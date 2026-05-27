@@ -83,13 +83,11 @@ async function refreshFiles(): Promise<void> {
   }
   app.loading.files = true;
   try {
-    app.changedFiles = await window.api.git.listChangedFiles(
-      app.activeRepo.id,
-      app.diffContext,
-    );
+    const ctx = $state.snapshot(app.diffContext) as DiffContext;
+    app.changedFiles = await window.api.git.listChangedFiles(app.activeRepo.id, ctx);
     const seenList = await window.api.state.getSeenFiles(
       app.activeRepo.id,
-      diffContextKey(app.diffContext),
+      diffContextKey(ctx),
     );
     app.seenFiles = new Set(seenList);
     const firstUnseen = app.changedFiles.find((f) => !app.seenFiles.has(f.path));
@@ -169,9 +167,10 @@ export const actions = {
     if (next) app.seenFiles.add(filePath);
     else app.seenFiles.delete(filePath);
     app.seenFiles = new Set(app.seenFiles);
+    const ctx = $state.snapshot(app.diffContext) as DiffContext;
     await window.api.state.setFileSeen(
       app.activeRepo.id,
-      diffContextKey(app.diffContext),
+      diffContextKey(ctx),
       filePath,
       next,
     );
@@ -179,7 +178,8 @@ export const actions = {
 
   async clearSeen(): Promise<void> {
     if (!app.activeRepo) return;
-    await window.api.state.clearSeen(app.activeRepo.id, diffContextKey(app.diffContext));
+    const ctx = $state.snapshot(app.diffContext) as DiffContext;
+    await window.api.state.clearSeen(app.activeRepo.id, diffContextKey(ctx));
     app.seenFiles = new Set();
   },
 

@@ -5,7 +5,7 @@
   import Button from './ui/Button.svelte';
   import Badge from './ui/Badge.svelte';
   import { actions, app } from '$lib/store.svelte';
-  import type { DiffData } from '@shared/types';
+  import type { DiffContext, DiffData } from '@shared/types';
 
   let container = $state<HTMLElement | null>(null);
   let instance: FileDiff<undefined> | null = null;
@@ -85,7 +85,7 @@
   $effect(() => {
     const file = app.selectedFile;
     const repo = app.activeRepo;
-    const ctx = app.diffContext;
+    const ctx = $state.snapshot(app.diffContext) as DiffContext;
     if (!file || !repo) {
       disposeDiff();
       currentDiff = null;
