@@ -1,0 +1,24 @@
+appId: com.superlocalreview.app
+productName: Super Local Review
+directories:
+  output: release
+  buildResources: build
+files:
+  - out
+  - package.json
+extraMetadata:
+  main: out/main/index.js
+asar: true
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+win:
+  target: nsis
+linux:
+  target:
+    - AppImage
+  category: Development
