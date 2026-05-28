@@ -1,7 +1,8 @@
 <script lang="ts">
   import { ChevronDown, GitBranch, GitCommit, GitPullRequest, FilePen } from 'lucide-svelte';
-  import Button from './ui/Button.svelte';
-  import Popover from './ui/Popover.svelte';
+  import { Button, buttonVariants } from './ui/button';
+  import * as Popover from './ui/popover';
+  import * as Tabs from './ui/tabs';
   import { actions, app } from '$lib/store.svelte';
   import { cn } from '$lib/utils';
 
@@ -34,7 +35,7 @@
   }
 
   $effect(() => {
-    if (open && tab === 'prs' && app.githubAuthed && app.prs.length === 0) {
+    if (open && tab === 'prs' && app.activeGithubAccount && app.prs.length === 0) {
       void actions.loadPRs();
     }
   });
@@ -64,36 +65,24 @@
   let Icon = $derived(ctxIcon());
 </script>
 
-<div class="relative">
-  <Button
-    variant="ghost"
-    size="sm"
+<Popover.Root bind:open>
+  <Popover.Trigger
     disabled={!app.activeRepo}
-    onclick={() => (open = !open)}
-    class="max-w-[280px]"
+    class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[280px]')}
   >
     <Icon class="size-3.5 text-muted-foreground" />
     <span class="truncate">{ctxLabel()}</span>
     <ChevronDown class="size-3.5 text-muted-foreground" />
-  </Button>
+  </Popover.Trigger>
+  <Popover.Content align="start" class="w-[420px] p-0">
+    <Tabs.Root value={tab} onValueChange={(v) => (tab = v as Tab)} class="gap-0">
+      <Tabs.List class="grid w-full grid-cols-3 rounded-none rounded-t-lg">
+        <Tabs.Trigger value="workingTree">Working tree</Tabs.Trigger>
+        <Tabs.Trigger value="branches">Branches</Tabs.Trigger>
+        <Tabs.Trigger value="prs">Pull requests</Tabs.Trigger>
+      </Tabs.List>
 
-  <Popover bind:open onClose={close} class="w-[420px]">
-    <div class="flex border-b border-border text-xs">
-      {#each [['workingTree', 'Working tree'], ['branches', 'Branches'], ['prs', 'Pull requests']] as [k, label] (k)}
-        <button
-          class={cn(
-            'flex-1 px-3 py-2 hover:bg-accent',
-            tab === k && 'border-b-2 border-foreground font-medium',
-          )}
-          onclick={() => (tab = k as Tab)}
-        >
-          {label}
-        </button>
-      {/each}
-    </div>
-
-    {#if tab === 'workingTree'}
-      <div class="p-3 text-sm">
+      <Tabs.Content value="workingTree" class="p-3 text-sm">
         <p class="text-muted-foreground">
           Show uncommitted changes against <code class="rounded bg-muted px-1">HEAD</code>.
         </p>
@@ -119,9 +108,9 @@
             Compare
           </Button>
         </div>
-      </div>
-    {:else if tab === 'branches'}
-      <div class="max-h-80 overflow-auto py-1 text-sm">
+      </Tabs.Content>
+
+      <Tabs.Content value="branches" class="max-h-80 overflow-auto py-1 text-sm">
         {#each app.branches as b (b.name)}
           <button
             class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent"
@@ -138,10 +127,10 @@
         {:else}
           <div class="px-3 py-4 text-center text-xs text-muted-foreground">No branches</div>
         {/each}
-      </div>
-    {:else}
-      <div class="max-h-80 overflow-auto py-1 text-sm">
-        {#if !app.githubAuthed}
+      </Tabs.Content>
+
+      <Tabs.Content value="prs" class="max-h-80 overflow-auto py-1 text-sm">
+        {#if !app.activeGithubAccount}
           <div class="px-3 py-6 text-center text-xs text-muted-foreground">
             Sign in to GitHub to view pull requests.
           </div>
@@ -173,7 +162,7 @@
             <div class="px-3 py-6 text-center text-xs text-muted-foreground">No open PRs</div>
           {/each}
         {/if}
-      </div>
-    {/if}
-  </Popover>
-</div>
+      </Tabs.Content>
+    </Tabs.Root>
+  </Popover.Content>
+</Popover.Root>

@@ -26,49 +26,139 @@ export async function isGitRepo(dirPath: string): Promise<boolean> {
   }
 }
 
+// Names we're willing to treat as a repo icon, ranked best → worst. A real
+// favicon beats a generic logo; `app-icon`/`AppIcon` cover macOS bundles.
+const ICON_BASE_PRIORITY: Record<string, number> = {
+  favicon: 0,
+  icon: 1,
+  'app-icon': 2,
+  appicon: 2,
+  logo: 3,
+};
+const ICON_EXT_PRIORITY: Record<string, number> = {
+  svg: 0,
+  png: 1,
+  ico: 2,
+};
+// Directory names we always skip — too noisy, too big, or vendored output.
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.svn',
+  '.hg',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.turbo',
+  '.vercel',
+  '.cache',
+  '.parcel-cache',
+  '.angular',
+  'dist',
+  'out',
+  'build',
+  'target',
+  'coverage',
+  'tmp',
+  'temp',
+  '.idea',
+  '.vscode',
+]);
+
+// Directories whose icons rarely represent the repo's brand. We still scan
+// into them (so single-example repos resolve), but apply a large score
+// penalty so a favicon in `apps/docs/` beats one in `examples/svelte/`.
+const NON_CANONICAL_SEGMENTS = new Set([
+  'examples',
+  'example',
+  'demo',
+  'demos',
+  'sample',
+  'samples',
+  'fixture',
+  'fixtures',
+  'test',
+  'tests',
+  '__tests__',
+  'e2e',
+  'playground',
+  'sandbox',
+  'storybook',
+  '.storybook',
+]);
+
+// Walk the repo up to MAX_DEPTH looking for the best-ranked icon. Bounded
+// because monorepos can have thousands of subdirs and we don't want to stall
+// the picker. A "best so far" tracker lets us short-circuit when we hit the
+// top-priority candidate (favicon.svg).
 async function findRepoIcon(repoPath: string): Promise<string | undefined> {
-  const candidates = [
-    'favicon.ico',
-    'favicon.png',
-    'favicon.svg',
-    'public/favicon.ico',
-    'public/favicon.png',
-    'public/favicon.svg',
-    'static/favicon.ico',
-    'static/favicon.png',
-    'static/favicon.svg',
-    'src/favicon.ico',
-    'src/assets/favicon.ico',
-    'apps/web/public/favicon.ico',
-    'apps/web/public/favicon.svg',
-    'packages/web/public/favicon.ico',
-    'web/public/favicon.ico',
-    'docs/favicon.ico',
-    'icon.png',
-    'icon.svg',
-    'logo.png',
-    'logo.svg',
-  ];
-  for (const rel of candidates) {
-    const abs = path.join(repoPath, rel);
+  const MAX_DEPTH = 5;
+  let bestPath: string | undefined;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  async function visit(dir: string, depth: number, nonCanonical: boolean): Promise<void> {
+    let entries;
     try {
-      const buf = await fs.readFile(abs);
-      if (buf.byteLength === 0 || buf.byteLength > 256 * 1024) continue;
-      const ext = path.extname(rel).slice(1).toLowerCase();
-      const mime =
-        ext === 'svg'
-          ? 'image/svg+xml'
-          : ext === 'png'
-            ? 'image/png'
-            : ext === 'ico'
-              ? 'image/x-icon'
-              : `image/${ext}`;
-      return `data:${mime};base64,${buf.toString('base64')}`;
+      entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
-      // not found, keep looking
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') && entry.name !== '.well-known') {
+        // skip dotfiles/dotdirs except a few we explicitly allow above
+        if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+        if (entry.isDirectory()) continue;
+        // dotfile — not an icon
+        continue;
+      }
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        if (depth >= MAX_DEPTH) continue;
+        const childNonCanonical =
+          nonCanonical || NON_CANONICAL_SEGMENTS.has(entry.name.toLowerCase());
+        await visit(path.join(dir, entry.name), depth + 1, childNonCanonical);
+        if (bestScore === 0) return;
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).slice(1).toLowerCase();
+        const extPriority = ICON_EXT_PRIORITY[ext];
+        if (extPriority === undefined) continue;
+        const stem = entry.name.slice(0, entry.name.length - ext.length - 1).toLowerCase();
+        const basePriority = ICON_BASE_PRIORITY[stem];
+        if (basePriority === undefined) continue;
+        // Depth penalty so top-level files beat deeply nested ones at the
+        // same base/ext rank, but a `favicon.svg` 4 levels deep still wins
+        // over a `logo.png` at the root. Non-canonical paths (examples/,
+        // tests/, fixtures/) take a large penalty so the brand favicon
+        // outranks starter-template icons.
+        const score =
+          basePriority * 100 + extPriority * 10 + depth + (nonCanonical ? 500 : 0);
+        if (score < bestScore) {
+          bestScore = score;
+          bestPath = path.join(dir, entry.name);
+          if (bestScore === 0) return;
+        }
+      }
     }
   }
-  return undefined;
+
+  await visit(repoPath, 0, false);
+  if (!bestPath) return undefined;
+  try {
+    const buf = await fs.readFile(bestPath);
+    if (buf.byteLength === 0 || buf.byteLength > 256 * 1024) return undefined;
+    const ext = path.extname(bestPath).slice(1).toLowerCase();
+    const mime =
+      ext === 'svg'
+        ? 'image/svg+xml'
+        : ext === 'png'
+          ? 'image/png'
+          : ext === 'ico'
+            ? 'image/x-icon'
+            : `image/${ext}`;
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseGithubFromUrl(url: string): { owner: string; repo: string } | undefined {
@@ -192,7 +282,18 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
   const files: ChangedFile[] = [];
 
   if (refs.workingTree) {
-    const status = await git.status();
+    // One git status + one git diff --numstat HEAD covers every tracked
+    // change (staged + unstaged). Calling numstat per-file was the dominant
+    // cost: each git subprocess spawn is ~30-100ms on macOS, so a repo with
+    // 30 changed files paid 1-3s just for numstats. Untracked files aren't
+    // included in `diff HEAD`; we count those from disk in parallel below.
+    const [status, numstatRaw] = await Promise.all([
+      git.status(),
+      git.raw(['diff', '--numstat', 'HEAD']).catch(() => ''),
+    ]);
+    const numstatMap = parseNumstat(numstatRaw);
+    const untrackedReadTasks: Array<{ index: number; filePath: string }> = [];
+
     for (const f of status.files) {
       const fullStatus = mapStatus(f.index, f.working_dir);
       let oldPath: string | undefined;
@@ -202,15 +303,41 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
         oldPath = renameMatch[1];
         p = renameMatch[2];
       }
-      const numstat = await safeNumstat(git, undefined, undefined, p);
+      const ns = numstatMap.get(p) ?? { additions: 0, deletions: 0, binary: false };
       files.push({
         path: p,
         oldPath,
         status: fullStatus,
-        additions: numstat.additions,
-        deletions: numstat.deletions,
-        isBinary: numstat.binary,
+        additions: ns.additions,
+        deletions: ns.deletions,
+        isBinary: ns.binary,
       });
+      // numstat returns nothing for untracked files (git doesn't track them)
+      // and sometimes for staged adds depending on what's in the index.
+      // Queue a disk read so the user sees a real line count.
+      if (
+        !ns.binary &&
+        ns.additions === 0 &&
+        ns.deletions === 0 &&
+        (fullStatus === 'untracked' || fullStatus === 'added')
+      ) {
+        untrackedReadTasks.push({ index: files.length - 1, filePath: p });
+      }
+    }
+
+    if (untrackedReadTasks.length > 0) {
+      await Promise.all(
+        untrackedReadTasks.map(async ({ index, filePath }) => {
+          const counted = await countWorkingLines(repoPath, filePath);
+          if (counted) {
+            files[index] = {
+              ...files[index],
+              additions: counted.additions,
+              isBinary: counted.binary,
+            };
+          }
+        }),
+      );
     }
     return files;
   }
@@ -296,6 +423,35 @@ async function safeNumstat(
   }
 }
 
+// Raw newline count of a working-copy file, plus a quick null-byte probe to
+// flag binaries. Used as a fallback when git numstat can't produce a count
+// (untracked files, fresh adds).
+async function countWorkingLines(
+  repoPath: string,
+  filePath: string,
+): Promise<{ additions: number; binary: boolean } | null> {
+  try {
+    const abs = path.join(repoPath, filePath);
+    const stat = await fs.stat(abs);
+    if (!stat.isFile()) return null;
+    if (stat.size === 0) return { additions: 0, binary: false };
+    if (stat.size > MAX_FILE_BYTES) return { additions: 0, binary: false };
+    const buf = await fs.readFile(abs);
+    const probeEnd = Math.min(buf.length, 8192);
+    for (let i = 0; i < probeEnd; i++) {
+      if (buf[i] === 0) return { additions: 0, binary: true };
+    }
+    let lines = 0;
+    for (let i = 0; i < buf.length; i++) {
+      if (buf[i] === 0x0a) lines++;
+    }
+    if (buf[buf.length - 1] !== 0x0a) lines++;
+    return { additions: lines, binary: false };
+  } catch {
+    return null;
+  }
+}
+
 async function showFile(git: SimpleGit, ref: string, filePath: string): Promise<string> {
   try {
     return await git.show([`${ref}:${filePath}`]);
@@ -375,6 +531,253 @@ export async function getDiff(
     newContents: truncated ? '' : newContents,
     truncated,
   };
+}
+
+export interface PushStatus {
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  hasUpstream: boolean;
+  hasRemote: boolean;
+  aheadOfDefault: number;
+}
+
+async function countAheadOfDefault(
+  git: SimpleGit,
+  branch: string,
+  defaultBranch: string | undefined,
+): Promise<number> {
+  if (!defaultBranch || branch === defaultBranch) return 0;
+  try {
+    const out = (await git.raw(['rev-list', '--count', `${defaultBranch}..HEAD`])).trim();
+    return Number(out) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function getPushStatus(
+  repoPath: string,
+  defaultBranch?: string,
+): Promise<PushStatus> {
+  const git = simpleGit(repoPath);
+  let branch: string | null = null;
+  try {
+    branch = (await git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim() || null;
+  } catch {
+    branch = null;
+  }
+  const remotes = await git.getRemotes(true).catch(() => []);
+  const hasRemote = remotes.some((r) => r.name === 'origin');
+  const aheadOfDefault = branch ? await countAheadOfDefault(git, branch, defaultBranch) : 0;
+  if (!branch || !hasRemote) {
+    return {
+      branch,
+      ahead: 0,
+      behind: 0,
+      hasUpstream: false,
+      hasRemote,
+      aheadOfDefault,
+    };
+  }
+  let upstream: string | null = null;
+  try {
+    upstream = (
+      await git.raw(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+    ).trim();
+  } catch {
+    upstream = null;
+  }
+  if (!upstream) {
+    return {
+      branch,
+      ahead: 0,
+      behind: 0,
+      hasUpstream: false,
+      hasRemote,
+      aheadOfDefault,
+    };
+  }
+  let ahead = 0;
+  let behind = 0;
+  try {
+    const counts = (
+      await git.raw(['rev-list', '--left-right', '--count', `${upstream}...HEAD`])
+    ).trim();
+    const [b, a] = counts.split(/\s+/).map((n) => Number(n) || 0);
+    behind = b;
+    ahead = a;
+  } catch {
+    // ignore
+  }
+  return { branch, ahead, behind, hasUpstream: true, hasRemote, aheadOfDefault };
+}
+
+export interface PullPushResult {
+  ok: boolean;
+  conflicts: string[];
+  error?: string;
+}
+
+async function listUnmergedPaths(git: SimpleGit): Promise<string[]> {
+  try {
+    const raw = await git.raw(['diff', '--name-only', '--diff-filter=U']);
+    return raw.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function pull(repoPath: string): Promise<PullPushResult> {
+  const git = simpleGit(repoPath);
+  try {
+    await git.raw(['pull', '--no-rebase', '--no-edit']);
+    return { ok: true, conflicts: [] };
+  } catch (err) {
+    const conflicts = await listUnmergedPaths(git);
+    if (conflicts.length > 0) return { ok: false, conflicts };
+    return {
+      ok: false,
+      conflicts: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function push(repoPath: string): Promise<PullPushResult> {
+  const git = simpleGit(repoPath);
+  try {
+    const status = await getPushStatus(repoPath);
+    if (!status.branch) throw new Error('Not on a branch (detached HEAD).');
+    if (!status.hasRemote) throw new Error("No 'origin' remote configured.");
+    const args = ['push'];
+    if (!status.hasUpstream) args.push('--set-upstream', 'origin', status.branch);
+    await git.raw(args);
+    return { ok: true, conflicts: [] };
+  } catch (err) {
+    return {
+      ok: false,
+      conflicts: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function getConflicts(repoPath: string): Promise<string[]> {
+  return listUnmergedPaths(simpleGit(repoPath));
+}
+
+export async function stageFile(repoPath: string, filePath: string): Promise<void> {
+  await simpleGit(repoPath).add([filePath]);
+}
+
+// Try to wrap up an in-progress merge. If unmerged paths remain we surface
+// them; otherwise we create the merge commit.
+export async function continueMerge(repoPath: string): Promise<PullPushResult> {
+  const git = simpleGit(repoPath);
+  const remaining = await listUnmergedPaths(git);
+  if (remaining.length > 0) return { ok: false, conflicts: remaining };
+  try {
+    await git.raw(['commit', '--no-edit']);
+    return { ok: true, conflicts: [] };
+  } catch (err) {
+    return {
+      ok: false,
+      conflicts: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function abortMerge(repoPath: string): Promise<void> {
+  await simpleGit(repoPath).raw(['merge', '--abort']).catch(() => {});
+}
+
+export interface CommitResult {
+  ok: boolean;
+  error?: string;
+}
+
+// Stages every tracked + untracked change, then commits with the given message.
+// Mirrors the "Commit all" affordance of the primary action button.
+export async function commitAll(
+  repoPath: string,
+  message: string,
+): Promise<CommitResult> {
+  const git = simpleGit(repoPath);
+  try {
+    await git.raw(['add', '-A']);
+    const trimmed = message.trim();
+    if (!trimmed) throw new Error('Commit message is required.');
+    await git.raw(['commit', '-m', trimmed]);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export interface CloneResult {
+  ok: boolean;
+  path?: string;
+  error?: string;
+}
+
+// Clones the given URL into `parentDir/<repo-name>`. Caller is responsible for
+// validating the parent dir exists and is writable.
+export async function cloneRepo(
+  url: string,
+  parentDir: string,
+): Promise<CloneResult> {
+  const trimmed = url.trim();
+  if (!trimmed) return { ok: false, error: 'Repository URL is required.' };
+  const name = trimmed
+    .replace(/\.git$/, '')
+    .split(/[/:]/)
+    .pop();
+  if (!name) return { ok: false, error: 'Could not parse repository name from URL.' };
+  const target = path.join(parentDir, name);
+  try {
+    const exists = await fs
+      .stat(target)
+      .then(() => true)
+      .catch(() => false);
+    if (exists) {
+      return { ok: false, error: `Destination already exists: ${target}` };
+    }
+    await simpleGit().clone(trimmed, target);
+    return { ok: true, path: target };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// Initialize a fresh git repository at `targetDir`. If the directory is
+// already a git repo we leave it alone and return success — picking an
+// existing repo via "Create new" should still register it instead of erroring.
+export async function initRepo(targetDir: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const stat = await fs.stat(targetDir).catch(() => null);
+    if (!stat) {
+      await fs.mkdir(targetDir, { recursive: true });
+    } else if (!stat.isDirectory()) {
+      return { ok: false, error: `Not a directory: ${targetDir}` };
+    }
+    if (await isGitRepo(targetDir)) return { ok: true };
+    await simpleGit(targetDir).init();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function fetchOrigin(repoPath: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const git = simpleGit(repoPath);
+    await git.fetch(['origin', '--prune']);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export async function fetchPRRef(

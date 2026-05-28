@@ -4,20 +4,105 @@
   import TopBar from '$lib/components/TopBar.svelte';
   import FileList from '$lib/components/FileList.svelte';
   import DiffView from '$lib/components/DiffView.svelte';
+  import ConflictDialog from '$lib/components/ConflictDialog.svelte';
+  import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
+  import SettingsDialog from '$lib/components/SettingsDialog.svelte';
+  import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
+  import * as Sidebar from '$lib/components/ui/sidebar';
+  import * as Resizable from '$lib/components/ui/resizable';
+  import type { PaneAPI } from 'paneforge';
   import { actions, setError, app } from '$lib/store.svelte';
+  import { initDiffHighlighter } from '$lib/diff-highlighter';
+
+  const ORIGIN_POLL_MS = 2 * 60 * 1000;
+  const TICK_MS = 30 * 1000;
+
+  // Kick off the shiki highlighter preload early so the very first diff —
+  // including the settings preview — has a warm singleton.
+  initDiffHighlighter();
+
+  // Imperative handle on the sidebar pane, used by Cmd+B and the
+  // SidebarTrigger button to collapse/expand without dragging.
+  let sidebarPane = $state<PaneAPI | undefined>();
 
   onMount(() => {
     void actions.init();
-    return window.api.events.onRepoChanged((repo) => {
-      // active repo updated externally (e.g. another window picked a new repo)
-      if (repo) {
+
+    const offRepoChanged = window.api.events.onRepoChanged((repo) => {
+      if (!repo) return;
+      // Different repo → a real switch (e.g. triggered from another window).
+      if (repo.id !== app.activeRepo?.id) {
         void actions.switchRepo(repo.id);
+        return;
       }
+      // Same repo → the main process did a background metadata refresh
+      // (favicon, remote URL, etc). Merge the new info in-place so the UI
+      // updates without re-running the whole switch pipeline.
+      actions.updateActiveRepoMetadata(repo);
     });
+
+    // Refresh the working tree whenever the window regains focus so file
+    // changes made externally are reflected without a manual click.
+    const onFocus = (): void => {
+      if (app.activeRepo) void actions.refresh();
+    };
+    window.addEventListener('focus', onFocus);
+
+    // Periodically fetch origin so branch base diffs and ahead/behind stay
+    // fresh. Only runs while the window is visible to avoid background work
+    // on minimized/hidden windows.
+    let pollId: number | undefined;
+    const startPoll = (): void => {
+      if (pollId !== undefined) return;
+      pollId = window.setInterval(() => {
+        if (app.activeRepo && document.visibilityState === 'visible') {
+          void actions.fetchAndRefresh();
+        }
+      }, ORIGIN_POLL_MS);
+    };
+    const stopPoll = (): void => {
+      if (pollId !== undefined) {
+        window.clearInterval(pollId);
+        pollId = undefined;
+      }
+    };
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'visible') startPoll();
+      else stopPoll();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    if (document.visibilityState === 'visible') startPoll();
+
+    // Drive the "last refreshed Xm ago" label.
+    const tickId = window.setInterval(() => actions.tickNow(), TICK_MS);
+
+    return () => {
+      offRepoChanged();
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      stopPoll();
+      window.clearInterval(tickId);
+    };
   });
 </script>
 
-<div class="flex h-full flex-col">
+<!--
+  SidebarProvider gives us Cmd/Ctrl+B + a shared sidebar context (consumed by
+  Sidebar.Trigger in TopBar). Open state binding flow:
+    user toggles → onOpenChange → sidebarPane.expand/collapse() →
+    PaneForge fires onCollapse/onExpand → app.sidebarCollapsed updates →
+    open getter re-reads. The pane layout stays the single source of truth,
+    so dragging the handle to collapse also stays in sync without looping.
+-->
+<Sidebar.Provider
+  open={!app.sidebarCollapsed}
+  onOpenChange={(open) => {
+    if (!sidebarPane) return;
+    if (open) sidebarPane.expand();
+    else sidebarPane.collapse();
+  }}
+  class="flex h-full w-full flex-col"
+>
   <TopBar />
   <main class="flex min-h-0 flex-1">
     {#if !app.activeRepo}
@@ -36,8 +121,32 @@
         </div>
       </div>
     {:else}
-      <FileList />
-      <DiffView />
+      <Resizable.PaneGroup
+        direction="horizontal"
+        autoSaveId="slr-main-layout"
+        class="h-full w-full"
+      >
+        <Resizable.Pane
+          bind:this={sidebarPane}
+          defaultSize={22}
+          minSize={14}
+          maxSize={50}
+          collapsible
+          collapsedSize={0}
+          onCollapse={() => {
+            app.sidebarCollapsed = true;
+          }}
+          onExpand={() => {
+            app.sidebarCollapsed = false;
+          }}
+        >
+          <FileList />
+        </Resizable.Pane>
+        <Resizable.Handle class="hover:bg-foreground/20 transition-colors" />
+        <Resizable.Pane defaultSize={78}>
+          <DiffView />
+        </Resizable.Pane>
+      </Resizable.PaneGroup>
     {/if}
   </main>
 
@@ -56,4 +165,9 @@
       </button>
     </div>
   {/if}
-</div>
+</Sidebar.Provider>
+
+<ConflictDialog />
+<AddRepoDialog />
+<SettingsDialog />
+<GithubSignInDialog />

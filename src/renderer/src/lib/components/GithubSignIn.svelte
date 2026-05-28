@@ -1,106 +1,113 @@
 <script lang="ts">
-  import { Github, LogOut } from 'lucide-svelte';
-  import Button from './ui/Button.svelte';
+  import { Check, LogOut, Plus, Settings, User } from 'lucide-svelte';
+  import { buttonVariants } from './ui/button';
+  import * as DropdownMenu from './ui/dropdown-menu';
+  import * as Avatar from './ui/avatar';
   import { actions, app } from '$lib/store.svelte';
+  import { cn } from '$lib/utils';
 
-  let open = $state(false);
-  let userCode = $state<string | null>(null);
-  let verificationUri = $state<string | null>(null);
-  let polling = $state(false);
-  let errorMsg = $state<string | null>(null);
-  let pollHandle: number | null = null;
-
-  function stop(): void {
-    if (pollHandle !== null) {
-      window.clearInterval(pollHandle);
-      pollHandle = null;
-    }
-    polling = false;
+  function startSignIn(): void {
+    actions.openGithubSignIn();
   }
 
-  function close(): void {
-    void window.api.github.cancelDeviceFlow();
-    stop();
-    open = false;
-    userCode = null;
-    verificationUri = null;
-    errorMsg = null;
+  function openSettings(): void {
+    actions.openSettingsDialog();
   }
 
-  async function start(): Promise<void> {
-    errorMsg = null;
-    open = true;
-    try {
-      const flow = await window.api.github.startDeviceFlow();
-      userCode = flow.userCode;
-      verificationUri = flow.verificationUri;
-      polling = true;
-      pollHandle = window.setInterval(async () => {
-        const status = await window.api.github.pollDeviceFlow();
-        if (status.state === 'success') {
-          stop();
-          actions.setGithubAuthed(true);
-          open = false;
-          userCode = null;
-          verificationUri = null;
-          void actions.loadPRs();
-        } else if (status.state === 'error') {
-          stop();
-          errorMsg = status.message;
-        }
-      }, 1500);
-    } catch (err) {
-      errorMsg = err instanceof Error ? err.message : String(err);
-    }
+  async function switchTo(id: string): Promise<void> {
+    await actions.switchGithubAccount(id);
+  }
+
+  async function removeAccount(id: string): Promise<void> {
+    await actions.removeGithubAccount(id);
   }
 </script>
 
-{#if app.githubAuthed}
-  <Button variant="ghost" size="sm" onclick={() => actions.signOutGithub()} title="Sign out">
-    <Github class="size-3.5" />
-    <LogOut class="size-3" />
-  </Button>
-{:else}
-  <Button variant="ghost" size="sm" onclick={start}>
-    <Github class="size-3.5" />
-    <span class="hidden sm:inline">Sign in</span>
-  </Button>
-{/if}
-
-{#if open}
-  <button
-    aria-label="Close"
-    class="fixed inset-0 z-50 cursor-default bg-black/40"
-    onclick={close}
-  ></button>
-  <div
-    role="dialog"
-    class="fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-2xl"
+<DropdownMenu.Root>
+  <DropdownMenu.Trigger
+    class={cn(
+      buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+      'rounded-full p-0',
+    )}
+    title={app.activeGithubAccount
+      ? `Signed in as ${app.activeGithubAccount.login}`
+      : 'Account'}
   >
-    <h2 class="text-base font-semibold">Sign in to GitHub</h2>
-    {#if errorMsg}
-      <p class="mt-3 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-        {errorMsg}
-      </p>
-    {/if}
-    {#if userCode && verificationUri}
-      <p class="mt-3 text-sm text-muted-foreground">
-        Enter this code in your browser:
-      </p>
-      <div class="my-3 rounded-md border border-border bg-card p-3 text-center font-mono text-2xl tracking-[0.3em]">
-        {userCode}
-      </div>
-      <p class="text-xs text-muted-foreground">
-        Verification URL: <a class="underline" href={verificationUri} target="_blank" rel="noreferrer">{verificationUri}</a>
-      </p>
-      {#if polling}
-        <p class="mt-3 text-xs text-muted-foreground">Waiting for confirmation…</p>
-      {/if}
+    {#if app.activeGithubAccount}
+      <Avatar.Root class="size-6">
+        {#if app.activeGithubAccount.avatarUrl}
+          <Avatar.Image
+            src={app.activeGithubAccount.avatarUrl}
+            alt={app.activeGithubAccount.login}
+          />
+        {/if}
+        <Avatar.Fallback class="text-[10px]">
+          {app.activeGithubAccount.login.slice(0, 2).toUpperCase()}
+        </Avatar.Fallback>
+      </Avatar.Root>
     {:else}
-      <p class="mt-3 text-sm text-muted-foreground">Starting device flow…</p>
+      <Avatar.Root class="size-6">
+        <Avatar.Fallback>
+          <User class="size-3.5" />
+        </Avatar.Fallback>
+      </Avatar.Root>
     {/if}
-    <div class="mt-4 flex justify-end">
-      <Button variant="secondary" size="sm" onclick={close}>Cancel</Button>
-    </div>
-  </div>
-{/if}
+  </DropdownMenu.Trigger>
+  <DropdownMenu.Content align="end" class="min-w-[280px]">
+    {#if app.githubAccounts.length > 0}
+      <DropdownMenu.Group>
+        <DropdownMenu.GroupHeading>Signed in accounts</DropdownMenu.GroupHeading>
+        {#each app.githubAccounts as acct (acct.id)}
+          {@const isActive = acct.id === app.activeGithubAccount?.id}
+          <DropdownMenu.Item
+            class={cn('gap-2', isActive && 'opacity-100')}
+            disabled={isActive}
+            closeOnSelect={!isActive}
+            onSelect={() => switchTo(acct.id)}
+          >
+            <Avatar.Root class="size-6 shrink-0">
+              {#if acct.avatarUrl}
+                <Avatar.Image src={acct.avatarUrl} alt={acct.login} />
+              {/if}
+              <Avatar.Fallback class="text-[10px]">
+                {acct.login.slice(0, 2).toUpperCase()}
+              </Avatar.Fallback>
+            </Avatar.Root>
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-xs font-medium">{acct.login}</div>
+              {#if acct.name}
+                <div class="truncate text-[10px] text-muted-foreground">{acct.name}</div>
+              {/if}
+            </div>
+            {#if isActive}
+              <Check class="size-3.5 text-success" />
+            {:else}
+              <button
+                type="button"
+                class="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  void removeAccount(acct.id);
+                }}
+                title={`Sign out ${acct.login}`}
+                aria-label={`Sign out ${acct.login}`}
+              >
+                <LogOut class="size-3.5" />
+              </button>
+            {/if}
+          </DropdownMenu.Item>
+        {/each}
+      </DropdownMenu.Group>
+      <DropdownMenu.Separator />
+    {/if}
+    <DropdownMenu.Item onSelect={startSignIn}>
+      <Plus class="size-3.5" />
+      {app.githubAccounts.length > 0 ? 'Add another account' : 'Sign in to GitHub'}
+    </DropdownMenu.Item>
+    <DropdownMenu.Separator />
+    <DropdownMenu.Item onSelect={openSettings}>
+      <Settings class="size-3.5" />
+      Settings
+    </DropdownMenu.Item>
+  </DropdownMenu.Content>
+</DropdownMenu.Root>

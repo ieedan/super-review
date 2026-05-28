@@ -1,0 +1,345 @@
+<script lang="ts">
+  import { Check, Code2, LogOut, Palette, Plus, User } from 'lucide-svelte';
+  import * as Dialog from './ui/dialog';
+  import * as Avatar from './ui/avatar';
+  import { Button } from './ui/button';
+  import CursorIcon from './icons/CursorIcon.svelte';
+  import VSCodeIcon from './icons/VSCodeIcon.svelte';
+  import GhostIcon from './icons/GhostIcon.svelte';
+  import ZshIcon from './icons/ZshIcon.svelte';
+  import DiffStylePreview from './DiffStylePreview.svelte';
+  import { actions, app, effectiveEditor, effectiveTerminal } from '$lib/store.svelte';
+  import { cn } from '$lib/utils';
+  import type { EditorKind, TerminalKind, ViewMode } from '@shared/types';
+
+  type SettingsTab = 'accounts' | 'appearance' | 'editor';
+  let activeTab = $state<SettingsTab>('accounts');
+
+  const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
+    { id: 'accounts', label: 'Accounts', icon: User },
+    { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'editor', label: 'Editor', icon: Code2 },
+  ];
+
+  const EDITOR_LABELS: Record<EditorKind, string> = {
+    cursor: 'Cursor',
+    vscode: 'Visual Studio Code',
+  };
+
+  const TERMINAL_LABELS: Record<TerminalKind, string> = {
+    terminal: 'Terminal',
+    iterm: 'iTerm',
+    warp: 'Warp',
+    ghostty: 'Ghostty',
+  };
+
+  let dialogOpen = $derived(app.settingsDialogOpen);
+
+  // Draft state — snapshot when the dialog opens, applied on Save.
+  let draftViewMode = $state<ViewMode>('split');
+  let draftEditor = $state<EditorKind | null>(null);
+  let draftTerminal = $state<TerminalKind | null>(null);
+
+  $effect(() => {
+    if (dialogOpen) {
+      draftViewMode = app.viewMode;
+      draftEditor = effectiveEditor();
+      draftTerminal = effectiveTerminal();
+    }
+  });
+
+  async function save(): Promise<void> {
+    const promises: Promise<unknown>[] = [];
+    if (draftViewMode !== app.viewMode) {
+      promises.push(actions.setViewMode(draftViewMode));
+    }
+    const savedEditor = app.prefs?.externalEditor ?? null;
+    if (draftEditor !== savedEditor) {
+      promises.push(actions.setExternalEditor(draftEditor));
+    }
+    const savedTerminal = app.prefs?.externalTerminal ?? null;
+    if (draftTerminal !== savedTerminal) {
+      promises.push(actions.setExternalTerminal(draftTerminal));
+    }
+    await Promise.all(promises);
+    actions.closeSettingsDialog();
+  }
+
+  function cancel(): void {
+    actions.closeSettingsDialog();
+  }
+
+  function startAddAccount(): void {
+    actions.openGithubSignIn();
+  }
+
+  async function removeAccount(id: string): Promise<void> {
+    await actions.removeGithubAccount(id);
+  }
+
+  async function switchAccount(id: string): Promise<void> {
+    await actions.switchGithubAccount(id);
+  }
+
+  let availableEditors = $derived(
+    (['cursor', 'vscode'] as EditorKind[]).filter((k) => app.editors[k]),
+  );
+  let availableTerminals = $derived(
+    (['terminal', 'iterm', 'warp', 'ghostty'] as TerminalKind[]).filter(
+      (k) => app.terminals[k],
+    ),
+  );
+</script>
+
+{#snippet editorIcon(editor: EditorKind)}
+  {#if editor === 'cursor'}
+    <CursorIcon class="size-5" />
+  {:else}
+    <VSCodeIcon class="size-5 text-foreground" />
+  {/if}
+{/snippet}
+
+{#snippet terminalIcon(terminal: TerminalKind)}
+  {#if terminal === 'ghostty'}
+    <GhostIcon class="size-5" />
+  {:else}
+    <ZshIcon class="size-5 text-foreground" />
+  {/if}
+{/snippet}
+
+<Dialog.Root bind:open={dialogOpen} onOpenChange={(o) => !o && cancel()}>
+  <Dialog.Content
+    class="w-[720px] !max-w-[calc(100%-2rem)] !p-0 !gap-0 overflow-hidden"
+    showCloseButton={true}
+  >
+    <Dialog.Header class="border-b border-border px-4 py-3">
+      <Dialog.Title class="text-base">Settings</Dialog.Title>
+    </Dialog.Header>
+
+    <div class="flex h-[480px] min-h-0">
+      <!-- Left nav -->
+      <nav class="w-48 shrink-0 border-r border-border bg-card/30 p-2">
+        {#each TABS as tab (tab.id)}
+          {@const Icon = tab.icon}
+          <button
+            type="button"
+            class={cn(
+              'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm',
+              activeTab === tab.id
+                ? 'bg-muted text-foreground'
+                : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+            )}
+            onclick={() => (activeTab = tab.id)}
+          >
+            <Icon class="size-4" />
+            {tab.label}
+          </button>
+        {/each}
+      </nav>
+
+      <!-- Content panel -->
+      <div class="min-w-0 flex-1 overflow-y-auto p-5">
+        {#if activeTab === 'accounts'}
+          <section class="space-y-5">
+            <div>
+              <h3 class="text-base font-semibold">GitHub.com</h3>
+              {#if app.githubAccounts.length === 0}
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Sign in to review pull requests and post comments.
+                </p>
+                <Button size="sm" class="mt-3" onclick={startAddAccount}>
+                  <Plus class="size-3.5" /> Sign in to GitHub
+                </Button>
+              {:else}
+                <ul class="mt-3 space-y-2">
+                  {#each app.githubAccounts as acct (acct.id)}
+                    {@const isActive = acct.id === app.activeGithubAccount?.id}
+                    <li
+                      class="flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2"
+                    >
+                      <Avatar.Root class="size-8">
+                        {#if acct.avatarUrl}
+                          <Avatar.Image src={acct.avatarUrl} alt={acct.login} />
+                        {/if}
+                        <Avatar.Fallback class="text-[10px]">
+                          {acct.login.slice(0, 2).toUpperCase()}
+                        </Avatar.Fallback>
+                      </Avatar.Root>
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-sm font-medium">
+                          {acct.name ?? acct.login}
+                        </div>
+                        <div class="truncate text-xs text-muted-foreground">
+                          @{acct.login}
+                        </div>
+                      </div>
+                      {#if isActive}
+                        <span
+                          class="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success"
+                        >
+                          <Check class="size-3" /> Active
+                        </span>
+                      {:else}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onclick={() => switchAccount(acct.id)}
+                        >
+                          Switch
+                        </Button>
+                      {/if}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title={`Sign out ${acct.login}`}
+                        onclick={() => removeAccount(acct.id)}
+                      >
+                        <LogOut class="size-3.5" />
+                      </Button>
+                    </li>
+                  {/each}
+                </ul>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="mt-3"
+                  onclick={startAddAccount}
+                >
+                  <Plus class="size-3.5" /> Add another account
+                </Button>
+              {/if}
+            </div>
+          </section>
+        {:else if activeTab === 'appearance'}
+          <section class="space-y-5">
+            <div>
+              <h3 class="text-base font-semibold">Diff view</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Choose how changes are displayed.
+              </p>
+
+              <div class="mt-4 grid grid-cols-2 gap-3">
+                {#each [{ mode: 'split' as ViewMode, label: 'Split' }, { mode: 'unified' as ViewMode, label: 'Unified' }] as opt (opt.mode)}
+                  {@const active = draftViewMode === opt.mode}
+                  <button
+                    type="button"
+                    onclick={() => (draftViewMode = opt.mode)}
+                    class={cn(
+                      'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+                      active
+                        ? 'border-primary'
+                        : 'border-border hover:border-muted-foreground/50',
+                    )}
+                  >
+                    <div
+                      class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+                    >
+                      <span
+                        class={cn(
+                          'grid size-3.5 place-items-center rounded-full border',
+                          active
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border',
+                        )}
+                      >
+                        {#if active}<Check class="size-2.5" />{/if}
+                      </span>
+                      {opt.label}
+                    </div>
+                    <div class="w-full bg-background p-1.5">
+                      <DiffStylePreview mode={opt.mode} />
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          </section>
+        {:else if activeTab === 'editor'}
+          <section class="space-y-6">
+            <div>
+              <h3 class="text-base font-semibold">External editor</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Used by the "Open in editor" button.
+              </p>
+
+              {#if availableEditors.length === 0}
+                <p
+                  class="mt-3 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+                >
+                  No supported editors detected. Install the
+                  <code>cursor</code> or <code>code</code> CLI from your editor's command palette.
+                </p>
+              {:else}
+                <div class="mt-3 space-y-1.5">
+                  {#each availableEditors as ed (ed)}
+                    {@const selected = draftEditor === ed}
+                    <button
+                      type="button"
+                      class={cn(
+                        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
+                        selected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:bg-muted/40',
+                      )}
+                      onclick={() => (draftEditor = ed)}
+                    >
+                      {@render editorIcon(ed)}
+                      <span class="flex-1 text-sm">{EDITOR_LABELS[ed]}</span>
+                      {#if selected}
+                        <Check class="size-4 text-primary" />
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div>
+              <h3 class="text-base font-semibold">Terminal</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Used by the "Open in terminal" button.
+              </p>
+
+              {#if availableTerminals.length === 0}
+                <p
+                  class="mt-3 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+                >
+                  No supported terminals detected.
+                </p>
+              {:else}
+                <div class="mt-3 space-y-1.5">
+                  {#each availableTerminals as t (t)}
+                    {@const selected = draftTerminal === t}
+                    <button
+                      type="button"
+                      class={cn(
+                        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
+                        selected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:bg-muted/40',
+                      )}
+                      onclick={() => (draftTerminal = t)}
+                    >
+                      {@render terminalIcon(t)}
+                      <span class="flex-1 text-sm">{TERMINAL_LABELS[t]}</span>
+                      {#if selected}
+                        <Check class="size-4 text-primary" />
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </section>
+        {/if}
+      </div>
+    </div>
+
+    <footer
+      class="flex items-center justify-end gap-2 border-t border-border bg-muted/30 px-4 py-3"
+    >
+      <Button variant="secondary" size="sm" onclick={cancel}>Cancel</Button>
+      <Button size="sm" onclick={save}>Save</Button>
+    </footer>
+  </Dialog.Content>
+</Dialog.Root>

@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -24,6 +26,14 @@
   --color-ring: hsl(0 0% 3.9%);
   --color-success: hsl(142 76% 36%);
   --color-warning: hsl(38 92% 50%);
+  --color-sidebar: hsl(0 0% 98%);
+  --color-sidebar-foreground: hsl(0 0% 3.9%);
+  --color-sidebar-border: hsl(0 0% 89.8%);
+  --color-sidebar-accent: hsl(0 0% 96.1%);
+  --color-sidebar-accent-foreground: hsl(0 0% 9%);
+  --color-sidebar-primary: hsl(0 0% 9%);
+  --color-sidebar-primary-foreground: hsl(0 0% 98%);
+  --color-sidebar-ring: hsl(0 0% 3.9%);
   --radius: 0.5rem;
 }
 
@@ -49,6 +59,14 @@
   --color-ring: hsl(0 0% 83.1%);
   --color-success: hsl(142 70% 45%);
   --color-warning: hsl(38 92% 60%);
+  --color-sidebar: hsl(0 0% 7%);
+  --color-sidebar-foreground: hsl(0 0% 98%);
+  --color-sidebar-border: hsl(0 0% 14.9%);
+  --color-sidebar-accent: hsl(0 0% 14.9%);
+  --color-sidebar-accent-foreground: hsl(0 0% 98%);
+  --color-sidebar-primary: hsl(0 0% 98%);
+  --color-sidebar-primary-foreground: hsl(0 0% 9%);
+  --color-sidebar-ring: hsl(0 0% 83.1%);
 }
 
 html, body, #app {

@@ -2,13 +2,22 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   BranchInfo,
   ChangedFile,
+  CloneResult,
+  CommitResult,
   DeviceFlowStart,
   DeviceFlowStatus,
   DiffContext,
   DiffData,
+  EditorKind,
+  GithubAccount,
+  NewReviewCommentInput,
+  PRReviewComment,
   PRSummary,
   PreloadAPI,
+  PullPushResult,
+  PushStatus,
   RepoInfo,
+  TerminalKind,
   UserPrefs,
 } from '@shared/types.js';
 
@@ -16,6 +25,7 @@ const api: PreloadAPI = {
   repos: {
     list: () => ipcRenderer.invoke('repos:list') as Promise<RepoInfo[]>,
     openPicker: () => ipcRenderer.invoke('repos:openPicker') as Promise<RepoInfo | null>,
+    createPicker: () => ipcRenderer.invoke('repos:createPicker') as Promise<RepoInfo | null>,
     remove: (id) => ipcRenderer.invoke('repos:remove', id) as Promise<void>,
     setActive: (id) => ipcRenderer.invoke('repos:setActive', id) as Promise<RepoInfo | null>,
     getActive: () => ipcRenderer.invoke('repos:getActive') as Promise<RepoInfo | null>,
@@ -31,21 +41,90 @@ const api: PreloadAPI = {
       ipcRenderer.invoke('git:listChangedFiles', repoId, ctx) as Promise<ChangedFile[]>,
     getDiff: (repoId, filePath, ctx: DiffContext) =>
       ipcRenderer.invoke('git:getDiff', repoId, filePath, ctx) as Promise<DiffData>,
+    fetchOrigin: (repoId) =>
+      ipcRenderer.invoke('git:fetchOrigin', repoId) as Promise<{ ok: boolean; error?: string }>,
+    getPushStatus: (repoId) =>
+      ipcRenderer.invoke('git:getPushStatus', repoId) as Promise<PushStatus>,
+    pull: (repoId) => ipcRenderer.invoke('git:pull', repoId) as Promise<PullPushResult>,
+    push: (repoId) => ipcRenderer.invoke('git:push', repoId) as Promise<PullPushResult>,
+    getConflicts: (repoId) =>
+      ipcRenderer.invoke('git:getConflicts', repoId) as Promise<string[]>,
+    stageFile: (repoId, filePath) =>
+      ipcRenderer.invoke('git:stageFile', repoId, filePath) as Promise<void>,
+    continueMerge: (repoId) =>
+      ipcRenderer.invoke('git:continueMerge', repoId) as Promise<PullPushResult>,
+    abortMerge: (repoId) =>
+      ipcRenderer.invoke('git:abortMerge', repoId) as Promise<void>,
+    commitAll: (repoId, message) =>
+      ipcRenderer.invoke('git:commitAll', repoId, message) as Promise<CommitResult>,
+    cloneRepo: (url) => ipcRenderer.invoke('git:cloneRepo', url) as Promise<CloneResult>,
+  },
+  editor: {
+    detect: () =>
+      ipcRenderer.invoke('editor:detect') as Promise<{ cursor: boolean; vscode: boolean }>,
+    open: (editor: EditorKind, target: string) =>
+      ipcRenderer.invoke('editor:open', editor, target) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+  },
+  terminal: {
+    detect: () =>
+      ipcRenderer.invoke('terminal:detect') as Promise<Record<TerminalKind, boolean>>,
+    open: (terminal: TerminalKind, target: string) =>
+      ipcRenderer.invoke('terminal:open', terminal, target) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
   },
   github: {
-    isAuthenticated: () => ipcRenderer.invoke('github:isAuthenticated') as Promise<boolean>,
+    listAccounts: () => ipcRenderer.invoke('github:listAccounts') as Promise<GithubAccount[]>,
+    getActiveAccount: () =>
+      ipcRenderer.invoke('github:getActiveAccount') as Promise<GithubAccount | null>,
+    setActiveAccount: (id) =>
+      ipcRenderer.invoke('github:setActiveAccount', id) as Promise<GithubAccount | null>,
+    removeAccount: (id) => ipcRenderer.invoke('github:removeAccount', id) as Promise<void>,
     startDeviceFlow: () =>
       ipcRenderer.invoke('github:startDeviceFlow') as Promise<DeviceFlowStart>,
     pollDeviceFlow: () =>
       ipcRenderer.invoke('github:pollDeviceFlow') as Promise<DeviceFlowStatus>,
     cancelDeviceFlow: () => ipcRenderer.invoke('github:cancelDeviceFlow') as Promise<void>,
-    signOut: () => ipcRenderer.invoke('github:signOut') as Promise<void>,
     listPRs: (repoId) => ipcRenderer.invoke('github:listPRs', repoId) as Promise<PRSummary[]>,
     fetchPR: (repoId, prNumber) =>
       ipcRenderer.invoke('github:fetchPR', repoId, prNumber) as Promise<{
         headRef: string;
         baseRef: string;
       }>,
+    findPRForBranch: (repoId, branch) =>
+      ipcRenderer.invoke('github:findPRForBranch', repoId, branch) as Promise<PRSummary | null>,
+    getPR: (repoId, prNumber) =>
+      ipcRenderer.invoke('github:getPR', repoId, prNumber) as Promise<PRSummary | null>,
+    listReviewComments: (repoId, prNumber) =>
+      ipcRenderer.invoke(
+        'github:listReviewComments',
+        repoId,
+        prNumber,
+      ) as Promise<PRReviewComment[]>,
+    createReviewComment: (repoId, input: NewReviewCommentInput) =>
+      ipcRenderer.invoke(
+        'github:createReviewComment',
+        repoId,
+        input,
+      ) as Promise<PRReviewComment>,
+    replyReviewComment: (repoId, prNumber, commentId, body) =>
+      ipcRenderer.invoke(
+        'github:replyReviewComment',
+        repoId,
+        prNumber,
+        commentId,
+        body,
+      ) as Promise<PRReviewComment>,
+    deleteReviewComment: (repoId, commentId) =>
+      ipcRenderer.invoke(
+        'github:deleteReviewComment',
+        repoId,
+        commentId,
+      ) as Promise<void>,
   },
   state: {
     getPrefs: () => ipcRenderer.invoke('state:getPrefs') as Promise<UserPrefs>,
@@ -62,6 +141,21 @@ const api: PreloadAPI = {
       ) as Promise<void>,
     clearSeen: (repoId, contextKey) =>
       ipcRenderer.invoke('state:clearSeen', repoId, contextKey) as Promise<void>,
+    getCollapsedFiles: (repoId, contextKey) =>
+      ipcRenderer.invoke('state:getCollapsedFiles', repoId, contextKey) as Promise<string[]>,
+    setFileCollapsed: (repoId, contextKey, filePath, collapsed) =>
+      ipcRenderer.invoke(
+        'state:setFileCollapsed',
+        repoId,
+        contextKey,
+        filePath,
+        collapsed,
+      ) as Promise<void>,
+    clearCollapsedFiles: (repoId, contextKey) =>
+      ipcRenderer.invoke('state:clearCollapsedFiles', repoId, contextKey) as Promise<void>,
+  },
+  shell: {
+    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,
   },
   events: {
     onRepoChanged(handler) {
