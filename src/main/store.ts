@@ -24,6 +24,8 @@ const defaults: Schema = {
   prefs: {
     viewMode: 'split',
     theme: 'system',
+    fileListLayout: 'tree',
+    showFileIcons: true,
   },
   seen: {},
   collapsedFiles: {},
@@ -65,11 +67,13 @@ export function getRepo(id: string): RepoInfo | null {
 }
 
 export function getPrefs(): UserPrefs {
-  return store.get('prefs');
+  // Merge with defaults so prefs files saved by older builds still report
+  // values for fields added in later releases.
+  return { ...defaults.prefs, ...store.get('prefs') };
 }
 
 export function setPrefs(patch: Partial<UserPrefs>): UserPrefs {
-  const next = { ...store.get('prefs'), ...patch };
+  const next = { ...defaults.prefs, ...store.get('prefs'), ...patch };
   store.set('prefs', next);
   return next;
 }

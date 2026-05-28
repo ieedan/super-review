@@ -213,23 +213,38 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 
 export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
   const git = simpleGit(repoPath);
-  const local = await git.branchLocal();
-  const all = await git.branch(['-vv']);
+  // One `for-each-ref` call gives us the name, ref kind, and committer epoch
+  // for every branch — much cheaper than `branch -vv` + per-branch date probes
+  // and lets the picker show GitHub Desktop-style relative timestamps.
+  const [currentRaw, raw] = await Promise.all([
+    git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
+    git.raw([
+      'for-each-ref',
+      '--format=%(refname:short)\t%(committerdate:unix)',
+      'refs/heads',
+    ]),
+  ]);
+  const current = currentRaw.trim();
   const branches: BranchInfo[] = [];
-  for (const [name, info] of Object.entries(all.branches)) {
-    const isRemote = name.startsWith('remotes/');
-    const displayName = isRemote ? name.replace(/^remotes\//, '') : name;
+  for (const line of raw.split('\n').filter(Boolean)) {
+    const [name, tsRaw] = line.split('\t');
+    if (!name) continue;
+    const ts = Number(tsRaw);
     branches.push({
-      name: displayName,
-      current: name === local.current,
+      name,
+      current: name === current,
       upstream: undefined,
-      isRemote,
+      isRemote: false,
+      lastCommitAt: Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined,
     });
-    void info;
   }
   branches.sort((a, b) => {
     if (a.current !== b.current) return a.current ? -1 : 1;
     if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1;
+    // Most recently updated first — matches GitHub Desktop's branch list.
+    const at = a.lastCommitAt ?? 0;
+    const bt = b.lastCommitAt ?? 0;
+    if (at !== bt) return bt - at;
     return a.name.localeCompare(b.name);
   });
   return branches;
@@ -248,6 +263,48 @@ export async function getCurrentBranch(repoPath: string): Promise<string | null>
 export async function checkout(repoPath: string, branch: string): Promise<void> {
   const git = simpleGit(repoPath);
   await git.checkout(branch);
+}
+
+export async function isWorkingTreeDirty(repoPath: string): Promise<boolean> {
+  try {
+    const status = await simpleGit(repoPath).status();
+    return !status.isClean();
+  } catch {
+    return false;
+  }
+}
+
+export interface CreateBranchResult {
+  ok: boolean;
+  error?: string;
+}
+
+// Create a new branch off of `base` (defaults to current HEAD). When
+// `checkout` is true we use `checkout -b` so the working tree follows along
+// (GitHub Desktop's "Bring my changes" path); otherwise the branch is created
+// without switching, leaving uncommitted changes on the current branch.
+export async function createBranch(
+  repoPath: string,
+  name: string,
+  opts: { base?: string; checkout: boolean },
+): Promise<CreateBranchResult> {
+  const trimmed = name.trim();
+  if (!trimmed) return { ok: false, error: 'Branch name is required.' };
+  const git = simpleGit(repoPath);
+  try {
+    if (opts.checkout) {
+      const args = ['checkout', '-b', trimmed];
+      if (opts.base) args.push(opts.base);
+      await git.raw(args);
+    } else {
+      const args = ['branch', trimmed];
+      if (opts.base) args.push(opts.base);
+      await git.raw(args);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 function mapStatus(x: string, y: string): FileStatus {

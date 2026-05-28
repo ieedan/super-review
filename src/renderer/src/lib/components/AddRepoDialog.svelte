@@ -2,6 +2,7 @@
   import { ChevronLeft, Download, FolderOpen, Loader2, Plus } from 'lucide-svelte';
   import * as Dialog from './ui/dialog';
   import { Button } from './ui/button';
+  import { Input } from './ui/input';
   import { actions, app } from '$lib/store.svelte';
 
   type Mode = 'choose' | 'clone';
@@ -134,11 +135,11 @@
       </Dialog.Footer>
     {:else}
       <form class="grid gap-3" onsubmit={submitClone}>
-        <input
+        <Input
           type="text"
           bind:value={cloneUrl}
           placeholder="https://github.com/owner/repo.git"
-          class="w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="font-mono text-xs"
           disabled={busy}
           autofocus
         />

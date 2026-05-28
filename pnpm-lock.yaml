@@ -29,6 +29,9 @@ importers:
       ignore:
         specifier: ^7.0.5
         version: 7.0.5
+      runed:
+        specifier: ^0.37.1
+        version: 0.37.1(svelte@5.55.9)
       simple-git:
         specifier: ^3.27.0
         version: 3.36.0
@@ -2333,6 +2336,18 @@ packages:
       svelte: ^5.7.0
     peerDependenciesMeta:
       '@sveltejs/kit':
+        optional: true
+
+  runed@0.37.1:
+    resolution: {integrity: sha512-MeFY73xBW8IueWBm012nNFIGy19WUGPLtknavyUPMpnyt350M47PhGSGrGoSLbidwn+Zlt/O0cp8/OZE3LASWA==}
+    peerDependencies:
+      '@sveltejs/kit': ^2.21.0
+      svelte: ^5.7.0
+      zod: ^4.1.0
+    peerDependenciesMeta:
+      '@sveltejs/kit':
+        optional: true
+      zod:
         optional: true
 
   sade@1.8.1:
@@ -5104,6 +5119,13 @@ snapshots:
       svelte: 5.55.9
 
   runed@0.35.1(svelte@5.55.9):
+    dependencies:
+      dequal: 2.0.3
+      esm-env: 1.2.2
+      lz-string: 1.5.0
+      svelte: 5.55.9
+
+  runed@0.37.1(svelte@5.55.9):
     dependencies:
       dequal: 2.0.3
       esm-env: 1.2.2

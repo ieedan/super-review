@@ -6,6 +6,7 @@
   import DiffView from '$lib/components/DiffView.svelte';
   import ConflictDialog from '$lib/components/ConflictDialog.svelte';
   import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
+  import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
   import SettingsDialog from '$lib/components/SettingsDialog.svelte';
   import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
   import * as Sidebar from '$lib/components/ui/sidebar';
@@ -169,5 +170,6 @@
 
 <ConflictDialog />
 <AddRepoDialog />
+<CreateBranchDialog />
 <SettingsDialog />
 <GithubSignInDialog />

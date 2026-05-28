@@ -20,7 +20,16 @@
 
   type Node =
     | { kind: 'folder'; path: string; name: string; depth: number; childCount: number }
-    | { kind: 'file'; path: string; name: string; depth: number; file: ChangedFile };
+    | {
+        kind: 'file';
+        path: string;
+        name: string;
+        // GitHub-style muted directory prefix shown before `name`. Only set in
+        // 'list' layout, where the whole path is shown on a single row.
+        dirPrefix?: string;
+        depth: number;
+        file: ChangedFile;
+      };
 
   // Tight, uniform row height for the virtualizer. Each row enforces this
   // with `style="height: ${ROW_HEIGHT}px"` + `items-center` so the math
@@ -31,10 +40,35 @@
   // animation frame fills them in.
   const BUFFER_ROWS = 8;
 
-  // Build the visible flat list of nodes from the changed files, honoring
-  // collapsed folders. Folders are aggregated from the file paths themselves —
-  // there is no separate directory listing.
+  // Build the visible flat list of nodes from the changed files. In 'tree'
+  // layout, folders are aggregated from the file paths themselves and may be
+  // collapsed. In 'list' layout, each file gets its own row at depth 0 with
+  // its full path as the display name — no folder rows.
   let nodes = $derived.by<Node[]>(() => {
+    if (app.fileListLayout === 'list') {
+      const out: Node[] = [];
+      for (const f of app.changedFiles) {
+        const slash = f.path.lastIndexOf('/');
+        // Fold the path separator into the filename (`/CreateBranchDialog.svelte`)
+        // so the row only needs two flex children — a truncating prefix and a
+        // shrink-0 filename. With three children (prefix + slash span + name),
+        // when the truncate span shrinks small enough, Chromium's text-overflow
+        // can leave a few subpixels of empty space between the ellipsis and
+        // the next flex item, which read as a visible gap.
+        const dirPrefix = slash >= 0 ? f.path.slice(0, slash) : '';
+        const name = slash >= 0 ? f.path.slice(slash) : f.path;
+        out.push({
+          kind: 'file',
+          path: f.path,
+          name,
+          dirPrefix,
+          depth: 0,
+          file: f,
+        });
+      }
+      return out;
+    }
+
     const collapsed = app.collapsedFolders;
     const folderCounts = new Map<string, number>();
     for (const f of app.changedFiles) {
@@ -178,10 +212,14 @@
       <span class="text-xs tabular-nums">
         <span class="font-medium">{seenCount}/{app.changedFiles.length}</span>
       </span>
-      {#if app.changedFiles.length > 0}
+      {#if app.changedFiles.length > 0 && (totals.add > 0 || totals.del > 0)}
         <span class="text-[11px] tabular-nums">
-          <span class="text-success">+{totals.add}</span>
-          <span class="ml-0.5 text-destructive">−{totals.del}</span>
+          {#if totals.add > 0}
+            <span class="text-success">+{totals.add}</span>
+          {/if}
+          {#if totals.del > 0}
+            <span class="ml-0.5 text-destructive">−{totals.del}</span>
+          {/if}
         </span>
       {/if}
       <span class="flex-1"></span>
@@ -202,9 +240,16 @@
       >
         <Tabs.Trigger
           value="unstaged"
-          class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+          class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
         >
           Unstaged
+          {#if app.unstagedFileCount > 0}
+            <span
+              class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] font-medium tabular-nums leading-none text-foreground"
+            >
+              {app.unstagedFileCount > 99 ? '99+' : app.unstagedFileCount}
+            </span>
+          {/if}
         </Tabs.Trigger>
         <Tabs.Trigger
           value="branch"
@@ -297,10 +342,20 @@
                   onclick={() => pick(node.file.path)}
                   type="button"
                 >
-                  <Icon icon={iconName} class="size-3.5 shrink-0" />
-                  <span class={cn('truncate text-xs', isSeen && 'line-through')}>
-                    {node.name}
-                  </span>
+                  {#if app.showFileIcons}
+                    <Icon icon={iconName} class="size-3.5 shrink-0" />
+                  {/if}
+                  {#if node.dirPrefix !== undefined}
+                    <!-- Inline whitespace is intentional: any newline between
+                         these flex children becomes a text node inside the
+                         flex container, which can render as a visible gap
+                         between the truncated prefix and the filename. -->
+                    <span class={cn('flex min-w-0 flex-1 items-center text-xs', isSeen && 'line-through')}>{#if node.dirPrefix}<span class="min-w-0 truncate text-muted-foreground">{node.dirPrefix}</span>{/if}<span class="shrink-0">{node.name}</span></span>
+                  {:else}
+                    <span class={cn('truncate text-xs', isSeen && 'line-through')}>
+                      {node.name}
+                    </span>
+                  {/if}
                   <span class="ml-auto flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums">
                     {#if node.file.status === 'deleted'}
                       <FileMinus class="size-3 text-destructive" />
@@ -309,8 +364,12 @@
                     {:else if node.file.isBinary}
                       <span class="text-muted-foreground">bin</span>
                     {:else}
-                      <span class="text-success">+{node.file.additions}</span>
-                      <span class="text-destructive">−{node.file.deletions}</span>
+                      {#if node.file.additions > 0}
+                        <span class="text-success">+{node.file.additions}</span>
+                      {/if}
+                      {#if node.file.deletions > 0}
+                        <span class="text-destructive">−{node.file.deletions}</span>
+                      {/if}
                     {/if}
                   </span>
                 </button>

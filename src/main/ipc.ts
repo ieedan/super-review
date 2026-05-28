@@ -26,6 +26,7 @@ import {
   cloneRepo,
   commitAll,
   continueMerge,
+  createBranch,
   fetchOrigin,
   fetchPRRef,
   getConflicts,
@@ -34,6 +35,7 @@ import {
   getPushStatus,
   initRepo,
   isGitRepo,
+  isWorkingTreeDirty,
   listBranches,
   listChangedFiles,
   pinPRBaseRef,
@@ -176,6 +178,20 @@ export function registerIpc(): void {
   ipcMain.handle('git:checkout', async (_e, repoId: string, branch: string) => {
     await checkout(repoOrThrow(repoId).path, branch);
   });
+
+  ipcMain.handle('git:isDirty', async (_e, repoId: string): Promise<boolean> => {
+    return isWorkingTreeDirty(repoOrThrow(repoId).path);
+  });
+
+  ipcMain.handle(
+    'git:createBranch',
+    async (
+      _e,
+      repoId: string,
+      name: string,
+      opts: { base?: string; checkout: boolean },
+    ) => createBranch(repoOrThrow(repoId).path, name, opts),
+  );
 
   ipcMain.handle(
     'git:listChangedFiles',

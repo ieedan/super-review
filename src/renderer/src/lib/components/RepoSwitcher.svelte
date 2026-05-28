@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { ChevronDown, Plus, X } from 'lucide-svelte';
+  import { Command as CommandPrimitive } from 'bits-ui';
+  import { ChevronDown, Plus, Search, X } from 'lucide-svelte';
   import { Button, buttonVariants } from './ui/button';
   import * as Popover from './ui/popover';
   import * as Command from './ui/command';
   import { actions, app } from '$lib/store.svelte';
   import { cn, repoPlaceholder } from '$lib/utils';
+  import { repoFrecency } from '$lib/repo-frecency.svelte';
   import type { RepoInfo } from '@shared/types';
 
   let open = $state(false);
+  let filter = $state('');
 
   async function pick(id: string): Promise<void> {
     open = false;
@@ -30,10 +33,25 @@
   } {
     return repoPlaceholder(repo?.name ?? '');
   }
+
+  // Resolve the order from frecency (uses desc, lastUsage tiebreaker). Repos
+  // without a frecency entry fall to the bottom, themselves sorted by their
+  // existing `lastOpenedAt`.
+  let sortedRepos = $derived.by(() => {
+    const order = new Map(repoFrecency.items.map((id, i) => [id, i]));
+    return [...app.repos].sort((a, b) => {
+      const ai = order.get(a.id) ?? Infinity;
+      const bi = order.get(b.id) ?? Infinity;
+      if (ai !== bi) return ai - bi;
+      return b.lastOpenedAt - a.lastOpenedAt;
+    });
+  });
 </script>
 
-<Popover.Root bind:open>
-  <Popover.Trigger class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[260px]')}>
+<Popover.Root bind:open onOpenChange={(v) => { if (!v) filter = ''; }}>
+  <Popover.Trigger
+    class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[260px]')}
+  >
     {#if app.activeRepo?.iconDataUrl}
       <img
         src={app.activeRepo.iconDataUrl}
@@ -54,14 +72,36 @@
     <span class="truncate">{app.activeRepo?.name ?? 'Open repository'}</span>
     <ChevronDown class="size-3.5 text-muted-foreground" />
   </Popover.Trigger>
-  <Popover.Content align="start" class="w-72 p-0">
-    <Command.Root>
+  <Popover.Content align="start" class="w-[26rem] p-0">
+    <Command.Root shouldFilter={true}>
+      <!-- Sticky header: filter on the left, primary Add button on the right.
+           Both stay visible while the repo list scrolls. -->
+      <div class="flex items-center gap-2 border-b border-border p-2">
+        <div
+          class="flex h-8 flex-1 items-center gap-2 rounded-md border border-input bg-background px-2"
+        >
+          <Search class="size-3.5 shrink-0 text-muted-foreground" />
+          <CommandPrimitive.Input
+            bind:value={filter}
+            placeholder="Filter…"
+            class="flex h-full w-full bg-transparent text-sm outline-hidden placeholder:text-muted-foreground"
+          />
+        </div>
+        <Button size="sm" class="h-8 shrink-0 gap-1.5" onclick={openAddRepo}>
+          <Plus class="size-3.5" />
+          Add repository
+        </Button>
+      </div>
+
       <Command.List class="max-h-[320px]">
         {#if app.repos.length === 0}
-          <Command.Empty>No repositories yet</Command.Empty>
+          <div class="px-3 py-6 text-center text-xs text-muted-foreground">
+            No repositories yet
+          </div>
         {:else}
+          <Command.Empty>No matches</Command.Empty>
           <Command.Group>
-            {#each app.repos as repo (repo.id)}
+            {#each sortedRepos as repo (repo.id)}
               <Command.Item
                 value={`${repo.name} ${repo.path}`}
                 onSelect={() => pick(repo.id)}
@@ -71,7 +111,11 @@
                 )}
               >
                 {#if repo.iconDataUrl}
-                  <img src={repo.iconDataUrl} alt="" class="size-5 rounded-sm object-contain" />
+                  <img
+                    src={repo.iconDataUrl}
+                    alt=""
+                    class="size-5 rounded-sm object-contain"
+                  />
                 {:else}
                   {@const { initial, toneClass } = placeholderFor(repo)}
                   <span
@@ -96,14 +140,7 @@
               </Command.Item>
             {/each}
           </Command.Group>
-          <Command.Separator />
         {/if}
-        <Command.Group>
-          <Command.Item value="__add_repository__" onSelect={openAddRepo}>
-            <Plus class="size-4" />
-            Add repository…
-          </Command.Item>
-        </Command.Group>
       </Command.List>
     </Command.Root>
   </Popover.Content>

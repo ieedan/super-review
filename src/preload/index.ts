@@ -4,6 +4,7 @@ import type {
   ChangedFile,
   CloneResult,
   CommitResult,
+  CreateBranchResult,
   DeviceFlowStart,
   DeviceFlowStatus,
   DiffContext,
@@ -37,6 +38,9 @@ const api: PreloadAPI = {
       ipcRenderer.invoke('git:getCurrentBranch', repoId) as Promise<string | null>,
     checkout: (repoId, branch) =>
       ipcRenderer.invoke('git:checkout', repoId, branch) as Promise<void>,
+    isDirty: (repoId) => ipcRenderer.invoke('git:isDirty', repoId) as Promise<boolean>,
+    createBranch: (repoId, name, opts) =>
+      ipcRenderer.invoke('git:createBranch', repoId, name, opts) as Promise<CreateBranchResult>,
     listChangedFiles: (repoId, ctx: DiffContext) =>
       ipcRenderer.invoke('git:listChangedFiles', repoId, ctx) as Promise<ChangedFile[]>,
     getDiff: (repoId, filePath, ctx: DiffContext) =>

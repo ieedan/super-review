@@ -9,6 +9,7 @@
     parseDiffFromFile,
     type DiffLineAnnotation,
     type OnDiffLineClickProps,
+    type SelectedLineRange,
   } from '@pierre/diffs';
   import { Button } from './ui/button';
   import { Badge } from './ui/badge';
@@ -52,8 +53,16 @@
   // target supersedes it before the scheduler gets to it.
   let cancelPendingRender: (() => void) | null = null;
 
-  // PR mode: only show comments / accept new ones when we're reviewing a PR.
-  let isPRContext = $derived(app.diffContext.kind === 'pr');
+  // Show comments / accept new ones only where the local diff matches what
+  // GitHub thinks the PR contains:
+  //   - `kind: 'pr'`: reviewing someone's PR (refs `pr/N/base...pr/N/head`).
+  //   - Branch tab with an open PR for the current branch (base...head).
+  // The Unstaged tab is intentionally excluded — its line numbers reflect
+  // uncommitted changes and don't translate to anything on GitHub.
+  let isPRContext = $derived(
+    app.diffContext.kind === 'pr' ||
+      (app.contextTab === 'branch' && app.branchPR != null),
+  );
 
   // Build the annotation list FileDiff renders: every existing comment +
   // any pending composers on this file. Annotation order matters for the
@@ -141,6 +150,13 @@
   function renderAnnotation(
     annotation: DiffLineAnnotation<CommentMeta>,
   ): HTMLElement | undefined {
+    // eslint-disable-next-line no-console
+    console.log('[PR comment] renderAnnotation called', {
+      file: file.path,
+      side: annotation.side,
+      lineNumber: annotation.lineNumber,
+      metaKind: annotation.metadata?.kind,
+    });
     if (!annotation.metadata) return undefined;
     const container = document.createElement('div');
     // Stamp the same cache key Pierre uses so we can unmount the matching
@@ -167,9 +183,41 @@
   }
 
   function onDiffLineNumberClick(props: OnDiffLineClickProps): void {
+    // eslint-disable-next-line no-console
+    console.log('[PR comment] line-number click', {
+      isPRContext,
+      contextTab: app.contextTab,
+      diffKind: app.diffContext.kind,
+      branchPR: app.branchPR?.number ?? null,
+      file: file.path,
+      lineNumber: props.lineNumber,
+      annotationSide: props.annotationSide,
+    });
     if (!isPRContext) return;
     const side = props.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT';
     actions.openComposer(file.path, side, props.lineNumber);
+  }
+
+  // Pierre's idiomatic gutter affordance: `enableGutterUtility: true` paints
+  // their built-in `+` button on hover, and `onGutterUtilityClick` delivers
+  // the selected line range when it's clicked. No custom DOM, no event
+  // wrestling — Pierre owns the whole interaction.
+  function onGutterClick(range: SelectedLineRange): void {
+    // eslint-disable-next-line no-console
+    console.log('[PR comment] gutter click', {
+      isPRContext,
+      contextTab: app.contextTab,
+      diffKind: app.diffContext.kind,
+      branchPR: app.branchPR?.number ?? null,
+      file: file.path,
+      range,
+    });
+    if (!isPRContext) return;
+    const sel = range.side ?? 'additions';
+    const side = sel === 'deletions' ? 'LEFT' : 'RIGHT';
+    // For a plain click `start === end`. Drag-select reports both ends; we
+    // attach the comment to the first (top) line for now.
+    actions.openComposer(file.path, side, range.start);
   }
 
   function renderDiff(diff: DiffData): void {
@@ -184,6 +232,11 @@
       disableFileHeader: true,
       renderAnnotation,
       onLineNumberClick: onDiffLineNumberClick,
+      // Built-in gutter `+` button (the one with `data-utility-button`).
+      // Only enable it where commenting is meaningful — toggled live below
+      // via setOptions + flushManagers when `isPRContext` changes.
+      enableGutterUtility: isPRContext,
+      onGutterUtilityClick: onGutterClick,
     });
 
     const namePair = {
@@ -332,13 +385,21 @@
     queueRender(diffData!, target);
   });
 
-  // Push new annotations into the live FileDiff instance. Pierre reconciles
-  // them against its element cache, so existing comment DOM nodes stay put
-  // while new ones get a fresh renderAnnotation call.
+  // Push new annotations into the live FileDiff instance. `setLineAnnotations`
+  // alone only updates Pierre's internal pointer — it does NOT trigger a
+  // render. We have to follow it with `render({ lineAnnotations })` to walk
+  // the annotation cache and actually paint the new ones. Pierre's cache key
+  // is `${index}-${side}-${lineNumber}`, so existing comment DOM survives
+  // and only newly-keyed annotations trigger a `renderAnnotation` call.
   $effect(() => {
     if (!instance) return;
-    // Take a fresh array reference so $effect tracks the derived dep.
     const annotations = lineAnnotations;
+    // eslint-disable-next-line no-console
+    console.log('[PR comment] annotations effect', {
+      file: file.path,
+      count: annotations.length,
+      kinds: annotations.map((a) => a.metadata?.kind ?? '?'),
+    });
     // Drop cached mounted components that no longer have a matching index.
     const liveKeys = new Set(annotations.map((a, i) => annotationCacheKey(a, i)));
     for (const key of [...mountedComponents.keys()]) {
@@ -354,7 +415,33 @@
         mountedComponents.delete(key);
       }
     }
-    instance.setLineAnnotations(annotations);
+    try {
+      instance.render({ lineAnnotations: annotations });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[PR comment] render failed', err);
+    }
+  });
+
+  // Toggle Pierre's built-in gutter `+` button live as the user switches
+  // between commentable / non-commentable contexts. `setOptions` swaps the
+  // option bag, `flushManagers` reruns `InteractionManager.setup`, which is
+  // the path that adds (or removes) the gutter container.
+  $effect(() => {
+    if (!instance) return;
+    const enabled = isPRContext;
+    type WithOptions = { options: Record<string, unknown> };
+    const current = (instance as unknown as WithOptions).options;
+    if (current.enableGutterUtility === enabled) return;
+    instance.setOptions({ ...current, enableGutterUtility: enabled } as Parameters<
+      typeof instance.setOptions
+    >[0]);
+    try {
+      instance.flushManagers();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[PR comment] flushManagers failed', err);
+    }
   });
 
   onDestroy(() => {
@@ -437,8 +524,12 @@
     {/if}
     <div class="ml-auto flex items-center gap-2 text-[10px] tabular-nums">
       {#if !file.isBinary}
-        <span class="text-success">+{file.additions}</span>
-        <span class="text-destructive">−{file.deletions}</span>
+        {#if file.additions > 0}
+          <span class="text-success">+{file.additions}</span>
+        {/if}
+        {#if file.deletions > 0}
+          <span class="text-destructive">−{file.deletions}</span>
+        {/if}
       {/if}
       <Button
         variant={isSeen ? 'secondary' : 'outline'}
@@ -497,5 +588,54 @@
   .diff-host :global(diffs-container) {
     display: block;
     width: 100%;
+  }
+  /* Pierre's gutter container sits absolute over the line-number cell with
+     no z-index. Raise it above the digits and let it fill the gutter so the
+     `+` button has a solid backdrop. */
+  .diff-host :global([data-gutter-utility-slot]) {
+    z-index: 5;
+    left: 0;
+    right: 0;
+    align-items: center;
+    justify-content: center;
+    background: var(--diffs-bg-num, var(--diffs-bg, transparent));
+  }
+  /* Pierre's built-in `+` button (with `data-utility-button`). Reskin to
+     match the project's default Button variant — primary bg, white icon,
+     rounded, with a soft elevation so it pops against the diff line. */
+  .diff-host :global([data-utility-button]) {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    cursor: pointer;
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.25),
+      0 0 0 1px rgba(0, 0, 0, 0.04);
+    transition:
+      transform 80ms ease,
+      box-shadow 80ms ease,
+      background-color 80ms ease;
+  }
+  .diff-host :global([data-utility-button]:hover) {
+    background: color-mix(in lab, hsl(var(--primary)) 90%, white);
+    transform: scale(1.06);
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.25),
+      0 0 0 1px rgba(0, 0, 0, 0.05);
+  }
+  .diff-host :global([data-utility-button]:focus-visible) {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 1px;
+  }
+  .diff-host :global([data-utility-button] svg) {
+    width: 12px;
+    height: 12px;
+    stroke-width: 2.5;
   }
 </style>

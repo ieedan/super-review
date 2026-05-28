@@ -1,6 +1,7 @@
 <script lang="ts">
   import { MessageSquare, Reply, Trash2 } from 'lucide-svelte';
   import { Button } from './ui/button';
+  import { Textarea } from './ui/textarea';
   import { actions, app, composerKey } from '$lib/store.svelte';
   import { formatRelative } from '$lib/utils';
   import type { PRReviewComment } from '@shared/types';
@@ -99,16 +100,16 @@
         <MessageSquare class="size-3.5 text-muted-foreground" />
         <span>{composer.replyTo ? 'Reply' : 'New comment'}</span>
       </div>
-      <textarea
-        class="textarea"
+      <Textarea
+        class="resize-y"
         placeholder={composer.replyTo ? 'Write a reply…' : 'Leave a comment on this line…'}
         value={composer.draft}
         oninput={(e) =>
           actions.setComposerDraft(composerState!.key, (e.target as HTMLTextAreaElement).value)}
         onkeydown={onKeydown}
         disabled={composer.submitting}
-        rows="3"
-      ></textarea>
+        rows={3}
+      />
       <div class="composer-footer">
         <span class="hint">⌘⏎ to submit · esc to cancel</span>
         <div class="actions">
@@ -181,23 +182,6 @@
     align-items: center;
     font-size: 12px;
     color: hsl(var(--muted-foreground));
-  }
-  .textarea {
-    width: 100%;
-    resize: vertical;
-    min-height: 64px;
-    padding: 8px;
-    border: 1px solid hsl(var(--border));
-    border-radius: 6px;
-    background: hsl(var(--background));
-    color: hsl(var(--foreground));
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 1.45;
-  }
-  .textarea:focus {
-    outline: 2px solid hsl(var(--ring));
-    outline-offset: -1px;
   }
   .composer-footer {
     display: flex;

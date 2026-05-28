@@ -2,6 +2,8 @@
   import { Loader2, User } from 'lucide-svelte';
   import { Button } from './ui/button';
   import * as Avatar from './ui/avatar';
+  import { Input } from './ui/input';
+  import { Textarea } from './ui/textarea';
   import { actions, app } from '$lib/store.svelte';
 
   let summary = $state('');
@@ -59,24 +61,24 @@
         {/if}
       </Avatar.Fallback>
     </Avatar.Root>
-    <input
+    <Input
       type="text"
       bind:value={summary}
       onkeydown={onSummaryKey}
       placeholder="Summary (required)"
       disabled={busy}
-      class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+      class="h-7 min-w-0 flex-1 text-xs"
     />
   </div>
 
-  <textarea
+  <Textarea
     bind:value={description}
     onkeydown={onKeydown}
     placeholder="Description"
-    rows="3"
+    rows={3}
     disabled={busy}
-    class="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-  ></textarea>
+    class="min-h-0 resize-none px-2 py-1.5 text-xs"
+  />
 
   <Button type="submit" size="sm" class="w-full" disabled={!canCommit}>
     {#if busy}

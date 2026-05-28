@@ -5,6 +5,7 @@ import type {
   DiffContext,
   DiffData,
   EditorKind,
+  FileListLayout,
   GithubAccount,
   PRReviewComment,
   PRSummary,
@@ -16,6 +17,7 @@ import type {
 } from '@shared/types';
 import { diffContextKey } from '@shared/diff-context';
 import { comparePathsVSCodeStyle } from '$lib/utils';
+import { repoFrecency } from '$lib/repo-frecency.svelte';
 
 // Re-export so existing component imports (`from '$lib/store.svelte'`) keep
 // working. The canonical definition lives in @shared/types.
@@ -43,10 +45,15 @@ interface AppState {
   diffContext: DiffContext;
   contextTab: ContextTab;
   changedFiles: ChangedFile[];
+  // Count of working-tree changes, kept in sync regardless of the active tab
+  // so the Unstaged tab can always show a badge with the current count.
+  unstagedFileCount: number;
   selectedFile: string | null;
   seenFiles: Set<string>;
   collapsedFiles: Set<string>;
   viewMode: ViewMode;
+  fileListLayout: FileListLayout;
+  showFileIcons: boolean;
   prefs: UserPrefs | null;
   githubAccounts: GithubAccount[];
   activeGithubAccount: GithubAccount | null;
@@ -72,6 +79,7 @@ interface AppState {
   // by the same string the renderer uses to scope the annotation.
   pendingComposers: Record<string, PendingComposer>;
   addRepoDialogOpen: boolean;
+  createBranchDialogOpen: boolean;
   push: {
     inProgress: boolean;
     stage: 'idle' | 'fetching' | 'committing' | 'pulling' | 'pushing' | 'conflicts' | 'done';
@@ -92,6 +100,19 @@ export function composerKey(filePath: string, side: 'LEFT' | 'RIGHT', line: numb
   return `${filePath}::${side}::${line}`;
 }
 
+// Resolve which PR the comment surface should target.
+// - `kind: 'pr'` context: the PR being reviewed (its number lives on the ctx).
+// - any other context with a known `branchPR`: comment against that PR. The
+//   local diff is computed against working-tree / branch refs, so line
+//   numbers may not align with what GitHub has — uncommitted changes shift
+//   positions, for instance. GitHub will mark the resulting comment outdated
+//   in that case, same as commenting from a stale web view.
+export function commentablePRNumber(): number | null {
+  if (app.diffContext.kind === 'pr') return app.diffContext.prNumber;
+  if (app.branchPR) return app.branchPR.number;
+  return null;
+}
+
 const initial: AppState = {
   repos: [],
   activeRepo: null,
@@ -101,10 +122,13 @@ const initial: AppState = {
   diffContext: { kind: 'workingTree' },
   contextTab: 'unstaged',
   changedFiles: [],
+  unstagedFileCount: 0,
   selectedFile: null,
   seenFiles: new Set(),
   collapsedFiles: new Set(),
   viewMode: 'split',
+  fileListLayout: 'tree',
+  showFileIcons: true,
   prefs: null,
   githubAccounts: [],
   activeGithubAccount: null,
@@ -125,6 +149,7 @@ const initial: AppState = {
   loadingComments: false,
   pendingComposers: {},
   addRepoDialogOpen: false,
+  createBranchDialogOpen: false,
   push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
   conflictFiles: [],
   loading: { files: false, branches: false, prs: false, repos: false },
@@ -252,6 +277,7 @@ async function refreshBranchPR(): Promise<void> {
     app.branchPR = null;
     return;
   }
+  const prev = app.branchPR?.number ?? null;
   try {
     app.branchPR = await window.api.github.findPRForBranch(
       app.activeRepo.id,
@@ -259,6 +285,17 @@ async function refreshBranchPR(): Promise<void> {
     );
   } catch {
     app.branchPR = null;
+  }
+  // Keep PR-comment state in sync with the branch tab's PR. Only refetch when
+  // we're not in `kind: 'pr'` mode (that flow drives its own fetch already).
+  if (app.diffContext.kind !== 'pr') {
+    const next = app.branchPR?.number ?? null;
+    if (next == null) {
+      app.prComments = {};
+      app.pendingComposers = {};
+    } else if (next !== prev) {
+      void actions.refreshPRComments();
+    }
   }
 }
 
@@ -283,9 +320,29 @@ function contextForTab(tab: ContextTab): DiffContext {
   return { kind: 'workingTree' };
 }
 
+// Fetch the working-tree file count and store it on `app.unstagedFileCount`
+// so the Unstaged tab badge stays accurate even when another tab is active.
+// Errors are swallowed — the badge is non-critical and we'd rather keep a
+// stale count than throw a banner over a transient git failure.
+async function refreshUnstagedCount(): Promise<void> {
+  if (!app.activeRepo) {
+    app.unstagedFileCount = 0;
+    return;
+  }
+  const repoId = app.activeRepo.id;
+  try {
+    const files = await window.api.git.listChangedFiles(repoId, { kind: 'workingTree' });
+    if (!app.activeRepo || app.activeRepo.id !== repoId) return;
+    app.unstagedFileCount = files.length;
+  } catch {
+    // keep previous count
+  }
+}
+
 async function refreshFiles(): Promise<void> {
   if (!app.activeRepo) {
     app.changedFiles = [];
+    app.unstagedFileCount = 0;
     return;
   }
   const repoId = app.activeRepo.id;
@@ -338,6 +395,15 @@ async function refreshFiles(): Promise<void> {
       selectedFile: nextSelected,
     });
 
+    // Keep the Unstaged tab badge in sync. When the active context already is
+    // the working tree, the fetched list IS the unstaged count; otherwise we
+    // need a separate fetch since the active tab isn't tracking it.
+    if (ctx.kind === 'workingTree') {
+      app.unstagedFileCount = files.length;
+    } else {
+      void refreshUnstagedCount();
+    }
+
     app.lastRefreshAt = Date.now();
   } catch (err) {
     // On error, keep showing whatever cache we hydrated from. Only surface
@@ -356,12 +422,15 @@ export const actions = {
   async init(): Promise<void> {
     app.prefs = await window.api.state.getPrefs();
     app.viewMode = app.prefs.viewMode;
+    app.fileListLayout = app.prefs.fileListLayout;
+    app.showFileIcons = app.prefs.showFileIcons;
     await refreshGithubAccounts();
     app.editors = await window.api.editor.detect();
     app.terminals = await window.api.terminal.detect();
     await refreshRepos();
     app.activeRepo = await window.api.repos.getActive();
     if (app.activeRepo) {
+      repoFrecency.use(app.activeRepo.id);
       // Restore the last tab. The 'branch' tab needs `currentBranch` to build
       // its DiffContext, so refresh branches first when restoring it.
       const savedTab = app.prefs.contextTab;
@@ -372,8 +441,9 @@ export const actions = {
         await Promise.all([refreshFiles(), refreshPushStatus()]);
       } else if (savedTab === 'sessions') {
         app.contextTab = 'sessions';
-        // Sessions is a placeholder — no file list to fetch.
-        await Promise.all([refreshBranches(), refreshPushStatus()]);
+        // Sessions is a placeholder — no file list to fetch. We still want the
+        // Unstaged tab badge to be accurate on launch, so fetch the count.
+        await Promise.all([refreshBranches(), refreshPushStatus(), refreshUnstagedCount()]);
       } else {
         await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
       }
@@ -386,6 +456,7 @@ export const actions = {
       const repo = await window.api.repos.openPicker();
       if (repo) {
         app.activeRepo = repo;
+        repoFrecency.use(repo.id);
         applyContextTab('unstaged');
         app.diffContext = { kind: 'workingTree' };
         await Promise.all([
@@ -415,6 +486,7 @@ export const actions = {
       await refreshRepos();
       app.activeRepo = await window.api.repos.getActive();
       if (app.activeRepo) {
+        repoFrecency.use(app.activeRepo.id);
         await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
         await refreshBranchPR();
       }
@@ -434,6 +506,7 @@ export const actions = {
     const repo = await window.api.repos.setActive(id);
     if (repo) {
       app.activeRepo = repo;
+      repoFrecency.use(repo.id);
       applyContextTab('unstaged');
       app.diffContext = { kind: 'workingTree' };
       app.prs = [];
@@ -453,6 +526,7 @@ export const actions = {
     if (app.activeRepo?.id === id) {
       app.activeRepo = null;
       app.changedFiles = [];
+      app.unstagedFileCount = 0;
       app.branches = [];
       app.selectedFile = null;
     }
@@ -496,6 +570,15 @@ export const actions = {
         app.collapsedFiles = new Set(cached.collapsedFiles);
         app.selectedFile = cached.selectedFile;
       }
+    }
+    // Whenever the current branch has an open PR, keep comments around so
+    // they show up on whichever tab the user is on. Only clear when there's
+    // no PR for the branch (e.g. after merge / branch swap with no PR).
+    if (app.branchPR) {
+      void actions.refreshPRComments();
+    } else {
+      app.prComments = {};
+      app.pendingComposers = {};
     }
     await refreshFiles();
   },
@@ -609,8 +692,9 @@ export const actions = {
   },
 
   async refreshPRComments(): Promise<void> {
-    if (!app.activeRepo || app.diffContext.kind !== 'pr') return;
-    const prNumber = app.diffContext.prNumber;
+    if (!app.activeRepo) return;
+    const prNumber = commentablePRNumber();
+    if (prNumber == null) return;
     app.loadingComments = true;
     try {
       const comments = await window.api.github.listReviewComments(
@@ -659,10 +743,11 @@ export const actions = {
   },
 
   async submitComposer(key: string): Promise<void> {
-    if (!app.activeRepo || app.diffContext.kind !== 'pr') return;
+    if (!app.activeRepo) return;
+    const prNumber = commentablePRNumber();
+    if (prNumber == null) return;
     const c = app.pendingComposers[key];
     if (!c || !c.draft.trim() || c.submitting) return;
-    const prNumber = app.diffContext.prNumber;
     app.pendingComposers = {
       ...app.pendingComposers,
       [key]: { ...c, submitting: true },
@@ -751,11 +836,49 @@ export const actions = {
     app.addRepoDialogOpen = false;
   },
 
+  openCreateBranchDialog(): void {
+    app.createBranchDialogOpen = true;
+  },
+  closeCreateBranchDialog(): void {
+    app.createBranchDialogOpen = false;
+  },
+
+  // Create a new branch, mirroring GitHub Desktop's flow. `bringChanges`
+  // applies only when the working tree is dirty: true → checkout into the
+  // new branch (working tree follows); false → create the branch without
+  // switching so changes stay on the current branch.
+  async createBranch(
+    name: string,
+    opts: { base?: string; bringChanges: boolean },
+  ): Promise<boolean> {
+    if (!app.activeRepo) return false;
+    try {
+      const result = await window.api.git.createBranch(app.activeRepo.id, name, {
+        base: opts.base,
+        checkout: opts.bringChanges,
+      });
+      if (!result.ok) {
+        setError(result.error ?? 'Could not create branch.');
+        return false;
+      }
+      if (app.contextTab === 'branch') {
+        app.diffContext = contextForTab('branch');
+      }
+      await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+      await refreshBranchPR();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  },
+
   async createRepo(): Promise<void> {
     try {
       const repo = await window.api.repos.createPicker();
       if (repo) {
         app.activeRepo = repo;
+        repoFrecency.use(repo.id);
         applyContextTab('unstaged');
         app.diffContext = { kind: 'workingTree' };
         await Promise.all([
@@ -986,6 +1109,16 @@ export const actions = {
   async setViewMode(mode: ViewMode): Promise<void> {
     app.viewMode = mode;
     app.prefs = await window.api.state.setPrefs({ viewMode: mode });
+  },
+
+  async setFileListLayout(layout: FileListLayout): Promise<void> {
+    app.fileListLayout = layout;
+    app.prefs = await window.api.state.setPrefs({ fileListLayout: layout });
+  },
+
+  async setShowFileIcons(show: boolean): Promise<void> {
+    app.showFileIcons = show;
+    app.prefs = await window.api.state.setPrefs({ showFileIcons: show });
   },
 
   openSettingsDialog(): void {

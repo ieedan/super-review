@@ -17,6 +17,9 @@ export interface BranchInfo {
   ahead?: number;
   behind?: number;
   isRemote: boolean;
+  // Unix epoch ms of the branch tip's committer date. Undefined when git
+  // didn't return a parseable date (very rare — corrupted ref, etc.).
+  lastCommitAt?: number;
 }
 
 export type FileStatus =
@@ -99,6 +102,10 @@ export interface NewReviewCommentInput {
 
 export type ViewMode = 'split' | 'unified';
 
+// How the sidebar file list is laid out. 'tree' groups files into nested
+// folders (VSCode-style); 'list' flattens to one file per row.
+export type FileListLayout = 'tree' | 'list';
+
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
 export type ContextTab = 'unstaged' | 'branch' | 'sessions';
@@ -130,6 +137,11 @@ export interface CommitResult {
   error?: string;
 }
 
+export interface CreateBranchResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface CloneResult {
   ok: boolean;
   path?: string;
@@ -143,6 +155,8 @@ export interface UserPrefs {
   contextTab?: ContextTab;
   externalEditor?: EditorKind | null;
   externalTerminal?: TerminalKind | null;
+  fileListLayout: FileListLayout;
+  showFileIcons: boolean;
 }
 
 export interface DeviceFlowStart {
@@ -178,6 +192,12 @@ export interface PreloadAPI {
     listBranches(repoId: string): Promise<BranchInfo[]>;
     getCurrentBranch(repoId: string): Promise<string | null>;
     checkout(repoId: string, branch: string): Promise<void>;
+    isDirty(repoId: string): Promise<boolean>;
+    createBranch(
+      repoId: string,
+      name: string,
+      opts: { base?: string; checkout: boolean },
+    ): Promise<CreateBranchResult>;
     listChangedFiles(repoId: string, ctx: DiffContext): Promise<ChangedFile[]>;
     getDiff(repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData>;
     fetchOrigin(repoId: string): Promise<{ ok: boolean; error?: string }>;
