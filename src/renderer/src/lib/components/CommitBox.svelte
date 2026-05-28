@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { Loader2, User } from 'lucide-svelte';
   import { Button } from './ui/button';
   import * as Avatar from './ui/avatar';
@@ -9,6 +10,46 @@
   let summary = $state('');
   let description = $state('');
 
+  // Restore the persisted draft whenever the active repo changes. Tracked
+  // separately from `app.activeRepo` so we only reload on an actual switch,
+  // not on every metadata refresh.
+  let loadedRepoId: string | null = null;
+  $effect(() => {
+    const repoId = app.activeRepo?.id ?? null;
+    if (repoId === loadedRepoId) return;
+    loadedRepoId = repoId;
+    if (!repoId) {
+      summary = '';
+      description = '';
+      return;
+    }
+    void window.api.state.getCommitDraft(repoId).then((draft) => {
+      // A faster switch may have superseded this load — ignore stale results.
+      if (app.activeRepo?.id !== repoId) return;
+      summary = draft.summary;
+      description = draft.description;
+    });
+  });
+
+  // Debounce persistence so we're not writing the store on every keystroke.
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  function persistDraft(): void {
+    const repoId = app.activeRepo?.id;
+    if (!repoId) return;
+    clearTimeout(saveTimer);
+    const snapshot = { summary, description };
+    saveTimer = setTimeout(() => {
+      void window.api.state.setCommitDraft(repoId, snapshot);
+    }, 300);
+  }
+
+  function clearDraft(repoId: string): void {
+    clearTimeout(saveTimer);
+    void window.api.state.setCommitDraft(repoId, { summary: '', description: '' });
+  }
+
+  onDestroy(() => clearTimeout(saveTimer));
+
   let busy = $derived(app.push.inProgress && app.push.stage === 'committing');
   let fileCount = $derived(app.changedFiles.length);
   let branch = $derived(app.currentBranch ?? 'detached HEAD');
@@ -17,10 +58,12 @@
   async function submit(e?: Event): Promise<void> {
     e?.preventDefault();
     if (!canCommit) return;
+    const repoId = app.activeRepo?.id;
     const ok = await actions.commit(summary, description);
     if (ok) {
       summary = '';
       description = '';
+      if (repoId) clearDraft(repoId);
     }
   }
 
@@ -60,6 +103,7 @@
     <Input
       type="text"
       bind:value={summary}
+      oninput={persistDraft}
       placeholder="Summary (required)"
       disabled={busy}
       class="h-7 min-w-0 flex-1 text-xs"
@@ -68,6 +112,7 @@
 
   <Textarea
     bind:value={description}
+    oninput={persistDraft}
     onkeydown={onKeydown}
     placeholder="Description"
     rows={3}

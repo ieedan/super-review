@@ -152,6 +152,13 @@ export interface CreateBranchResult {
   error?: string;
 }
 
+// An in-progress commit message the user hasn't committed yet. Persisted
+// per-repo so switching repos / restarting the app restores what was typed.
+export interface CommitDraft {
+  summary: string;
+  description: string;
+}
+
 export interface CloneResult {
   ok: boolean;
   path?: string;
@@ -298,6 +305,8 @@ export interface PreloadAPI {
       collapsed: boolean,
     ): Promise<void>;
     clearCollapsedFiles(repoId: string, contextKey: string): Promise<void>;
+    getCommitDraft(repoId: string): Promise<CommitDraft>;
+    setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
   };
   shell: {
     openExternal(url: string): Promise<void>;

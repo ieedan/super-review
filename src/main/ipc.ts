@@ -3,6 +3,7 @@ import type {
   BranchInfo,
   ChangedFile,
   CloneResult,
+  CommitDraft,
   CommitResult,
   DeviceFlowStart,
   DeviceFlowStatus,
@@ -57,11 +58,13 @@ import {
   clearCollapsedFiles,
   clearSeen,
   getCollapsedFiles,
+  getCommitDraft,
   getPrefs,
   getRepo,
   getSeen,
   listRepos,
   removeRepo,
+  setCommitDraft,
   setFileCollapsed,
   setPrefs,
   setSeen,
@@ -552,5 +555,17 @@ export function registerIpc(): void {
     "state:clearCollapsedFiles",
     async (_e, repoId: string, contextKey: string) =>
       clearCollapsedFiles(repoId, contextKey),
+  );
+
+  ipcMain.handle(
+    "state:getCommitDraft",
+    async (_e, repoId: string): Promise<CommitDraft> => getCommitDraft(repoId),
+  );
+
+  ipcMain.handle(
+    "state:setCommitDraft",
+    async (_e, repoId: string, draft: CommitDraft): Promise<void> => {
+      setCommitDraft(repoId, draft);
+    },
   );
 }

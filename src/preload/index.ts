@@ -3,6 +3,7 @@ import type {
   BranchInfo,
   ChangedFile,
   CloneResult,
+  CommitDraft,
   CommitResult,
   CreateBranchResult,
   DeviceFlowStart,
@@ -233,6 +234,17 @@ const api: PreloadAPI = {
         "state:clearCollapsedFiles",
         repoId,
         contextKey,
+      ) as Promise<void>,
+    getCommitDraft: (repoId) =>
+      ipcRenderer.invoke(
+        "state:getCommitDraft",
+        repoId,
+      ) as Promise<CommitDraft>,
+    setCommitDraft: (repoId, draft) =>
+      ipcRenderer.invoke(
+        "state:setCommitDraft",
+        repoId,
+        draft,
       ) as Promise<void>,
   },
   shell: {

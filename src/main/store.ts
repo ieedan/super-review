@@ -1,5 +1,5 @@
 import Store from 'electron-store';
-import type { GithubAccount, RepoInfo, UserPrefs } from '@shared/types.js';
+import type { CommitDraft, GithubAccount, RepoInfo, UserPrefs } from '@shared/types.js';
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
 
 export interface StoredGithubAccount extends GithubAccount {
@@ -13,6 +13,8 @@ interface Schema {
   seen: Record<string, Record<string, string[]>>;
   // collapsedFiles[repoId][contextKey] = filePath[]
   collapsedFiles: Record<string, Record<string, string[]>>;
+  // Unsent commit message drafts, keyed by repoId.
+  commitDrafts: Record<string, CommitDraft>;
   // Multi-account GitHub auth. Keyed by account id (GitHub user id as string).
   githubAccounts: Record<string, StoredGithubAccount>;
   activeGithubAccountId: string | null;
@@ -32,6 +34,7 @@ const defaults: Schema = {
   },
   seen: {},
   collapsedFiles: {},
+  commitDrafts: {},
   githubAccounts: {},
   activeGithubAccountId: null,
   githubToken: null,
@@ -59,6 +62,9 @@ export function removeRepo(id: string): void {
   const collapsed = store.get('collapsedFiles');
   delete collapsed[id];
   store.set('collapsedFiles', collapsed);
+  const drafts = store.get('commitDrafts');
+  delete drafts[id];
+  store.set('commitDrafts', drafts);
   const prefs = store.get('prefs');
   if (prefs.activeRepoId === id) {
     store.set('prefs', { ...prefs, activeRepoId: undefined });
@@ -133,6 +139,20 @@ export function clearCollapsedFiles(repoId: string, contextKey: string): void {
     delete all[repoId][contextKey];
     store.set('collapsedFiles', all);
   }
+}
+
+export function getCommitDraft(repoId: string): CommitDraft {
+  return store.get('commitDrafts')[repoId] ?? { summary: '', description: '' };
+}
+
+export function setCommitDraft(repoId: string, draft: CommitDraft): void {
+  const all = store.get('commitDrafts');
+  if (!draft.summary && !draft.description) {
+    delete all[repoId];
+  } else {
+    all[repoId] = draft;
+  }
+  store.set('commitDrafts', all);
 }
 
 export function getLegacyGithubToken(): string | null {

@@ -300,9 +300,11 @@
   <Sidebar.Header class="gap-0 p-0">
     <!-- Progress strip — seen/total, +adds, -dels, collapse. -->
     <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
-      <span class="text-xs tabular-nums">
-        <span class="font-medium">{seenCount}/{app.changedFiles.length}</span>
-      </span>
+      {#if app.changedFiles.length > 0}
+        <span class="text-xs tabular-nums">
+          <span class="font-medium">{seenCount}/{app.changedFiles.length}</span>
+        </span>
+      {/if}
       {#if app.changedFiles.length > 0 && (totals.add > 0 || totals.del > 0)}
         <span class="text-[11px] tabular-nums">
           {#if totals.add > 0}
