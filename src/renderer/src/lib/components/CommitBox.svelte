@@ -30,6 +30,14 @@
       void submit();
     }
   }
+
+  let lastCommit = $derived(app.lastCommit);
+  let canUndo = $derived(!busy && (lastCommit?.canUndo ?? false));
+
+  async function undo(): Promise<void> {
+    if (!canUndo) return;
+    await actions.undoLastCommit();
+  }
 </script>
 
 <form class="flex flex-col gap-1.5 border-t border-border bg-card/40 p-2" onsubmit={submit}>
@@ -82,3 +90,25 @@
     {/if}
   </Button>
 </form>
+
+{#if canUndo && lastCommit}
+  <div
+    class="flex items-center gap-2 border-t border-border bg-card/40 px-2 py-1.5"
+  >
+    <div class="min-w-0 flex-1">
+      <p class="truncate text-[11px] text-muted-foreground">
+        Committed {lastCommit.relativeTime}
+      </p>
+      <p class="truncate text-xs">{lastCommit.subject}</p>
+    </div>
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      class="h-7 shrink-0 text-xs"
+      onclick={undo}
+    >
+      Undo
+    </Button>
+  </div>
+{/if}

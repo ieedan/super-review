@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import type { GithubAccount, RepoInfo, UserPrefs } from '@shared/types.js';
+import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
 
 export interface StoredGithubAccount extends GithubAccount {
   token: string;
@@ -26,6 +27,8 @@ const defaults: Schema = {
     theme: 'dark',
     fileListLayout: 'tree',
     showFileIcons: true,
+    maxDiffLines: 1500,
+    hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
   },
   seen: {},
   collapsedFiles: {},

@@ -87,7 +87,8 @@ button, [role="button"] {
 }
 
 ::selection {
-  background: var(--color-accent);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
 }
 
 /* Pierre diffs container baseline */
@@ -96,4 +97,17 @@ diffs-container {
   font-family: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* Find-in-changes highlight bands (CSS Custom Highlight API). The "all"
+   highlight paints every match in a muted yellow; the "current" one paints
+   the active match in a brighter orange so the user can see where they are
+   while paging through. */
+::highlight(slr-find-match) {
+  background-color: rgba(250, 204, 21, 0.35);
+  color: inherit;
+}
+::highlight(slr-find-current) {
+  background-color: rgba(249, 115, 22, 0.6);
+  color: inherit;
 }

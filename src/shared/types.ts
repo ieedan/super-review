@@ -23,13 +23,13 @@ export interface BranchInfo {
 }
 
 export type FileStatus =
-  | 'added'
-  | 'modified'
-  | 'deleted'
-  | 'renamed'
-  | 'copied'
-  | 'untracked'
-  | 'type-change';
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "type-change";
 
 export interface ChangedFile {
   path: string;
@@ -61,13 +61,13 @@ export interface PRSummary {
   url: string;
   draft: boolean;
   updatedAt: string;
-  state: 'open' | 'closed';
+  state: "open" | "closed";
 }
 
 export type DiffContext =
-  | { kind: 'branch'; base: string; head: string }
-  | { kind: 'workingTree' }
-  | { kind: 'pr'; prNumber: number };
+  | { kind: "branch"; base: string; head: string }
+  | { kind: "workingTree" }
+  | { kind: "pr"; prNumber: number };
 
 // A review comment attached to a specific line in a PR diff.
 // `side: 'RIGHT'` lives in the head file (additions); `'LEFT'` in the base
@@ -84,7 +84,7 @@ export interface PRReviewComment {
   updatedAt: string;
   url: string;
   line: number | null;
-  side: 'LEFT' | 'RIGHT';
+  side: "LEFT" | "RIGHT";
   // Top-level comment id this one is replying to (if any).
   inReplyTo?: number;
   // The viewer's permission to delete: true when this comment was authored
@@ -97,22 +97,22 @@ export interface NewReviewCommentInput {
   path: string;
   body: string;
   line: number;
-  side: 'LEFT' | 'RIGHT';
+  side: "LEFT" | "RIGHT";
 }
 
-export type ViewMode = 'split' | 'unified';
+export type ViewMode = "split" | "unified";
 
 // How the sidebar file list is laid out. 'tree' groups files into nested
 // folders (VSCode-style); 'list' flattens to one file per row.
-export type FileListLayout = 'tree' | 'list';
+export type FileListLayout = "tree" | "list";
 
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
-export type ContextTab = 'unstaged' | 'branch' | 'sessions';
+export type ContextTab = "unstaged" | "branch" | "sessions";
 
-export type EditorKind = 'cursor' | 'vscode';
+export type EditorKind = "cursor" | "vscode";
 
-export type TerminalKind = 'terminal' | 'iterm' | 'warp' | 'ghostty';
+export type TerminalKind = "terminal" | "iterm" | "warp" | "ghostty";
 
 export interface PushStatus {
   branch: string | null;
@@ -137,6 +137,16 @@ export interface CommitResult {
   error?: string;
 }
 
+export interface LastCommit {
+  hash: string;
+  subject: string;
+  // Relative time string straight from git (e.g. "2 minutes ago").
+  relativeTime: string;
+  // True when the commit has not yet been pushed to any remote, so undoing it
+  // is safe.
+  canUndo: boolean;
+}
+
 export interface CreateBranchResult {
   ok: boolean;
   error?: string;
@@ -150,13 +160,20 @@ export interface CloneResult {
 
 export interface UserPrefs {
   viewMode: ViewMode;
-  theme: 'light' | 'dark';
+  theme: "light" | "dark";
   activeRepoId?: string;
   contextTab?: ContextTab;
   externalEditor?: EditorKind | null;
   externalTerminal?: TerminalKind | null;
   fileListLayout: FileListLayout;
   showFileIcons: boolean;
+  // Diffs whose changed-line count (additions + deletions) exceeds this are
+  // hidden behind a "Load diff" button by default. 0 disables the size check.
+  maxDiffLines: number;
+  // Glob patterns whose matching files have their diffs hidden behind a
+  // "Load diff" button by default (lock files, build outputs, etc.). See
+  // DEFAULT_HIDDEN_DIFF_PATTERNS in @shared/diff-defer for match semantics.
+  hiddenDiffPatterns: string[];
 }
 
 export interface DeviceFlowStart {
@@ -175,9 +192,9 @@ export interface GithubAccount {
 }
 
 export type DeviceFlowStatus =
-  | { state: 'pending' }
-  | { state: 'success'; account: GithubAccount }
-  | { state: 'error'; message: string };
+  | { state: "pending" }
+  | { state: "success"; account: GithubAccount }
+  | { state: "error"; message: string };
 
 export interface PreloadAPI {
   repos: {
@@ -199,7 +216,11 @@ export interface PreloadAPI {
       opts: { base?: string; checkout: boolean },
     ): Promise<CreateBranchResult>;
     listChangedFiles(repoId: string, ctx: DiffContext): Promise<ChangedFile[]>;
-    getDiff(repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData>;
+    getDiff(
+      repoId: string,
+      filePath: string,
+      ctx: DiffContext,
+    ): Promise<DiffData>;
     fetchOrigin(repoId: string): Promise<{ ok: boolean; error?: string }>;
     getPushStatus(repoId: string): Promise<PushStatus>;
     pull(repoId: string): Promise<PullPushResult>;
@@ -209,6 +230,8 @@ export interface PreloadAPI {
     continueMerge(repoId: string): Promise<PullPushResult>;
     abortMerge(repoId: string): Promise<void>;
     commitAll(repoId: string, message: string): Promise<CommitResult>;
+    getLastCommit(repoId: string): Promise<LastCommit | null>;
+    undoLastCommit(repoId: string): Promise<CommitResult>;
     cloneRepo(url: string): Promise<CloneResult>;
   };
   editor: {
@@ -234,10 +257,16 @@ export interface PreloadAPI {
     pollDeviceFlow(): Promise<DeviceFlowStatus>;
     cancelDeviceFlow(): Promise<void>;
     listPRs(repoId: string): Promise<PRSummary[]>;
-    fetchPR(repoId: string, prNumber: number): Promise<{ headRef: string; baseRef: string }>;
+    fetchPR(
+      repoId: string,
+      prNumber: number,
+    ): Promise<{ headRef: string; baseRef: string }>;
     findPRForBranch(repoId: string, branch: string): Promise<PRSummary | null>;
     getPR(repoId: string, prNumber: number): Promise<PRSummary | null>;
-    listReviewComments(repoId: string, prNumber: number): Promise<PRReviewComment[]>;
+    listReviewComments(
+      repoId: string,
+      prNumber: number,
+    ): Promise<PRReviewComment[]>;
     createReviewComment(
       repoId: string,
       input: NewReviewCommentInput,
@@ -254,7 +283,12 @@ export interface PreloadAPI {
     getPrefs(): Promise<UserPrefs>;
     setPrefs(patch: Partial<UserPrefs>): Promise<UserPrefs>;
     getSeenFiles(repoId: string, contextKey: string): Promise<string[]>;
-    setFileSeen(repoId: string, contextKey: string, filePath: string, seen: boolean): Promise<void>;
+    setFileSeen(
+      repoId: string,
+      contextKey: string,
+      filePath: string,
+      seen: boolean,
+    ): Promise<void>;
     clearSeen(repoId: string, contextKey: string): Promise<void>;
     getCollapsedFiles(repoId: string, contextKey: string): Promise<string[]>;
     setFileCollapsed(

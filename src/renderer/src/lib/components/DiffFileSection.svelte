@@ -14,17 +14,23 @@
   import { Button } from './ui/button';
   import { Badge } from './ui/badge';
   import { actions, app, composerKey, getCachedDiff, setCachedDiff } from '$lib/store.svelte';
+  import { diffDeferReason } from '@shared/diff-defer';
   import { scheduleRender } from '$lib/render-scheduler';
   import { diffContextKey } from '@shared/diff-context';
+  import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
   import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
   import type { ChangedFile, DiffContext, DiffData, PRReviewComment } from '@shared/types';
 
   interface Props {
     file: ChangedFile;
     observer: IntersectionObserver | null;
+    // When true, this section is given `min-height: 100%` of the scroll
+    // container so the last file can scroll its top to the viewport top
+    // without exposing scrollable area past its own bottom.
+    isLast?: boolean;
   }
 
-  let { file, observer }: Props = $props();
+  let { file, observer, isLast = false }: Props = $props();
 
   let section = $state<HTMLElement | null>(null);
   let host = $state<HTMLElement | null>(null);
@@ -49,6 +55,17 @@
   let loadError = $state<string | null>(null);
   let inView = $state(false);
   let expanded = $derived(!app.collapsedFiles.has(file.path));
+  // Set true when the user clicks "Load diff" to override the default hiding
+  // of matched / oversized diffs. Resets to false if the file changes.
+  let loadDiffOverride = $state(false);
+  // Why this diff is hidden by default (matched a hidden pattern or too large),
+  // or null when it should render normally. The override forces a render.
+  let deferReason = $derived(
+    loadDiffOverride
+      ? null
+      : diffDeferReason(file, app.maxDiffLines, app.hiddenDiffPatterns),
+  );
+  let deferred = $derived(deferReason !== null);
   // Handle for the most recently queued render so we can cancel it if a newer
   // target supersedes it before the scheduler gets to it.
   let cancelPendingRender: (() => void) | null = null;
@@ -64,6 +81,19 @@
       (app.contextTab === 'branch' && app.branchPR != null),
   );
 
+  // Memoize the `metadata` objects we hand Pierre — its annotation cache uses
+  // a reference check (`metadata === metadata`) to decide whether to re-render
+  // an annotation. If we hand it a fresh `{ kind: 'composer', … }` literal each
+  // pass, Pierre rebuilds the wrapper and our `mount()` re-creates the form,
+  // which steals focus from the textarea. Keying these by stable identifiers
+  // (comment id / composer key) gives Pierre the same ref every time. Each
+  // cache is narrowed to a single variant so the discriminated union doesn't
+  // confuse Pierre's `DiffLineAnnotation<T>` generic when we push.
+  type CommentMetaComment = Extract<CommentMeta, { kind: 'comment' }>;
+  type CommentMetaComposer = Extract<CommentMeta, { kind: 'composer' }>;
+  const commentMetaCache = new Map<number, CommentMetaComment>();
+  const composerMetaCache = new Map<string, CommentMetaComposer>();
+
   // Build the annotation list FileDiff renders: every existing comment +
   // any pending composers on this file. Annotation order matters for the
   // cache key — `${index}-${side}-${line}` — but as long as we deterministically
@@ -71,29 +101,58 @@
   let lineAnnotations = $derived.by<DiffLineAnnotation<CommentMeta>[]>(() => {
     if (!isPRContext) return [];
     const out: DiffLineAnnotation<CommentMeta>[] = [];
+    const liveCommentIds = new Set<number>();
+    const liveComposerKeys = new Set<string>();
+
     const comments = app.prComments[file.path] ?? [];
     for (const c of comments) {
       if (c.line == null) continue;
+      liveCommentIds.add(c.id);
+      let meta = commentMetaCache.get(c.id);
+      // Invalidate the cached metadata if the underlying comment object was
+      // replaced (e.g. server returned an edited copy).
+      if (meta == null || meta.comment !== c) {
+        meta = { kind: 'comment', comment: c };
+        commentMetaCache.set(c.id, meta);
+      }
       out.push({
         side: c.side === 'LEFT' ? 'deletions' : 'additions',
         lineNumber: c.line,
-        metadata: { kind: 'comment', comment: c },
+        metadata: meta,
       });
     }
+
     for (const composer of Object.values(app.pendingComposers)) {
       if (composer.filePath !== file.path) continue;
-      out.push({
-        side: composer.side === 'LEFT' ? 'deletions' : 'additions',
-        lineNumber: composer.line,
-        metadata: {
+      const key = composerKey(composer.filePath, composer.side, composer.line);
+      liveComposerKeys.add(key);
+      let meta = composerMetaCache.get(key);
+      if (meta == null || meta.replyTo !== composer.replyTo) {
+        meta = {
           kind: 'composer',
           filePath: composer.filePath,
           line: composer.line,
           side: composer.side,
           replyTo: composer.replyTo,
-        },
+        };
+        composerMetaCache.set(key, meta);
+      }
+      out.push({
+        side: composer.side === 'LEFT' ? 'deletions' : 'additions',
+        lineNumber: composer.line,
+        metadata: meta,
       });
     }
+
+    // Garbage-collect stale entries so the caches don't leak across the
+    // lifetime of the section.
+    for (const id of [...commentMetaCache.keys()]) {
+      if (!liveCommentIds.has(id)) commentMetaCache.delete(id);
+    }
+    for (const k of [...composerMetaCache.keys()]) {
+      if (!liveComposerKeys.has(k)) composerMetaCache.delete(k);
+    }
+
     return out;
   });
 
@@ -114,6 +173,31 @@
   $effect(() => {
     if (!section) return;
     (section as HTMLElement & { __setInView?: (v: boolean) => void }).__setInView = markInView;
+  });
+
+  // Register with the find controller so it can highlight matches inside
+  // this section's DOM without owning a global mutation observer over the
+  // whole diff view. Find only walks one section's shadow tree at a time —
+  // see diff-find.svelte.ts for the rationale.
+  //
+  // We also hand over `renderIfNeeded` so find can render this file's diff
+  // synchronously when the user navigates to a match here, bypassing the
+  // FRAME_BUDGET_MS render scheduler queue. Without this fast lane, the
+  // target file's render sits behind every other file that scrollIntoView
+  // happened to sweep into the IntersectionObserver margin.
+  $effect(() => {
+    if (!section) return;
+    const unregister = registerFindSection(file.path, section, {
+      renderIfNeeded: forceRenderForFind,
+    });
+    return unregister;
+  });
+
+  // Mirror `inView` into the find controller so it knows which file sections
+  // have live DOM to paint yellow "all-match" highlights into. Out-of-view
+  // sections get their highlights dropped.
+  $effect(() => {
+    notifySectionState(file.path, { inView });
   });
 
   function unmountAll(): void {
@@ -150,13 +234,6 @@
   function renderAnnotation(
     annotation: DiffLineAnnotation<CommentMeta>,
   ): HTMLElement | undefined {
-    // eslint-disable-next-line no-console
-    console.log('[PR comment] renderAnnotation called', {
-      file: file.path,
-      side: annotation.side,
-      lineNumber: annotation.lineNumber,
-      metaKind: annotation.metadata?.kind,
-    });
     if (!annotation.metadata) return undefined;
     const container = document.createElement('div');
     // Stamp the same cache key Pierre uses so we can unmount the matching
@@ -183,16 +260,6 @@
   }
 
   function onDiffLineNumberClick(props: OnDiffLineClickProps): void {
-    // eslint-disable-next-line no-console
-    console.log('[PR comment] line-number click', {
-      isPRContext,
-      contextTab: app.contextTab,
-      diffKind: app.diffContext.kind,
-      branchPR: app.branchPR?.number ?? null,
-      file: file.path,
-      lineNumber: props.lineNumber,
-      annotationSide: props.annotationSide,
-    });
     if (!isPRContext) return;
     const side = props.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT';
     actions.openComposer(file.path, side, props.lineNumber);
@@ -203,15 +270,6 @@
   // the selected line range when it's clicked. No custom DOM, no event
   // wrestling — Pierre owns the whole interaction.
   function onGutterClick(range: SelectedLineRange): void {
-    // eslint-disable-next-line no-console
-    console.log('[PR comment] gutter click', {
-      isPRContext,
-      contextTab: app.contextTab,
-      diffKind: app.diffContext.kind,
-      branchPR: app.branchPR?.number ?? null,
-      file: file.path,
-      range,
-    });
     if (!isPRContext) return;
     const sel = range.side ?? 'additions';
     const side = sel === 'deletions' ? 'LEFT' : 'RIGHT';
@@ -286,6 +344,9 @@
     diffData = d;
     loadedCtxKey = ctxKey;
     dataEpoch++;
+    // The find index reads from the diff cache; signal it that new patch
+    // text just landed so any active query can incorporate this file.
+    notifySectionState(file.path, { dataLoaded: true });
   }
 
   function clearLoadedDiff(): void {
@@ -295,6 +356,9 @@
     cancelPendingRender = null;
     disposeDiff();
     renderedKey = null;
+    // Drop any cached find Ranges into this section's DOM — they reference
+    // nodes that disposeDiff() just removed.
+    notifySectionState(file.path, { bumpRenderEpoch: true });
   }
 
   // Hand the actual DOM work to the global render scheduler so the UI can
@@ -308,7 +372,43 @@
       cancelPendingRender = null;
       renderDiff(data);
       renderedKey = target;
+      // Tell find that this section's DOM was replaced — it must invalidate
+      // any cached Ranges (whose Text nodes just got removed) and rebuild
+      // highlights against the fresh DOM.
+      notifySectionState(file.path, { bumpRenderEpoch: true });
     });
+  }
+
+  // Render the diff right now, skipping the render scheduler. Called by find
+  // when the user navigates here so the highlight doesn't sit behind every
+  // other queued render. Hydrates from the diff cache if data hasn't loaded
+  // through the lazy path yet. Returns true if rendered DOM is available
+  // by the time we return (already rendered, or just rendered in-place);
+  // false when data hasn't been fetched and we have nothing to render yet.
+  function forceRenderForFind(): boolean {
+    if (host == null) return false;
+    let data = diffData;
+    let ctxKey = loadedCtxKey;
+    if (data == null && app.activeRepo) {
+      const ctx = $state.snapshot(app.diffContext) as DiffContext;
+      const cached = getCachedDiff(app.activeRepo.id, ctx, file.path);
+      if (cached) {
+        ctxKey = diffContextKey(ctx);
+        setLoadedDiff(cached, ctxKey);
+        data = cached;
+      }
+    }
+    if (data == null || ctxKey == null) return false;
+    if (data.file.isBinary || data.truncated) return false;
+    // dataEpoch has just been bumped by setLoadedDiff (or was already current).
+    const target = `${ctxKey}::${app.viewMode}::${dataEpoch}`;
+    if (renderedKey === target) return true;
+    cancelPendingRender?.();
+    cancelPendingRender = null;
+    renderDiff(data);
+    renderedKey = target;
+    notifySectionState(file.path, { bumpRenderEpoch: true });
+    return true;
   }
 
   // Fetch the diff the first time the section enters view (and stays expanded).
@@ -317,6 +417,9 @@
   // actual DOM render is kicked off by the render effect below.
   $effect(() => {
     if (!inView || !expanded || !app.activeRepo) return;
+    // Don't fetch hidden diffs — wait until the user clicks "Load diff". When
+    // they do, `deferred` flips false and this effect re-runs to fetch.
+    if (deferred) return;
     const repo = app.activeRepo;
     const ctx = $state.snapshot(app.diffContext) as DiffContext;
     const ctxKey = diffContextKey(ctx);
@@ -400,13 +503,6 @@
   $effect(() => {
     const annotations = lineAnnotations;
     if (!instance) return;
-    // eslint-disable-next-line no-console
-    console.log('[PR comment] annotations effect — before', {
-      file: file.path,
-      count: annotations.length,
-      kinds: annotations.map((a) => a.metadata?.kind ?? '?'),
-      lines: annotations.map((a) => `${a.side}:${a.lineNumber}`),
-    });
     // Drop cached mounted components that no longer have a matching index.
     const liveKeys = new Set(annotations.map((a, i) => annotationCacheKey(a, i)));
     for (const key of [...mountedComponents.keys()]) {
@@ -422,18 +518,8 @@
         mountedComponents.delete(key);
       }
     }
-    try {
-      instance.setLineAnnotations(annotations);
-      instance.rerender();
-      // eslint-disable-next-line no-console
-      console.log('[PR comment] annotations effect — after rerender ok', {
-        file: file.path,
-        mountedCount: mountedComponents.size,
-      });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[PR comment] rerender failed', err);
-    }
+    instance.setLineAnnotations(annotations);
+    instance.rerender();
   });
 
   // Toggle Pierre's built-in gutter `+` button live as the user switches
@@ -451,12 +537,7 @@
     instance.setOptions({ ...current, enableGutterUtility: enabled } as Parameters<
       typeof instance.setOptions
     >[0]);
-    try {
-      instance.flushManagers();
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[PR comment] flushManagers failed', err);
-    }
+    instance.flushManagers();
   });
 
   // Live-swap the diff theme when the app theme changes. `setThemeType` alone
@@ -472,13 +553,8 @@
   $effect(() => {
     const t = app.theme;
     if (!instance) return;
-    try {
-      instance.setThemeType(t);
-      instance.onThemeChange();
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[theme] diff theme change failed', err);
-    }
+    instance.setThemeType(t);
+    instance.onThemeChange();
   });
 
   onDestroy(() => {
@@ -511,8 +587,14 @@
     void actions.toggleSeen(file.path);
     if (wasSeen) return;
     void actions.toggleFileCollapsed(file.path, true);
-    const idx = app.changedFiles.findIndex((f) => f.path === file.path);
-    const next = idx >= 0 ? app.changedFiles[idx + 1] : undefined;
+    // Skip over files hidden by the search filter — jumping to a file that
+    // isn't rendered would leave the user staring at a blank section.
+    const q = app.fileSearchQuery.trim().toLowerCase();
+    const visible = q
+      ? app.changedFiles.filter((f) => f.path.toLowerCase().includes(q))
+      : app.changedFiles;
+    const idx = visible.findIndex((f) => f.path === file.path);
+    const next = idx >= 0 ? visible[idx + 1] : undefined;
     if (next) actions.scrollToFile(next.path);
   }
   // Surface comments that fall outside the rendered diff (e.g. on lines we
@@ -526,7 +608,7 @@
 <section
   bind:this={section}
   data-file-path={file.path}
-  class="border-b border-border"
+  class={['border-b border-border', isLast && 'min-h-full']}
 >
   <header
     class={[
@@ -585,6 +667,20 @@
   <div class="bg-card/20" hidden={!expanded}>
     {#if loadError}
       <div class="p-4 text-sm text-destructive">{loadError}</div>
+    {:else if deferred}
+      <div class="flex flex-col items-center gap-2 p-6 text-center">
+        <p class="text-xs text-muted-foreground">
+          {#if deferReason === 'pattern'}
+            This file is hidden by default.
+          {:else}
+            This diff is too big to be displayed by default
+            ({file.additions + file.deletions} changed lines).
+          {/if}
+        </p>
+        <Button variant="outline" size="sm" onclick={() => (loadDiffOverride = true)}>
+          Load diff
+        </Button>
+      </div>
     {:else if (loading || isAwaitingFirstRender) && !diffData?.file.isBinary}
       <div class="p-4 text-xs text-muted-foreground">Loading diff…</div>
     {:else if !inView && !diffData}
@@ -601,7 +697,7 @@
         File too large to render. Diff preview disabled.
       </div>
     {/if}
-    <div bind:this={host} class="diff-host"></div>
+    <div bind:this={host} class="diff-host pl-2"></div>
     {#if orphanComments.length > 0}
       <div class="border-t border-border p-3 text-xs text-muted-foreground">
         <p class="mb-2 font-medium">

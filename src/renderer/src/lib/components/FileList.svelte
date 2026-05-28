@@ -6,12 +6,14 @@
     FileEdit,
     Folder,
     FolderOpen,
+    MessageSquare,
     PanelLeftClose,
     Search,
     X,
   } from 'lucide-svelte';
   import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
   import { Button } from './ui/button';
+  import { Kbd } from './ui/kbd';
   import * as Tabs from './ui/tabs';
   import * as Sidebar from './ui/sidebar';
   import CommitBox from './CommitBox.svelte';
@@ -43,12 +45,11 @@
   // animation frame fills them in.
   const BUFFER_ROWS = 8;
 
-  let searchQuery = $state('');
-
-  // Filter changed files by the search query (case-insensitive substring match
-  // on the full path). When the query is empty, this is the full list.
+  // Filter changed files by the shared search query (case-insensitive substring
+  // match on the full path). When the query is empty, this is the full list.
+  // Lives on the store so the diff view applies the same filter.
   let filteredFiles = $derived.by<ChangedFile[]>(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = app.fileSearchQuery.trim().toLowerCase();
     if (!q) return app.changedFiles;
     return app.changedFiles.filter((f) => f.path.toLowerCase().includes(q));
   });
@@ -84,7 +85,7 @@
 
     // While searching, ignore collapsed folders so matches deep in the tree
     // are always visible without forcing the user to expand parents.
-    const isSearching = searchQuery.trim().length > 0;
+    const isSearching = app.fileSearchQuery.trim().length > 0;
     const collapsed = isSearching ? new Set<string>() : app.collapsedFolders;
     const folderCounts = new Map<string, number>();
     for (const f of filteredFiles) {
@@ -234,9 +235,59 @@
   let topSpacer = $derived(visibleRange.start * ROW_HEIGHT);
   let bottomSpacer = $derived((nodes.length - visibleRange.end) * ROW_HEIGHT);
 
+  // Keep the highlighted file visible as the user scrolls the diff. Because
+  // the list is virtualized, `scrollIntoView` on the row element won't work
+  // (rows outside the visible window aren't mounted) — we set `scrollTop`
+  // directly using the known row index × ROW_HEIGHT layout. Reading
+  // `scrollRoot.scrollTop` / `.clientHeight` directly (not the reactive
+  // mirrors) keeps this effect from re-firing on every scroll tick.
+  $effect(() => {
+    const path = app.selectedFile;
+    if (!path || !scrollRoot) return;
+    const idx = nodes.findIndex((n) => n.kind === 'file' && n.file.path === path);
+    if (idx === -1) return;
+    const el = scrollRoot;
+    const itemTop = idx * ROW_HEIGHT;
+    const itemBottom = itemTop + ROW_HEIGHT;
+    const viewTop = el.scrollTop;
+    const viewBottom = viewTop + el.clientHeight;
+    if (itemTop < viewTop) {
+      el.scrollTop = itemTop;
+    } else if (itemBottom > viewBottom) {
+      el.scrollTop = itemBottom - el.clientHeight;
+    }
+  });
+
   const isMac =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const toggleShortcut = isMac ? '⌘B' : 'Ctrl+B';
+
+  // `/` jumps focus to the search input from anywhere in the app. Skipped when
+  // the user is already typing in an editable target (so it doesn't hijack the
+  // commit composer, comment composer, or the search input itself) and when
+  // any modifier is held (so it doesn't fight legitimate ⌘//Ctrl+/ shortcuts).
+  let searchInput = $state<HTMLInputElement | null>(null);
+  $effect(() => {
+    function onKeydown(e: KeyboardEvent): void {
+      if (e.key !== '/') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (!searchInput) return;
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    }
+    window.addEventListener('keydown', onKeydown);
+    return () => window.removeEventListener('keydown', onKeydown);
+  });
 </script>
 
 <!--
@@ -313,20 +364,23 @@
         >
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input
+            bind:this={searchInput}
             type="text"
-            bind:value={searchQuery}
+            bind:value={app.fileSearchQuery}
             placeholder="Search files…"
             class="h-full w-full min-w-0 bg-transparent text-xs outline-hidden placeholder:text-muted-foreground"
           />
-          {#if searchQuery}
+          {#if app.fileSearchQuery}
             <button
               type="button"
               class="shrink-0 text-muted-foreground hover:text-foreground"
-              onclick={() => (searchQuery = '')}
+              onclick={() => (app.fileSearchQuery = '')}
               aria-label="Clear search"
             >
               <X class="size-3" />
             </button>
+          {:else}
+            <Kbd title="Press / to search">/</Kbd>
           {/if}
         </div>
       </div>
@@ -350,7 +404,7 @@
         </div>
       {:else if filteredFiles.length === 0}
         <div class="px-3 py-8 text-center text-xs text-muted-foreground">
-          No files match "{searchQuery}"
+          No files match "{app.fileSearchQuery}"
         </div>
       {:else}
         <!--
@@ -378,12 +432,12 @@
                   <Folder class="size-3.5 shrink-0 text-muted-foreground" />
                 {/if}
                 <span class="truncate">{node.name}</span>
-                <span class="ml-auto pr-1 text-[10px] tabular-nums">{node.childCount}</span>
               </button>
             {:else}
               {@const isSeen = app.seenFiles.has(node.file.path)}
               {@const iconName = languageIconForPath(node.file.path)}
               {@const isActive = app.selectedFile === node.file.path}
+              {@const commentCount = (app.prComments[node.file.path] ?? []).length}
               <div
                 class={cn(
                   'group flex w-full items-center gap-1.5 border-l-2 border-transparent pr-2',
@@ -434,21 +488,32 @@
                       {node.name}
                     </span>
                   {/if}
-                  <span class="ml-auto flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums">
-                    {#if node.file.status === 'deleted'}
-                      <FileMinus class="size-3 text-destructive" />
-                    {:else if node.file.status === 'renamed' || node.file.status === 'copied'}
-                      <FileEdit class="size-3 text-warning" />
-                    {:else if node.file.isBinary}
-                      <span class="text-muted-foreground">bin</span>
-                    {:else}
-                      {#if node.file.additions > 0}
-                        <span class="text-success">+{node.file.additions}</span>
-                      {/if}
-                      {#if node.file.deletions > 0}
-                        <span class="text-destructive">−{node.file.deletions}</span>
-                      {/if}
+                  <span class="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums">
+                    {#if commentCount > 0}
+                      <span
+                        class="flex items-center gap-0.5 text-muted-foreground"
+                        title="{commentCount} comment{commentCount === 1 ? '' : 's'}"
+                      >
+                        <MessageSquare class="size-3" />
+                        {commentCount}
+                      </span>
                     {/if}
+                    <span class="flex items-center gap-0.5">
+                      {#if node.file.status === 'deleted'}
+                        <FileMinus class="size-3 text-destructive" />
+                      {:else if node.file.status === 'renamed' || node.file.status === 'copied'}
+                        <FileEdit class="size-3 text-warning" />
+                      {:else if node.file.isBinary}
+                        <span class="text-muted-foreground">bin</span>
+                      {:else}
+                        {#if node.file.additions > 0}
+                          <span class="text-success">+{node.file.additions}</span>
+                        {/if}
+                        {#if node.file.deletions > 0}
+                          <span class="text-destructive">−{node.file.deletions}</span>
+                        {/if}
+                      {/if}
+                    </span>
                   </span>
                 </button>
               </div>

@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type {
   BranchInfo,
   ChangedFile,
@@ -10,6 +10,7 @@ import type {
   DiffData,
   EditorKind,
   GithubAccount,
+  LastCommit,
   NewReviewCommentInput,
   PRReviewComment,
   PRSummary,
@@ -18,7 +19,7 @@ import type {
   RepoInfo,
   TerminalKind,
   UserPrefs,
-} from '@shared/types.js';
+} from "@shared/types.js";
 import {
   abortMerge,
   buildRepoInfo,
@@ -32,6 +33,7 @@ import {
   getConflicts,
   getCurrentBranch,
   getDiff,
+  getLastCommit,
   getPushStatus,
   initRepo,
   isGitRepo,
@@ -42,14 +44,15 @@ import {
   pull,
   push,
   stageFile,
-} from './git-service.js';
+  undoLastCommit,
+} from "./git-service.js";
 import {
   detectEditors,
   detectTerminals,
   openInEditor,
   openInTerminal,
-} from './editor-service.js';
-import * as gh from './github-service.js';
+} from "./editor-service.js";
+import * as gh from "./github-service.js";
 import {
   clearCollapsedFiles,
   clearSeen,
@@ -63,7 +66,7 @@ import {
   setPrefs,
   setSeen,
   upsertRepo,
-} from './store.js';
+} from "./store.js";
 
 function repoOrThrow(id: string): RepoInfo {
   const repo = getRepo(id);
@@ -96,7 +99,7 @@ async function refreshRepoInfoInBackground(
       merged.name !== previous.name;
     if (!changed) return;
     upsertRepo(merged);
-    broadcast('repos:active-changed', merged);
+    broadcast("repos:active-changed", merged);
   } catch {
     // Background refresh — failure is silent.
   }
@@ -104,12 +107,12 @@ async function refreshRepoInfoInBackground(
 
 export function registerIpc(): void {
   // ─── Repos ─────────────────────────────────────────────────────────────
-  ipcMain.handle('repos:list', async (): Promise<RepoInfo[]> => listRepos());
+  ipcMain.handle("repos:list", async (): Promise<RepoInfo[]> => listRepos());
 
-  ipcMain.handle('repos:openPicker', async (): Promise<RepoInfo | null> => {
+  ipcMain.handle("repos:openPicker", async (): Promise<RepoInfo | null> => {
     const result = await dialog.showOpenDialog({
-      title: 'Open repository',
-      properties: ['openDirectory'],
+      title: "Open repository",
+      properties: ["openDirectory"],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const repoPath = result.filePaths[0];
@@ -119,72 +122,85 @@ export function registerIpc(): void {
     const info = await buildRepoInfo(repoPath);
     upsertRepo(info);
     setPrefs({ activeRepoId: info.id });
-    broadcast('repos:active-changed', info);
+    broadcast("repos:active-changed", info);
     return info;
   });
 
-  ipcMain.handle('repos:createPicker', async (): Promise<RepoInfo | null> => {
+  ipcMain.handle("repos:createPicker", async (): Promise<RepoInfo | null> => {
     const result = await dialog.showOpenDialog({
-      title: 'Create new repository',
-      buttonLabel: 'Initialize here',
-      properties: ['openDirectory', 'createDirectory'],
+      title: "Create new repository",
+      buttonLabel: "Initialize here",
+      properties: ["openDirectory", "createDirectory"],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const target = result.filePaths[0];
     const init = await initRepo(target);
-    if (!init.ok) throw new Error(init.error ?? 'Failed to initialize repository.');
+    if (!init.ok)
+      throw new Error(init.error ?? "Failed to initialize repository.");
     const info = await buildRepoInfo(target);
     upsertRepo(info);
     setPrefs({ activeRepoId: info.id });
-    broadcast('repos:active-changed', info);
+    broadcast("repos:active-changed", info);
     return info;
   });
 
-  ipcMain.handle('repos:remove', async (_e, id: string) => {
+  ipcMain.handle("repos:remove", async (_e, id: string) => {
     removeRepo(id);
   });
 
-  ipcMain.handle('repos:setActive', async (_e, id: string): Promise<RepoInfo | null> => {
-    const repo = getRepo(id);
-    if (!repo) return null;
-    // Switching needs to feel instant — buildRepoInfo rescans the favicon
-    // tree, queries git remotes, and resolves origin/HEAD, easily adding
-    // 100ms-1s on a large repo. None of that data changes between switches,
-    // so we return the stored info immediately and refresh in the background.
-    const updated: RepoInfo = { ...repo, lastOpenedAt: Date.now() };
-    upsertRepo(updated);
-    setPrefs({ activeRepoId: id });
-    broadcast('repos:active-changed', updated);
+  ipcMain.handle(
+    "repos:setActive",
+    async (_e, id: string): Promise<RepoInfo | null> => {
+      const repo = getRepo(id);
+      if (!repo) return null;
+      // Switching needs to feel instant — buildRepoInfo rescans the favicon
+      // tree, queries git remotes, and resolves origin/HEAD, easily adding
+      // 100ms-1s on a large repo. None of that data changes between switches,
+      // so we return the stored info immediately and refresh in the background.
+      const updated: RepoInfo = { ...repo, lastOpenedAt: Date.now() };
+      upsertRepo(updated);
+      setPrefs({ activeRepoId: id });
+      broadcast("repos:active-changed", updated);
 
-    void refreshRepoInfoInBackground(repo.path, updated);
-    return updated;
-  });
+      void refreshRepoInfoInBackground(repo.path, updated);
+      return updated;
+    },
+  );
 
-  ipcMain.handle('repos:getActive', async (): Promise<RepoInfo | null> => {
+  ipcMain.handle("repos:getActive", async (): Promise<RepoInfo | null> => {
     const prefs = getPrefs();
     if (!prefs.activeRepoId) return null;
     return getRepo(prefs.activeRepoId);
   });
 
   // ─── Git ───────────────────────────────────────────────────────────────
-  ipcMain.handle('git:listBranches', async (_e, repoId: string): Promise<BranchInfo[]> => {
-    return listBranches(repoOrThrow(repoId).path);
-  });
+  ipcMain.handle(
+    "git:listBranches",
+    async (_e, repoId: string): Promise<BranchInfo[]> => {
+      return listBranches(repoOrThrow(repoId).path);
+    },
+  );
 
-  ipcMain.handle('git:getCurrentBranch', async (_e, repoId: string): Promise<string | null> => {
-    return getCurrentBranch(repoOrThrow(repoId).path);
-  });
+  ipcMain.handle(
+    "git:getCurrentBranch",
+    async (_e, repoId: string): Promise<string | null> => {
+      return getCurrentBranch(repoOrThrow(repoId).path);
+    },
+  );
 
-  ipcMain.handle('git:checkout', async (_e, repoId: string, branch: string) => {
+  ipcMain.handle("git:checkout", async (_e, repoId: string, branch: string) => {
     await checkout(repoOrThrow(repoId).path, branch);
   });
 
-  ipcMain.handle('git:isDirty', async (_e, repoId: string): Promise<boolean> => {
-    return isWorkingTreeDirty(repoOrThrow(repoId).path);
-  });
+  ipcMain.handle(
+    "git:isDirty",
+    async (_e, repoId: string): Promise<boolean> => {
+      return isWorkingTreeDirty(repoOrThrow(repoId).path);
+    },
+  );
 
   ipcMain.handle(
-    'git:createBranch',
+    "git:createBranch",
     async (
       _e,
       repoId: string,
@@ -194,25 +210,30 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    'git:listChangedFiles',
+    "git:listChangedFiles",
     async (_e, repoId: string, ctx: DiffContext): Promise<ChangedFile[]> => {
       return listChangedFiles(repoOrThrow(repoId).path, ctx);
     },
   );
 
   ipcMain.handle(
-    'git:getDiff',
-    async (_e, repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData> => {
+    "git:getDiff",
+    async (
+      _e,
+      repoId: string,
+      filePath: string,
+      ctx: DiffContext,
+    ): Promise<DiffData> => {
       return getDiff(repoOrThrow(repoId).path, filePath, ctx);
     },
   );
 
-  ipcMain.handle('git:fetchOrigin', async (_e, repoId: string) => {
+  ipcMain.handle("git:fetchOrigin", async (_e, repoId: string) => {
     return fetchOrigin(repoOrThrow(repoId).path);
   });
 
   ipcMain.handle(
-    'git:getPushStatus',
+    "git:getPushStatus",
     async (_e, repoId: string): Promise<PushStatus> => {
       const repo = repoOrThrow(repoId);
       return getPushStatus(repo.path, repo.defaultBranch);
@@ -220,111 +241,151 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    'git:pull',
-    async (_e, repoId: string): Promise<PullPushResult> => pull(repoOrThrow(repoId).path),
+    "git:pull",
+    async (_e, repoId: string): Promise<PullPushResult> =>
+      pull(repoOrThrow(repoId).path),
   );
 
   ipcMain.handle(
-    'git:push',
-    async (_e, repoId: string): Promise<PullPushResult> => push(repoOrThrow(repoId).path),
+    "git:push",
+    async (_e, repoId: string): Promise<PullPushResult> =>
+      push(repoOrThrow(repoId).path),
   );
 
   ipcMain.handle(
-    'git:getConflicts',
+    "git:getConflicts",
     async (_e, repoId: string): Promise<string[]> =>
       getConflicts(repoOrThrow(repoId).path),
   );
 
   ipcMain.handle(
-    'git:stageFile',
+    "git:stageFile",
     async (_e, repoId: string, filePath: string): Promise<void> =>
       stageFile(repoOrThrow(repoId).path, filePath),
   );
 
   ipcMain.handle(
-    'git:continueMerge',
+    "git:continueMerge",
     async (_e, repoId: string): Promise<PullPushResult> =>
       continueMerge(repoOrThrow(repoId).path),
   );
 
-  ipcMain.handle('git:abortMerge', async (_e, repoId: string): Promise<void> => {
-    await abortMerge(repoOrThrow(repoId).path);
-  });
+  ipcMain.handle(
+    "git:abortMerge",
+    async (_e, repoId: string): Promise<void> => {
+      await abortMerge(repoOrThrow(repoId).path);
+    },
+  );
 
   ipcMain.handle(
-    'git:commitAll',
+    "git:commitAll",
     async (_e, repoId: string, message: string): Promise<CommitResult> =>
       commitAll(repoOrThrow(repoId).path, message),
   );
 
-  ipcMain.handle('git:cloneRepo', async (_e, url: string): Promise<CloneResult> => {
-    const dir = await dialog.showOpenDialog({
-      title: 'Clone destination',
-      properties: ['openDirectory', 'createDirectory'],
-    });
-    if (dir.canceled || dir.filePaths.length === 0) {
-      return { ok: false, error: 'Clone cancelled.' };
-    }
-    const result = await cloneRepo(url, dir.filePaths[0]);
-    if (result.ok && result.path) {
-      const info = await buildRepoInfo(result.path);
-      upsertRepo(info);
-      setPrefs({ activeRepoId: info.id });
-      broadcast('repos:active-changed', info);
-    }
-    return result;
-  });
+  ipcMain.handle(
+    "git:getLastCommit",
+    async (_e, repoId: string): Promise<LastCommit | null> =>
+      getLastCommit(repoOrThrow(repoId).path),
+  );
+
+  ipcMain.handle(
+    "git:undoLastCommit",
+    async (_e, repoId: string): Promise<CommitResult> =>
+      undoLastCommit(repoOrThrow(repoId).path),
+  );
+
+  ipcMain.handle(
+    "git:cloneRepo",
+    async (_e, url: string): Promise<CloneResult> => {
+      const dir = await dialog.showOpenDialog({
+        title: "Clone destination",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (dir.canceled || dir.filePaths.length === 0) {
+        return { ok: false, error: "Clone cancelled." };
+      }
+      const result = await cloneRepo(url, dir.filePaths[0]);
+      if (result.ok && result.path) {
+        const info = await buildRepoInfo(result.path);
+        upsertRepo(info);
+        setPrefs({ activeRepoId: info.id });
+        broadcast("repos:active-changed", info);
+      }
+      return result;
+    },
+  );
 
   // ─── Editor ────────────────────────────────────────────────────────────
-  ipcMain.handle('editor:detect', async () => detectEditors());
+  ipcMain.handle("editor:detect", async () => detectEditors());
   ipcMain.handle(
-    'editor:open',
-    async (_e, editor: EditorKind, target: string) => openInEditor(editor, target),
+    "editor:open",
+    async (_e, editor: EditorKind, target: string) =>
+      openInEditor(editor, target),
   );
 
   // ─── Terminal ──────────────────────────────────────────────────────────
-  ipcMain.handle('terminal:detect', async () => detectTerminals());
+  ipcMain.handle("terminal:detect", async () => detectTerminals());
   ipcMain.handle(
-    'terminal:open',
-    async (_e, terminal: TerminalKind, target: string) => openInTerminal(terminal, target),
+    "terminal:open",
+    async (_e, terminal: TerminalKind, target: string) =>
+      openInTerminal(terminal, target),
   );
 
   // ─── GitHub ────────────────────────────────────────────────────────────
-  ipcMain.handle('github:listAccounts', async (): Promise<GithubAccount[]> =>
-    gh.listAccounts(),
-  );
-  ipcMain.handle('github:getActiveAccount', async (): Promise<GithubAccount | null> =>
-    gh.getActiveAccount(),
+  ipcMain.handle(
+    "github:listAccounts",
+    async (): Promise<GithubAccount[]> => gh.listAccounts(),
   );
   ipcMain.handle(
-    'github:setActiveAccount',
-    async (_e, id: string): Promise<GithubAccount | null> => gh.setActiveAccount(id),
+    "github:getActiveAccount",
+    async (): Promise<GithubAccount | null> => gh.getActiveAccount(),
   );
-  ipcMain.handle('github:removeAccount', async (_e, id: string) => gh.removeAccount(id));
-  ipcMain.handle('github:startDeviceFlow', async (): Promise<DeviceFlowStart> =>
-    gh.startDeviceFlow(),
+  ipcMain.handle(
+    "github:setActiveAccount",
+    async (_e, id: string): Promise<GithubAccount | null> =>
+      gh.setActiveAccount(id),
   );
-  ipcMain.handle('github:pollDeviceFlow', async (): Promise<DeviceFlowStatus> =>
-    gh.pollDeviceFlow(),
+  ipcMain.handle("github:removeAccount", async (_e, id: string) =>
+    gh.removeAccount(id),
   );
-  ipcMain.handle('github:cancelDeviceFlow', async () => gh.cancelDeviceFlow());
-
-  ipcMain.handle('github:listPRs', async (_e, repoId: string): Promise<PRSummary[]> => {
-    const repo = repoOrThrow(repoId);
-    if (!repo.githubOwner || !repo.githubRepo) {
-      throw new Error('This repository does not have a GitHub remote.');
-    }
-    return gh.listPullRequests(repo.githubOwner, repo.githubRepo);
-  });
+  ipcMain.handle(
+    "github:startDeviceFlow",
+    async (): Promise<DeviceFlowStart> => gh.startDeviceFlow(),
+  );
+  ipcMain.handle(
+    "github:pollDeviceFlow",
+    async (): Promise<DeviceFlowStatus> => gh.pollDeviceFlow(),
+  );
+  ipcMain.handle("github:cancelDeviceFlow", async () => gh.cancelDeviceFlow());
 
   ipcMain.handle(
-    'github:fetchPR',
-    async (_e, repoId: string, prNumber: number): Promise<{ headRef: string; baseRef: string }> => {
+    "github:listPRs",
+    async (_e, repoId: string): Promise<PRSummary[]> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) {
-        throw new Error('This repository does not have a GitHub remote.');
+        throw new Error("This repository does not have a GitHub remote.");
       }
-      const { baseRef } = await gh.getPRBase(repo.githubOwner, repo.githubRepo, prNumber);
+      return gh.listPullRequests(repo.githubOwner, repo.githubRepo);
+    },
+  );
+
+  ipcMain.handle(
+    "github:fetchPR",
+    async (
+      _e,
+      repoId: string,
+      prNumber: number,
+    ): Promise<{ headRef: string; baseRef: string }> => {
+      const repo = repoOrThrow(repoId);
+      if (!repo.githubOwner || !repo.githubRepo) {
+        throw new Error("This repository does not have a GitHub remote.");
+      }
+      const { baseRef } = await gh.getPRBase(
+        repo.githubOwner,
+        repo.githubRepo,
+        prNumber,
+      );
       const refs = await fetchPRRef(repo.path, prNumber);
       await pinPRBaseRef(repo.path, prNumber, baseRef);
       return refs;
@@ -332,12 +393,16 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    'github:findPRForBranch',
+    "github:findPRForBranch",
     async (_e, repoId: string, branch: string): Promise<PRSummary | null> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) return null;
       try {
-        return await gh.findPRForBranch(repo.githubOwner, repo.githubRepo, branch);
+        return await gh.findPRForBranch(
+          repo.githubOwner,
+          repo.githubRepo,
+          branch,
+        );
       } catch {
         return null;
       }
@@ -345,7 +410,7 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    'github:getPR',
+    "github:getPR",
     async (_e, repoId: string, prNumber: number): Promise<PRSummary | null> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) return null;
@@ -354,18 +419,22 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    'github:listReviewComments',
-    async (_e, repoId: string, prNumber: number): Promise<PRReviewComment[]> => {
+    "github:listReviewComments",
+    async (
+      _e,
+      repoId: string,
+      prNumber: number,
+    ): Promise<PRReviewComment[]> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) {
-        throw new Error('This repository does not have a GitHub remote.');
+        throw new Error("This repository does not have a GitHub remote.");
       }
       return gh.listReviewComments(repo.githubOwner, repo.githubRepo, prNumber);
     },
   );
 
   ipcMain.handle(
-    'github:createReviewComment',
+    "github:createReviewComment",
     async (
       _e,
       repoId: string,
@@ -373,14 +442,14 @@ export function registerIpc(): void {
     ): Promise<PRReviewComment> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) {
-        throw new Error('This repository does not have a GitHub remote.');
+        throw new Error("This repository does not have a GitHub remote.");
       }
       return gh.createReviewComment(repo.githubOwner, repo.githubRepo, input);
     },
   );
 
   ipcMain.handle(
-    'github:replyReviewComment',
+    "github:replyReviewComment",
     async (
       _e,
       repoId: string,
@@ -390,7 +459,7 @@ export function registerIpc(): void {
     ): Promise<PRReviewComment> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) {
-        throw new Error('This repository does not have a GitHub remote.');
+        throw new Error("This repository does not have a GitHub remote.");
       }
       return gh.replyReviewComment(
         repo.githubOwner,
@@ -403,63 +472,85 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    'github:deleteReviewComment',
+    "github:deleteReviewComment",
     async (_e, repoId: string, commentId: number): Promise<void> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) {
-        throw new Error('This repository does not have a GitHub remote.');
+        throw new Error("This repository does not have a GitHub remote.");
       }
-      await gh.deleteReviewComment(repo.githubOwner, repo.githubRepo, commentId);
+      await gh.deleteReviewComment(
+        repo.githubOwner,
+        repo.githubRepo,
+        commentId,
+      );
     },
   );
 
   // ─── Shell ─────────────────────────────────────────────────────────────
-  ipcMain.handle('shell:openExternal', async (_e, url: string): Promise<void> => {
-    await shell.openExternal(url);
-  });
+  ipcMain.handle(
+    "shell:openExternal",
+    async (_e, url: string): Promise<void> => {
+      await shell.openExternal(url);
+    },
+  );
 
   // ─── State ─────────────────────────────────────────────────────────────
-  ipcMain.handle('state:getPrefs', async (): Promise<UserPrefs> => getPrefs());
+  ipcMain.handle("state:getPrefs", async (): Promise<UserPrefs> => getPrefs());
   ipcMain.handle(
-    'state:setPrefs',
-    async (_e, patch: Partial<UserPrefs>): Promise<UserPrefs> => setPrefs(patch),
+    "state:setPrefs",
+    async (_e, patch: Partial<UserPrefs>): Promise<UserPrefs> =>
+      setPrefs(patch),
   );
 
   ipcMain.handle(
-    'state:getSeenFiles',
+    "state:getSeenFiles",
     async (_e, repoId: string, contextKey: string): Promise<string[]> => {
       return getSeen(repoId, contextKey);
     },
   );
 
   ipcMain.handle(
-    'state:setFileSeen',
-    async (_e, repoId: string, contextKey: string, filePath: string, seen: boolean) => {
+    "state:setFileSeen",
+    async (
+      _e,
+      repoId: string,
+      contextKey: string,
+      filePath: string,
+      seen: boolean,
+    ) => {
       setSeen(repoId, contextKey, filePath, seen);
     },
   );
 
   ipcMain.handle(
-    'state:clearSeen',
-    async (_e, repoId: string, contextKey: string) => clearSeen(repoId, contextKey),
+    "state:clearSeen",
+    async (_e, repoId: string, contextKey: string) =>
+      clearSeen(repoId, contextKey),
   );
 
   ipcMain.handle(
-    'state:getCollapsedFiles',
+    "state:getCollapsedFiles",
     async (_e, repoId: string, contextKey: string): Promise<string[]> => {
       return getCollapsedFiles(repoId, contextKey);
     },
   );
 
   ipcMain.handle(
-    'state:setFileCollapsed',
-    async (_e, repoId: string, contextKey: string, filePath: string, collapsed: boolean) => {
+    "state:setFileCollapsed",
+    async (
+      _e,
+      repoId: string,
+      contextKey: string,
+      filePath: string,
+      collapsed: boolean,
+    ) => {
       setFileCollapsed(repoId, contextKey, filePath, collapsed);
     },
   );
 
   ipcMain.handle(
-    'state:clearCollapsedFiles',
-    async (_e, repoId: string, contextKey: string) => clearCollapsedFiles(repoId, contextKey),
+    "state:clearCollapsedFiles",
+    async (_e, repoId: string, contextKey: string) =>
+      clearCollapsedFiles(repoId, contextKey),
   );
 }

@@ -1,8 +1,20 @@
 <script lang="ts">
-  import { Check, Code2, LogOut, Palette, Plus, User } from 'lucide-svelte';
+  import {
+    Check,
+    Code2,
+    LogOut,
+    Palette,
+    Plus,
+    RotateCcw,
+    SlidersHorizontal,
+    User,
+    X,
+  } from 'lucide-svelte';
   import * as Dialog from './ui/dialog';
   import * as Avatar from './ui/avatar';
   import { Button } from './ui/button';
+  import { Input } from './ui/input';
+  import * as Table from './ui/table';
   import CursorIcon from './icons/CursorIcon.svelte';
   import VSCodeIcon from './icons/VSCodeIcon.svelte';
   import GhostIcon from './icons/GhostIcon.svelte';
@@ -11,6 +23,7 @@
   import FileListPreview from './FileListPreview.svelte';
   import ThemePreview from './ThemePreview.svelte';
   import { actions, app, effectiveEditor, effectiveTerminal } from '$lib/store.svelte';
+  import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
   import { cn } from '$lib/utils';
   import type {
     EditorKind,
@@ -19,12 +32,13 @@
     ViewMode,
   } from '@shared/types';
 
-  type SettingsTab = 'accounts' | 'appearance' | 'editor';
+  type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'editor';
   let activeTab = $state<SettingsTab>('accounts');
 
   const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
     { id: 'accounts', label: 'Accounts', icon: User },
     { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
     { id: 'editor', label: 'Editor', icon: Code2 },
   ];
 
@@ -46,6 +60,9 @@
   let draftViewMode = $state<ViewMode>('split');
   let draftFileListLayout = $state<FileListLayout>('tree');
   let draftShowFileIcons = $state<boolean>(true);
+  let draftMaxDiffLines = $state<number>(1500);
+  let draftHiddenDiffPatterns = $state<string[]>([]);
+  let newPattern = $state<string>('');
   let draftTheme = $state<'light' | 'dark'>('dark');
   let draftEditor = $state<EditorKind | null>(null);
   let draftTerminal = $state<TerminalKind | null>(null);
@@ -55,11 +72,36 @@
       draftViewMode = app.viewMode;
       draftFileListLayout = app.fileListLayout;
       draftShowFileIcons = app.showFileIcons;
+      draftMaxDiffLines = app.maxDiffLines;
+      draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
+      newPattern = '';
       draftTheme = app.theme;
       draftEditor = effectiveEditor();
       draftTerminal = effectiveTerminal();
     }
   });
+
+  function addPattern(): void {
+    const p = newPattern.trim();
+    if (!p || draftHiddenDiffPatterns.includes(p)) {
+      newPattern = '';
+      return;
+    }
+    draftHiddenDiffPatterns = [...draftHiddenDiffPatterns, p];
+    newPattern = '';
+  }
+
+  function removePattern(pattern: string): void {
+    draftHiddenDiffPatterns = draftHiddenDiffPatterns.filter((p) => p !== pattern);
+  }
+
+  function resetPatterns(): void {
+    draftHiddenDiffPatterns = [...DEFAULT_HIDDEN_DIFF_PATTERNS];
+  }
+
+  function arraysEqual(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
 
   async function save(): Promise<void> {
     const promises: Promise<unknown>[] = [];
@@ -71,6 +113,17 @@
     }
     if (draftShowFileIcons !== app.showFileIcons) {
       promises.push(actions.setShowFileIcons(draftShowFileIcons));
+    }
+    const parsedMaxDiffLines = Number(draftMaxDiffLines);
+    const clampedMaxDiffLines =
+      Number.isFinite(parsedMaxDiffLines) && parsedMaxDiffLines >= 0
+        ? Math.floor(parsedMaxDiffLines)
+        : 0;
+    if (clampedMaxDiffLines !== app.maxDiffLines) {
+      promises.push(actions.setMaxDiffLines(clampedMaxDiffLines));
+    }
+    if (!arraysEqual(draftHiddenDiffPatterns, app.hiddenDiffPatterns)) {
+      promises.push(actions.setHiddenDiffPatterns(draftHiddenDiffPatterns));
     }
     if (draftTheme !== app.theme) {
       promises.push(actions.setTheme(draftTheme));
@@ -400,6 +453,101 @@
                   </button>
                 {/each}
               </div>
+            </div>
+          </section>
+        {:else if activeTab === 'behavior'}
+          <section class="space-y-6">
+            <div>
+              <h3 class="text-base font-semibold">Large diffs</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Diffs with more changed lines than this are hidden behind a
+                "Load diff" button by default. Set to 0 to disable the size
+                limit.
+              </p>
+
+              <div class="mt-4 flex items-center gap-2">
+                <Input
+                  type="number"
+                  min="0"
+                  step="100"
+                  bind:value={draftMaxDiffLines}
+                  class="w-32"
+                />
+                <span class="text-xs text-muted-foreground">changed lines</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-base font-semibold">Hidden files</h3>
+                {#if !arraysEqual([...draftHiddenDiffPatterns].sort(), [...DEFAULT_HIDDEN_DIFF_PATTERNS].sort())}
+                  <Button variant="ghost" size="sm" onclick={resetPatterns}>
+                    <RotateCcw class="size-3.5" /> Reset to defaults
+                  </Button>
+                {/if}
+              </div>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Files matching these glob patterns have their diffs hidden
+                behind a "Load diff" button by default — lock files, build
+                outputs, etc. A pattern with no slash matches the file name
+                anywhere (e.g. <code>*.lock</code>); one with a slash matches the
+                full path (e.g. <code>dist/**</code>).
+              </p>
+
+              <div class="mt-3 flex gap-2">
+                <Input
+                  placeholder="e.g. *.min.js or dist/**"
+                  bind:value={newPattern}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addPattern();
+                    }
+                  }}
+                  class="flex-1"
+                />
+                <Button variant="outline" onclick={addPattern}>
+                  <Plus class="size-3.5" /> Add
+                </Button>
+              </div>
+
+              {#if draftHiddenDiffPatterns.length === 0}
+                <p class="mt-3 text-xs text-muted-foreground">
+                  No patterns — every file's diff renders inline.
+                </p>
+              {:else}
+                <div
+                  class="mt-3 overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:max-h-[250px]"
+                >
+                  <Table.Root>
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.Head class="sticky top-0 z-10 bg-background">
+                          Pattern
+                        </Table.Head>
+                        <Table.Head class="sticky top-0 z-10 w-12 bg-background"></Table.Head>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {#each draftHiddenDiffPatterns as pattern (pattern)}
+                        <Table.Row>
+                          <Table.Cell class="font-mono text-xs">{pattern}</Table.Cell>
+                          <Table.Cell class="py-1 text-right">
+                            <button
+                              type="button"
+                              class="ml-auto inline-grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                              title={`Remove ${pattern}`}
+                              onclick={() => removePattern(pattern)}
+                            >
+                              <X class="size-3.5" />
+                            </button>
+                          </Table.Cell>
+                        </Table.Row>
+                      {/each}
+                    </Table.Body>
+                  </Table.Root>
+                </div>
+              {/if}
             </div>
           </section>
         {:else if activeTab === 'editor'}

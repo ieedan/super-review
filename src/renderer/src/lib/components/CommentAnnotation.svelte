@@ -80,7 +80,7 @@
             <Reply class="size-3.5" /> Reply
           </Button>
           {#if c.canDelete}
-            <Button variant="ghost" size="sm" onclick={() => remove(c)}>
+            <Button variant="destructive" size="sm" onclick={() => remove(c)}>
               <Trash2 class="size-3.5" /> Delete
             </Button>
           {/if}

@@ -7,6 +7,7 @@ import type {
   EditorKind,
   FileListLayout,
   GithubAccount,
+  LastCommit,
   PRReviewComment,
   PRSummary,
   PushStatus,
@@ -14,10 +15,11 @@ import type {
   TerminalKind,
   UserPrefs,
   ViewMode,
-} from '@shared/types';
-import { diffContextKey } from '@shared/diff-context';
-import { comparePathsVSCodeStyle } from '$lib/utils';
-import { repoFrecency } from '$lib/repo-frecency.svelte';
+} from "@shared/types";
+import { diffContextKey } from "@shared/diff-context";
+import { DEFAULT_HIDDEN_DIFF_PATTERNS } from "@shared/diff-defer";
+import { comparePathsVSCodeStyle } from "$lib/utils";
+import { repoFrecency } from "$lib/repo-frecency.svelte";
 
 // Re-export so existing component imports (`from '$lib/store.svelte'`) keep
 // working. The canonical definition lives in @shared/types.
@@ -28,7 +30,7 @@ export type { ContextTab };
 export interface PendingComposer {
   filePath: string;
   line: number;
-  side: 'LEFT' | 'RIGHT';
+  side: "LEFT" | "RIGHT";
   // Optional comment id we're replying to. When set, posting will use the
   // reply endpoint instead of creating a top-level comment.
   replyTo?: number;
@@ -45,6 +47,10 @@ interface AppState {
   diffContext: DiffContext;
   contextTab: ContextTab;
   changedFiles: ChangedFile[];
+  // Free-text filter applied to the changed-files list. Shared between the
+  // sidebar (where it's typed) and the diff view (which hides sections for
+  // files that don't match) so both stay in sync.
+  fileSearchQuery: string;
   // Count of working-tree changes, kept in sync regardless of the active tab
   // so the Unstaged tab can always show a badge with the current count.
   unstagedFileCount: number;
@@ -54,7 +60,9 @@ interface AppState {
   viewMode: ViewMode;
   fileListLayout: FileListLayout;
   showFileIcons: boolean;
-  theme: 'light' | 'dark';
+  maxDiffLines: number;
+  hiddenDiffPatterns: string[];
+  theme: "light" | "dark";
   prefs: UserPrefs | null;
   githubAccounts: GithubAccount[];
   activeGithubAccount: GithubAccount | null;
@@ -69,6 +77,9 @@ interface AppState {
   settingsDialogOpen: boolean;
   githubSignInOpen: boolean;
   pushStatus: PushStatus | null;
+  // Tip commit of the current branch, surfaced so the commit box can offer an
+  // "Undo" affordance for the most recent unpushed commit.
+  lastCommit: LastCommit | null;
   // PR matching the current branch (if any). Refreshed alongside push status.
   branchPR: PRSummary | null;
   // PR currently being reviewed (when diffContext.kind === 'pr').
@@ -83,8 +94,15 @@ interface AppState {
   createBranchDialogOpen: boolean;
   push: {
     inProgress: boolean;
-    stage: 'idle' | 'fetching' | 'committing' | 'pulling' | 'pushing' | 'conflicts' | 'done';
-    intent: 'push' | 'pull';
+    stage:
+      | "idle"
+      | "fetching"
+      | "committing"
+      | "pulling"
+      | "pushing"
+      | "conflicts"
+      | "done";
+    intent: "push" | "pull";
     error: string | null;
   };
   conflictFiles: string[];
@@ -97,7 +115,11 @@ interface AppState {
   error: string | null;
 }
 
-export function composerKey(filePath: string, side: 'LEFT' | 'RIGHT', line: number): string {
+export function composerKey(
+  filePath: string,
+  side: "LEFT" | "RIGHT",
+  line: number,
+): string {
   return `${filePath}::${side}::${line}`;
 }
 
@@ -109,7 +131,7 @@ export function composerKey(filePath: string, side: 'LEFT' | 'RIGHT', line: numb
 //   positions, for instance. GitHub will mark the resulting comment outdated
 //   in that case, same as commenting from a stale web view.
 export function commentablePRNumber(): number | null {
-  if (app.diffContext.kind === 'pr') return app.diffContext.prNumber;
+  if (app.diffContext.kind === "pr") return app.diffContext.prNumber;
   if (app.branchPR) return app.branchPR.number;
   return null;
 }
@@ -120,17 +142,20 @@ const initial: AppState = {
   branches: [],
   currentBranch: null,
   prs: [],
-  diffContext: { kind: 'workingTree' },
-  contextTab: 'unstaged',
+  diffContext: { kind: "workingTree" },
+  contextTab: "unstaged",
   changedFiles: [],
+  fileSearchQuery: "",
   unstagedFileCount: 0,
   selectedFile: null,
   seenFiles: new Set(),
   collapsedFiles: new Set(),
-  viewMode: 'split',
-  fileListLayout: 'tree',
+  viewMode: "split",
+  fileListLayout: "tree",
   showFileIcons: true,
-  theme: 'dark',
+  maxDiffLines: 1500,
+  hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
+  theme: "dark",
   prefs: null,
   githubAccounts: [],
   activeGithubAccount: null,
@@ -145,6 +170,7 @@ const initial: AppState = {
   settingsDialogOpen: false,
   githubSignInOpen: false,
   pushStatus: null,
+  lastCommit: null,
   branchPR: null,
   activePR: null,
   prComments: {},
@@ -152,7 +178,7 @@ const initial: AppState = {
   pendingComposers: {},
   addRepoDialogOpen: false,
   createBranchDialogOpen: false,
-  push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
+  push: { inProgress: false, stage: "idle", intent: "push", error: null },
   conflictFiles: [],
   loading: { files: false, branches: false, prs: false, repos: false },
   error: null,
@@ -176,7 +202,11 @@ function filesCacheKey(repoId: string, ctx: DiffContext): string {
   return `${repoId}::${diffContextKey(ctx)}`;
 }
 
-function diffCacheKeyFor(repoId: string, ctx: DiffContext, filePath: string): string {
+function diffCacheKeyFor(
+  repoId: string,
+  ctx: DiffContext,
+  filePath: string,
+): string {
   return `${repoId}::${diffContextKey(ctx)}::${filePath}`;
 }
 
@@ -201,10 +231,10 @@ export function setError(msg: string | null): void {
   app.error = msg;
 }
 
-function applyTheme(theme: 'light' | 'dark'): void {
+function applyTheme(theme: "light" | "dark"): void {
   const root = document.documentElement;
-  root.classList.toggle('dark', theme === 'dark');
-  root.classList.toggle('light', theme === 'light');
+  root.classList.toggle("dark", theme === "dark");
+  root.classList.toggle("light", theme === "light");
 }
 
 // Editor the user has configured, falling back to whichever is detected.
@@ -212,13 +242,18 @@ function applyTheme(theme: 'light' | 'dark'): void {
 export function effectiveEditor(): EditorKind | null {
   const pref = app.prefs?.externalEditor ?? null;
   if (pref && app.editors[pref]) return pref;
-  if (app.editors.cursor) return 'cursor';
-  if (app.editors.vscode) return 'vscode';
+  if (app.editors.cursor) return "cursor";
+  if (app.editors.vscode) return "vscode";
   return null;
 }
 
 // Terminal the user has configured, falling back to whichever is detected.
-const TERMINAL_FALLBACK_ORDER: TerminalKind[] = ['ghostty', 'warp', 'iterm', 'terminal'];
+const TERMINAL_FALLBACK_ORDER: TerminalKind[] = [
+  "ghostty",
+  "warp",
+  "iterm",
+  "terminal",
+];
 export function effectiveTerminal(): TerminalKind | null {
   const pref = app.prefs?.externalTerminal ?? null;
   if (pref && app.terminals[pref]) return pref;
@@ -251,7 +286,9 @@ async function refreshBranches(): Promise<void> {
   app.loading.branches = true;
   try {
     app.branches = await window.api.git.listBranches(app.activeRepo.id);
-    app.currentBranch = await window.api.git.getCurrentBranch(app.activeRepo.id);
+    app.currentBranch = await window.api.git.getCurrentBranch(
+      app.activeRepo.id,
+    );
   } catch (err) {
     setError(err instanceof Error ? err.message : String(err));
   } finally {
@@ -262,12 +299,20 @@ async function refreshBranches(): Promise<void> {
 async function refreshPushStatus(): Promise<void> {
   if (!app.activeRepo) {
     app.pushStatus = null;
+    app.lastCommit = null;
     return;
   }
+  const repoId = app.activeRepo.id;
   try {
-    app.pushStatus = await window.api.git.getPushStatus(app.activeRepo.id);
+    const [status, lastCommit] = await Promise.all([
+      window.api.git.getPushStatus(repoId),
+      window.api.git.getLastCommit(repoId),
+    ]);
+    app.pushStatus = status;
+    app.lastCommit = lastCommit;
   } catch {
     app.pushStatus = null;
+    app.lastCommit = null;
   }
 }
 
@@ -296,7 +341,7 @@ async function refreshBranchPR(): Promise<void> {
   }
   // Keep PR-comment state in sync with the branch tab's PR. Only refetch when
   // we're not in `kind: 'pr'` mode (that flow drives its own fetch already).
-  if (app.diffContext.kind !== 'pr') {
+  if (app.diffContext.kind !== "pr") {
     const next = app.branchPR?.number ?? null;
     if (next == null) {
       app.prComments = {};
@@ -312,6 +357,9 @@ async function refreshBranchPR(): Promise<void> {
 // change, and prefs writes are cheap.
 function applyContextTab(tab: ContextTab): void {
   app.contextTab = tab;
+  // The query is scoped to "files on this tab/repo"; carrying it across
+  // surfaces a stale filter that hides everything in the new context.
+  app.fileSearchQuery = "";
   void window.api.state.setPrefs({ contextTab: tab }).then((prefs) => {
     app.prefs = prefs;
   });
@@ -319,13 +367,13 @@ function applyContextTab(tab: ContextTab): void {
 
 // Resolve which DiffContext the current tab should drive.
 function contextForTab(tab: ContextTab): DiffContext {
-  if (tab === 'branch') {
-    const base = app.activeRepo?.defaultBranch ?? 'main';
-    const head = app.currentBranch ?? 'HEAD';
-    return { kind: 'branch', base, head };
+  if (tab === "branch") {
+    const base = app.activeRepo?.defaultBranch ?? "main";
+    const head = app.currentBranch ?? "HEAD";
+    return { kind: "branch", base, head };
   }
   // 'sessions' is a placeholder — treat like workingTree until implemented.
-  return { kind: 'workingTree' };
+  return { kind: "workingTree" };
 }
 
 // Fetch the working-tree file count and store it on `app.unstagedFileCount`
@@ -339,7 +387,9 @@ async function refreshUnstagedCount(): Promise<void> {
   }
   const repoId = app.activeRepo.id;
   try {
-    const files = await window.api.git.listChangedFiles(repoId, { kind: 'workingTree' });
+    const files = await window.api.git.listChangedFiles(repoId, {
+      kind: "workingTree",
+    });
     if (!app.activeRepo || app.activeRepo.id !== repoId) return;
     app.unstagedFileCount = files.length;
   } catch {
@@ -375,7 +425,9 @@ async function refreshFiles(): Promise<void> {
     // otherwise the "first file in the tree" can land mid-list in the diff
     // view, and scrolling past it jumps to whatever git happened to list
     // before/after instead of feeling like you're at the boundary.
-    const files = [...raw].sort((a, b) => comparePathsVSCodeStyle(a.path, b.path));
+    const files = [...raw].sort((a, b) =>
+      comparePathsVSCodeStyle(a.path, b.path),
+    );
     // Bail if the user switched tabs / repos while we were fetching.
     if (!app.activeRepo || app.activeRepo.id !== repoId) return;
     const currentCtx = $state.snapshot(app.diffContext) as DiffContext;
@@ -406,7 +458,7 @@ async function refreshFiles(): Promise<void> {
     // Keep the Unstaged tab badge in sync. When the active context already is
     // the working tree, the fetched list IS the unstaged count; otherwise we
     // need a separate fetch since the active tab isn't tracking it.
-    if (ctx.kind === 'workingTree') {
+    if (ctx.kind === "workingTree") {
       app.unstagedFileCount = files.length;
     } else {
       void refreshUnstagedCount();
@@ -432,6 +484,8 @@ export const actions = {
     app.viewMode = app.prefs.viewMode;
     app.fileListLayout = app.prefs.fileListLayout;
     app.showFileIcons = app.prefs.showFileIcons;
+    app.maxDiffLines = app.prefs.maxDiffLines;
+    app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
     app.theme = app.prefs.theme;
     applyTheme(app.theme);
     await refreshGithubAccounts();
@@ -444,18 +498,26 @@ export const actions = {
       // Restore the last tab. The 'branch' tab needs `currentBranch` to build
       // its DiffContext, so refresh branches first when restoring it.
       const savedTab = app.prefs.contextTab;
-      if (savedTab === 'branch') {
+      if (savedTab === "branch") {
         await refreshBranches();
-        app.contextTab = 'branch';
-        app.diffContext = contextForTab('branch');
+        app.contextTab = "branch";
+        app.diffContext = contextForTab("branch");
         await Promise.all([refreshFiles(), refreshPushStatus()]);
-      } else if (savedTab === 'sessions') {
-        app.contextTab = 'sessions';
+      } else if (savedTab === "sessions") {
+        app.contextTab = "sessions";
         // Sessions is a placeholder — no file list to fetch. We still want the
         // Unstaged tab badge to be accurate on launch, so fetch the count.
-        await Promise.all([refreshBranches(), refreshPushStatus(), refreshUnstagedCount()]);
+        await Promise.all([
+          refreshBranches(),
+          refreshPushStatus(),
+          refreshUnstagedCount(),
+        ]);
       } else {
-        await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+        await Promise.all([
+          refreshBranches(),
+          refreshFiles(),
+          refreshPushStatus(),
+        ]);
       }
       await refreshBranchPR();
     }
@@ -467,8 +529,8 @@ export const actions = {
       if (repo) {
         app.activeRepo = repo;
         repoFrecency.use(repo.id);
-        applyContextTab('unstaged');
-        app.diffContext = { kind: 'workingTree' };
+        applyContextTab("unstaged");
+        app.diffContext = { kind: "workingTree" };
         await Promise.all([
           refreshRepos(),
           refreshBranches(),
@@ -486,18 +548,22 @@ export const actions = {
     try {
       const result = await window.api.git.cloneRepo(url);
       if (!result.ok) {
-        if (result.error && result.error !== 'Clone cancelled.') {
+        if (result.error && result.error !== "Clone cancelled.") {
           setError(result.error);
         }
         return;
       }
-      applyContextTab('unstaged');
-      app.diffContext = { kind: 'workingTree' };
+      applyContextTab("unstaged");
+      app.diffContext = { kind: "workingTree" };
       await refreshRepos();
       app.activeRepo = await window.api.repos.getActive();
       if (app.activeRepo) {
         repoFrecency.use(app.activeRepo.id);
-        await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+        await Promise.all([
+          refreshBranches(),
+          refreshFiles(),
+          refreshPushStatus(),
+        ]);
         await refreshBranchPR();
       }
     } catch (err) {
@@ -517,8 +583,8 @@ export const actions = {
     if (repo) {
       app.activeRepo = repo;
       repoFrecency.use(repo.id);
-      applyContextTab('unstaged');
-      app.diffContext = { kind: 'workingTree' };
+      applyContextTab("unstaged");
+      app.diffContext = { kind: "workingTree" };
       app.prs = [];
       app.branchPR = null;
       await Promise.all([
@@ -545,7 +611,7 @@ export const actions = {
 
   async setDiffContext(ctx: DiffContext): Promise<void> {
     app.diffContext = ctx;
-    if (ctx.kind !== 'pr') {
+    if (ctx.kind !== "pr") {
       app.activePR = null;
       app.prComments = {};
       app.pendingComposers = {};
@@ -560,19 +626,22 @@ export const actions = {
   async setContextTab(tab: ContextTab): Promise<void> {
     if (app.contextTab === tab) return;
     applyContextTab(tab);
-    if (tab === 'sessions') {
+    if (tab === "sessions") {
       // No sessions yet — clear the file list and skip the IPC roundtrip.
       app.changedFiles = [];
       app.selectedFile = null;
       app.seenFiles = new Set();
       app.collapsedFiles = new Set();
-      app.diffContext = { kind: 'workingTree' };
+      app.diffContext = { kind: "workingTree" };
       return;
     }
     app.diffContext = contextForTab(tab);
     if (app.activeRepo) {
       const cached = filesCache.get(
-        filesCacheKey(app.activeRepo.id, $state.snapshot(app.diffContext) as DiffContext),
+        filesCacheKey(
+          app.activeRepo.id,
+          $state.snapshot(app.diffContext) as DiffContext,
+        ),
       );
       if (cached) {
         app.changedFiles = cached.changedFiles;
@@ -614,7 +683,7 @@ export const actions = {
   },
 
   async toggleViewMode(): Promise<void> {
-    app.viewMode = app.viewMode === 'split' ? 'unified' : 'split';
+    app.viewMode = app.viewMode === "split" ? "unified" : "split";
     app.prefs = await window.api.state.setPrefs({ viewMode: app.viewMode });
   },
 
@@ -640,7 +709,10 @@ export const actions = {
     app.seenFiles = new Set();
   },
 
-  async toggleFileCollapsed(filePath: string, collapsed?: boolean): Promise<void> {
+  async toggleFileCollapsed(
+    filePath: string,
+    collapsed?: boolean,
+  ): Promise<void> {
     if (!app.activeRepo) return;
     const next = collapsed ?? !app.collapsedFiles.has(filePath);
     const set = new Set(app.collapsedFiles);
@@ -661,10 +733,14 @@ export const actions = {
     try {
       await window.api.git.checkout(app.activeRepo.id, branch);
       // Re-derive the diff context for tabs that depend on currentBranch.
-      if (app.contextTab === 'branch') {
-        app.diffContext = contextForTab('branch');
+      if (app.contextTab === "branch") {
+        app.diffContext = contextForTab("branch");
       }
-      await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+      await Promise.all([
+        refreshBranches(),
+        refreshFiles(),
+        refreshPushStatus(),
+      ]);
       await refreshBranchPR();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -694,7 +770,7 @@ export const actions = {
         summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber));
       app.prComments = {};
       app.pendingComposers = {};
-      await actions.setDiffContext({ kind: 'pr', prNumber });
+      await actions.setDiffContext({ kind: "pr", prNumber });
       void actions.refreshPRComments();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -727,22 +803,30 @@ export const actions = {
     }
   },
 
-  openComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number, replyTo?: number): void {
+  openComposer(
+    filePath: string,
+    side: "LEFT" | "RIGHT",
+    line: number,
+    replyTo?: number,
+  ): void {
     const key = composerKey(filePath, side, line);
     if (app.pendingComposers[key]) return;
     app.pendingComposers = {
       ...app.pendingComposers,
-      [key]: { filePath, line, side, replyTo, draft: '', submitting: false },
+      [key]: { filePath, line, side, replyTo, draft: "", submitting: false },
     };
   },
 
   setComposerDraft(key: string, draft: string): void {
     const c = app.pendingComposers[key];
     if (!c) return;
-    app.pendingComposers = {
-      ...app.pendingComposers,
-      [key]: { ...c, draft },
-    };
+    // Mutate in place. Svelte 5 deep-proxies $state, so consumers that read
+    // `.draft` re-run, but consumers that only read structural fields
+    // (filePath, line, side, replyTo) — like the `lineAnnotations` derived
+    // in DiffFileSection — don't see a change and won't trigger Pierre's
+    // expensive `rerender`. Without this, every keystroke tore down the
+    // textarea and stole focus.
+    c.draft = draft;
   },
 
   cancelComposer(key: string): void {
@@ -758,10 +842,9 @@ export const actions = {
     if (prNumber == null) return;
     const c = app.pendingComposers[key];
     if (!c || !c.draft.trim() || c.submitting) return;
-    app.pendingComposers = {
-      ...app.pendingComposers,
-      [key]: { ...c, submitting: true },
-    };
+    // Mutate in place — same rationale as setComposerDraft. Flipping
+    // `submitting` shouldn't churn `lineAnnotations` and tear down the form.
+    c.submitting = true;
     try {
       const created = c.replyTo
         ? await window.api.github.replyReviewComment(
@@ -786,21 +869,23 @@ export const actions = {
       void _done;
       app.pendingComposers = rest;
     } catch (err) {
-      app.pendingComposers = {
-        ...app.pendingComposers,
-        [key]: { ...c, submitting: false },
-      };
+      c.submitting = false;
       setError(err instanceof Error ? err.message : String(err));
     }
   },
 
   async deleteComment(commentId: number, filePath: string): Promise<void> {
     if (!app.activeRepo) return;
+    // Optimistically remove the comment so the UI feels instant — the
+    // GitHub round-trip can take 500ms+. Snapshot the previous list so we
+    // can restore on failure.
+    const prev = app.prComments[filePath] ?? [];
+    const next = prev.filter((c) => c.id !== commentId);
+    app.prComments = { ...app.prComments, [filePath]: next };
     try {
       await window.api.github.deleteReviewComment(app.activeRepo.id, commentId);
-      const next = (app.prComments[filePath] ?? []).filter((c) => c.id !== commentId);
-      app.prComments = { ...app.prComments, [filePath]: next };
     } catch (err) {
+      app.prComments = { ...app.prComments, [filePath]: prev };
       setError(err instanceof Error ? err.message : String(err));
     }
   },
@@ -830,9 +915,13 @@ export const actions = {
       const result = await window.api.git.fetchOrigin(app.activeRepo.id);
       if (!result.ok && result.error) {
         // Don't show as user-facing error — surface only on explicit failures
-        console.warn('fetchOrigin failed:', result.error);
+        console.warn("fetchOrigin failed:", result.error);
       }
-      await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+      await Promise.all([
+        refreshFiles(),
+        refreshBranches(),
+        refreshPushStatus(),
+      ]);
       await refreshBranchPR();
     } finally {
       app.fetchingOrigin = false;
@@ -863,18 +952,26 @@ export const actions = {
   ): Promise<boolean> {
     if (!app.activeRepo) return false;
     try {
-      const result = await window.api.git.createBranch(app.activeRepo.id, name, {
-        base: opts.base,
-        checkout: opts.bringChanges,
-      });
+      const result = await window.api.git.createBranch(
+        app.activeRepo.id,
+        name,
+        {
+          base: opts.base,
+          checkout: opts.bringChanges,
+        },
+      );
       if (!result.ok) {
-        setError(result.error ?? 'Could not create branch.');
+        setError(result.error ?? "Could not create branch.");
         return false;
       }
-      if (app.contextTab === 'branch') {
-        app.diffContext = contextForTab('branch');
+      if (app.contextTab === "branch") {
+        app.diffContext = contextForTab("branch");
       }
-      await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+      await Promise.all([
+        refreshBranches(),
+        refreshFiles(),
+        refreshPushStatus(),
+      ]);
       await refreshBranchPR();
       return true;
     } catch (err) {
@@ -889,8 +986,8 @@ export const actions = {
       if (repo) {
         app.activeRepo = repo;
         repoFrecency.use(repo.id);
-        applyContextTab('unstaged');
-        app.diffContext = { kind: 'workingTree' };
+        applyContextTab("unstaged");
+        app.diffContext = { kind: "workingTree" };
         await Promise.all([
           refreshRepos(),
           refreshBranches(),
@@ -911,16 +1008,56 @@ export const actions = {
     const repoId = app.activeRepo.id;
     const trimmedSummary = summary.trim();
     if (!trimmedSummary) return false;
-    const trimmedDescription = description?.trim() ?? '';
+    const trimmedDescription = description?.trim() ?? "";
     const message = trimmedDescription
       ? `${trimmedSummary}\n\n${trimmedDescription}`
       : trimmedSummary;
-    app.push = { inProgress: true, stage: 'committing', intent: 'push', error: null };
+    app.push = {
+      inProgress: true,
+      stage: "committing",
+      intent: "push",
+      error: null,
+    };
     try {
       const commit = await window.api.git.commitAll(repoId, message);
-      if (!commit.ok) throw new Error(commit.error ?? 'Commit failed.');
-      app.push.stage = 'done';
-      await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+      if (!commit.ok) throw new Error(commit.error ?? "Commit failed.");
+      app.push.stage = "done";
+      await Promise.all([
+        refreshFiles(),
+        refreshBranches(),
+        refreshPushStatus(),
+      ]);
+      await refreshBranchPR();
+      return true;
+    } catch (err) {
+      app.push.error = err instanceof Error ? err.message : String(err);
+      setError(app.push.error);
+      return false;
+    } finally {
+      app.push.inProgress = false;
+    }
+  },
+
+  // Undo the most recent commit, keeping its changes staged in the working
+  // tree. Only safe (and offered) while the commit hasn't been pushed.
+  async undoLastCommit(): Promise<boolean> {
+    if (!app.activeRepo || app.push.inProgress) return false;
+    const repoId = app.activeRepo.id;
+    app.push = {
+      inProgress: true,
+      stage: "committing",
+      intent: "push",
+      error: null,
+    };
+    try {
+      const result = await window.api.git.undoLastCommit(repoId);
+      if (!result.ok) throw new Error(result.error ?? "Undo failed.");
+      app.push.stage = "done";
+      await Promise.all([
+        refreshFiles(),
+        refreshBranches(),
+        refreshPushStatus(),
+      ]);
       await refreshBranchPR();
       return true;
     } catch (err) {
@@ -941,8 +1078,8 @@ export const actions = {
       await window.api.shell.openExternal(app.branchPR.url);
       return;
     }
-    const base = repo.defaultBranch ?? 'main';
-    const head = app.currentBranch ?? '';
+    const base = repo.defaultBranch ?? "main";
+    const head = app.currentBranch ?? "";
     if (!head) return;
     const url = `https://github.com/${repo.githubOwner}/${repo.githubRepo}/compare/${encodeURIComponent(
       base,
@@ -955,28 +1092,37 @@ export const actions = {
   async pull(): Promise<void> {
     if (!app.activeRepo || app.push.inProgress) return;
     const repoId = app.activeRepo.id;
-    app.push = { inProgress: true, stage: 'fetching', intent: 'pull', error: null };
+    app.push = {
+      inProgress: true,
+      stage: "fetching",
+      intent: "pull",
+      error: null,
+    };
     app.conflictFiles = [];
     try {
       await window.api.git.fetchOrigin(repoId);
-      app.push.stage = 'pulling';
+      app.push.stage = "pulling";
       const pullResult = await window.api.git.pull(repoId);
       if (!pullResult.ok) {
         if (pullResult.conflicts.length > 0) {
           app.conflictFiles = pullResult.conflicts;
-          app.push.stage = 'conflicts';
+          app.push.stage = "conflicts";
           return;
         }
-        throw new Error(pullResult.error ?? 'Pull failed.');
+        throw new Error(pullResult.error ?? "Pull failed.");
       }
-      app.push.stage = 'done';
-      await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+      app.push.stage = "done";
+      await Promise.all([
+        refreshFiles(),
+        refreshBranches(),
+        refreshPushStatus(),
+      ]);
       await refreshBranchPR();
     } catch (err) {
       app.push.error = err instanceof Error ? err.message : String(err);
       setError(app.push.error);
     } finally {
-      if (app.push.stage !== 'conflicts') {
+      if (app.push.stage !== "conflicts") {
         app.push.inProgress = false;
       }
     }
@@ -987,37 +1133,46 @@ export const actions = {
   async push(): Promise<void> {
     if (!app.activeRepo || app.push.inProgress) return;
     const repoId = app.activeRepo.id;
-    app.push = { inProgress: true, stage: 'fetching', intent: 'push', error: null };
+    app.push = {
+      inProgress: true,
+      stage: "fetching",
+      intent: "push",
+      error: null,
+    };
     app.conflictFiles = [];
     try {
       await window.api.git.fetchOrigin(repoId);
       await refreshPushStatus();
       if (app.pushStatus?.behind && app.pushStatus.behind > 0) {
-        app.push.stage = 'pulling';
+        app.push.stage = "pulling";
         const pullResult = await window.api.git.pull(repoId);
         if (!pullResult.ok) {
           if (pullResult.conflicts.length > 0) {
             app.conflictFiles = pullResult.conflicts;
-            app.push.stage = 'conflicts';
+            app.push.stage = "conflicts";
             // Don't clear inProgress — UI shows the conflict dialog until
             // the user resolves or aborts.
             return;
           }
-          throw new Error(pullResult.error ?? 'Pull failed.');
+          throw new Error(pullResult.error ?? "Pull failed.");
         }
       }
-      app.push.stage = 'pushing';
+      app.push.stage = "pushing";
       const pushResult = await window.api.git.push(repoId);
-      if (!pushResult.ok) throw new Error(pushResult.error ?? 'Push failed.');
-      app.push.stage = 'done';
-      await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+      if (!pushResult.ok) throw new Error(pushResult.error ?? "Push failed.");
+      app.push.stage = "done";
+      await Promise.all([
+        refreshFiles(),
+        refreshBranches(),
+        refreshPushStatus(),
+      ]);
       await refreshBranchPR();
     } catch (err) {
       app.push.error = err instanceof Error ? err.message : String(err);
       setError(app.push.error);
     } finally {
       // Only release the lock if we're not currently waiting on conflicts.
-      if (app.push.stage !== 'conflicts') {
+      if (app.push.stage !== "conflicts") {
         app.push.inProgress = false;
       }
     }
@@ -1046,22 +1201,30 @@ export const actions = {
           app.conflictFiles = merge.conflicts;
           return;
         }
-        throw new Error(merge.error ?? 'Could not continue merge.');
+        throw new Error(merge.error ?? "Could not continue merge.");
       }
       app.conflictFiles = [];
       // For a pull-only flow, the merge commit is all we needed — skip push.
-      if (app.push.intent === 'pull') {
-        app.push.stage = 'done';
-        await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+      if (app.push.intent === "pull") {
+        app.push.stage = "done";
+        await Promise.all([
+          refreshFiles(),
+          refreshBranches(),
+          refreshPushStatus(),
+        ]);
         await refreshBranchPR();
         return;
       }
       // Resume the push pipeline.
-      app.push.stage = 'pushing';
+      app.push.stage = "pushing";
       const pushResult = await window.api.git.push(repoId);
-      if (!pushResult.ok) throw new Error(pushResult.error ?? 'Push failed.');
-      app.push.stage = 'done';
-      await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+      if (!pushResult.ok) throw new Error(pushResult.error ?? "Push failed.");
+      app.push.stage = "done";
+      await Promise.all([
+        refreshFiles(),
+        refreshBranches(),
+        refreshPushStatus(),
+      ]);
     } catch (err) {
       app.push.error = err instanceof Error ? err.message : String(err);
       setError(app.push.error);
@@ -1075,8 +1238,17 @@ export const actions = {
     try {
       await window.api.git.abortMerge(app.activeRepo.id);
       app.conflictFiles = [];
-      app.push = { inProgress: false, stage: 'idle', intent: 'push', error: null };
-      await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+      app.push = {
+        inProgress: false,
+        stage: "idle",
+        intent: "push",
+        error: null,
+      };
+      await Promise.all([
+        refreshFiles(),
+        refreshBranches(),
+        refreshPushStatus(),
+      ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -1090,11 +1262,16 @@ export const actions = {
     if (!app.activeRepo) return;
     const editor = effectiveEditor();
     if (!editor) {
-      setError('No external editor is configured. Install the cursor or code CLI.');
+      setError(
+        "No external editor is configured. Install the cursor or code CLI.",
+      );
       return;
     }
     const path = target ?? app.activeRepo.path;
-    const resolved = target && !target.startsWith('/') ? `${app.activeRepo.path}/${target}` : path;
+    const resolved =
+      target && !target.startsWith("/")
+        ? `${app.activeRepo.path}/${target}`
+        : path;
     const result = await window.api.editor.open(editor, resolved);
     if (!result.ok && result.error) setError(result.error);
   },
@@ -1107,11 +1284,14 @@ export const actions = {
     if (!app.activeRepo) return;
     const terminal = effectiveTerminal();
     if (!terminal) {
-      setError('No terminal is configured.');
+      setError("No terminal is configured.");
       return;
     }
     const path = target ?? app.activeRepo.path;
-    const resolved = target && !target.startsWith('/') ? `${app.activeRepo.path}/${target}` : path;
+    const resolved =
+      target && !target.startsWith("/")
+        ? `${app.activeRepo.path}/${target}`
+        : path;
     const result = await window.api.terminal.open(terminal, resolved);
     if (!result.ok && result.error) setError(result.error);
   },
@@ -1131,7 +1311,20 @@ export const actions = {
     app.prefs = await window.api.state.setPrefs({ showFileIcons: show });
   },
 
-  async setTheme(theme: 'light' | 'dark'): Promise<void> {
+  async setMaxDiffLines(max: number): Promise<void> {
+    const next = Number.isFinite(max) && max >= 0 ? Math.floor(max) : 0;
+    app.maxDiffLines = next;
+    app.prefs = await window.api.state.setPrefs({ maxDiffLines: next });
+  },
+
+  async setHiddenDiffPatterns(patterns: string[]): Promise<void> {
+    // Normalize: trim, drop blanks, de-dupe (preserving order).
+    const next = [...new Set(patterns.map((p) => p.trim()).filter(Boolean))];
+    app.hiddenDiffPatterns = next;
+    app.prefs = await window.api.state.setPrefs({ hiddenDiffPatterns: next });
+  },
+
+  async setTheme(theme: "light" | "dark"): Promise<void> {
     app.theme = theme;
     applyTheme(theme);
     app.prefs = await window.api.state.setPrefs({ theme });
@@ -1173,7 +1366,11 @@ export const actions = {
     await window.api.github.removeAccount(id);
     await refreshGithubAccounts();
     app.prs = [];
-    if (app.activeGithubAccount && app.activeRepo?.githubOwner && app.activeRepo.githubRepo) {
+    if (
+      app.activeGithubAccount &&
+      app.activeRepo?.githubOwner &&
+      app.activeRepo.githubRepo
+    ) {
       void actions.loadPRs();
     }
   },
