@@ -9,6 +9,7 @@
   import ZshIcon from './icons/ZshIcon.svelte';
   import DiffStylePreview from './DiffStylePreview.svelte';
   import FileListPreview from './FileListPreview.svelte';
+  import ThemePreview from './ThemePreview.svelte';
   import { actions, app, effectiveEditor, effectiveTerminal } from '$lib/store.svelte';
   import { cn } from '$lib/utils';
   import type {
@@ -45,6 +46,7 @@
   let draftViewMode = $state<ViewMode>('split');
   let draftFileListLayout = $state<FileListLayout>('tree');
   let draftShowFileIcons = $state<boolean>(true);
+  let draftTheme = $state<'light' | 'dark'>('dark');
   let draftEditor = $state<EditorKind | null>(null);
   let draftTerminal = $state<TerminalKind | null>(null);
 
@@ -53,6 +55,7 @@
       draftViewMode = app.viewMode;
       draftFileListLayout = app.fileListLayout;
       draftShowFileIcons = app.showFileIcons;
+      draftTheme = app.theme;
       draftEditor = effectiveEditor();
       draftTerminal = effectiveTerminal();
     }
@@ -68,6 +71,9 @@
     }
     if (draftShowFileIcons !== app.showFileIcons) {
       promises.push(actions.setShowFileIcons(draftShowFileIcons));
+    }
+    if (draftTheme !== app.theme) {
+      promises.push(actions.setTheme(draftTheme));
     }
     const savedEditor = app.prefs?.externalEditor ?? null;
     if (draftEditor !== savedEditor) {
@@ -229,6 +235,48 @@
         {:else if activeTab === 'appearance'}
           <section class="space-y-6">
             <div>
+              <h3 class="text-base font-semibold">Theme</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Choose a light or dark appearance.
+              </p>
+
+              <div class="mt-4 grid grid-cols-2 gap-3">
+                {#each [{ value: 'light' as const, label: 'Light' }, { value: 'dark' as const, label: 'Dark' }] as opt (opt.value)}
+                  {@const active = draftTheme === opt.value}
+                  <button
+                    type="button"
+                    onclick={() => (draftTheme = opt.value)}
+                    class={cn(
+                      'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+                      active
+                        ? 'border-primary'
+                        : 'border-border hover:border-muted-foreground/50',
+                    )}
+                  >
+                    <div
+                      class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+                    >
+                      <span
+                        class={cn(
+                          'grid size-3.5 place-items-center rounded-full border',
+                          active
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border',
+                        )}
+                      >
+                        {#if active}<Check class="size-2.5" />{/if}
+                      </span>
+                      {opt.label}
+                    </div>
+                    <div class="w-full p-2">
+                      <ThemePreview theme={opt.value} />
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div>
               <h3 class="text-base font-semibold">Diff view</h3>
               <p class="mt-1 text-xs text-muted-foreground">
                 Choose how changes are displayed.
@@ -318,28 +366,40 @@
                 Show language-specific icons next to file names in the sidebar.
               </p>
 
-              <button
-                type="button"
-                onclick={() => (draftShowFileIcons = !draftShowFileIcons)}
-                class="mt-3 flex w-full items-center justify-between rounded-md border border-border px-3 py-2.5 text-left transition-colors hover:bg-muted/40"
-                role="switch"
-                aria-checked={draftShowFileIcons}
-              >
-                <span class="text-sm">Show file icons</span>
-                <span
-                  class={cn(
-                    'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
-                    draftShowFileIcons ? 'bg-primary' : 'bg-border',
-                  )}
-                >
-                  <span
+              <div class="mt-4 grid grid-cols-2 gap-3">
+                {#each [{ value: true, label: 'Shown' }, { value: false, label: 'Hidden' }] as opt (opt.label)}
+                  {@const active = draftShowFileIcons === opt.value}
+                  <button
+                    type="button"
+                    onclick={() => (draftShowFileIcons = opt.value)}
                     class={cn(
-                      'inline-block size-4 transform rounded-full bg-background shadow transition-transform',
-                      draftShowFileIcons ? 'translate-x-[18px]' : 'translate-x-0.5',
+                      'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+                      active
+                        ? 'border-primary'
+                        : 'border-border hover:border-muted-foreground/50',
                     )}
-                  ></span>
-                </span>
-              </button>
+                  >
+                    <div
+                      class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+                    >
+                      <span
+                        class={cn(
+                          'grid size-3.5 place-items-center rounded-full border',
+                          active
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border',
+                        )}
+                      >
+                        {#if active}<Check class="size-2.5" />{/if}
+                      </span>
+                      {opt.label}
+                    </div>
+                    <div class="w-full bg-background py-1">
+                      <FileListPreview layout={draftFileListLayout} showIcons={opt.value} />
+                    </div>
+                  </button>
+                {/each}
+              </div>
             </div>
           </section>
         {:else if activeTab === 'editor'}

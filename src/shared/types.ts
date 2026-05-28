@@ -150,7 +150,7 @@ export interface CloneResult {
 
 export interface UserPrefs {
   viewMode: ViewMode;
-  theme: 'light' | 'dark' | 'system';
+  theme: 'light' | 'dark';
   activeRepoId?: string;
   contextTab?: ContextTab;
   externalEditor?: EditorKind | null;

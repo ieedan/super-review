@@ -229,6 +229,7 @@
     host.appendChild(diffContainer);
     instance = new FileDiffClass<CommentMeta>({
       diffStyle: app.viewMode,
+      themeType: app.theme,
       disableFileHeader: true,
       renderAnnotation,
       onLineNumberClick: onDiffLineNumberClick,
@@ -386,19 +387,25 @@
   });
 
   // Push new annotations into the live FileDiff instance. `setLineAnnotations`
-  // alone only updates Pierre's internal pointer — it does NOT trigger a
-  // render. We have to follow it with `render({ lineAnnotations })` to walk
-  // the annotation cache and actually paint the new ones. Pierre's cache key
-  // is `${index}-${side}-${lineNumber}`, so existing comment DOM survives
-  // and only newly-keyed annotations trigger a `renderAnnotation` call.
+  // alone only updates Pierre's internal pointer — `rerender` is what actually
+  // walks the annotation cache and paints new entries. The cache key is
+  // `${index}-${side}-${lineNumber}`, so existing comment DOM survives and
+  // only newly-keyed annotations trigger a `renderAnnotation` call.
+  //
+  // IMPORTANT: read `lineAnnotations` *first* so Svelte registers it as a
+  // dependency even on the early-mount pass when `instance` is still null.
+  // `instance` is a plain `let` (not `$state`), so it doesn't trigger
+  // re-runs on assignment — without reading the derived up-front, this
+  // effect would never re-fire when the user adds a composer.
   $effect(() => {
-    if (!instance) return;
     const annotations = lineAnnotations;
+    if (!instance) return;
     // eslint-disable-next-line no-console
-    console.log('[PR comment] annotations effect', {
+    console.log('[PR comment] annotations effect — before', {
       file: file.path,
       count: annotations.length,
       kinds: annotations.map((a) => a.metadata?.kind ?? '?'),
+      lines: annotations.map((a) => `${a.side}:${a.lineNumber}`),
     });
     // Drop cached mounted components that no longer have a matching index.
     const liveKeys = new Set(annotations.map((a, i) => annotationCacheKey(a, i)));
@@ -416,10 +423,16 @@
       }
     }
     try {
-      instance.render({ lineAnnotations: annotations });
+      instance.setLineAnnotations(annotations);
+      instance.rerender();
+      // eslint-disable-next-line no-console
+      console.log('[PR comment] annotations effect — after rerender ok', {
+        file: file.path,
+        mountedCount: mountedComponents.size,
+      });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[PR comment] render failed', err);
+      console.error('[PR comment] rerender failed', err);
     }
   });
 
@@ -427,9 +440,11 @@
   // between commentable / non-commentable contexts. `setOptions` swaps the
   // option bag, `flushManagers` reruns `InteractionManager.setup`, which is
   // the path that adds (or removes) the gutter container.
+  // Same caveat as the annotations effect: read `isPRContext` first so the
+  // dependency is registered even when `instance` is null on first run.
   $effect(() => {
-    if (!instance) return;
     const enabled = isPRContext;
+    if (!instance) return;
     type WithOptions = { options: Record<string, unknown> };
     const current = (instance as unknown as WithOptions).options;
     if (current.enableGutterUtility === enabled) return;
@@ -441,6 +456,28 @@
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[PR comment] flushManagers failed', err);
+    }
+  });
+
+  // Live-swap the diff theme when the app theme changes. `setThemeType` alone
+  // only swaps the cached CSS overlay; the highlighter's token cache still
+  // holds the previous theme's colors. `onThemeChange` clears that cache and
+  // triggers a fresh render that picks up the new themeType.
+  //
+  // IMPORTANT: read `app.theme` *first* so Svelte registers it as a
+  // dependency even on the early-mount pass when `instance` is still null.
+  // `instance` is a plain `let` (not `$state`) so assigning it later doesn't
+  // wake this effect — without reading the reactive value up-front, the
+  // effect would orphan and never re-fire on theme changes.
+  $effect(() => {
+    const t = app.theme;
+    if (!instance) return;
+    try {
+      instance.setThemeType(t);
+      instance.onThemeChange();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[theme] diff theme change failed', err);
     }
   });
 

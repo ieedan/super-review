@@ -21,6 +21,7 @@
     "lint": "eslint . --ext .ts,.svelte"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.7",
     "@iconify-json/material-icon-theme": "^1.2.66",
     "@iconify/svelte": "^5.2.1",
     "@octokit/auth-oauth-device": "^7.1.3",

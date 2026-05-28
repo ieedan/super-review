@@ -24,18 +24,6 @@
     }
   }
 
-  function onSummaryKey(e: KeyboardEvent): void {
-    // Enter in the summary field jumps to the description like GitHub Desktop,
-    // rather than submitting — Cmd/Ctrl+Enter from anywhere submits.
-    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
-      e.preventDefault();
-      (e.currentTarget as HTMLInputElement)
-        .closest('form')
-        ?.querySelector<HTMLTextAreaElement>('textarea')
-        ?.focus();
-    }
-  }
-
   function onKeydown(e: KeyboardEvent): void {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -64,7 +52,6 @@
     <Input
       type="text"
       bind:value={summary}
-      onkeydown={onSummaryKey}
       placeholder="Summary (required)"
       disabled={busy}
       class="h-7 min-w-0 flex-1 text-xs"

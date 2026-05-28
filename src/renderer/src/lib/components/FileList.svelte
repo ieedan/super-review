@@ -7,6 +7,8 @@
     Folder,
     FolderOpen,
     PanelLeftClose,
+    Search,
+    X,
   } from 'lucide-svelte';
   import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
   import { Button } from './ui/button';
@@ -16,6 +18,7 @@
   import { actions, app, type ContextTab } from '$lib/store.svelte';
   import { cn } from '$lib/utils';
   import { languageIconForPath } from '$lib/file-icons';
+  import { truncatePathPrefix } from '$lib/path-truncate';
   import type { ChangedFile } from '@shared/types';
 
   type Node =
@@ -40,6 +43,16 @@
   // animation frame fills them in.
   const BUFFER_ROWS = 8;
 
+  let searchQuery = $state('');
+
+  // Filter changed files by the search query (case-insensitive substring match
+  // on the full path). When the query is empty, this is the full list.
+  let filteredFiles = $derived.by<ChangedFile[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return app.changedFiles;
+    return app.changedFiles.filter((f) => f.path.toLowerCase().includes(q));
+  });
+
   // Build the visible flat list of nodes from the changed files. In 'tree'
   // layout, folders are aggregated from the file paths themselves and may be
   // collapsed. In 'list' layout, each file gets its own row at depth 0 with
@@ -47,7 +60,7 @@
   let nodes = $derived.by<Node[]>(() => {
     if (app.fileListLayout === 'list') {
       const out: Node[] = [];
-      for (const f of app.changedFiles) {
+      for (const f of filteredFiles) {
         const slash = f.path.lastIndexOf('/');
         // Fold the path separator into the filename (`/CreateBranchDialog.svelte`)
         // so the row only needs two flex children — a truncating prefix and a
@@ -69,9 +82,12 @@
       return out;
     }
 
-    const collapsed = app.collapsedFolders;
+    // While searching, ignore collapsed folders so matches deep in the tree
+    // are always visible without forcing the user to expand parents.
+    const isSearching = searchQuery.trim().length > 0;
+    const collapsed = isSearching ? new Set<string>() : app.collapsedFolders;
     const folderCounts = new Map<string, number>();
-    for (const f of app.changedFiles) {
+    for (const f of filteredFiles) {
       const parts = f.path.split('/');
       for (let i = 1; i < parts.length; i++) {
         const dir = parts.slice(0, i).join('/');
@@ -85,7 +101,7 @@
     const seenFolders = new Set<string>();
     let skipPrefix: string | null = null;
 
-    for (const f of app.changedFiles) {
+    for (const f of filteredFiles) {
       const parts = f.path.split('/');
       const dirs = parts.slice(0, -1);
       const name = parts[parts.length - 1];
@@ -155,24 +171,48 @@
   let scrollRoot = $state<HTMLElement | null>(null);
   let scrollTop = $state(0);
   let viewportHeight = $state(0);
+  // Container width and the CSS font shorthand used by file rows — both feed
+  // the pretext-based path truncation in list layout. Tracking width here
+  // (rather than per-row) lets us re-use one cache entry per (width, path)
+  // across the whole virtualized list.
+  let scrollRootWidth = $state(0);
+  let rowFont = $state<string>('12px ui-sans-serif, system-ui, sans-serif');
 
   $effect(() => {
     if (!scrollRoot) return;
     const el = scrollRoot;
     scrollTop = el.scrollTop;
     viewportHeight = el.clientHeight;
+    scrollRootWidth = el.clientWidth;
+    const cs = window.getComputedStyle(el);
+    // text-xs = 12px / 16px in Tailwind. Construct a canvas-compatible font
+    // shorthand using the container's inherited font-family.
+    rowFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
     const onScroll = (): void => {
       scrollTop = el.scrollTop;
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     const ro = new ResizeObserver(() => {
       viewportHeight = el.clientHeight;
+      scrollRootWidth = el.clientWidth;
     });
     ro.observe(el);
     return () => {
       el.removeEventListener('scroll', onScroll);
       ro.disconnect();
     };
+  });
+
+  // Approximate width available for the path text in a list-layout row, after
+  // subtracting fixed UI chrome (checkbox, optional file icon, gaps, padding,
+  // and a generous reserve for the +/- stats span). One shared value across
+  // all rows — slight per-row stats variance is absorbed by the reserve.
+  let availablePathWidth = $derived.by(() => {
+    const checkbox = 14;
+    const icon = app.showFileIcons ? 14 + 6 : 0;
+    const statsReserve = 70;
+    const gapsAndPadding = 6 + 6 + 8 + 4;
+    return Math.max(0, scrollRootWidth - checkbox - icon - statsReserve - gapsAndPadding);
   });
 
   // Render only the slice of nodes that intersects the viewport (plus a
@@ -236,7 +276,7 @@
     <!-- Tab strip: drives which diff context fuels the file list. -->
     <Tabs.Root value={app.contextTab} onValueChange={setTab} class="gap-0">
       <Tabs.List
-        class="group-data-horizontal/tabs:h-9 w-full justify-start gap-1 rounded-none border-b border-border bg-transparent px-1 py-0"
+        class="no-scrollbar group-data-horizontal/tabs:h-9 w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent px-1 py-0"
       >
         <Tabs.Trigger
           value="unstaged"
@@ -265,6 +305,32 @@
         </Tabs.Trigger>
       </Tabs.List>
     </Tabs.Root>
+
+    {#if app.contextTab !== 'sessions'}
+      <div class="border-b border-border px-2 py-1.5">
+        <div
+          class="flex h-7 items-center gap-1.5 rounded-md border border-input bg-background px-2"
+        >
+          <Search class="size-3 shrink-0 text-muted-foreground" />
+          <input
+            type="text"
+            bind:value={searchQuery}
+            placeholder="Search files…"
+            class="h-full w-full min-w-0 bg-transparent text-xs outline-hidden placeholder:text-muted-foreground"
+          />
+          {#if searchQuery}
+            <button
+              type="button"
+              class="shrink-0 text-muted-foreground hover:text-foreground"
+              onclick={() => (searchQuery = '')}
+              aria-label="Clear search"
+            >
+              <X class="size-3" />
+            </button>
+          {/if}
+        </div>
+      </div>
+    {/if}
   </Sidebar.Header>
 
   <Sidebar.Content bind:ref={scrollRoot}>
@@ -281,6 +347,10 @@
           {:else}
             No changes
           {/if}
+        </div>
+      {:else if filteredFiles.length === 0}
+        <div class="px-3 py-8 text-center text-xs text-muted-foreground">
+          No files match "{searchQuery}"
         </div>
       {:else}
         <!--
@@ -346,11 +416,19 @@
                     <Icon icon={iconName} class="size-3.5 shrink-0" />
                   {/if}
                   {#if node.dirPrefix !== undefined}
+                    {@const displayPrefix = node.dirPrefix
+                      ? truncatePathPrefix(node.dirPrefix, node.name, availablePathWidth, rowFont)
+                      : ''}
                     <!-- Inline whitespace is intentional: any newline between
                          these flex children becomes a text node inside the
                          flex container, which can render as a visible gap
-                         between the truncated prefix and the filename. -->
-                    <span class={cn('flex min-w-0 flex-1 items-center text-xs', isSeen && 'line-through')}>{#if node.dirPrefix}<span class="min-w-0 truncate text-muted-foreground">{node.dirPrefix}</span>{/if}<span class="shrink-0">{node.name}</span></span>
+                         between the truncated prefix and the filename. The
+                         prefix string is pre-truncated by pretext to fit
+                         `availablePathWidth`, so no CSS text-overflow is
+                         needed — that's the whole point of doing this in JS,
+                         since text-overflow re-flows every row on every
+                         pixel of a sidebar resize. -->
+                    <span class={cn('flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-xs', isSeen && 'line-through')}>{#if displayPrefix}<span class="text-muted-foreground">{displayPrefix}</span>{/if}<span class="shrink-0">{node.name}</span></span>
                   {:else}
                     <span class={cn('truncate text-xs', isSeen && 'line-through')}>
                       {node.name}

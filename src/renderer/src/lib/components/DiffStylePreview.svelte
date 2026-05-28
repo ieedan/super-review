@@ -6,6 +6,7 @@
     parseDiffFromFile,
   } from '@pierre/diffs';
   import { ensureDiffHighlighter } from '$lib/diff-highlighter';
+  import { app } from '$lib/store.svelte';
   import type { ViewMode } from '@shared/types';
 
   interface Props {
@@ -72,6 +73,7 @@
     host.appendChild(container);
     instance = new FileDiffClass({
       diffStyle: mode,
+      themeType: app.theme,
       disableFileHeader: true,
     });
     // First paint — fires synchronously. If shiki isn't loaded yet, the diff

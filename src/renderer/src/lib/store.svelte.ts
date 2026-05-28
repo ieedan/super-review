@@ -54,6 +54,7 @@ interface AppState {
   viewMode: ViewMode;
   fileListLayout: FileListLayout;
   showFileIcons: boolean;
+  theme: 'light' | 'dark';
   prefs: UserPrefs | null;
   githubAccounts: GithubAccount[];
   activeGithubAccount: GithubAccount | null;
@@ -129,6 +130,7 @@ const initial: AppState = {
   viewMode: 'split',
   fileListLayout: 'tree',
   showFileIcons: true,
+  theme: 'dark',
   prefs: null,
   githubAccounts: [],
   activeGithubAccount: null,
@@ -197,6 +199,12 @@ export function setCachedDiff(
 
 export function setError(msg: string | null): void {
   app.error = msg;
+}
+
+function applyTheme(theme: 'light' | 'dark'): void {
+  const root = document.documentElement;
+  root.classList.toggle('dark', theme === 'dark');
+  root.classList.toggle('light', theme === 'light');
 }
 
 // Editor the user has configured, falling back to whichever is detected.
@@ -424,6 +432,8 @@ export const actions = {
     app.viewMode = app.prefs.viewMode;
     app.fileListLayout = app.prefs.fileListLayout;
     app.showFileIcons = app.prefs.showFileIcons;
+    app.theme = app.prefs.theme;
+    applyTheme(app.theme);
     await refreshGithubAccounts();
     app.editors = await window.api.editor.detect();
     app.terminals = await window.api.terminal.detect();
@@ -1119,6 +1129,12 @@ export const actions = {
   async setShowFileIcons(show: boolean): Promise<void> {
     app.showFileIcons = show;
     app.prefs = await window.api.state.setPrefs({ showFileIcons: show });
+  },
+
+  async setTheme(theme: 'light' | 'dark'): Promise<void> {
+    app.theme = theme;
+    applyTheme(theme);
+    app.prefs = await window.api.state.setPrefs({ theme });
   },
 
   openSettingsDialog(): void {

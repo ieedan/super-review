@@ -23,7 +23,7 @@ const defaults: Schema = {
   repos: {},
   prefs: {
     viewMode: 'split',
-    theme: 'system',
+    theme: 'dark',
     fileListLayout: 'tree',
     showFileIcons: true,
   },
@@ -69,7 +69,12 @@ export function getRepo(id: string): RepoInfo | null {
 export function getPrefs(): UserPrefs {
   // Merge with defaults so prefs files saved by older builds still report
   // values for fields added in later releases.
-  return { ...defaults.prefs, ...store.get('prefs') };
+  const merged = { ...defaults.prefs, ...store.get('prefs') };
+  // Older builds persisted theme: 'system'; collapse that to the default.
+  if ((merged.theme as string) !== 'light' && (merged.theme as string) !== 'dark') {
+    merged.theme = defaults.prefs.theme;
+  }
+  return merged;
 }
 
 export function setPrefs(patch: Partial<UserPrefs>): UserPrefs {
