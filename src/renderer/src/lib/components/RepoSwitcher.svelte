@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Command as CommandPrimitive } from 'bits-ui';
   import { ChevronDown, Plus, Search, X } from 'lucide-svelte';
+  import { VirtualList } from '$lib/virtual-list';
   import { Button, buttonVariants } from './ui/button';
   import * as Popover from './ui/popover';
   import * as Command from './ui/command';
@@ -8,6 +9,9 @@
   import { cn, repoPlaceholder } from '$lib/utils';
   import { repoFrecency } from '$lib/repo-frecency.svelte';
   import type { RepoInfo } from '@shared/types';
+
+  const ITEM_SIZE = 36;
+  const MAX_LIST_HEIGHT = 320;
 
   let open = $state(false);
   let filter = $state('');
@@ -36,16 +40,30 @@
 
   // Resolve the order from frecency (uses desc, lastUsage tiebreaker). Repos
   // without a frecency entry fall to the bottom, themselves sorted by their
-  // existing `lastOpenedAt`.
-  let sortedRepos = $derived.by(() => {
+  // existing `lastOpenedAt`. Filtering is applied here (rather than via
+  // Command's built-in matcher) because the list is virtualized and its items
+  // are not all present in the DOM.
+  const sortedRepos = $derived.by(() => {
     const order = new Map(repoFrecency.items.map((id, i) => [id, i]));
-    return [...app.repos].sort((a, b) => {
-      const ai = order.get(a.id) ?? Infinity;
-      const bi = order.get(b.id) ?? Infinity;
-      if (ai !== bi) return ai - bi;
-      return b.lastOpenedAt - a.lastOpenedAt;
-    });
+    const needle = filter.trim().toLowerCase();
+    return [...app.repos]
+      .filter(
+        (r) =>
+          needle === '' ||
+          r.name.toLowerCase().includes(needle) ||
+          r.path.toLowerCase().includes(needle),
+      )
+      .sort((a, b) => {
+        const ai = order.get(a.id) ?? Infinity;
+        const bi = order.get(b.id) ?? Infinity;
+        if (ai !== bi) return ai - bi;
+        return b.lastOpenedAt - a.lastOpenedAt;
+      });
   });
+
+  const listHeight = $derived(
+    Math.min(MAX_LIST_HEIGHT, Math.max(ITEM_SIZE, sortedRepos.length * ITEM_SIZE)),
+  );
 </script>
 
 <Popover.Root bind:open onOpenChange={(v) => { if (!v) filter = ''; }}>
@@ -73,7 +91,7 @@
     <ChevronDown class="size-3.5 text-muted-foreground" />
   </Popover.Trigger>
   <Popover.Content align="start" class="w-[26rem] p-0">
-    <Command.Root shouldFilter={true}>
+    <Command.Root shouldFilter={false}>
       <!-- Sticky header: filter on the left, primary Add button on the right.
            Both stay visible while the repo list scrolls. -->
       <div class="flex items-center gap-2 border-b border-border p-2">
@@ -93,52 +111,65 @@
         </Button>
       </div>
 
-      <Command.List class="max-h-[320px]">
+      <Command.List class="max-h-[320px] overflow-hidden">
         {#if app.repos.length === 0}
           <div class="px-3 py-6 text-center text-xs text-muted-foreground">
             No repositories yet
           </div>
+        {:else if sortedRepos.length === 0}
+          <div class="px-3 py-6 text-center text-xs text-muted-foreground">
+            No matches
+          </div>
         {:else}
-          <Command.Empty>No matches</Command.Empty>
           <Command.Group>
-            {#each sortedRepos as repo (repo.id)}
-              <Command.Item
-                value={`${repo.name} ${repo.path}`}
-                onSelect={() => pick(repo.id)}
-                class={cn(
-                  'group flex items-center gap-2',
-                  repo.id === app.activeRepo?.id && 'bg-accent/60',
-                )}
-              >
-                {#if repo.iconDataUrl}
-                  <img
-                    src={repo.iconDataUrl}
-                    alt=""
-                    class="size-5 rounded-sm object-contain"
-                  />
-                {:else}
-                  {@const { initial, toneClass } = placeholderFor(repo)}
-                  <span
+            <VirtualList
+              width="100%"
+              itemSize={ITEM_SIZE}
+              itemCount={sortedRepos.length}
+              height={listHeight}
+            >
+              {#snippet item({ index, style })}
+                {@const repo = sortedRepos[index]}
+                <div {style}>
+                  <Command.Item
+                    value={`${repo.name} ${repo.path}`}
+                    onSelect={() => pick(repo.id)}
                     class={cn(
-                      'grid size-5 place-items-center rounded-sm text-[11px] font-semibold leading-none',
-                      toneClass,
+                      'group flex items-center gap-2',
+                      repo.id === app.activeRepo?.id && 'bg-accent/60',
                     )}
                   >
-                    {initial}
-                  </span>
-                {/if}
-                <span class="min-w-0 flex-1 truncate font-medium">{repo.name}</span>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  class="-mr-1 opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
-                  onclick={(e) => remove(e, repo.id)}
-                  aria-label="Remove repository"
-                >
-                  <X class="size-3" />
-                </Button>
-              </Command.Item>
-            {/each}
+                    {#if repo.iconDataUrl}
+                      <img
+                        src={repo.iconDataUrl}
+                        alt=""
+                        class="size-5 rounded-sm object-contain"
+                      />
+                    {:else}
+                      {@const { initial, toneClass } = placeholderFor(repo)}
+                      <span
+                        class={cn(
+                          'grid size-5 place-items-center rounded-sm text-[11px] font-semibold leading-none',
+                          toneClass,
+                        )}
+                      >
+                        {initial}
+                      </span>
+                    {/if}
+                    <span class="min-w-0 flex-1 truncate font-medium">{repo.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      class="-mr-1 opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
+                      onclick={(e) => remove(e, repo.id)}
+                      aria-label="Remove repository"
+                    >
+                      <X class="size-3" />
+                    </Button>
+                  </Command.Item>
+                </div>
+              {/snippet}
+            </VirtualList>
           </Command.Group>
         {/if}
       </Command.List>

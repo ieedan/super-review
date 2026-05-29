@@ -1,6 +1,7 @@
 import { simpleGit, type SimpleGit } from "simple-git";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type {
   BranchInfo,
@@ -8,6 +9,7 @@ import type {
   DiffContext,
   DiffData,
   FileStatus,
+  GitIdentity,
   RepoInfo,
 } from "@shared/types.js";
 
@@ -170,14 +172,76 @@ async function findRepoIcon(repoPath: string): Promise<string | undefined> {
   }
 }
 
-function parseGithubFromUrl(
+// Maps each SSH `Host` alias in ~/.ssh/config to its real `HostName`, so a
+// remote like `git@github.com-work:owner/repo` (a common per-account alias) can
+// be recognized as GitHub. Read once and cached for the process lifetime.
+let sshHostMapCache: Map<string, string> | null = null;
+async function sshHostMap(): Promise<Map<string, string>> {
+  if (sshHostMapCache) return sshHostMapCache;
+  const map = new Map<string, string>();
+  try {
+    const cfg = await fs.readFile(
+      path.join(os.homedir(), ".ssh", "config"),
+      "utf8",
+    );
+    let aliases: string[] = [];
+    for (const raw of cfg.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const sep = line.search(/\s|=/);
+      if (sep === -1) continue;
+      const key = line.slice(0, sep).toLowerCase();
+      const value = line.slice(sep + 1).replace(/^[=\s]+/, "").trim();
+      if (key === "host") aliases = value.split(/\s+/);
+      else if (key === "hostname")
+        for (const a of aliases) map.set(a, value);
+    }
+  } catch {
+    // No ssh config (or unreadable) — nothing to resolve.
+  }
+  sshHostMapCache = map;
+  return map;
+}
+
+// Recognizes GitHub remotes across https, scp-like ssh (git@host:owner/repo)
+// and ssh:// forms. SSH host aliases are resolved via ~/.ssh/config, and the
+// repo segment may contain dots (e.g. "repo.js").
+async function parseGithubFromUrl(
   url: string,
-): { owner: string; repo: string } | undefined {
-  const m =
-    url.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?$/) ??
-    url.match(/github\.com\/([^/]+)\/([^/.]+)/);
+): Promise<{ owner: string; repo: string } | undefined> {
+  let host: string | undefined;
+  let rest: string | undefined;
+  if (!url.includes("://")) {
+    const m = url.match(/^[^@]+@([^:/]+):(.+)$/); // git@host:owner/repo
+    if (m) {
+      host = m[1];
+      rest = m[2];
+    }
+  }
+  if (!host) {
+    // scheme://[user@]host[:port]/owner/repo
+    const m = url.match(
+      /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?([^:/]+)(?::\d+)?\/(.+)$/i,
+    );
+    if (m) {
+      host = m[1];
+      rest = m[2];
+    }
+  }
+  if (!host || !rest) return undefined;
+
+  let realHost = host;
+  if (realHost.toLowerCase() !== "github.com") {
+    realHost = (await sshHostMap()).get(host) ?? host;
+  }
+  if (realHost.toLowerCase() !== "github.com") return undefined;
+
+  const m = rest
+    .replace(/\.git$/i, "")
+    .replace(/\/+$/, "")
+    .match(/^([^/]+)\/([^/]+)$/);
   if (!m) return undefined;
-  return { owner: m[1], repo: m[2].replace(/\.git$/, "") };
+  return { owner: m[1], repo: m[2] };
 }
 
 export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
@@ -193,14 +257,23 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
     const origin = remotes.find((r) => r.name === "origin") ?? remotes[0];
     if (origin?.refs.fetch) {
       remoteUrl = origin.refs.fetch;
-      const gh = parseGithubFromUrl(remoteUrl);
+      const gh = await parseGithubFromUrl(remoteUrl);
       if (gh) {
         githubOwner = gh.owner;
         githubRepo = gh.repo;
       }
+      console.log(
+        `[repo] buildRepoInfo "${name}" remote=${origin.name} url=${remoteUrl} ` +
+          `→ parsed ${gh ? `${gh.owner}/${gh.repo}` : "(not a github.com URL)"}`,
+      );
+    } else {
+      console.log(
+        `[repo] buildRepoInfo "${name}" has no usable remote ` +
+          `(remotes: ${remotes.map((r) => r.name).join(", ") || "none"})`,
+      );
     }
-  } catch {
-    // no remotes
+  } catch (err) {
+    console.error(`[repo] buildRepoInfo "${name}" failed to read remotes:`, err);
   }
   try {
     const head = await git.raw([
@@ -841,13 +914,24 @@ export interface CommitResult {
 export async function commitAll(
   repoPath: string,
   message: string,
+  identity?: GitIdentity | null,
 ): Promise<CommitResult> {
   const git = simpleGit(repoPath);
   try {
     await git.raw(["add", "-A"]);
     const trimmed = message.trim();
     if (!trimmed) throw new Error("Commit message is required.");
-    await git.raw(["commit", "-m", trimmed]);
+    // `-c` sets config for this invocation only, overriding both author and
+    // committer without touching the repo's git config.
+    const identityArgs = identity
+      ? [
+          "-c",
+          `user.name=${identity.name}`,
+          "-c",
+          `user.email=${identity.email}`,
+        ]
+      : [];
+    await git.raw([...identityArgs, "commit", "-m", trimmed]);
     return { ok: true };
   } catch (err) {
     return {

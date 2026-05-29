@@ -29,6 +29,8 @@ const defaults: Schema = {
     theme: 'dark',
     fileListLayout: 'tree',
     showFileIcons: true,
+    codeFont: 'system',
+    uiFont: 'system',
     maxDiffLines: 1500,
     hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
   },
@@ -73,6 +75,22 @@ export function removeRepo(id: string): void {
 
 export function getRepo(id: string): RepoInfo | null {
   return store.get('repos')[id] ?? null;
+}
+
+// Pin (or unpin, when accountId is null) the GitHub account a project uses.
+export function setRepoGithubAccountId(
+  repoId: string,
+  accountId: string | null,
+): RepoInfo | null {
+  const repos = store.get('repos');
+  const repo = repos[repoId];
+  if (!repo) return null;
+  const next: RepoInfo = { ...repo };
+  if (accountId) next.githubAccountId = accountId;
+  else delete next.githubAccountId;
+  repos[repoId] = next;
+  store.set('repos', repos);
+  return next;
 }
 
 export function getPrefs(): UserPrefs {
@@ -199,4 +217,15 @@ export function removeGithubAccount(id: string): void {
     const remaining = Object.keys(accounts);
     setActiveGithubAccountId(remaining[0] ?? null);
   }
+  // Unpin any project that referenced the removed account so it falls back to
+  // the app-wide default.
+  const repos = store.get('repos');
+  let changed = false;
+  for (const repo of Object.values(repos)) {
+    if (repo.githubAccountId === id) {
+      delete repo.githubAccountId;
+      changed = true;
+    }
+  }
+  if (changed) store.set('repos', repos);
 }

@@ -1,4 +1,5 @@
 import type {
+  AppPlatform,
   BranchInfo,
   ChangedFile,
   ContextTab,
@@ -8,6 +9,7 @@ import type {
   FileListLayout,
   GithubAccount,
   LastCommit,
+  PRChecksSummary,
   PRReviewComment,
   PRSummary,
   PushStatus,
@@ -63,6 +65,11 @@ interface AppState {
   maxDiffLines: number;
   hiddenDiffPatterns: string[];
   theme: "light" | "dark";
+  codeFont: string;
+  uiFont: string;
+  // Font families installed on the user's machine, queried lazily on launch.
+  // Empty when the Local Font Access API is unavailable or denied.
+  systemFonts: string[];
   prefs: UserPrefs | null;
   githubAccounts: GithubAccount[];
   activeGithubAccount: GithubAccount | null;
@@ -72,7 +79,8 @@ interface AppState {
   lastRefreshAt: number | null;
   fetchingOrigin: boolean;
   nowTick: number;
-  editors: { cursor: boolean; vscode: boolean };
+  platform: AppPlatform;
+  editors: Record<EditorKind, boolean>;
   terminals: Record<TerminalKind, boolean>;
   settingsDialogOpen: boolean;
   githubSignInOpen: boolean;
@@ -82,6 +90,10 @@ interface AppState {
   lastCommit: LastCommit | null;
   // PR matching the current branch (if any). Refreshed alongside push status.
   branchPR: PRSummary | null;
+  // CI/workflow status for `branchPR`'s head commit — aggregate plus the
+  // individual checks for a hover breakdown. Keyed by PR number so a stale poll
+  // result can't paint the wrong PR. Polled on an interval while a PR is shown.
+  branchPRChecks: { number: number; summary: PRChecksSummary } | null;
   // PR currently being reviewed (when diffContext.kind === 'pr').
   activePR: PRSummary | null;
   // Review comments for the active PR, indexed by file path.
@@ -156,6 +168,9 @@ const initial: AppState = {
   maxDiffLines: 1500,
   hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
   theme: "dark",
+  codeFont: "system",
+  uiFont: "system",
+  systemFonts: [],
   prefs: null,
   githubAccounts: [],
   activeGithubAccount: null,
@@ -165,13 +180,28 @@ const initial: AppState = {
   lastRefreshAt: null,
   fetchingOrigin: false,
   nowTick: 0,
-  editors: { cursor: false, vscode: false },
-  terminals: { terminal: false, iterm: false, warp: false, ghostty: false },
+  platform: "darwin",
+  editors: {
+    cursor: false,
+    vscode: false,
+    zed: false,
+    xcode: false,
+    visualstudio: false,
+  },
+  terminals: {
+    terminal: false,
+    iterm: false,
+    warp: false,
+    ghostty: false,
+    cmd: false,
+    powershell: false,
+  },
   settingsDialogOpen: false,
   githubSignInOpen: false,
   pushStatus: null,
   lastCommit: null,
   branchPR: null,
+  branchPRChecks: null,
   activePR: null,
   prComments: {},
   loadingComments: false,
@@ -237,6 +267,50 @@ function applyTheme(theme: "light" | "dark"): void {
   root.classList.toggle("light", theme === "light");
 }
 
+// Built-in fallback stacks — kept in sync with the defaults in app.css. A
+// chosen family is layered on top so missing glyphs still fall back sensibly.
+const UI_FONT_STACK =
+  "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+const CODE_FONT_STACK =
+  "ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace";
+
+export function uiFontCss(font: string | null | undefined): string {
+  if (!font || font === "system") return UI_FONT_STACK;
+  return `"${font}", ${UI_FONT_STACK}`;
+}
+
+export function codeFontCss(font: string | null | undefined): string {
+  if (!font || font === "system") return CODE_FONT_STACK;
+  return `"${font}", ${CODE_FONT_STACK}`;
+}
+
+function applyFonts(): void {
+  const root = document.documentElement;
+  root.style.setProperty("--ui-font", uiFontCss(app.uiFont));
+  root.style.setProperty("--code-font", codeFontCss(app.codeFont));
+}
+
+// Enumerate installed font families via the Local Font Access API. Resolves to
+// nothing when the API is missing (older runtime) or the permission is denied;
+// the picker then just offers the system default.
+async function loadSystemFonts(): Promise<void> {
+  const query = (
+    window as unknown as {
+      queryLocalFonts?: () => Promise<Array<{ family: string }>>;
+    }
+  ).queryLocalFonts;
+  if (typeof query !== "function") return;
+  try {
+    const fonts = await query();
+    const families = [...new Set(fonts.map((f) => f.family))].sort((a, b) =>
+      a.localeCompare(b),
+    );
+    app.systemFonts = families;
+  } catch {
+    // Unsupported or permission denied — leave the list empty.
+  }
+}
+
 // Editor the user has configured, falling back to whichever is detected.
 // Returns null when nothing is available.
 export function effectiveEditor(): EditorKind | null {
@@ -253,6 +327,8 @@ const TERMINAL_FALLBACK_ORDER: TerminalKind[] = [
   "warp",
   "iterm",
   "terminal",
+  "powershell",
+  "cmd",
 ];
 export function effectiveTerminal(): TerminalKind | null {
   const pref = app.prefs?.externalTerminal ?? null;
@@ -261,6 +337,18 @@ export function effectiveTerminal(): TerminalKind | null {
     if (app.terminals[t]) return t;
   }
   return null;
+}
+
+// The GitHub account the active project authenticates as: its pinned account
+// when set, otherwise the app-wide default. Both account switchers and all
+// project-scoped GitHub calls resolve through this.
+export function effectiveGithubAccount(): GithubAccount | null {
+  const pinnedId = app.activeRepo?.githubAccountId;
+  if (pinnedId) {
+    const pinned = app.githubAccounts.find((a) => a.id === pinnedId);
+    if (pinned) return pinned;
+  }
+  return app.activeGithubAccount;
 }
 
 async function refreshGithubAccounts(): Promise<void> {
@@ -327,16 +415,34 @@ async function refreshBranchPR(): Promise<void> {
     !app.activeGithubAccount ||
     !app.currentBranch
   ) {
+    console.log("[branchPR] skipped — missing prerequisite:", {
+      hasActiveRepo: !!app.activeRepo,
+      githubOwner: app.activeRepo?.githubOwner ?? null,
+      githubRepo: app.activeRepo?.githubRepo ?? null,
+      pinnedAccountId: app.activeRepo?.githubAccountId ?? null,
+      activeGithubAccount: app.activeGithubAccount?.login ?? null,
+      currentBranch: app.currentBranch ?? null,
+    });
     app.branchPR = null;
     return;
   }
+  console.log(
+    `[branchPR] checking ${app.activeRepo.githubOwner}/${app.activeRepo.githubRepo} ` +
+      `branch=${app.currentBranch} ` +
+      `pinnedAccountId=${app.activeRepo.githubAccountId ?? "(none → app default)"} ` +
+      `appDefault=${app.activeGithubAccount.login}`,
+  );
   const prev = app.branchPR?.number ?? null;
   try {
     app.branchPR = await window.api.github.findPRForBranch(
       app.activeRepo.id,
       app.currentBranch,
     );
-  } catch {
+    console.log(
+      `[branchPR] result: ${app.branchPR ? `PR #${app.branchPR.number}` : "none (will show Create PR)"}`,
+    );
+  } catch (err) {
+    console.error("[branchPR] lookup threw:", err);
     app.branchPR = null;
   }
   // Keep PR-comment state in sync with the branch tab's PR. Only refetch when
@@ -349,6 +455,35 @@ async function refreshBranchPR(): Promise<void> {
     } else if (next !== prev) {
       void actions.refreshPRComments();
     }
+  }
+  // Drop any status for a PR we're no longer showing, then refresh.
+  if (app.branchPRChecks && app.branchPRChecks.number !== app.branchPR?.number) {
+    app.branchPRChecks = null;
+  }
+  await refreshBranchPRChecks();
+}
+
+// Poll the CI/workflow status for the current branch PR's head commit. Cheap
+// and failure-silent — the button just hides the status indicator on error or
+// when nothing reports. Called after `refreshBranchPR` and on a timer.
+async function refreshBranchPRChecks(): Promise<void> {
+  const pr = app.branchPR;
+  if (!app.activeRepo || !pr) {
+    app.branchPRChecks = null;
+    return;
+  }
+  try {
+    const summary = await window.api.github.getChecks(
+      app.activeRepo.id,
+      pr.headSha,
+    );
+    // The PR may have changed while the request was in flight; only apply the
+    // result if it still matches what we're showing.
+    if (app.branchPR?.number === pr.number) {
+      app.branchPRChecks = { number: pr.number, summary };
+    }
+  } catch (err) {
+    console.error("[branchPR] checks lookup threw:", err);
   }
 }
 
@@ -488,7 +623,12 @@ export const actions = {
     app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
     app.theme = app.prefs.theme;
     applyTheme(app.theme);
+    app.codeFont = app.prefs.codeFont;
+    app.uiFont = app.prefs.uiFont;
+    applyFonts();
+    void loadSystemFonts();
     await refreshGithubAccounts();
+    app.platform = window.api.platform;
     app.editors = await window.api.editor.detect();
     app.terminals = await window.api.terminal.detect();
     await refreshRepos();
@@ -573,8 +713,17 @@ export const actions = {
 
   updateActiveRepoMetadata(repo: RepoInfo): void {
     if (app.activeRepo?.id !== repo.id) return;
+    const prev = app.activeRepo;
     app.activeRepo = repo;
     app.repos = app.repos.map((r) => (r.id === repo.id ? repo : r));
+    // A background refresh may have just resolved the GitHub remote (or the
+    // pinned account changed), which makes a branch-PR lookup possible where it
+    // wasn't before. Re-check when that identity shifts.
+    const identityChanged =
+      prev.githubOwner !== repo.githubOwner ||
+      prev.githubRepo !== repo.githubRepo ||
+      prev.githubAccountId !== repo.githubAccountId;
+    if (identityChanged) void refreshBranchPR();
   },
 
   async switchRepo(id: string): Promise<void> {
@@ -1330,6 +1479,18 @@ export const actions = {
     app.prefs = await window.api.state.setPrefs({ theme });
   },
 
+  async setCodeFont(font: string): Promise<void> {
+    app.codeFont = font;
+    applyFonts();
+    app.prefs = await window.api.state.setPrefs({ codeFont: font });
+  },
+
+  async setUiFont(font: string): Promise<void> {
+    app.uiFont = font;
+    applyFonts();
+    app.prefs = await window.api.state.setPrefs({ uiFont: font });
+  },
+
   openSettingsDialog(): void {
     app.settingsDialogOpen = true;
   },
@@ -1348,23 +1509,57 @@ export const actions = {
     app.nowTick++;
   },
 
+  async refreshBranchPRChecks(): Promise<void> {
+    await refreshBranchPRChecks();
+  },
+
   async refreshGithubAccounts(): Promise<void> {
     await refreshGithubAccounts();
   },
 
-  async switchGithubAccount(id: string): Promise<void> {
+  // Set the app-wide default account (configured in Settings). Projects that
+  // haven't pinned their own account follow this.
+  async setDefaultGithubAccount(id: string): Promise<void> {
     const next = await window.api.github.setActiveAccount(id);
     if (!next) return;
     app.activeGithubAccount = next;
-    app.prs = [];
-    if (app.activeRepo?.githubOwner && app.activeRepo.githubRepo) {
+    // Only projects following the default are affected; pinned projects keep
+    // their own account, so leave their PR state alone.
+    if (
+      !app.activeRepo?.githubAccountId &&
+      app.activeRepo?.githubOwner &&
+      app.activeRepo.githubRepo
+    ) {
+      app.prs = [];
       void actions.loadPRs();
+      void refreshBranchPR();
+    }
+  },
+
+  // Pin (or unpin, when id is null) the GitHub account the active project uses.
+  async setRepoGithubAccount(id: string | null): Promise<void> {
+    const repoId = app.activeRepo?.id;
+    if (!repoId) return;
+    const updated = await window.api.github.setRepoAccount(repoId, id);
+    if (!updated || app.activeRepo?.id !== updated.id) return;
+    app.activeRepo = updated;
+    const idx = app.repos.findIndex((r) => r.id === updated.id);
+    if (idx !== -1) app.repos[idx] = updated;
+    app.prs = [];
+    if (updated.githubOwner && updated.githubRepo) {
+      void actions.loadPRs();
+      // The new account may see a different (or newly visible) PR for this
+      // branch, so re-resolve it rather than leaving the stale result.
+      void refreshBranchPR();
     }
   },
 
   async removeGithubAccount(id: string): Promise<void> {
     await window.api.github.removeAccount(id);
     await refreshGithubAccounts();
+    // The account may have been a project's pinned account; the backend unpins
+    // those, so re-sync the active repo to reflect the fallback.
+    app.activeRepo = await window.api.repos.getActive();
     app.prs = [];
     if (
       app.activeGithubAccount &&

@@ -14,6 +14,7 @@ import type {
   GithubAccount,
   LastCommit,
   NewReviewCommentInput,
+  PRChecksSummary,
   PRReviewComment,
   PRSummary,
   PreloadAPI,
@@ -25,6 +26,12 @@ import type {
 } from "@shared/types.js";
 
 const api: PreloadAPI = {
+  platform:
+    process.platform === "darwin"
+      ? "darwin"
+      : process.platform === "win32"
+        ? "win32"
+        : "linux",
   repos: {
     list: () => ipcRenderer.invoke("repos:list") as Promise<RepoInfo[]>,
     openPicker: () =>
@@ -106,10 +113,9 @@ const api: PreloadAPI = {
   },
   editor: {
     detect: () =>
-      ipcRenderer.invoke("editor:detect") as Promise<{
-        cursor: boolean;
-        vscode: boolean;
-      }>,
+      ipcRenderer.invoke("editor:detect") as Promise<
+        Record<EditorKind, boolean>
+      >,
     open: (editor: EditorKind, target: string) =>
       ipcRenderer.invoke("editor:open", editor, target) as Promise<{
         ok: boolean;
@@ -141,6 +147,12 @@ const api: PreloadAPI = {
       ) as Promise<GithubAccount | null>,
     removeAccount: (id) =>
       ipcRenderer.invoke("github:removeAccount", id) as Promise<void>,
+    setRepoAccount: (repoId, accountId) =>
+      ipcRenderer.invoke(
+        "github:setRepoAccount",
+        repoId,
+        accountId,
+      ) as Promise<RepoInfo | null>,
     startDeviceFlow: () =>
       ipcRenderer.invoke("github:startDeviceFlow") as Promise<DeviceFlowStart>,
     pollDeviceFlow: () =>
@@ -160,6 +172,12 @@ const api: PreloadAPI = {
         repoId,
         branch,
       ) as Promise<PRSummary | null>,
+    getChecks: (repoId, ref) =>
+      ipcRenderer.invoke(
+        "github:getChecks",
+        repoId,
+        ref,
+      ) as Promise<PRChecksSummary>,
     getPR: (repoId, prNumber) =>
       ipcRenderer.invoke(
         "github:getPR",

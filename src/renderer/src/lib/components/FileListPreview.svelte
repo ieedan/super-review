@@ -42,7 +42,7 @@
     file('README.md', 2, 0),
   ];
 
-  let nodes = $derived.by<PreviewNode[]>(() => {
+  const nodes = $derived.by<PreviewNode[]>(() => {
     if (layout === 'list') {
       return MOCK_FILES.map((f) => {
         const slash = f.path.lastIndexOf('/');

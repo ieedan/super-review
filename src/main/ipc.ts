@@ -13,6 +13,7 @@ import type {
   GithubAccount,
   LastCommit,
   NewReviewCommentInput,
+  PRChecksSummary,
   PRReviewComment,
   PRSummary,
   PullPushResult,
@@ -67,6 +68,7 @@ import {
   setCommitDraft,
   setFileCollapsed,
   setPrefs,
+  setRepoGithubAccountId,
   setSeen,
   upsertRepo,
 } from "./store.js";
@@ -86,13 +88,29 @@ function broadcast(channel: string, payload: unknown): void {
 // Re-run buildRepoInfo off the critical path. If anything moved (favicon
 // added, remote URL changed, default branch updated) we persist and re-emit
 // active-changed so the UI picks it up. No-op when nothing changed.
+// buildRepoInfo derives only git/path metadata. When re-opening a repo we've
+// seen before (id is path-derived), carry over the user's pinned account so it
+// isn't clobbered by the rebuilt record.
+function preservePinnedAccount(info: RepoInfo): RepoInfo {
+  const existing = getRepo(info.id);
+  return existing?.githubAccountId
+    ? { ...info, githubAccountId: existing.githubAccountId }
+    : info;
+}
+
 async function refreshRepoInfoInBackground(
   repoPath: string,
   previous: RepoInfo,
 ): Promise<void> {
   try {
     const fresh = await buildRepoInfo(repoPath);
-    const merged: RepoInfo = { ...fresh, lastOpenedAt: previous.lastOpenedAt };
+    // buildRepoInfo only derives git/path metadata, so carry over fields the
+    // user owns (last-opened time, the project's pinned GitHub account).
+    const merged: RepoInfo = {
+      ...fresh,
+      lastOpenedAt: previous.lastOpenedAt,
+      githubAccountId: previous.githubAccountId,
+    };
     const changed =
       merged.iconDataUrl !== previous.iconDataUrl ||
       merged.remoteUrl !== previous.remoteUrl ||
@@ -122,7 +140,7 @@ export function registerIpc(): void {
     if (!(await isGitRepo(repoPath))) {
       throw new Error(`Not a git repository: ${repoPath}`);
     }
-    const info = await buildRepoInfo(repoPath);
+    const info = preservePinnedAccount(await buildRepoInfo(repoPath));
     upsertRepo(info);
     setPrefs({ activeRepoId: info.id });
     broadcast("repos:active-changed", info);
@@ -140,7 +158,7 @@ export function registerIpc(): void {
     const init = await initRepo(target);
     if (!init.ok)
       throw new Error(init.error ?? "Failed to initialize repository.");
-    const info = await buildRepoInfo(target);
+    const info = preservePinnedAccount(await buildRepoInfo(target));
     upsertRepo(info);
     setPrefs({ activeRepoId: info.id });
     broadcast("repos:active-changed", info);
@@ -282,8 +300,11 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     "git:commitAll",
-    async (_e, repoId: string, message: string): Promise<CommitResult> =>
-      commitAll(repoOrThrow(repoId).path, message),
+    async (_e, repoId: string, message: string): Promise<CommitResult> => {
+      const repo = repoOrThrow(repoId);
+      const identity = gh.resolveCommitIdentity(repo.githubAccountId);
+      return commitAll(repo.path, message, identity);
+    },
   );
 
   ipcMain.handle(
@@ -310,7 +331,7 @@ export function registerIpc(): void {
       }
       const result = await cloneRepo(url, dir.filePaths[0]);
       if (result.ok && result.path) {
-        const info = await buildRepoInfo(result.path);
+        const info = preservePinnedAccount(await buildRepoInfo(result.path));
         upsertRepo(info);
         setPrefs({ activeRepoId: info.id });
         broadcast("repos:active-changed", info);
@@ -353,6 +374,18 @@ export function registerIpc(): void {
     gh.removeAccount(id),
   );
   ipcMain.handle(
+    "github:setRepoAccount",
+    async (
+      _e,
+      repoId: string,
+      accountId: string | null,
+    ): Promise<RepoInfo | null> => {
+      const updated = setRepoGithubAccountId(repoId, accountId);
+      if (updated) broadcast("repos:active-changed", updated);
+      return updated;
+    },
+  );
+  ipcMain.handle(
     "github:startDeviceFlow",
     async (): Promise<DeviceFlowStart> => gh.startDeviceFlow(),
   );
@@ -369,7 +402,11 @@ export function registerIpc(): void {
       if (!repo.githubOwner || !repo.githubRepo) {
         throw new Error("This repository does not have a GitHub remote.");
       }
-      return gh.listPullRequests(repo.githubOwner, repo.githubRepo);
+      return gh.listPullRequests(
+        repo.githubOwner,
+        repo.githubRepo,
+        repo.githubAccountId,
+      );
     },
   );
 
@@ -388,6 +425,7 @@ export function registerIpc(): void {
         repo.githubOwner,
         repo.githubRepo,
         prNumber,
+        repo.githubAccountId,
       );
       const refs = await fetchPRRef(repo.path, prNumber);
       await pinPRBaseRef(repo.path, prNumber, baseRef);
@@ -399,15 +437,50 @@ export function registerIpc(): void {
     "github:findPRForBranch",
     async (_e, repoId: string, branch: string): Promise<PRSummary | null> => {
       const repo = repoOrThrow(repoId);
-      if (!repo.githubOwner || !repo.githubRepo) return null;
+      if (!repo.githubOwner || !repo.githubRepo) {
+        console.log(
+          `[github] findPRForBranch skipped: repo "${repo.name}" has no GitHub remote ` +
+            `(owner=${repo.githubOwner ?? '∅'} repo=${repo.githubRepo ?? '∅'})`,
+        );
+        return null;
+      }
       try {
         return await gh.findPRForBranch(
           repo.githubOwner,
           repo.githubRepo,
           branch,
+          repo.githubAccountId,
         );
-      } catch {
+      } catch (err) {
+        console.error(
+          `[github] findPRForBranch failed for ${repo.githubOwner}/${repo.githubRepo} ` +
+            `branch=${branch} pinnedAccountId=${repo.githubAccountId ?? '(none)'}:`,
+          err instanceof Error ? err.message : err,
+        );
         return null;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "github:getChecks",
+    async (_e, repoId: string, ref: string): Promise<PRChecksSummary> => {
+      const repo = repoOrThrow(repoId);
+      const empty: PRChecksSummary = { state: "none", checks: [] };
+      if (!repo.githubOwner || !repo.githubRepo) return empty;
+      try {
+        return await gh.getChecks(
+          repo.githubOwner,
+          repo.githubRepo,
+          ref,
+          repo.githubAccountId,
+        );
+      } catch (err) {
+        console.error(
+          `[github] getChecks failed for ${repo.githubOwner}/${repo.githubRepo} ref=${ref}:`,
+          err instanceof Error ? err.message : err,
+        );
+        return empty;
       }
     },
   );
@@ -417,7 +490,12 @@ export function registerIpc(): void {
     async (_e, repoId: string, prNumber: number): Promise<PRSummary | null> => {
       const repo = repoOrThrow(repoId);
       if (!repo.githubOwner || !repo.githubRepo) return null;
-      return gh.getPRSummary(repo.githubOwner, repo.githubRepo, prNumber);
+      return gh.getPRSummary(
+        repo.githubOwner,
+        repo.githubRepo,
+        prNumber,
+        repo.githubAccountId,
+      );
     },
   );
 
@@ -432,7 +510,12 @@ export function registerIpc(): void {
       if (!repo.githubOwner || !repo.githubRepo) {
         throw new Error("This repository does not have a GitHub remote.");
       }
-      return gh.listReviewComments(repo.githubOwner, repo.githubRepo, prNumber);
+      return gh.listReviewComments(
+        repo.githubOwner,
+        repo.githubRepo,
+        prNumber,
+        repo.githubAccountId,
+      );
     },
   );
 
@@ -447,7 +530,12 @@ export function registerIpc(): void {
       if (!repo.githubOwner || !repo.githubRepo) {
         throw new Error("This repository does not have a GitHub remote.");
       }
-      return gh.createReviewComment(repo.githubOwner, repo.githubRepo, input);
+      return gh.createReviewComment(
+        repo.githubOwner,
+        repo.githubRepo,
+        input,
+        repo.githubAccountId,
+      );
     },
   );
 
@@ -470,6 +558,7 @@ export function registerIpc(): void {
         prNumber,
         commentId,
         body,
+        repo.githubAccountId,
       );
     },
   );
@@ -485,6 +574,7 @@ export function registerIpc(): void {
         repo.githubOwner,
         repo.githubRepo,
         commentId,
+        repo.githubAccountId,
       );
     },
   );

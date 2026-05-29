@@ -40,7 +40,7 @@
     primary: 'hsl(0 0% 98%)',
   };
 
-  let p = $derived(theme === 'light' ? LIGHT : DARK);
+  const p = $derived(theme === 'light' ? LIGHT : DARK);
 </script>
 
 <div

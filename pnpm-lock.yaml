@@ -38,6 +38,9 @@ importers:
       simple-git:
         specifier: ^3.27.0
         version: 3.36.0
+      svelte-tiny-virtual-list:
+        specifier: ^3.0.1
+        version: 3.0.1(svelte@5.55.9)
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -2519,6 +2522,12 @@ packages:
     peerDependencies:
       svelte: ^4.0.0 || ^5.0.0-next.0
       typescript: '>=5.0.0'
+
+  svelte-tiny-virtual-list@3.0.1:
+    resolution: {integrity: sha512-KUvqkY5Sw+6tHjjsJFTV2bahtqiKKkV5+aDq/wialp76tWD7WuNY2ymufVkRAa+AMbPhmJ/VgmOGbsp2FMrNIg==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      svelte: ^4.2.19
 
   svelte-toolbelt@0.10.6:
     resolution: {integrity: sha512-YWuX+RE+CnWYx09yseAe4ZVMM7e7GRFZM6OYWpBKOb++s+SQ8RBIMMe+Bs/CznBMc0QPLjr+vDBxTAkozXsFXQ==}
@@ -5321,6 +5330,10 @@ snapshots:
       typescript: 5.9.3
     transitivePeerDependencies:
       - picomatch
+
+  svelte-tiny-virtual-list@3.0.1(svelte@5.55.9):
+    dependencies:
+      svelte: 5.55.9
 
   svelte-toolbelt@0.10.6(svelte@5.55.9):
     dependencies:

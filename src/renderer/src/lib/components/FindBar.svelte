@@ -46,7 +46,7 @@
     }
   }
 
-  let counterText = $derived.by(() => {
+  const counterText = $derived.by(() => {
     if (!find.query) return '';
     if (find.matchCount === 0) return 'No results';
     const current = find.currentIndex < 0 ? 0 : find.currentIndex + 1;

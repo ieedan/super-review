@@ -4,10 +4,10 @@
   import * as Dialog from './ui/dialog';
   import { actions, app, effectiveEditor } from '$lib/store.svelte';
 
-  let editor = $derived(effectiveEditor());
-  let allResolved = $derived(app.conflictFiles.length === 0);
-  let open = $derived(app.push.stage === 'conflicts');
-  let isPullOnly = $derived(app.push.intent === 'pull');
+  const editor = $derived(effectiveEditor());
+  const allResolved = $derived(app.conflictFiles.length === 0);
+  const open = $derived(app.push.stage === 'conflicts');
+  const isPullOnly = $derived(app.push.intent === 'pull');
 
   async function openFile(file: string): Promise<void> {
     await actions.openInEditor(file);

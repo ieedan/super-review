@@ -1,48 +1,41 @@
 <script lang="ts">
-  import { Check, LogOut, Plus, Settings, User } from 'lucide-svelte';
+  import { User } from 'lucide-svelte';
   import { buttonVariants } from './ui/button';
-  import * as DropdownMenu from './ui/dropdown-menu';
   import * as Avatar from './ui/avatar';
-  import { actions, app } from '$lib/store.svelte';
+  import AccountSwitcher from './AccountSwitcher.svelte';
+  import { actions, app, effectiveGithubAccount } from '$lib/store.svelte';
   import { cn } from '$lib/utils';
 
-  function startSignIn(): void {
-    actions.openGithubSignIn();
-  }
-
-  function openSettings(): void {
-    actions.openSettingsDialog();
-  }
-
-  async function switchTo(id: string): Promise<void> {
-    await actions.switchGithubAccount(id);
-  }
-
-  async function removeAccount(id: string): Promise<void> {
-    await actions.removeGithubAccount(id);
-  }
+  // Shows the account the current project authenticates as (its pin, else the
+  // app-wide default) and switches the project's account — same behavior as the
+  // commit-box switcher.
+  const account = $derived(effectiveGithubAccount());
 </script>
 
-<DropdownMenu.Root>
-  <DropdownMenu.Trigger
-    class={cn(
-      buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
-      'rounded-full p-0',
-    )}
-    title={app.activeGithubAccount
-      ? `Signed in as ${app.activeGithubAccount.login}`
-      : 'Account'}
-  >
-    {#if app.activeGithubAccount}
+<AccountSwitcher
+  align="end"
+  heading="Account for this project"
+  selectedAccountId={account?.id}
+  defaultAccountId={app.activeGithubAccount?.id}
+  isPinned={!!app.activeRepo?.githubAccountId}
+  onSelectAccount={(id) => actions.setRepoGithubAccount(id)}
+  onUseDefault={() => actions.setRepoGithubAccount(null)}
+  triggerTitle={account
+    ? `This project uses ${account.login} — click to switch`
+    : 'Account'}
+  triggerClass={cn(
+    buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+    'rounded-full p-0',
+  )}
+>
+  {#snippet trigger()}
+    {#if account}
       <Avatar.Root class="size-6">
-        {#if app.activeGithubAccount.avatarUrl}
-          <Avatar.Image
-            src={app.activeGithubAccount.avatarUrl}
-            alt={app.activeGithubAccount.login}
-          />
+        {#if account.avatarUrl}
+          <Avatar.Image src={account.avatarUrl} alt={account.login} />
         {/if}
         <Avatar.Fallback class="text-[10px]">
-          {app.activeGithubAccount.login.slice(0, 2).toUpperCase()}
+          {account.login.slice(0, 2).toUpperCase()}
         </Avatar.Fallback>
       </Avatar.Root>
     {:else}
@@ -52,62 +45,5 @@
         </Avatar.Fallback>
       </Avatar.Root>
     {/if}
-  </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="end" class="min-w-[280px]">
-    {#if app.githubAccounts.length > 0}
-      <DropdownMenu.Group>
-        <DropdownMenu.GroupHeading>Signed in accounts</DropdownMenu.GroupHeading>
-        {#each app.githubAccounts as acct (acct.id)}
-          {@const isActive = acct.id === app.activeGithubAccount?.id}
-          <DropdownMenu.Item
-            class={cn('gap-2', isActive && 'opacity-100')}
-            disabled={isActive}
-            closeOnSelect={!isActive}
-            onSelect={() => switchTo(acct.id)}
-          >
-            <Avatar.Root class="size-6 shrink-0">
-              {#if acct.avatarUrl}
-                <Avatar.Image src={acct.avatarUrl} alt={acct.login} />
-              {/if}
-              <Avatar.Fallback class="text-[10px]">
-                {acct.login.slice(0, 2).toUpperCase()}
-              </Avatar.Fallback>
-            </Avatar.Root>
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-xs font-medium">{acct.login}</div>
-              {#if acct.name}
-                <div class="truncate text-[10px] text-muted-foreground">{acct.name}</div>
-              {/if}
-            </div>
-            {#if isActive}
-              <Check class="size-3.5 text-success" />
-            {:else}
-              <button
-                type="button"
-                class="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  void removeAccount(acct.id);
-                }}
-                title={`Sign out ${acct.login}`}
-                aria-label={`Sign out ${acct.login}`}
-              >
-                <LogOut class="size-3.5" />
-              </button>
-            {/if}
-          </DropdownMenu.Item>
-        {/each}
-      </DropdownMenu.Group>
-      <DropdownMenu.Separator />
-    {/if}
-    <DropdownMenu.Item onSelect={startSignIn}>
-      <Plus class="size-3.5" />
-      {app.githubAccounts.length > 0 ? 'Add another account' : 'Sign in to GitHub'}
-    </DropdownMenu.Item>
-    <DropdownMenu.Separator />
-    <DropdownMenu.Item onSelect={openSettings}>
-      <Settings class="size-3.5" />
-      Settings
-    </DropdownMenu.Item>
-  </DropdownMenu.Content>
-</DropdownMenu.Root>
+  {/snippet}
+</AccountSwitcher>

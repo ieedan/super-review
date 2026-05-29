@@ -2,34 +2,38 @@
   import {
     ArrowUp,
     ArrowUpFromLine,
+    Check,
     ExternalLink,
     GitPullRequest,
     GitPullRequestArrow,
     Loader2,
+    X,
   } from 'lucide-svelte';
   import { Button } from './ui/button';
+  import * as Tooltip from './ui/tooltip';
   import { actions, app } from '$lib/store.svelte';
   import { cn } from '$lib/utils';
+  import type { PRCheck } from '@shared/types';
 
-  let status = $derived(app.pushStatus);
-  let busy = $derived(app.push.inProgress);
-  let stage = $derived(app.push.stage);
+  const status = $derived(app.pushStatus);
+  const busy = $derived(app.push.inProgress);
+  const stage = $derived(app.push.stage);
 
   type Mode = 'push' | 'go-pr' | 'create-pr' | 'none';
 
   // Branch has commits the default branch doesn't — i.e. there's content to
   // open a PR for. 0 when on the default branch or when the branch hasn't
   // diverged from it.
-  let branchHasChanges = $derived((status?.aheadOfDefault ?? 0) > 0);
+  const branchHasChanges = $derived((status?.aheadOfDefault ?? 0) > 0);
 
-  let mode = $derived.by<Mode>(() => {
+  const mode = $derived.by<Mode>(() => {
     if (status?.hasRemote && (status.ahead > 0 || !status.hasUpstream)) return 'push';
     if (app.branchPR) return 'go-pr';
     if (branchHasChanges) return 'create-pr';
     return 'none';
   });
 
-  let label = $derived.by(() => {
+  const label = $derived.by(() => {
     if (busy) {
       switch (stage) {
         case 'fetching':
@@ -54,7 +58,7 @@
     }
   });
 
-  let Icon = $derived.by(() => {
+  const Icon = $derived.by(() => {
     if (busy) return Loader2;
     switch (mode) {
       case 'push':
@@ -68,7 +72,7 @@
     }
   });
 
-  let disabled = $derived.by(() => {
+  const disabled = $derived.by(() => {
     if (busy) return true;
     if (mode === 'push') return !status?.hasRemote;
     // PR actions require a GitHub-linked repo.
@@ -87,7 +91,62 @@
     }
   }
 
-  let title = $derived.by(() => {
+  // CI/workflow status for the branch PR's head commit, guarded so a stale poll
+  // result can't paint the wrong PR. `null`/`'none'` means there's nothing to
+  // show, in which case we fall back to the plain PR icon.
+  const checks = $derived(
+    app.branchPRChecks && app.branchPRChecks.number === app.branchPR?.number
+      ? app.branchPRChecks.summary
+      : null,
+  );
+  const checksState = $derived(checks && checks.state !== 'none' ? checks.state : null);
+
+  const checksTitle = $derived.by(() => {
+    switch (checksState) {
+      case 'success':
+        return 'Checks passing';
+      case 'failure':
+        return 'Checks failing';
+      case 'pending':
+        return 'Checks running';
+      default:
+        return '';
+    }
+  });
+
+  function fmtDuration(ms: number | null): string {
+    if (ms == null) return '';
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return rem ? `${m}m ${rem}s` : `${m}m`;
+  }
+
+  // GitHub-style phrasing for a check's outcome, e.g. "Failing after 2m",
+  // "Successful in 25s", "In progress".
+  function statusText(check: PRCheck): string {
+    const d = fmtDuration(check.durationMs);
+    switch (check.state) {
+      case 'failure':
+        return d ? `Failing after ${d}` : 'Failing';
+      case 'success':
+        return d ? `Successful in ${d}` : 'Successful';
+      default:
+        return 'In progress';
+    }
+  }
+
+  // Grouped for the hover breakdown, failing first like GitHub.
+  const failing = $derived(checks?.checks.filter((c) => c.state === 'failure') ?? []);
+  const running = $derived(checks?.checks.filter((c) => c.state === 'pending') ?? []);
+  const passing = $derived(checks?.checks.filter((c) => c.state === 'success') ?? []);
+
+  function plural(n: number, word: string): string {
+    return `${n} ${word}${n === 1 ? '' : 's'}`;
+  }
+
+  const title = $derived.by(() => {
     switch (mode) {
       case 'push':
         if (!status?.hasUpstream) return 'Publish branch to origin';
@@ -113,7 +172,72 @@
     <Icon class={cn('size-3.5', busy && 'animate-spin')} />
     <span class="text-xs">{label}</span>
     {#if mode === 'go-pr'}
-      <GitPullRequestArrow class="size-3 text-muted-foreground" />
+      {#if checks && checks.checks.length > 0}
+        <Tooltip.Provider delayDuration={150}>
+          <Tooltip.Root>
+            <Tooltip.Trigger>
+              {#snippet child({ props })}
+                <span {...props} class="inline-flex items-center" aria-label={checksTitle}>
+                  {@render indicator()}
+                </span>
+              {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content
+              side="bottom"
+              class="border-border bg-popover text-popover-foreground border p-0 shadow-md"
+              arrowClasses="bg-popover fill-popover"
+            >
+              <div class="flex max-h-80 w-80 flex-col overflow-y-auto py-1">
+                {#if failing.length > 0}
+                  {@render group(plural(failing.length, 'failing check'), failing)}
+                {/if}
+                {#if running.length > 0}
+                  {@render group(`${running.length} in progress`, running)}
+                {/if}
+                {#if passing.length > 0}
+                  {@render group(plural(passing.length, 'successful check'), passing)}
+                {/if}
+              </div>
+            </Tooltip.Content>
+          </Tooltip.Root>
+        </Tooltip.Provider>
+      {:else}
+        {@render indicator()}
+      {/if}
     {/if}
   </Button>
 {/if}
+
+{#snippet indicator()}
+  {#if checksState === 'success'}
+    <Check class="size-3.5 text-green-500" aria-label={checksTitle} />
+  {:else if checksState === 'failure'}
+    <X class="size-3.5 text-red-500" aria-label={checksTitle} />
+  {:else if checksState === 'pending'}
+    <Loader2 class="size-3.5 animate-spin text-muted-foreground" aria-label={checksTitle} />
+  {:else}
+    <GitPullRequestArrow class="size-3 text-muted-foreground" />
+  {/if}
+{/snippet}
+
+{#snippet group(label: string, items: PRCheck[])}
+  <div class="text-muted-foreground px-2.5 pb-1 pt-2 text-xs font-medium">{label}</div>
+  {#each items as check (check.name)}
+    <div class="flex items-center gap-2 px-2.5 py-1 text-xs">
+      {#if check.state === 'success'}
+        <Check class="size-3.5 shrink-0 text-green-500" />
+      {:else if check.state === 'failure'}
+        <X class="size-3.5 shrink-0 text-red-500" />
+      {:else}
+        <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+      {/if}
+      {#if check.avatarUrl}
+        <img src={check.avatarUrl} alt="" class="size-3.5 shrink-0 rounded-full" />
+      {/if}
+      <span class="truncate" title={check.name}>{check.name}</span>
+      <span class="text-muted-foreground ml-auto shrink-0 whitespace-nowrap">
+        {statusText(check)}
+      </span>
+    </div>
+  {/each}
+{/snippet}

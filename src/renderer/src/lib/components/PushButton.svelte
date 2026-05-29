@@ -4,11 +4,11 @@
   import { actions, app } from '$lib/store.svelte';
   import { cn } from '$lib/utils';
 
-  let status = $derived(app.pushStatus);
-  let busy = $derived(app.push.inProgress);
-  let stage = $derived(app.push.stage);
+  const status = $derived(app.pushStatus);
+  const busy = $derived(app.push.inProgress);
+  const stage = $derived(app.push.stage);
 
-  let label = $derived.by(() => {
+  const label = $derived.by(() => {
     if (busy) {
       switch (stage) {
         case 'fetching':
@@ -30,7 +30,7 @@
     return 'Up to date';
   });
 
-  let title = $derived.by(() => {
+  const title = $derived.by(() => {
     if (!status) return 'Push';
     const parts: string[] = [];
     if (status.branch) parts.push(`Branch: ${status.branch}`);
@@ -39,14 +39,14 @@
     return parts.join(' · ');
   });
 
-  let disabled = $derived.by(() => {
+  const disabled = $derived.by(() => {
     if (busy) return true;
     if (!status?.hasRemote) return true;
     if (!status.hasUpstream) return false; // first push needs to work
     return status.ahead === 0 && status.behind === 0;
   });
 
-  let Icon = $derived.by(() => {
+  const Icon = $derived.by(() => {
     if (busy) return Loader2;
     if (!status?.hasUpstream) return ArrowUpFromLine;
     if (status.behind > 0 && status.ahead > 0) return ArrowUp;

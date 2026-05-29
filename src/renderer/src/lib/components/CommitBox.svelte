@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { Loader2, User } from 'lucide-svelte';
+  import { ChevronDown, Loader2, User } from 'lucide-svelte';
   import { Button } from './ui/button';
   import * as Avatar from './ui/avatar';
   import { Input } from './ui/input';
   import { Textarea } from './ui/textarea';
-  import { actions, app } from '$lib/store.svelte';
+  import AccountSwitcher from './AccountSwitcher.svelte';
+  import { actions, app, effectiveGithubAccount } from '$lib/store.svelte';
 
   let summary = $state('');
   let description = $state('');
@@ -50,10 +51,10 @@
 
   onDestroy(() => clearTimeout(saveTimer));
 
-  let busy = $derived(app.push.inProgress && app.push.stage === 'committing');
-  let fileCount = $derived(app.changedFiles.length);
-  let branch = $derived(app.currentBranch ?? 'detached HEAD');
-  let canCommit = $derived(!busy && fileCount > 0 && summary.trim().length > 0);
+  const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
+  const fileCount = $derived(app.changedFiles.length);
+  const branch = $derived(app.currentBranch ?? 'detached HEAD');
+  const canCommit = $derived(!busy && fileCount > 0 && summary.trim().length > 0);
 
   async function submit(e?: Event): Promise<void> {
     e?.preventDefault();
@@ -74,8 +75,12 @@
     }
   }
 
-  let lastCommit = $derived(app.lastCommit);
-  let canUndo = $derived(!busy && (lastCommit?.canUndo ?? false));
+  // Account this project authenticates as: its pinned account when set,
+  // otherwise the app-wide default.
+  const effectiveAccount = $derived(effectiveGithubAccount());
+
+  const lastCommit = $derived(app.lastCommit);
+  const canUndo = $derived(!busy && (lastCommit?.canUndo ?? false));
 
   async function undo(): Promise<void> {
     if (!canUndo) return;
@@ -85,21 +90,43 @@
 
 <form class="flex flex-col gap-1.5 border-t border-border bg-card/40 p-2" onsubmit={submit}>
   <div class="flex items-center gap-2">
-    <Avatar.Root class="size-7 shrink-0">
-      {#if app.activeGithubAccount?.avatarUrl}
-        <Avatar.Image
-          src={app.activeGithubAccount.avatarUrl}
-          alt={app.activeGithubAccount.login}
-        />
-      {/if}
-      <Avatar.Fallback class="text-[10px]">
-        {#if app.activeGithubAccount}
-          {app.activeGithubAccount.login.slice(0, 2).toUpperCase()}
-        {:else}
-          <User class="size-3.5" />
-        {/if}
-      </Avatar.Fallback>
-    </Avatar.Root>
+    <AccountSwitcher
+      align="start"
+      side="top"
+      heading="Account for this project"
+      selectedAccountId={effectiveAccount?.id}
+      defaultAccountId={app.activeGithubAccount?.id}
+      isPinned={!!app.activeRepo?.githubAccountId}
+      onSelectAccount={(id) => actions.setRepoGithubAccount(id)}
+      onUseDefault={() => actions.setRepoGithubAccount(null)}
+      triggerTitle={effectiveAccount
+        ? `This project uses ${effectiveAccount.login} — click to switch`
+        : 'Select an account for this project'}
+      triggerClass="group relative shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {#snippet trigger()}
+        <Avatar.Root class="size-7">
+          {#if effectiveAccount?.avatarUrl}
+            <Avatar.Image
+              src={effectiveAccount.avatarUrl}
+              alt={effectiveAccount.login}
+            />
+          {/if}
+          <Avatar.Fallback class="text-[10px]">
+            {#if effectiveAccount}
+              {effectiveAccount.login.slice(0, 2).toUpperCase()}
+            {:else}
+              <User class="size-3.5" />
+            {/if}
+          </Avatar.Fallback>
+        </Avatar.Root>
+        <span
+          class="absolute -bottom-0.5 -right-0.5 flex size-3 items-center justify-center rounded-full border border-border bg-card text-muted-foreground"
+        >
+          <ChevronDown class="size-2" />
+        </span>
+      {/snippet}
+    </AccountSwitcher>
     <Input
       type="text"
       bind:value={summary}

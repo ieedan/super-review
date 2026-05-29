@@ -17,13 +17,29 @@
   import * as Table from './ui/table';
   import CursorIcon from './icons/CursorIcon.svelte';
   import VSCodeIcon from './icons/VSCodeIcon.svelte';
+  import XcodeIcon from './icons/XcodeIcon.svelte';
+  import ZedIcon from './icons/ZedIcon.svelte';
+  import VisualStudioIcon from './icons/VisualStudioIcon.svelte';
   import GhostIcon from './icons/GhostIcon.svelte';
+  import WarpIcon from './icons/WarpIcon.svelte';
+  import ITermIcon from './icons/ITermIcon.svelte';
+  import TerminalAppIcon from './icons/TerminalAppIcon.svelte';
+  import PowerShellIcon from './icons/PowerShellIcon.svelte';
   import ZshIcon from './icons/ZshIcon.svelte';
   import DiffStylePreview from './DiffStylePreview.svelte';
   import FileListPreview from './FileListPreview.svelte';
+  import FontPicker from './FontPicker.svelte';
   import ThemePreview from './ThemePreview.svelte';
-  import { actions, app, effectiveEditor, effectiveTerminal } from '$lib/store.svelte';
+  import {
+    actions,
+    app,
+    codeFontCss,
+    effectiveEditor,
+    effectiveTerminal,
+    uiFontCss,
+  } from '$lib/store.svelte';
   import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
+  import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM } from '@shared/types';
   import { cn } from '$lib/utils';
   import type {
     EditorKind,
@@ -45,6 +61,9 @@
   const EDITOR_LABELS: Record<EditorKind, string> = {
     cursor: 'Cursor',
     vscode: 'Visual Studio Code',
+    zed: 'Zed',
+    xcode: 'Xcode',
+    visualstudio: 'Visual Studio',
   };
 
   const TERMINAL_LABELS: Record<TerminalKind, string> = {
@@ -52,7 +71,22 @@
     iterm: 'iTerm',
     warp: 'Warp',
     ghostty: 'Ghostty',
+    cmd: 'Command Prompt',
+    powershell: 'PowerShell',
   };
+
+  // Only the editors/terminals that make sense on the current OS, with
+  // installed options first and not-installed sunk to the bottom (stable).
+  const sortedEditors = $derived(
+    [...(EDITORS_BY_PLATFORM[app.platform] ?? [])].sort(
+      (a, b) => Number(app.editors[b]) - Number(app.editors[a]),
+    ),
+  );
+  const sortedTerminals = $derived(
+    [...(TERMINALS_BY_PLATFORM[app.platform] ?? [])].sort(
+      (a, b) => Number(app.terminals[b]) - Number(app.terminals[a]),
+    ),
+  );
 
   let dialogOpen = $derived(app.settingsDialogOpen);
 
@@ -64,6 +98,8 @@
   let draftHiddenDiffPatterns = $state<string[]>([]);
   let newPattern = $state<string>('');
   let draftTheme = $state<'light' | 'dark'>('dark');
+  let draftCodeFont = $state<string>('system');
+  let draftUiFont = $state<string>('system');
   let draftEditor = $state<EditorKind | null>(null);
   let draftTerminal = $state<TerminalKind | null>(null);
 
@@ -76,6 +112,8 @@
       draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
       newPattern = '';
       draftTheme = app.theme;
+      draftCodeFont = app.codeFont;
+      draftUiFont = app.uiFont;
       draftEditor = effectiveEditor();
       draftTerminal = effectiveTerminal();
     }
@@ -128,6 +166,12 @@
     if (draftTheme !== app.theme) {
       promises.push(actions.setTheme(draftTheme));
     }
+    if (draftCodeFont !== app.codeFont) {
+      promises.push(actions.setCodeFont(draftCodeFont));
+    }
+    if (draftUiFont !== app.uiFont) {
+      promises.push(actions.setUiFont(draftUiFont));
+    }
     const savedEditor = app.prefs?.externalEditor ?? null;
     if (draftEditor !== savedEditor) {
       promises.push(actions.setExternalEditor(draftEditor));
@@ -152,31 +196,37 @@
     await actions.removeGithubAccount(id);
   }
 
-  async function switchAccount(id: string): Promise<void> {
-    await actions.switchGithubAccount(id);
+  async function setDefaultAccount(id: string): Promise<void> {
+    await actions.setDefaultGithubAccount(id);
   }
 
-  let availableEditors = $derived(
-    (['cursor', 'vscode'] as EditorKind[]).filter((k) => app.editors[k]),
-  );
-  let availableTerminals = $derived(
-    (['terminal', 'iterm', 'warp', 'ghostty'] as TerminalKind[]).filter(
-      (k) => app.terminals[k],
-    ),
-  );
 </script>
 
 {#snippet editorIcon(editor: EditorKind)}
   {#if editor === 'cursor'}
     <CursorIcon class="size-5" />
-  {:else}
+  {:else if editor === 'vscode'}
     <VSCodeIcon class="size-5 text-foreground" />
+  {:else if editor === 'zed'}
+    <ZedIcon class="size-5 text-foreground" />
+  {:else if editor === 'xcode'}
+    <XcodeIcon class="size-5" />
+  {:else}
+    <VisualStudioIcon class="size-5" />
   {/if}
 {/snippet}
 
 {#snippet terminalIcon(terminal: TerminalKind)}
   {#if terminal === 'ghostty'}
     <GhostIcon class="size-5" />
+  {:else if terminal === 'warp'}
+    <WarpIcon class="size-5 rounded-[3px]" />
+  {:else if terminal === 'iterm'}
+    <ITermIcon class="size-5 rounded-[3px]" />
+  {:else if terminal === 'terminal'}
+    <TerminalAppIcon class="size-5" />
+  {:else if terminal === 'powershell'}
+    <PowerShellIcon class="size-5" />
   {:else}
     <ZshIcon class="size-5 text-foreground" />
   {/if}
@@ -222,13 +272,21 @@
                 <p class="mt-1 text-xs text-muted-foreground">
                   Sign in to review pull requests and post comments.
                 </p>
+              {:else}
+                <p class="mt-1 text-xs text-muted-foreground">
+                  The default account is used by any project that hasn't picked
+                  its own. Choose a project's account from the switcher in the
+                  top bar or next to the commit box.
+                </p>
+              {/if}
+              {#if app.githubAccounts.length === 0}
                 <Button size="sm" class="mt-3" onclick={startAddAccount}>
                   <Plus class="size-3.5" /> Sign in to GitHub
                 </Button>
               {:else}
                 <ul class="mt-3 space-y-2">
                   {#each app.githubAccounts as acct (acct.id)}
-                    {@const isActive = acct.id === app.activeGithubAccount?.id}
+                    {@const isDefault = acct.id === app.activeGithubAccount?.id}
                     <li
                       class="flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2"
                     >
@@ -248,19 +306,19 @@
                           @{acct.login}
                         </div>
                       </div>
-                      {#if isActive}
+                      {#if isDefault}
                         <span
                           class="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success"
                         >
-                          <Check class="size-3" /> Active
+                          <Check class="size-3" /> Default
                         </span>
                       {:else}
                         <Button
                           variant="ghost"
                           size="sm"
-                          onclick={() => switchAccount(acct.id)}
+                          onclick={() => setDefaultAccount(acct.id)}
                         >
-                          Switch
+                          Set as default
                         </Button>
                       {/if}
                       <Button
@@ -326,6 +384,47 @@
                     </div>
                   </button>
                 {/each}
+              </div>
+            </div>
+
+            <div>
+              <h3 class="text-base font-semibold">UI font</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Font used for the sidebar, lists, and app chrome.
+              </p>
+
+              <div class="mt-3">
+                <FontPicker
+                  value={draftUiFont}
+                  onChange={(f) => (draftUiFont = f)}
+                />
+              </div>
+              <div
+                class="mt-3 overflow-hidden rounded-lg border border-border bg-background py-1"
+                style="font-family: {uiFontCss(draftUiFont)}"
+              >
+                <FileListPreview layout={draftFileListLayout} showIcons={draftShowFileIcons} />
+              </div>
+            </div>
+
+            <div>
+              <h3 class="text-base font-semibold">Code font</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Font used for diffs and code.
+              </p>
+
+              <div class="mt-3">
+                <FontPicker
+                  value={draftCodeFont}
+                  mono
+                  onChange={(f) => (draftCodeFont = f)}
+                />
+              </div>
+              <div
+                class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5"
+                style="--code-font: {codeFontCss(draftCodeFont)}"
+              >
+                <DiffStylePreview mode={draftViewMode} />
               </div>
             </div>
 
@@ -558,36 +657,33 @@
                 Used by the "Open in editor" button.
               </p>
 
-              {#if availableEditors.length === 0}
-                <p
-                  class="mt-3 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
-                >
-                  No supported editors detected. Install the
-                  <code>cursor</code> or <code>code</code> CLI from your editor's command palette.
-                </p>
-              {:else}
-                <div class="mt-3 space-y-1.5">
-                  {#each availableEditors as ed (ed)}
-                    {@const selected = draftEditor === ed}
-                    <button
-                      type="button"
-                      class={cn(
-                        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
-                        selected
+              <div class="mt-3 space-y-1.5">
+                {#each sortedEditors as ed (ed)}
+                  {@const installed = app.editors[ed]}
+                  {@const selected = draftEditor === ed}
+                  <button
+                    type="button"
+                    disabled={!installed}
+                    class={cn(
+                      'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
+                      !installed
+                        ? 'cursor-not-allowed border-border opacity-50'
+                        : selected
                           ? 'border-primary bg-primary/5'
                           : 'border-border hover:bg-muted/40',
-                      )}
-                      onclick={() => (draftEditor = ed)}
-                    >
-                      {@render editorIcon(ed)}
-                      <span class="flex-1 text-sm">{EDITOR_LABELS[ed]}</span>
-                      {#if selected}
-                        <Check class="size-4 text-primary" />
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
+                    )}
+                    onclick={() => installed && (draftEditor = ed)}
+                  >
+                    {@render editorIcon(ed)}
+                    <span class="flex-1 text-sm">{EDITOR_LABELS[ed]}</span>
+                    {#if !installed}
+                      <span class="text-xs text-muted-foreground">Not installed</span>
+                    {:else if selected}
+                      <Check class="size-4 text-primary" />
+                    {/if}
+                  </button>
+                {/each}
+              </div>
             </div>
 
             <div>
@@ -596,35 +692,33 @@
                 Used by the "Open in terminal" button.
               </p>
 
-              {#if availableTerminals.length === 0}
-                <p
-                  class="mt-3 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
-                >
-                  No supported terminals detected.
-                </p>
-              {:else}
-                <div class="mt-3 space-y-1.5">
-                  {#each availableTerminals as t (t)}
-                    {@const selected = draftTerminal === t}
-                    <button
-                      type="button"
-                      class={cn(
-                        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
-                        selected
+              <div class="mt-3 space-y-1.5">
+                {#each sortedTerminals as t (t)}
+                  {@const installed = app.terminals[t]}
+                  {@const selected = draftTerminal === t}
+                  <button
+                    type="button"
+                    disabled={!installed}
+                    class={cn(
+                      'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
+                      !installed
+                        ? 'cursor-not-allowed border-border opacity-50'
+                        : selected
                           ? 'border-primary bg-primary/5'
                           : 'border-border hover:bg-muted/40',
-                      )}
-                      onclick={() => (draftTerminal = t)}
-                    >
-                      {@render terminalIcon(t)}
-                      <span class="flex-1 text-sm">{TERMINAL_LABELS[t]}</span>
-                      {#if selected}
-                        <Check class="size-4 text-primary" />
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
+                    )}
+                    onclick={() => installed && (draftTerminal = t)}
+                  >
+                    {@render terminalIcon(t)}
+                    <span class="flex-1 text-sm">{TERMINAL_LABELS[t]}</span>
+                    {#if !installed}
+                      <span class="text-xs text-muted-foreground">Not installed</span>
+                    {:else if selected}
+                      <Check class="size-4 text-primary" />
+                    {/if}
+                  </button>
+                {/each}
+              </div>
             </div>
           </section>
         {/if}

@@ -25,7 +25,7 @@
 
   let { meta }: Props = $props();
 
-  let composerState = $derived.by(() => {
+  const composerState = $derived.by(() => {
     if (meta.kind !== 'composer') return null;
     const key = composerKey(meta.filePath, meta.side, meta.line);
     return { key, value: app.pendingComposers[key] ?? null };

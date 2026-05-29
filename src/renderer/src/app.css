@@ -69,6 +69,12 @@
   --color-sidebar-ring: hsl(0 0% 83.1%);
 }
 
+:root {
+  --ui-font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, sans-serif;
+  --code-font: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+}
+
 html, body, #app {
   height: 100%;
   margin: 0;
@@ -76,8 +82,7 @@ html, body, #app {
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    'Segoe UI', Roboto, sans-serif;
+  font-family: var(--ui-font);
   font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
 }
@@ -94,7 +99,13 @@ button, [role="button"] {
 /* Pierre diffs container baseline */
 diffs-container {
   display: block;
-  font-family: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  /* @pierre/diffs renders code into a shadow root and sets
+     `font-family: var(--diffs-font-family, var(--diffs-font-fallback))` on the
+     code lines, so an inherited font-family on the host is overridden. Feed our
+     choice through the library's own override hook instead — custom properties
+     inherit across the shadow boundary. */
+  --diffs-font-family: var(--code-font);
+  font-family: var(--code-font);
   font-size: 12px;
   line-height: 1.5;
 }

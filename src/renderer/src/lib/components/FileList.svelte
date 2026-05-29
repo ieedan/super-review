@@ -48,7 +48,7 @@
   // Filter changed files by the shared search query (case-insensitive substring
   // match on the full path). When the query is empty, this is the full list.
   // Lives on the store so the diff view applies the same filter.
-  let filteredFiles = $derived.by<ChangedFile[]>(() => {
+  const filteredFiles = $derived.by<ChangedFile[]>(() => {
     const q = app.fileSearchQuery.trim().toLowerCase();
     if (!q) return app.changedFiles;
     return app.changedFiles.filter((f) => f.path.toLowerCase().includes(q));
@@ -58,7 +58,7 @@
   // layout, folders are aggregated from the file paths themselves and may be
   // collapsed. In 'list' layout, each file gets its own row at depth 0 with
   // its full path as the display name — no folder rows.
-  let nodes = $derived.by<Node[]>(() => {
+  const nodes = $derived.by<Node[]>(() => {
     if (app.fileListLayout === 'list') {
       const out: Node[] = [];
       for (const f of filteredFiles) {
@@ -139,7 +139,7 @@
     return out;
   });
 
-  let totals = $derived.by(() => {
+  const totals = $derived.by(() => {
     let add = 0,
       del = 0;
     for (const f of app.changedFiles) {
@@ -149,7 +149,7 @@
     return { add, del };
   });
 
-  let seenCount = $derived(
+  const seenCount = $derived(
     app.changedFiles.filter((f) => app.seenFiles.has(f.path)).length,
   );
 
@@ -208,7 +208,7 @@
   // subtracting fixed UI chrome (checkbox, optional file icon, gaps, padding,
   // and a generous reserve for the +/- stats span). One shared value across
   // all rows — slight per-row stats variance is absorbed by the reserve.
-  let availablePathWidth = $derived.by(() => {
+  const availablePathWidth = $derived.by(() => {
     const checkbox = 14;
     const icon = app.showFileIcons ? 14 + 6 : 0;
     const statsReserve = 70;
@@ -219,7 +219,7 @@
   // Render only the slice of nodes that intersects the viewport (plus a
   // small buffer). Until we've measured the viewport, render a reasonable
   // default window so the first paint isn't empty.
-  let visibleRange = $derived.by(() => {
+  const visibleRange = $derived.by(() => {
     if (nodes.length === 0) return { start: 0, end: 0 };
     if (viewportHeight === 0) {
       return { start: 0, end: Math.min(nodes.length, 60) };
@@ -231,9 +231,9 @@
     );
     return { start, end };
   });
-  let visibleNodes = $derived(nodes.slice(visibleRange.start, visibleRange.end));
-  let topSpacer = $derived(visibleRange.start * ROW_HEIGHT);
-  let bottomSpacer = $derived((nodes.length - visibleRange.end) * ROW_HEIGHT);
+  const visibleNodes = $derived(nodes.slice(visibleRange.start, visibleRange.end));
+  const topSpacer = $derived(visibleRange.start * ROW_HEIGHT);
+  const bottomSpacer = $derived((nodes.length - visibleRange.end) * ROW_HEIGHT);
 
   // Keep the highlighted file visible as the user scrolls the diff. Because
   // the list is virtualized, `scrollIntoView` on the row element won't work

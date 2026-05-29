@@ -5,37 +5,37 @@
   import { actions, app } from '$lib/store.svelte';
   import { cn, formatRelative } from '$lib/utils';
 
-  let pullStage = $derived(app.push.intent === 'pull' ? app.push.stage : 'idle');
-  let pulling = $derived(
+  const pullStage = $derived(app.push.intent === 'pull' ? app.push.stage : 'idle');
+  const pulling = $derived(
     app.push.inProgress && app.push.intent === 'pull' && pullStage !== 'conflicts',
   );
-  let refreshing = $derived(app.loading.files || app.loading.branches || app.fetchingOrigin);
-  let busy = $derived(refreshing || pulling);
+  const refreshing = $derived(app.loading.files || app.loading.branches || app.fetchingOrigin);
+  const busy = $derived(refreshing || pulling);
 
   // Switch to pull mode when origin has commits we don't, and we have no
   // local commits to push (the primary action button handles the sync case
   // by pulling-then-pushing).
-  let canPull = $derived(
+  const canPull = $derived(
     !!app.pushStatus &&
       app.pushStatus.hasUpstream &&
       app.pushStatus.behind > 0 &&
       app.pushStatus.ahead === 0,
   );
-  let mode = $derived<'refresh' | 'pull'>(canPull ? 'pull' : 'refresh');
+  const mode = $derived<'refresh' | 'pull'>(canPull ? 'pull' : 'refresh');
 
-  let relative = $derived.by(() => {
+  const relative = $derived.by(() => {
     void app.nowTick;
     if (!app.lastRefreshAt) return null;
     return formatRelative(new Date(app.lastRefreshAt).toISOString());
   });
 
-  let absolute = $derived.by(() => {
+  const absolute = $derived.by(() => {
     void app.nowTick;
     if (!app.lastRefreshAt) return null;
     return new Date(app.lastRefreshAt).toLocaleString();
   });
 
-  let behindLabel = $derived.by(() => {
+  const behindLabel = $derived.by(() => {
     const s = app.pushStatus;
     if (!s) return null;
     if (s.behind === 0 && s.ahead === 0) return 'Up to date with origin';
@@ -45,7 +45,7 @@
     return parts.join(' · ');
   });
 
-  let pullTitle = $derived.by(() => {
+  const pullTitle = $derived.by(() => {
     const n = app.pushStatus?.behind ?? 0;
     if (pulling) {
       return pullStage === 'fetching' ? 'Fetching origin…' : 'Pulling…';

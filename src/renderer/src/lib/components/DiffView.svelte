@@ -9,7 +9,7 @@
 
   // Mirror the sidebar's path filter so hidden files don't render a diff
   // section here either. Both views read from `app.fileSearchQuery`.
-  let visibleFiles = $derived.by<ChangedFile[]>(() => {
+  const visibleFiles = $derived.by<ChangedFile[]>(() => {
     const q = app.fileSearchQuery.trim().toLowerCase();
     if (!q) return app.changedFiles;
     return app.changedFiles.filter((f) => f.path.toLowerCase().includes(q));

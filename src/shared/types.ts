@@ -8,6 +8,16 @@ export interface RepoInfo {
   githubRepo?: string;
   defaultBranch?: string;
   lastOpenedAt: number;
+  // GitHub account this project is pinned to. When unset, the app-wide default
+  // (activeGithubAccountId) is used instead.
+  githubAccountId?: string;
+}
+
+// Author/committer identity applied to a commit, derived from the GitHub
+// account a project authenticates as.
+export interface GitIdentity {
+  name: string;
+  email: string;
 }
 
 export interface BranchInfo {
@@ -64,6 +74,31 @@ export interface PRSummary {
   state: "open" | "closed";
 }
 
+// Aggregated CI/workflow status for a PR's head commit. Mirrors GitHub's
+// combined-status precedence: any failure wins, then any still-running run,
+// else success. 'none' means nothing reported any checks.
+export type PRChecksState = "success" | "failure" | "pending" | "none";
+
+// A single check-run or commit status reported against the head commit.
+export interface PRCheck {
+  name: string;
+  // Per-check rollup. 'none' is never used here — a check is always one of the
+  // other three.
+  state: PRChecksState;
+  // Wall-clock run time in milliseconds, or null when still running or when the
+  // source (legacy commit statuses) doesn't expose timing.
+  durationMs: number | null;
+  // Avatar of the app/integration that reported the check (e.g. GitHub
+  // Actions), or null when unavailable.
+  avatarUrl: string | null;
+}
+
+// Aggregate state plus the individual checks behind it, for a hover breakdown.
+export interface PRChecksSummary {
+  state: PRChecksState;
+  checks: PRCheck[];
+}
+
 export type DiffContext =
   | { kind: "branch"; base: string; head: string }
   | { kind: "workingTree" }
@@ -110,9 +145,36 @@ export type FileListLayout = "tree" | "list";
 // restores the last tab on launch.
 export type ContextTab = "unstaged" | "branch" | "sessions";
 
-export type EditorKind = "cursor" | "vscode";
+export type EditorKind =
+  | "cursor"
+  | "vscode"
+  | "zed"
+  | "xcode"
+  | "visualstudio";
 
-export type TerminalKind = "terminal" | "iterm" | "warp" | "ghostty";
+export type TerminalKind =
+  | "terminal"
+  | "iterm"
+  | "warp"
+  | "ghostty"
+  | "cmd"
+  | "powershell";
+
+export type AppPlatform = "darwin" | "win32" | "linux";
+
+// Which editors/terminals make sense to offer per OS. The Settings UI only
+// lists these (e.g. Xcode/iTerm are macOS-only, Visual Studio is Windows-only).
+export const EDITORS_BY_PLATFORM: Record<AppPlatform, EditorKind[]> = {
+  darwin: ["cursor", "vscode", "zed", "xcode"],
+  win32: ["cursor", "vscode", "zed", "visualstudio"],
+  linux: ["cursor", "vscode", "zed"],
+};
+
+export const TERMINALS_BY_PLATFORM: Record<AppPlatform, TerminalKind[]> = {
+  darwin: ["terminal", "iterm", "warp", "ghostty"],
+  win32: ["cmd", "powershell"],
+  linux: [],
+};
 
 export interface PushStatus {
   branch: string | null;
@@ -174,6 +236,13 @@ export interface UserPrefs {
   externalTerminal?: TerminalKind | null;
   fileListLayout: FileListLayout;
   showFileIcons: boolean;
+  // Font family for the diff/code surface. "system" uses the built-in
+  // monospace stack; any other value is a family name installed on the
+  // user's machine.
+  codeFont: string;
+  // Font family for the app UI (sidebar, lists, chrome). "system" uses the
+  // built-in sans stack; any other value is an installed family name.
+  uiFont: string;
   // Diffs whose changed-line count (additions + deletions) exceeds this are
   // hidden behind a "Load diff" button by default. 0 disables the size check.
   maxDiffLines: number;
@@ -204,6 +273,7 @@ export type DeviceFlowStatus =
   | { state: "error"; message: string };
 
 export interface PreloadAPI {
+  platform: AppPlatform;
   repos: {
     list(): Promise<RepoInfo[]>;
     openPicker(): Promise<RepoInfo | null>;
@@ -242,7 +312,7 @@ export interface PreloadAPI {
     cloneRepo(url: string): Promise<CloneResult>;
   };
   editor: {
-    detect(): Promise<{ cursor: boolean; vscode: boolean }>;
+    detect(): Promise<Record<EditorKind, boolean>>;
     open(
       editor: EditorKind,
       target: string,
@@ -260,6 +330,10 @@ export interface PreloadAPI {
     getActiveAccount(): Promise<GithubAccount | null>;
     setActiveAccount(id: string): Promise<GithubAccount | null>;
     removeAccount(id: string): Promise<void>;
+    setRepoAccount(
+      repoId: string,
+      accountId: string | null,
+    ): Promise<RepoInfo | null>;
     startDeviceFlow(): Promise<DeviceFlowStart>;
     pollDeviceFlow(): Promise<DeviceFlowStatus>;
     cancelDeviceFlow(): Promise<void>;
@@ -269,6 +343,7 @@ export interface PreloadAPI {
       prNumber: number,
     ): Promise<{ headRef: string; baseRef: string }>;
     findPRForBranch(repoId: string, branch: string): Promise<PRSummary | null>;
+    getChecks(repoId: string, ref: string): Promise<PRChecksSummary>;
     getPR(repoId: string, prNumber: number): Promise<PRSummary | null>;
     listReviewComments(
       repoId: string,

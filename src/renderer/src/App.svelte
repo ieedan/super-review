@@ -17,6 +17,7 @@
 
   const ORIGIN_POLL_MS = 2 * 60 * 1000;
   const TICK_MS = 30 * 1000;
+  const CHECKS_POLL_MS = 20 * 1000;
 
   // Kick off the shiki highlighter preload early so the very first diff —
   // including the settings preview — has a warm singleton.
@@ -77,12 +78,21 @@
     // Drive the "last refreshed Xm ago" label.
     const tickId = window.setInterval(() => actions.tickNow(), TICK_MS);
 
+    // Poll the branch PR's CI/workflow status so the action button's indicator
+    // stays current while checks run. Only while visible and a PR is shown.
+    const checksId = window.setInterval(() => {
+      if (app.branchPR && document.visibilityState === 'visible') {
+        void actions.refreshBranchPRChecks();
+      }
+    }, CHECKS_POLL_MS);
+
     return () => {
       offRepoChanged();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       stopPoll();
       window.clearInterval(tickId);
+      window.clearInterval(checksId);
     };
   });
 </script>

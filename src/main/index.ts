@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpc } from './ipc.js';
@@ -36,7 +36,24 @@ function createWindow(): void {
   }
 }
 
+// The Appearance settings enumerate installed fonts via the renderer's Local
+// Font Access API (window.queryLocalFonts), which is gated behind the
+// 'local-fonts' permission. Grant it; deny everything else this trusted local
+// app never asks for.
+function setupPermissions(): void {
+  const ses = session.defaultSession;
+  // 'local-fonts' isn't in Electron's typed permission union yet, though it's
+  // a valid runtime value — compare as a string.
+  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback((permission as string) === 'local-fonts');
+  });
+  ses.setPermissionCheckHandler(
+    (_wc, permission) => (permission as string) === 'local-fonts',
+  );
+}
+
 void app.whenReady().then(() => {
+  setupPermissions();
   registerIpc();
   createWindow();
   app.on('activate', () => {

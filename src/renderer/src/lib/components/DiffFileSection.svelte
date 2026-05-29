@@ -54,18 +54,35 @@
   let loading = $state(false);
   let loadError = $state<string | null>(null);
   let inView = $state(false);
-  let expanded = $derived(!app.collapsedFiles.has(file.path));
+  const expanded = $derived(!app.collapsedFiles.has(file.path));
   // Set true when the user clicks "Load diff" to override the default hiding
   // of matched / oversized diffs. Resets to false if the file changes.
   let loadDiffOverride = $state(false);
   // Why this diff is hidden by default (matched a hidden pattern or too large),
   // or null when it should render normally. The override forces a render.
-  let deferReason = $derived(
+  const deferReason = $derived(
     loadDiffOverride
       ? null
       : diffDeferReason(file, app.maxDiffLines, app.hiddenDiffPatterns),
   );
-  let deferred = $derived(deferReason !== null);
+  const deferred = $derived(deferReason !== null);
+  // A pure rename (or copy) with no content change has nothing to diff — git
+  // reports zero additions/deletions. Mirror GitHub and show a one-liner
+  // instead of fetching/rendering an empty diff.
+  const renamedNoChanges = $derived(
+    (file.status === 'renamed' || file.status === 'copied') &&
+      file.additions === 0 &&
+      file.deletions === 0,
+  );
+  const isDeleted = $derived(file.status === 'deleted');
+  // Files where the diff body is pointless to render — show a one-liner.
+  const placeholderMessage = $derived(
+    renamedNoChanges
+      ? 'File renamed without changes.'
+      : isDeleted
+        ? 'This file was deleted.'
+        : null,
+  );
   // Handle for the most recently queued render so we can cancel it if a newer
   // target supersedes it before the scheduler gets to it.
   let cancelPendingRender: (() => void) | null = null;
@@ -76,7 +93,7 @@
   //   - Branch tab with an open PR for the current branch (base...head).
   // The Unstaged tab is intentionally excluded — its line numbers reflect
   // uncommitted changes and don't translate to anything on GitHub.
-  let isPRContext = $derived(
+  const isPRContext = $derived(
     app.diffContext.kind === 'pr' ||
       (app.contextTab === 'branch' && app.branchPR != null),
   );
@@ -98,7 +115,7 @@
   // any pending composers on this file. Annotation order matters for the
   // cache key — `${index}-${side}-${line}` — but as long as we deterministically
   // append composers after comments we get stable identities across updates.
-  let lineAnnotations = $derived.by<DiffLineAnnotation<CommentMeta>[]>(() => {
+  const lineAnnotations = $derived.by<DiffLineAnnotation<CommentMeta>[]>(() => {
     if (!isPRContext) return [];
     const out: DiffLineAnnotation<CommentMeta>[] = [];
     const liveCommentIds = new Set<number>();
@@ -329,14 +346,14 @@
 
   // What the DOM *should* reflect given the currently loaded data + UI mode.
   // Compared against `renderedKey` to decide whether a (re)render is needed.
-  let targetRenderKey = $derived(
+  const targetRenderKey = $derived(
     loadedCtxKey && diffData ? `${loadedCtxKey}::${app.viewMode}::${dataEpoch}` : null,
   );
 
   // True when there's no DOM in the host yet for the current data — the
   // placeholder uses this to keep "Loading diff…" visible across the gap
   // between data landing and the scheduler actually running renderDiff.
-  let isAwaitingFirstRender = $derived(
+  const isAwaitingFirstRender = $derived(
     targetRenderKey !== null && renderedKey === null,
   );
 
@@ -420,6 +437,8 @@
     // Don't fetch hidden diffs — wait until the user clicks "Load diff". When
     // they do, `deferred` flips false and this effect re-runs to fetch.
     if (deferred) return;
+    // Nothing useful to render for a pure rename or a deletion.
+    if (placeholderMessage) return;
     const repo = app.activeRepo;
     const ctx = $state.snapshot(app.diffContext) as DiffContext;
     const ctxKey = diffContextKey(ctx);
@@ -563,11 +582,11 @@
     disposeDiff();
   });
 
-  let isSeen = $derived(app.seenFiles.has(file.path));
-  let commentCount = $derived(
+  const isSeen = $derived(app.seenFiles.has(file.path));
+  const commentCount = $derived(
     isPRContext ? (app.prComments[file.path] ?? []).length : 0,
   );
-  let statusBadge = $derived.by(() => {
+  const statusBadge = $derived.by(() => {
     switch (file.status) {
       case 'deleted':
         return 'deleted';
@@ -599,7 +618,7 @@
   }
   // Surface comments that fall outside the rendered diff (e.g. on lines we
   // skipped) so they aren't silently lost.
-  let orphanComments = $derived.by<PRReviewComment[]>(() => {
+  const orphanComments = $derived.by<PRReviewComment[]>(() => {
     if (!isPRContext) return [];
     return (app.prComments[file.path] ?? []).filter((c) => c.line == null);
   });
@@ -665,7 +684,9 @@
   </header>
 
   <div class="bg-card/20" hidden={!expanded}>
-    {#if loadError}
+    {#if placeholderMessage}
+      <div class="p-4 text-sm text-muted-foreground">{placeholderMessage}</div>
+    {:else if loadError}
       <div class="p-4 text-sm text-destructive">{loadError}</div>
     {:else if deferred}
       <div class="flex flex-col items-center gap-2 p-6 text-center">
