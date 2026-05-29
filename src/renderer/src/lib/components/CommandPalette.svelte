@@ -102,7 +102,7 @@
         <Command.Item
           value={file.path}
           onSelect={() => choose(file.path)}
-          class={cn('gap-2', isSeen && 'opacity-50')}
+          class="gap-2"
         >
           <!-- `!size-*` overrides command-dialog's global `[data-command-item]
                svg { h-5 w-5 }` rule, which would otherwise blow the check past
@@ -126,7 +126,7 @@
           <!-- Inline whitespace is intentional: a newline between these flex
                children becomes a text node that can render as a visible gap.
                The prefix is pre-truncated to fit `availablePathWidth`. -->
-          <span class={cn('flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap', isSeen && 'line-through')}>{#if displayPrefix}<span class="text-muted-foreground">{displayPrefix}</span>{/if}<span class="shrink-0">{parts.name}</span></span>
+          <span class={cn('flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap', isSeen && 'text-muted-foreground line-through')}>{#if displayPrefix}<span class="text-muted-foreground">{displayPrefix}</span>{/if}<span class="shrink-0">{parts.name}</span></span>
         </Command.Item>
       {/each}
     </Command.Group>

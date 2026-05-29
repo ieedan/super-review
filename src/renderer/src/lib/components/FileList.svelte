@@ -444,7 +444,6 @@
                 class={cn(
                   'group flex w-full items-center gap-1.5 border-l-2 border-transparent pr-2',
                   isActive ? 'border-l-foreground bg-accent' : 'hover:bg-accent/50',
-                  isSeen && 'opacity-50',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 4}px"
               >
@@ -484,9 +483,9 @@
                          needed — that's the whole point of doing this in JS,
                          since text-overflow re-flows every row on every
                          pixel of a sidebar resize. -->
-                    <span class={cn('flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-xs', isSeen && 'line-through')}>{#if displayPrefix}<span class="text-muted-foreground">{displayPrefix}</span>{/if}<span class="shrink-0">{node.name}</span></span>
+                    <span class={cn('flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-xs', isSeen && 'text-muted-foreground line-through')}>{#if displayPrefix}<span class="text-muted-foreground">{displayPrefix}</span>{/if}<span class="shrink-0">{node.name}</span></span>
                   {:else}
-                    <span class={cn('truncate text-xs', isSeen && 'line-through')}>
+                    <span class={cn('truncate text-xs', isSeen && 'text-muted-foreground line-through')}>
                       {node.name}
                     </span>
                   {/if}

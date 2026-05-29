@@ -39,6 +39,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --color-background: hsl(0 0% 6%);
   --color-foreground: hsl(0 0% 98%);
   --color-card: hsl(0 0% 8%);
@@ -72,6 +73,7 @@
 }
 
 :root {
+  color-scheme: light;
   --ui-font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', Roboto, sans-serif;
   --code-font: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;

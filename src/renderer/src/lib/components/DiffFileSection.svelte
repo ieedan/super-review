@@ -652,7 +652,6 @@
   <header
     class={[
       'sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card/95 px-3 py-2 backdrop-blur',
-      isSeen && 'opacity-60',
     ]}
   >
     <button
@@ -668,7 +667,7 @@
       {/if}
     </button>
     <Icon icon={languageIconForPath(file.path)} class="size-3.5 shrink-0" />
-    <span class="truncate font-mono text-xs" title={file.path}>{file.path}</span>
+    <span class={['truncate font-mono text-xs', isSeen && 'text-muted-foreground']} title={file.path}>{file.path}</span>
     {#if statusBadge}
       <Badge variant={statusBadge === 'added' ? 'success' : statusBadge === 'deleted' ? 'destructive' : 'warning'}>
         {statusBadge}
