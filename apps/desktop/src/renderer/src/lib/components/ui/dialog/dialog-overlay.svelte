@@ -15,6 +15,6 @@
 <DialogPrimitive.Overlay
 	bind:ref
 	data-slot="dialog-overlay"
-	class={cn("bg-black/10 supports-backdrop-filter:backdrop-blur-xs fixed inset-0 isolate z-50", animations.animationsEnabled && "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 duration-100", className)}
+	class={cn("bg-black/50 fixed inset-0 isolate z-50", animations.animationsEnabled && "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 duration-100", className)}
 	{...restProps}
 />

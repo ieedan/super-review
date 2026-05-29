@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Command as CommandPrimitive } from 'bits-ui';
-  import { ChevronDown, Plus, Search, X } from 'lucide-svelte';
+  import { ChevronDown, Plus, Search } from 'lucide-svelte';
   import { VirtualList } from '$lib/virtual-list';
   import { Button, buttonVariants } from './ui/button';
   import * as Popover from './ui/popover';
@@ -36,9 +36,28 @@
     actions.openAddRepoDialog();
   }
 
-  async function remove(e: MouseEvent, id: string): Promise<void> {
-    e.stopPropagation();
-    await actions.removeRepo(id);
+  // Right-click a repo row: pop the native OS context menu and run the chosen
+  // action. "Remove" only de-registers the repo from the app — it never touches
+  // the files on disk.
+  async function showContextMenu(e: MouseEvent, repo: RepoInfo): Promise<void> {
+    e.preventDefault();
+    const revealLabel =
+      app.platform === 'win32'
+        ? 'Reveal in Explorer'
+        : app.platform === 'linux'
+          ? 'Reveal in File Manager'
+          : 'Reveal in Finder';
+    const action = await window.api.menu.showRepoContextMenu({
+      name: repo.name,
+      revealLabel,
+    });
+    if (action === 'remove') {
+      await actions.removeRepo(repo.id);
+    } else if (action === 'copyPath') {
+      await actions.copyToClipboard(repo.path);
+    } else if (action === 'reveal') {
+      await window.api.shell.showItemInFolder(repo.path);
+    }
   }
 
   function placeholderFor(repo: RepoInfo | null | undefined): {
@@ -115,7 +134,13 @@
   );
 </script>
 
-<Popover.Root bind:open onOpenChange={(v) => { if (!v) filter = ''; }}>
+<Popover.Root
+  bind:open
+  onOpenChange={(v) => {
+    if (v) void actions.refreshDirtyRepos();
+    else filter = '';
+  }}
+>
   <Popover.Trigger
     class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[260px]')}
   >
@@ -191,6 +216,7 @@
                     <Command.Item
                       value={`${index}-${repo.name} ${repo.path}`}
                       onSelect={() => pick(repo.id)}
+                      oncontextmenu={(e) => showContextMenu(e, repo)}
                       class={cn(
                         'group flex items-center gap-2',
                         repo.id === app.activeRepo?.id && 'bg-accent/60',
@@ -214,15 +240,14 @@
                         </span>
                       {/if}
                       <span class="min-w-0 flex-1 truncate font-medium">{repo.name}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        class="-mr-1 opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
-                        onclick={(e) => remove(e, repo.id)}
-                        aria-label="Remove repository"
-                      >
-                        <X class="size-3" />
-                      </Button>
+                      <!-- Dot marks a repo with uncommitted changes. Removing a
+                           repo now lives in the right-click context menu. -->
+                      {#if app.dirtyRepoIds.has(repo.id)}
+                        <span
+                          class="mr-1 size-2 shrink-0 rounded-full bg-sky-500"
+                          aria-label="Uncommitted changes"
+                        ></span>
+                      {/if}
                     </Command.Item>
                   {/if}
                 </div>

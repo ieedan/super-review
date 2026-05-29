@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { GitBranch, Loader2 } from 'lucide-svelte';
+  import { Check, GitBranch, Loader2 } from 'lucide-svelte';
   import * as Dialog from './ui/dialog';
   import { Button } from './ui/button';
   import { Input } from './ui/input';
   import { RadioGroup, RadioGroupItem } from './ui/radio-group';
   import { actions, app } from '$lib/store.svelte';
-  import { cn } from '$lib/utils';
 
   type BaseChoice = 'default' | 'current';
   type BringChoice = 'bring' | 'leave';
@@ -31,11 +30,11 @@
       : currentBranch ?? defaultBranch ?? undefined,
   );
 
-  // Step 2 (the "bring my changes" question) is only relevant when the user
-  // would otherwise be switching into a dirty working tree.
+  // The branch is created in step one. The "what about your changes?" step is
+  // only relevant when the working tree is dirty — otherwise there's nothing
+  // to decide and we switch onto the new branch immediately.
   const needsBringStep = $derived(dirty && !!currentBranch);
-  const canAdvance = $derived(!!name.trim() && !!baseRef && !busy);
-  const canSubmit = $derived(canAdvance);
+  const canCreate = $derived(!!name.trim() && !!baseRef && !busy);
 
   $effect(() => {
     if (!app.createBranchDialogOpen) {
@@ -58,34 +57,70 @@
     });
   });
 
-  function advance(e?: Event): void {
+  // Step one. Create the branch right away. When the working tree is dirty we
+  // create it without switching (so the user keeps deciding from a stable
+  // spot) and move to step two; otherwise we switch onto it and we're done.
+  async function create(e?: Event): Promise<void> {
     e?.preventDefault();
-    if (!canAdvance) return;
-    if (needsBringStep) {
-      step = 'bring';
-    } else {
-      void submit();
-    }
-  }
-
-  async function submit(e?: Event): Promise<void> {
-    e?.preventDefault();
-    if (!canSubmit) return;
+    if (!canCreate) return;
     busy = true;
     error = null;
     try {
       const ok = await actions.createBranch(name.trim(), {
         base: baseRef,
-        bringChanges: needsBringStep ? bringChoice === 'bring' : true,
+        checkout: !needsBringStep,
       });
-      if (ok) {
+      if (!ok) return;
+      if (needsBringStep) {
+        step = 'bring';
+      } else {
         actions.closeCreateBranchDialog();
       }
     } finally {
       busy = false;
     }
   }
+
+  // Step two. The branch already exists; we only decide what to do with the
+  // uncommitted changes. "Bring" switches onto the new branch (the working
+  // tree follows); "leave" stays put. Either way we close when done.
+  async function finish(e?: Event): Promise<void> {
+    e?.preventDefault();
+    if (busy) return;
+    if (bringChoice === 'bring') {
+      busy = true;
+      try {
+        const ok = await actions.checkoutBranch(name.trim());
+        if (!ok) return;
+      } finally {
+        busy = false;
+      }
+    }
+    actions.closeCreateBranchDialog();
+  }
 </script>
+
+{#snippet optionCard(
+  id: string,
+  value: string,
+  title: string,
+  description: string,
+)}
+  <label
+    for={id}
+    class="flex cursor-pointer flex-col rounded-lg border border-border leading-snug transition-colors has-[[data-state=checked]]:border-primary/30 has-[[data-state=checked]]:bg-primary/5 dark:has-[[data-state=checked]]:border-primary/20 dark:has-[[data-state=checked]]:bg-primary/10"
+  >
+    <div class="flex w-full flex-row items-center gap-3 p-3">
+      <div class="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
+        <span class="truncate text-sm font-medium leading-snug">{title}</span>
+        <span class="text-xs leading-snug text-muted-foreground">
+          {description}
+        </span>
+      </div>
+      <RadioGroupItem {id} {value} />
+    </div>
+  </label>
+{/snippet}
 
 <Dialog.Root
   open={app.createBranchDialogOpen}
@@ -95,13 +130,18 @@
   <Dialog.Content class="overflow-hidden sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title class="flex items-center gap-2 text-base">
-        <GitBranch class="size-4" />
-        {step === 'base' ? 'Create a Branch' : 'Bring your changes?'}
+        {#if step === 'base'}
+          <GitBranch class="size-4" />
+          Create a Branch
+        {:else}
+          <Check class="size-4 text-success" />
+          Branch created
+        {/if}
       </Dialog.Title>
     </Dialog.Header>
 
     {#if step === 'base'}
-      <form class="grid gap-4" onsubmit={advance}>
+      <form class="grid gap-4" onsubmit={create}>
         <div class="grid gap-1.5">
           <label for="create-branch-name" class="text-xs font-medium">Name</label>
           <Input
@@ -120,49 +160,20 @@
             <div class="text-xs font-medium">Create branch based on…</div>
             <RadioGroup bind:value={baseChoice} disabled={busy} class="gap-2">
               {#if defaultBranch}
-                <label
-                  for="branch-base-default"
-                  class={cn(
-                    'flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 text-left transition-colors hover:bg-accent',
-                    baseChoice === 'default' && 'border-ring bg-accent/40',
-                  )}
-                >
-                  <RadioGroupItem
-                    id="branch-base-default"
-                    value="default"
-                    class="mt-0.5"
-                  />
-                  <div class="min-w-0 flex-1">
-                    <div class="text-sm font-medium">{defaultBranch}</div>
-                    <div class="text-xs text-muted-foreground">
-                      The default branch in your repository. Pick this to start
-                      on something new that's not dependent on your current
-                      branch.
-                    </div>
-                  </div>
-                </label>
+                {@render optionCard(
+                  'branch-base-default',
+                  'default',
+                  defaultBranch,
+                  "The default branch in your repository. Pick this to start on something new that's not dependent on your current branch.",
+                )}
               {/if}
               {#if showCurrentOption && currentBranch}
-                <label
-                  for="branch-base-current"
-                  class={cn(
-                    'flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 text-left transition-colors hover:bg-accent',
-                    baseChoice === 'current' && 'border-ring bg-accent/40',
-                  )}
-                >
-                  <RadioGroupItem
-                    id="branch-base-current"
-                    value="current"
-                    class="mt-0.5"
-                  />
-                  <div class="min-w-0 flex-1">
-                    <div class="truncate text-sm font-medium">{currentBranch}</div>
-                    <div class="text-xs text-muted-foreground">
-                      The currently checked out branch. Pick this if you need to
-                      build on work done on this branch.
-                    </div>
-                  </div>
-                </label>
+                {@render optionCard(
+                  'branch-base-current',
+                  'current',
+                  currentBranch,
+                  'The currently checked out branch. Pick this if you need to build on work done on this branch.',
+                )}
               {/if}
             </RadioGroup>
           </div>
@@ -186,68 +197,36 @@
           >
             Cancel
           </Button>
-          <Button type="submit" size="sm" disabled={!canAdvance}>
-            {#if needsBringStep}
-              Continue
-            {:else if busy}
+          <Button type="submit" size="sm" disabled={!canCreate}>
+            {#if busy}
               <Loader2 class="size-3.5 animate-spin" /> Creating…
             {:else}
-              Create Branch
+              Create
             {/if}
           </Button>
         </Dialog.Footer>
       </form>
     {:else}
-      <form class="grid gap-4" onsubmit={submit}>
+      <form class="grid gap-4" onsubmit={finish}>
         <p class="text-xs text-muted-foreground">
-          You have uncommitted changes on
-          <span class="font-mono">{currentBranch}</span>. Choose where they
-          should go.
+          <span class="font-mono">{name.trim()}</span> is ready. You have
+          uncommitted changes on
+          <span class="font-mono">{currentBranch}</span> — where should they go?
         </p>
 
         <RadioGroup bind:value={bringChoice} disabled={busy} class="gap-2">
-          <label
-            for="branch-bring-bring"
-            class={cn(
-              'flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 text-left transition-colors hover:bg-accent',
-              bringChoice === 'bring' && 'border-ring bg-accent/40',
-            )}
-          >
-            <RadioGroupItem
-              id="branch-bring-bring"
-              value="bring"
-              class="mt-0.5"
-            />
-            <div class="min-w-0 flex-1">
-              <div class="text-sm font-medium">
-                Bring my changes to {name.trim() || 'new branch'}
-              </div>
-              <div class="text-xs text-muted-foreground">
-                Switch to the new branch and keep your uncommitted changes.
-              </div>
-            </div>
-          </label>
-          <label
-            for="branch-bring-leave"
-            class={cn(
-              'flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 text-left transition-colors hover:bg-accent',
-              bringChoice === 'leave' && 'border-ring bg-accent/40',
-            )}
-          >
-            <RadioGroupItem
-              id="branch-bring-leave"
-              value="leave"
-              class="mt-0.5"
-            />
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-sm font-medium">
-                Leave my changes on {currentBranch}
-              </div>
-              <div class="text-xs text-muted-foreground">
-                Create the branch but stay here so you can keep working.
-              </div>
-            </div>
-          </label>
+          {@render optionCard(
+            'branch-bring-bring',
+            'bring',
+            `Take them to ${name.trim() || 'new branch'}`,
+            'Switch to the new branch. Your uncommitted changes come along.',
+          )}
+          {@render optionCard(
+            'branch-bring-leave',
+            'leave',
+            `Keep them on ${currentBranch}`,
+            'Stay here and keep working. The new branch waits for you.',
+          )}
         </RadioGroup>
 
         {#if error}
@@ -259,20 +238,11 @@
         {/if}
 
         <Dialog.Footer>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            onclick={() => (step = 'base')}
-          >
-            Back
-          </Button>
-          <Button type="submit" size="sm" disabled={!canSubmit}>
+          <Button type="submit" size="sm" disabled={busy}>
             {#if busy}
-              <Loader2 class="size-3.5 animate-spin" /> Creating…
+              <Loader2 class="size-3.5 animate-spin" /> Switching…
             {:else}
-              Create Branch
+              Done
             {/if}
           </Button>
         </Dialog.Footer>

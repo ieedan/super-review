@@ -1,11 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  BranchContextMenuAction,
   BranchInfo,
   ChangedFile,
   CloneResult,
   CommitDraft,
   CommitResult,
   CreateBranchResult,
+  DeleteBranchResult,
   DeviceFlowStart,
   DeviceFlowStatus,
   DiffContext,
@@ -21,6 +23,7 @@ import type {
   PreloadAPI,
   PullPushResult,
   PushStatus,
+  RepoContextMenuAction,
   RepoInfo,
   TerminalKind,
   UserPrefs,
@@ -37,6 +40,8 @@ const api: PreloadAPI = {
     list: () => ipcRenderer.invoke("repos:list") as Promise<RepoInfo[]>,
     openPicker: () =>
       ipcRenderer.invoke("repos:openPicker") as Promise<RepoInfo | null>,
+    openFolder: () =>
+      ipcRenderer.invoke("repos:openFolder") as Promise<RepoInfo[]>,
     createPicker: () =>
       ipcRenderer.invoke("repos:createPicker") as Promise<RepoInfo | null>,
     remove: (id) => ipcRenderer.invoke("repos:remove", id) as Promise<void>,
@@ -55,12 +60,7 @@ const api: PreloadAPI = {
     checkout: (repoId, branch) =>
       ipcRenderer.invoke("git:checkout", repoId, branch) as Promise<void>,
     checkoutPR: (repoId, pr, source) =>
-      ipcRenderer.invoke(
-        "git:checkoutPR",
-        repoId,
-        pr,
-        source,
-      ) as Promise<void>,
+      ipcRenderer.invoke("git:checkoutPR", repoId, pr, source) as Promise<void>,
     isDirty: (repoId) =>
       ipcRenderer.invoke("git:isDirty", repoId) as Promise<boolean>,
     createBranch: (repoId, name, opts) =>
@@ -70,6 +70,13 @@ const api: PreloadAPI = {
         name,
         opts,
       ) as Promise<CreateBranchResult>,
+    deleteBranch: (repoId, name, opts) =>
+      ipcRenderer.invoke(
+        "git:deleteBranch",
+        repoId,
+        name,
+        opts,
+      ) as Promise<DeleteBranchResult>,
     listChangedFiles: (repoId, ctx: DiffContext) =>
       ipcRenderer.invoke("git:listChangedFiles", repoId, ctx) as Promise<
         ChangedFile[]
@@ -110,11 +117,12 @@ const api: PreloadAPI = {
       ) as Promise<PullPushResult>,
     abortMerge: (repoId) =>
       ipcRenderer.invoke("git:abortMerge", repoId) as Promise<void>,
-    commitAll: (repoId, message) =>
+    commit: (repoId, message, paths) =>
       ipcRenderer.invoke(
-        "git:commitAll",
+        "git:commit",
         repoId,
         message,
+        paths,
       ) as Promise<CommitResult>,
     getLastCommit: (repoId) =>
       ipcRenderer.invoke(
@@ -325,6 +333,22 @@ const api: PreloadAPI = {
         "menu:showFileContextMenu",
         params,
       ) as Promise<FileContextMenuAction | null>,
+    showBranchContextMenu: (params) =>
+      ipcRenderer.invoke(
+        "menu:showBranchContextMenu",
+        params,
+      ) as Promise<BranchContextMenuAction | null>,
+    showRepoContextMenu: (params) =>
+      ipcRenderer.invoke(
+        "menu:showRepoContextMenu",
+        params,
+      ) as Promise<RepoContextMenuAction | null>,
+  },
+  windowControls: {
+    // Ask the main process to re-center the macOS traffic lights for the
+    // current zoom factor. The renderer fires this on zoom changes (which the
+    // main 'zoom-changed' event misses for keyboard/menu zoom).
+    sync: () => ipcRenderer.send("window:syncControls"),
   },
   events: {
     onRepoChanged(handler) {

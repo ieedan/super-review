@@ -23,7 +23,7 @@
 		onOpenChange?: (open: boolean) => void;
 	} = $props();
 
-	const sidebar = setSidebar({
+	setSidebar({
 		open: () => open,
 		setOpen: (value: boolean) => {
 			open = value;
@@ -35,7 +35,11 @@
 	});
 </script>
 
-<svelte:window onkeydown={sidebar.handleShortcutKeydown} />
+<!--
+	The built-in Cmd/Ctrl+B listener is intentionally omitted: the sidebar toggle
+	is a user-configurable hotkey (see App.svelte + @shared/hotkeys) so the binding
+	stays the single source of truth and can be rebound in Settings.
+-->
 
 <Tooltip.Provider delayDuration={0}>
 	<div

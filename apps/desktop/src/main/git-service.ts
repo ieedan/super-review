@@ -1,7 +1,7 @@
 import { simpleGit, type SimpleGit } from "simple-git";
 import { shell } from "electron";
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs, type Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -27,6 +27,77 @@ export async function isGitRepo(dirPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Directories we never descend into while scanning a folder for repos: package
+// caches, build output, and other VCS metadata. They never contain a repo we
+// want to surface and can hold tens of thousands of files.
+const SCAN_IGNORE_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".svn",
+  ".hg",
+  "dist",
+  "build",
+  "out",
+  "target",
+  ".next",
+  ".turbo",
+  ".cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "vendor",
+  "Pods",
+]);
+
+// How deep below the chosen folder we'll look. Repos are normally checked out a
+// level or two down (e.g. ~/code/<repo> or ~/code/<org>/<repo>); a bound keeps a
+// stray deep tree from turning the scan into a full-disk walk.
+const MAX_SCAN_DEPTH = 4;
+
+// Recursively find git repositories under `rootPath`. A directory containing a
+// `.git` entry is treated as a repo and is not descended into (so nested repos
+// inside a checkout aren't double-counted). Returns absolute repo paths.
+export async function scanForRepos(rootPath: string): Promise<string[]> {
+  const found: string[] = [];
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    // `.git` is a directory in a normal checkout and a file in a worktree or
+    // submodule — either marks `dir` as a repository.
+    let isRepo = false;
+    try {
+      await fs.stat(path.join(dir, ".git"));
+      isRepo = true;
+    } catch {
+      // No `.git` here — keep descending.
+    }
+    if (isRepo) {
+      found.push(dir);
+      return;
+    }
+    if (depth >= MAX_SCAN_DEPTH) return;
+
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return; // Unreadable directory (permissions, etc.) — skip it.
+    }
+
+    const subdirs = entries.filter(
+      (e) =>
+        e.isDirectory() &&
+        !e.name.startsWith(".") &&
+        !SCAN_IGNORE_DIRS.has(e.name),
+    );
+    await Promise.all(
+      subdirs.map((e) => walk(path.join(dir, e.name), depth + 1)),
+    );
+  }
+
+  await walk(path.resolve(rootPath), 0);
+  return found;
 }
 
 // Names we're willing to treat as a repo icon, ranked best → worst. A real
@@ -90,6 +161,67 @@ const NON_CANONICAL_SEGMENTS = new Set([
   ".storybook",
 ]);
 
+// electron-builder config filenames. Any of these at a directory marks it as
+// an Electron project root; `package.json` deps / a `build` key also count
+// (see electronIconIn).
+const ELECTRON_CONFIG_FILES = new Set([
+  "electron-builder.yml",
+  "electron-builder.yaml",
+  "electron-builder.json",
+  "electron-builder.json5",
+  "electron-builder.js",
+  "electron-builder.cjs",
+  "electron-builder.mjs",
+  "electron-builder.ts",
+]);
+
+// Electron apps have no favicon; their brand icon is whatever electron-builder
+// packages from its buildResources dir (default `build/`) as icon.png/.ico.
+// That dir is in SKIP_DIRS — build output for most projects — so the generic
+// scan never reaches it. Detect an Electron project at `dir` and return its
+// build icon if present. Bounded to one package.json read + a few stat()s.
+async function electronIconIn(
+  dir: string,
+  entries: Dirent[],
+): Promise<string | undefined> {
+  let isElectron = entries.some(
+    (e) => e.isFile() && ELECTRON_CONFIG_FILES.has(e.name.toLowerCase()),
+  );
+  let buildResources = "build";
+  if (entries.some((e) => e.isFile() && e.name === "package.json")) {
+    try {
+      const pkg = JSON.parse(
+        await fs.readFile(path.join(dir, "package.json"), "utf8"),
+      );
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (deps.electron || deps["electron-builder"] || pkg.build) {
+        isElectron = true;
+      }
+      const br = pkg.build?.directories?.buildResources;
+      if (typeof br === "string" && br) buildResources = br;
+    } catch {
+      // unreadable / non-JSON package.json — rely on config-file detection
+    }
+  }
+  if (!isElectron) return undefined;
+  // Prefer png/ico (renderable in an <img>); .icns isn't, so skip it. Covers
+  // the buildResources icon and the linux `icons/` dir convention.
+  for (const rel of [
+    `${buildResources}/icon.png`,
+    `${buildResources}/icon.ico`,
+    `${buildResources}/icons/512x512.png`,
+  ]) {
+    const candidate = path.join(dir, rel);
+    try {
+      const st = await fs.stat(candidate);
+      if (st.isFile() && st.size > 0 && st.size <= 256 * 1024) return candidate;
+    } catch {
+      // not present — try the next
+    }
+  }
+  return undefined;
+}
+
 // Walk the repo up to MAX_DEPTH looking for the best-ranked icon. Bounded
 // because monorepos can have thousands of subdirs and we don't want to stall
 // the picker. A "best so far" tracker lets us short-circuit when we hit the
@@ -109,6 +241,19 @@ async function findRepoIcon(repoPath: string): Promise<string | undefined> {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
       return;
+    }
+    // An Electron app's build icon (build/icon.png) sits in a SKIP_DIRS dir the
+    // loop below won't descend into — check for it explicitly and score it as
+    // authoritatively as a favicon (basePriority 0).
+    const elIcon = await electronIconIn(dir, entries);
+    if (elIcon) {
+      const ext = path.extname(elIcon).slice(1).toLowerCase();
+      const score =
+        (ICON_EXT_PRIORITY[ext] ?? 1) * 10 + depth + (nonCanonical ? 500 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        bestPath = elIcon;
+      }
     }
     for (const entry of entries) {
       if (entry.name.startsWith(".") && entry.name !== ".well-known") {
@@ -192,10 +337,12 @@ async function sshHostMap(): Promise<Map<string, string>> {
       const sep = line.search(/\s|=/);
       if (sep === -1) continue;
       const key = line.slice(0, sep).toLowerCase();
-      const value = line.slice(sep + 1).replace(/^[=\s]+/, "").trim();
+      const value = line
+        .slice(sep + 1)
+        .replace(/^[=\s]+/, "")
+        .trim();
       if (key === "host") aliases = value.split(/\s+/);
-      else if (key === "hostname")
-        for (const a of aliases) map.set(a, value);
+      else if (key === "hostname") for (const a of aliases) map.set(a, value);
     }
   } catch {
     // No ssh config (or unreadable) — nothing to resolve.
@@ -274,7 +421,10 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
       );
     }
   } catch (err) {
-    console.error(`[repo] buildRepoInfo "${name}" failed to read remotes:`, err);
+    console.error(
+      `[repo] buildRepoInfo "${name}" failed to read remotes:`,
+      err,
+    );
   }
   try {
     const head = await git.raw([
@@ -309,20 +459,23 @@ export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
     git.raw(["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => ""),
     git.raw([
       "for-each-ref",
-      "--format=%(refname:short)\t%(committerdate:unix)",
+      "--format=%(refname:short)\t%(committerdate:unix)\t%(upstream:short)",
       "refs/heads",
     ]),
   ]);
   const current = currentRaw.trim();
   const branches: BranchInfo[] = [];
   for (const line of raw.split("\n").filter(Boolean)) {
-    const [name, tsRaw] = line.split("\t");
+    const [name, tsRaw, upstreamRaw] = line.split("\t");
     if (!name) continue;
     const ts = Number(tsRaw);
     branches.push({
       name,
       current: name === current,
-      upstream: undefined,
+      // `%(upstream:short)` is the configured tracking branch (e.g.
+      // "origin/feat") — its presence is how we tell a branch also lives on a
+      // remote. Empty when the branch tracks nothing.
+      upstream: upstreamRaw ? upstreamRaw : undefined,
       isRemote: false,
       lastCommitAt: Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined,
     });
@@ -373,6 +526,11 @@ export interface CreateBranchResult {
   error?: string;
 }
 
+export interface DeleteBranchResult {
+  ok: boolean;
+  error?: string;
+}
+
 // Create a new branch off of `base` (defaults to current HEAD). When
 // `checkout` is true we use `checkout -b` so the working tree follows along
 // (GitHub Desktop's "Bring my changes" path); otherwise the branch is created
@@ -394,6 +552,38 @@ export async function createBranch(
       const args = ["branch", trimmed];
       if (opts.base) args.push(opts.base);
       await git.raw(args);
+    }
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// Delete a local branch (force, so we don't fail on "not fully merged" — the
+// UI already gates this behind an explicit confirmation). When `deleteRemote`
+// is set and the branch has a tracking ref, also delete it on the remote.
+// `upstream` is the short tracking ref (e.g. "origin/feat"); we split off the
+// remote name (which can't contain a slash) to get the remote-side ref.
+export async function deleteBranch(
+  repoPath: string,
+  name: string,
+  opts: { deleteRemote: boolean; upstream?: string },
+): Promise<DeleteBranchResult> {
+  const trimmed = name.trim();
+  if (!trimmed) return { ok: false, error: "Branch name is required." };
+  const git = simpleGit(repoPath);
+  try {
+    await git.raw(["branch", "-D", trimmed]);
+    if (opts.deleteRemote && opts.upstream) {
+      const slash = opts.upstream.indexOf("/");
+      if (slash > 0) {
+        const remote = opts.upstream.slice(0, slash);
+        const ref = opts.upstream.slice(slash + 1);
+        await git.push([remote, "--delete", ref]);
+      }
     }
     return { ok: true };
   } catch (err) {
@@ -960,18 +1150,22 @@ export interface CommitResult {
   error?: string;
 }
 
-// Stages every tracked + untracked change, then commits with the given message.
-// Mirrors the "Commit all" affordance of the primary action button.
-export async function commitAll(
+// Stages and commits exactly the given pathspecs. The renderer decides which
+// changed files are checked for inclusion; `paths` is that selection (with the
+// old path included for renames so both sides of the rename are staged).
+export async function commit(
   repoPath: string,
   message: string,
+  paths: string[],
   identity?: GitIdentity | null,
 ): Promise<CommitResult> {
   const git = simpleGit(repoPath);
   try {
-    await git.raw(["add", "-A"]);
     const trimmed = message.trim();
     if (!trimmed) throw new Error("Commit message is required.");
+    if (paths.length === 0) throw new Error("No files selected to commit.");
+    // Stage only the selected paths (handles adds, edits, and deletions).
+    await git.raw(["add", "-A", "--", ...paths]);
     // `-c` sets config for this invocation only, overriding both author and
     // committer without touching the repo's git config.
     const identityArgs = identity
@@ -982,7 +1176,9 @@ export async function commitAll(
           `user.email=${identity.email}`,
         ]
       : [];
-    await git.raw([...identityArgs, "commit", "-m", trimmed]);
+    // Pin the commit to the selected pathspecs so anything else that may be
+    // staged in the index is left out — only the checked files are committed.
+    await git.raw([...identityArgs, "commit", "-m", trimmed, "--", ...paths]);
     return { ok: true };
   } catch (err) {
     return {
@@ -1250,7 +1446,8 @@ async function ensureRemoteForUrl(
   if (originUrl && (await sameGithubRepo(originUrl, url))) return "origin";
   const remotes = await git.getRemotes(true).catch(() => []);
   for (const r of remotes) {
-    if (r.refs.fetch && (await sameGithubRepo(r.refs.fetch, url))) return r.name;
+    if (r.refs.fetch && (await sameGithubRepo(r.refs.fetch, url)))
+      return r.name;
   }
   let name = sanitizeRemoteName(owner);
   // The preferred name is taken by a remote pointing elsewhere (none matched

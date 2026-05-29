@@ -1,6 +1,8 @@
 import { BrowserWindow, Menu, dialog, ipcMain, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import type {
+  BranchContextMenuAction,
+  BranchContextMenuParams,
   BranchInfo,
   ChangedFile,
   CloneResult,
@@ -22,6 +24,8 @@ import type {
   PRSummary,
   PullPushResult,
   PushStatus,
+  RepoContextMenuAction,
+  RepoContextMenuParams,
   RepoInfo,
   TerminalKind,
   UserPrefs,
@@ -32,9 +36,10 @@ import {
   checkout,
   checkoutPR,
   cloneRepo,
-  commitAll,
+  commit,
   continueMerge,
   createBranch,
+  deleteBranch,
   discardChanges,
   fetchOrigin,
   fetchPRRef,
@@ -51,6 +56,7 @@ import {
   pinPRBaseRef,
   pull,
   push,
+  scanForRepos,
   stageFile,
   undoLastCommit,
 } from "./git-service.js";
@@ -172,6 +178,31 @@ export function registerIpc(): void {
     return info;
   });
 
+  ipcMain.handle("repos:openFolder", async (): Promise<RepoInfo[]> => {
+    const result = await dialog.showOpenDialog({
+      title: "Open folder",
+      buttonLabel: "Scan folder",
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) return [];
+    const root = result.filePaths[0];
+    const repoPaths = await scanForRepos(root);
+    if (repoPaths.length === 0) {
+      throw new Error(`No git repositories found in: ${root}`);
+    }
+    const infos = await Promise.all(
+      repoPaths.map(async (p) => preservePinnedAccount(await buildRepoInfo(p))),
+    );
+    for (const info of infos) upsertRepo(info);
+    // Land the user in one of the freshly added repos (alphabetically first, so
+    // it's deterministic) rather than leaving them on the empty state.
+    infos.sort((a, b) => a.name.localeCompare(b.name));
+    const active = infos[0];
+    setPrefs({ activeRepoId: active.id });
+    broadcast("repos:active-changed", active);
+    return infos;
+  });
+
   ipcMain.handle("repos:createPicker", async (): Promise<RepoInfo | null> => {
     const result = await dialog.showOpenDialog({
       title: "Create new repository",
@@ -279,6 +310,16 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
+    "git:deleteBranch",
+    async (
+      _e,
+      repoId: string,
+      name: string,
+      opts: { deleteRemote: boolean; upstream?: string },
+    ) => deleteBranch(repoOrThrow(repoId).path, name, opts),
+  );
+
+  ipcMain.handle(
     "git:listChangedFiles",
     async (_e, repoId: string, ctx: DiffContext): Promise<ChangedFile[]> => {
       return listChangedFiles(repoOrThrow(repoId).path, ctx);
@@ -358,11 +399,16 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    "git:commitAll",
-    async (_e, repoId: string, message: string): Promise<CommitResult> => {
+    "git:commit",
+    async (
+      _e,
+      repoId: string,
+      message: string,
+      paths: string[],
+    ): Promise<CommitResult> => {
       const repo = repoOrThrow(repoId);
       const identity = gh.resolveCommitIdentity(repo.githubAccountId);
-      return commitAll(repo.path, message, identity);
+      return commit(repo.path, message, paths, identity);
     },
   );
 
@@ -526,7 +572,7 @@ export function registerIpc(): void {
       if (!repo.githubOwner || !repo.githubRepo) {
         console.log(
           `[github] findPRForBranch skipped: repo "${repo.name}" has no GitHub remote ` +
-            `(owner=${repo.githubOwner ?? '∅'} repo=${repo.githubRepo ?? '∅'})`,
+            `(owner=${repo.githubOwner ?? "∅"} repo=${repo.githubRepo ?? "∅"})`,
         );
         return null;
       }
@@ -541,7 +587,7 @@ export function registerIpc(): void {
       } catch (err) {
         console.error(
           `[github] findPRForBranch failed for ${repo.githubOwner}/${repo.githubRepo} ` +
-            `branch=${branch} pinnedAccountId=${repo.githubAccountId ?? '(none)'}:`,
+            `branch=${branch} pinnedAccountId=${repo.githubAccountId ?? "(none)"}:`,
           err instanceof Error ? err.message : err,
         );
       }
@@ -720,7 +766,12 @@ export function registerIpc(): void {
       if (!owner || !name) {
         throw new Error("This repository does not have a GitHub remote.");
       }
-      await gh.deleteReviewComment(owner, name, commentId, repo.githubAccountId);
+      await gh.deleteReviewComment(
+        owner,
+        name,
+        commentId,
+        repo.githubAccountId,
+      );
     },
   );
 
@@ -793,21 +844,121 @@ export function registerIpc(): void {
       });
 
       const template: MenuItemConstructorOptions[] = [];
-      if (params.canDiscard) {
-        template.push(item("Discard Changes", "discard"));
+      if (params.selectedCount > 1) {
+        // Multi-selection: only show actions that apply to the whole selection.
+        // The single-file copy/reveal/open items target just one file, so they
+        // are omitted here. Discard and include/exclude live in their own
+        // groups.
+        const n = params.selectedCount;
+        const groups: MenuItemConstructorOptions[][] = [];
+        if (params.canDiscard) {
+          groups.push([
+            item(`Discard ${n} Selected Files`, "discardSelected"),
+          ]);
+        }
+        if (params.canInclude) {
+          groups.push([
+            item(`Include ${n} Selected Files`, "includeSelected"),
+            item(`Exclude ${n} Selected Files`, "excludeSelected"),
+          ]);
+        }
+        groups.forEach((group, i) => {
+          if (i > 0) template.push({ type: "separator" });
+          template.push(...group);
+        });
+      } else {
+        if (params.canDiscard) {
+          template.push(item("Discard Changes", "discard"));
+          template.push({ type: "separator" });
+        }
+        template.push(item("Copy File Path", "copyPath"));
+        template.push(item("Copy Relative File Path", "copyRelativePath"));
         template.push({ type: "separator" });
+        template.push(item(params.revealLabel, "reveal"));
+        if (params.editorLabel) {
+          template.push(item(`Open in ${params.editorLabel}`, "openInEditor"));
+        }
+        template.push(item("Open with Default Program", "openDefault"));
       }
-      template.push(item("Copy File Path", "copyPath"));
-      template.push(item("Copy Relative File Path", "copyRelativePath"));
-      template.push({ type: "separator" });
-      template.push(item(params.revealLabel, "reveal"));
-      if (params.editorLabel) {
-        template.push(item(`Open in ${params.editorLabel}`, "openInEditor"));
-      }
-      template.push(item("Open with Default Program", "openDefault"));
 
       const menu = Menu.buildFromTemplate(template);
       return await new Promise<FileContextMenuAction | null>((resolve) => {
+        menu.popup({
+          window: win ?? undefined,
+          callback: () => resolve(chosen),
+        });
+      });
+    },
+  );
+
+  // Pop up a native OS context menu for a branch row and resolve with the
+  // chosen action. As with files, the renderer performs the action itself
+  // (copy / confirm-and-delete) so it can refresh afterward.
+  ipcMain.handle(
+    "menu:showBranchContextMenu",
+    async (
+      e,
+      params: BranchContextMenuParams,
+    ): Promise<BranchContextMenuAction | null> => {
+      const win = BrowserWindow.fromWebContents(e.sender);
+      let chosen: BranchContextMenuAction | null = null;
+      const item = (
+        label: string,
+        action: BranchContextMenuAction,
+      ): MenuItemConstructorOptions => ({
+        label,
+        click: () => {
+          chosen = action;
+        },
+      });
+
+      const template: MenuItemConstructorOptions[] = [
+        item("Copy Branch Name", "copy"),
+      ];
+      if (params.canDelete) {
+        template.push({ type: "separator" });
+        template.push(item("Delete Branch…", "delete"));
+      }
+
+      const menu = Menu.buildFromTemplate(template);
+      return await new Promise<BranchContextMenuAction | null>((resolve) => {
+        menu.popup({
+          window: win ?? undefined,
+          callback: () => resolve(chosen),
+        });
+      });
+    },
+  );
+
+  // Repo-row context menu (in the repo picker). Returns the chosen action so the
+  // renderer can run it — "remove" de-registers the repo without touching disk.
+  ipcMain.handle(
+    "menu:showRepoContextMenu",
+    async (
+      e,
+      params: RepoContextMenuParams,
+    ): Promise<RepoContextMenuAction | null> => {
+      const win = BrowserWindow.fromWebContents(e.sender);
+      let chosen: RepoContextMenuAction | null = null;
+      const item = (
+        label: string,
+        action: RepoContextMenuAction,
+      ): MenuItemConstructorOptions => ({
+        label,
+        click: () => {
+          chosen = action;
+        },
+      });
+
+      const template: MenuItemConstructorOptions[] = [
+        item("Copy Path", "copyPath"),
+        item(params.revealLabel, "reveal"),
+        { type: "separator" },
+        item("Remove…", "remove"),
+      ];
+
+      const menu = Menu.buildFromTemplate(template);
+      return await new Promise<RepoContextMenuAction | null>((resolve) => {
         menu.popup({
           window: win ?? undefined,
           callback: () => resolve(chosen),

@@ -1,21 +1,28 @@
 <script lang="ts">
-  import { ChevronLeft, Download, FolderOpen, Loader2, Plus } from 'lucide-svelte';
-  import * as Dialog from './ui/dialog';
-  import { Button } from './ui/button';
-  import { Input } from './ui/input';
-  import { actions, app } from '$lib/store.svelte';
+  import {
+    ChevronLeft,
+    Download,
+    FolderOpen,
+    FolderSearch,
+    Loader2,
+    Plus,
+  } from "lucide-svelte";
+  import * as Dialog from "./ui/dialog";
+  import { Button } from "./ui/button";
+  import { Input } from "./ui/input";
+  import { actions, app } from "$lib/store.svelte";
 
-  type Mode = 'choose' | 'clone';
+  type Mode = "choose" | "clone";
 
-  let mode = $state<Mode>('choose');
-  let cloneUrl = $state('');
+  let mode = $state<Mode>("choose");
+  let cloneUrl = $state("");
   let busy = $state(false);
 
   // Reset whenever the dialog is closed so reopening starts fresh.
   $effect(() => {
     if (!app.addRepoDialogOpen) {
-      mode = 'choose';
-      cloneUrl = '';
+      mode = "choose";
+      cloneUrl = "";
       busy = false;
     }
   });
@@ -25,6 +32,17 @@
     busy = true;
     try {
       await actions.openRepo();
+      actions.closeAddRepoDialog();
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function openFolder(): Promise<void> {
+    if (busy) return;
+    busy = true;
+    try {
+      await actions.openFolder();
       actions.closeAddRepoDialog();
     } finally {
       busy = false;
@@ -57,27 +75,29 @@
 
 <Dialog.Root
   open={app.addRepoDialogOpen}
-  onOpenChange={(v) => (v ? actions.openAddRepoDialog() : actions.closeAddRepoDialog())}
+  onOpenChange={(v) =>
+    v ? actions.openAddRepoDialog() : actions.closeAddRepoDialog()}
 >
   <Dialog.Content class="overflow-hidden sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title class="flex items-center gap-2 text-base">
-        {#if mode === 'clone'}
+        {#if mode === "clone"}
           <Download class="size-4" /> Clone repository
         {:else}
           Add repository
         {/if}
       </Dialog.Title>
       <Dialog.Description>
-        {#if mode === 'clone'}
+        {#if mode === "clone"}
           Paste a Git URL — you'll pick a destination folder next.
         {:else}
-          Open an existing folder, clone from a URL, or create a new repository.
+          Open a repo, scan a folder for repos, clone from a URL, or create a
+          new one.
         {/if}
       </Dialog.Description>
     </Dialog.Header>
 
-    {#if mode === 'choose'}
+    {#if mode === "choose"}
       <div class="grid gap-2">
         <button
           type="button"
@@ -96,7 +116,21 @@
         <button
           type="button"
           class="flex items-start gap-3 rounded-md border border-border p-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
-          onclick={() => (mode = 'clone')}
+          onclick={openFolder}
+          disabled={busy}
+        >
+          <FolderSearch class="mt-0.5 size-4 text-muted-foreground" />
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium">Open a folder</div>
+            <div class="text-xs text-muted-foreground">
+              Scan a folder and add every git repo inside it.
+            </div>
+          </div>
+        </button>
+        <button
+          type="button"
+          class="flex items-start gap-3 rounded-md border border-border p-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
+          onclick={() => (mode = "clone")}
           disabled={busy}
         >
           <Download class="mt-0.5 size-4 text-muted-foreground" />
@@ -117,7 +151,8 @@
           <div class="min-w-0 flex-1">
             <div class="text-sm font-medium">Create new repository</div>
             <div class="text-xs text-muted-foreground">
-              Run <code class="font-mono text-[11px]">git init</code> in a folder you choose.
+              Run <code class="font-mono text-[11px]">git init</code> in a folder
+              you choose.
             </div>
           </div>
         </button>
@@ -149,7 +184,7 @@
             variant="ghost"
             size="sm"
             disabled={busy}
-            onclick={() => (mode = 'choose')}
+            onclick={() => (mode = "choose")}
           >
             <ChevronLeft class="size-3.5" /> Back
           </Button>

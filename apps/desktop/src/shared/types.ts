@@ -185,12 +185,7 @@ export type ContextTab = "unstaged" | "branch" | "sessions";
 // ("fork") or, when the repo is a fork, its parent ("upstream").
 export type PRSource = "fork" | "upstream";
 
-export type EditorKind =
-  | "cursor"
-  | "vscode"
-  | "zed"
-  | "xcode"
-  | "visualstudio";
+export type EditorKind = "cursor" | "vscode" | "zed" | "xcode" | "visualstudio";
 
 export type TerminalKind =
   | "terminal"
@@ -203,14 +198,45 @@ export type TerminalKind =
 export type AppPlatform = "darwin" | "win32" | "linux";
 
 // Actions a file row's native context menu can return. `null` (from the IPC)
-// means the menu was dismissed without a choice.
+// means the menu was dismissed without a choice. The `*Selected` variants act
+// on the sidebar's whole multi-selection (cmd/shift-click) rather than the
+// single right-clicked file.
 export type FileContextMenuAction =
   | "discard"
+  | "discardSelected"
+  | "includeSelected"
+  | "excludeSelected"
   | "copyPath"
   | "copyRelativePath"
   | "reveal"
   | "openInEditor"
   | "openDefault";
+
+// Actions a branch row's native context menu can return. `null` (from the
+// IPC) means the menu was dismissed without a choice.
+export type BranchContextMenuAction = "copy" | "delete";
+
+// Actions a repo row's native context menu can return. `null` (from the IPC)
+// means the menu was dismissed without a choice.
+export type RepoContextMenuAction = "copyPath" | "reveal" | "remove";
+
+// What the renderer hands the main process to build a repo row's native menu.
+export interface RepoContextMenuParams {
+  // The repo's display name — used in the "Remove" item's label.
+  name: string;
+  // Platform-specific file-manager label, e.g. "Reveal in Finder".
+  revealLabel: string;
+}
+
+// What the renderer hands the main process to build a branch row's native menu.
+export interface BranchContextMenuParams {
+  // The branch name — shown back to the user isn't needed here, but kept for
+  // parity/labelling if the menu grows.
+  name: string;
+  // Whether to show "Delete Branch…" — hidden for the currently checked-out
+  // branch (which git can't delete anyway).
+  canDelete: boolean;
+}
 
 // What the renderer hands the main process to build a file row's native menu.
 // The labels are resolved renderer-side (platform name, configured editor) so
@@ -227,6 +253,13 @@ export interface FileContextMenuParams {
   editorLabel: string | null;
   // Platform-specific file-manager label, e.g. "Reveal in Finder".
   revealLabel: string;
+  // How many files are in the sidebar's current multi-selection. When > 1 the
+  // menu leads with bulk actions ("Discard N Files", etc.) that operate on the
+  // whole selection instead of just `filePath`.
+  selectedCount: number;
+  // Whether to offer commit Include/Exclude items — only in the Unstaged tab,
+  // where the file list drives which changes go into the next commit.
+  canInclude: boolean;
 }
 
 // Which editors/terminals make sense to offer per OS. The Settings UI only
@@ -285,6 +318,11 @@ export interface CreateBranchResult {
   error?: string;
 }
 
+export interface DeleteBranchResult {
+  ok: boolean;
+  error?: string;
+}
+
 // An in-progress commit message the user hasn't committed yet. Persisted
 // per-repo so switching repos / restarting the app restores what was typed.
 export interface CommitDraft {
@@ -305,7 +343,10 @@ export interface UserPrefs {
   contextTab?: ContextTab;
   externalEditor?: EditorKind | null;
   externalTerminal?: TerminalKind | null;
-  fileListLayout: FileListLayout;
+  // File list layout is tracked per sidebar tab so the user can keep, say, a
+  // tree in Unstaged and a flat list in Branch.
+  unstagedFileListLayout: FileListLayout;
+  branchFileListLayout: FileListLayout;
   showFileIcons: boolean;
   // When true, moving the file-tree keyboard cursor onto a file opens its diff
   // immediately. When false, arrows only move the focus ring and Enter/Space
@@ -359,6 +400,9 @@ export interface PreloadAPI {
   repos: {
     list(): Promise<RepoInfo[]>;
     openPicker(): Promise<RepoInfo | null>;
+    // Pick a parent folder; scan it for git repos, add them all, and return the
+    // ones that were found (empty if the picker was cancelled).
+    openFolder(): Promise<RepoInfo[]>;
     createPicker(): Promise<RepoInfo | null>;
     remove(id: string): Promise<void>;
     setActive(id: string): Promise<RepoInfo | null>;
@@ -375,6 +419,11 @@ export interface PreloadAPI {
       name: string,
       opts: { base?: string; checkout: boolean },
     ): Promise<CreateBranchResult>;
+    deleteBranch(
+      repoId: string,
+      name: string,
+      opts: { deleteRemote: boolean; upstream?: string },
+    ): Promise<DeleteBranchResult>;
     listChangedFiles(repoId: string, ctx: DiffContext): Promise<ChangedFile[]>;
     getDiff(
       repoId: string,
@@ -396,7 +445,11 @@ export interface PreloadAPI {
     ): Promise<void>;
     continueMerge(repoId: string): Promise<PullPushResult>;
     abortMerge(repoId: string): Promise<void>;
-    commitAll(repoId: string, message: string): Promise<CommitResult>;
+    commit(
+      repoId: string,
+      message: string,
+      paths: string[],
+    ): Promise<CommitResult>;
     getLastCommit(repoId: string): Promise<LastCommit | null>;
     undoLastCommit(repoId: string): Promise<CommitResult>;
     cloneRepo(url: string): Promise<CloneResult>;
@@ -527,6 +580,20 @@ export interface PreloadAPI {
     showFileContextMenu(
       params: FileContextMenuParams,
     ): Promise<FileContextMenuAction | null>;
+    // Pop up a native OS context menu for a branch row. Resolves to the chosen
+    // action, or null when the menu is dismissed without a selection.
+    showBranchContextMenu(
+      params: BranchContextMenuParams,
+    ): Promise<BranchContextMenuAction | null>;
+    // Pop up a native OS context menu for a repo row in the picker. Resolves to
+    // the chosen action, or null when the menu is dismissed without a selection.
+    showRepoContextMenu(
+      params: RepoContextMenuParams,
+    ): Promise<RepoContextMenuAction | null>;
+  };
+  windowControls: {
+    // Re-center the macOS traffic lights for the renderer's current zoom factor.
+    sync(): void;
   };
   events: {
     onRepoChanged(handler: (repo: RepoInfo | null) => void): () => void;

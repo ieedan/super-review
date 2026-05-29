@@ -66,11 +66,29 @@ interface AppState {
   // Count of working-tree changes, kept in sync regardless of the active tab
   // so the Unstaged tab can always show a badge with the current count.
   unstagedFileCount: number;
+  // Ids of repos with a dirty working tree (uncommitted changes), so the repo
+  // picker can flag them with a dot. The active repo's entry is kept in step by
+  // every file refresh; the rest are recomputed when the picker is opened.
+  dirtyRepoIds: Set<string>;
   selectedFile: string | null;
+  // Multi-file selection in the sidebar, driven by cmd/shift-click. Distinct
+  // from `selectedFile` (the one file whose diff is open): this set highlights
+  // every selected row and is the target of bulk context-menu actions (discard
+  // / include / exclude). A plain click or keyboard navigation collapses it
+  // back to the single active file.
+  selectedFiles: Set<string>;
   seenFiles: Set<string>;
+  // Working-tree files explicitly unchecked in the Unstaged tab so they're
+  // left out of the next commit. Tracking exclusions (rather than inclusions)
+  // means everything is committed by default and newly-changed files show up
+  // checked — matching GitHub Desktop. Only meaningful for the working tree.
+  excludedFromCommit: Set<string>;
   collapsedFiles: Set<string>;
   viewMode: ViewMode;
-  fileListLayout: FileListLayout;
+  // File list layout per sidebar tab. The active tab decides which one the
+  // sidebar's tree/list toggle reads and writes.
+  unstagedFileListLayout: FileListLayout;
+  branchFileListLayout: FileListLayout;
   showFileIcons: boolean;
   openFileOnArrowNav: boolean;
   maxDiffLines: number;
@@ -199,11 +217,15 @@ const initial: AppState = {
   changedFiles: [],
   fileSearchQuery: "",
   unstagedFileCount: 0,
+  dirtyRepoIds: new Set(),
   selectedFile: null,
+  selectedFiles: new Set(),
   seenFiles: new Set(),
+  excludedFromCommit: new Set(),
   collapsedFiles: new Set(),
   viewMode: "split",
-  fileListLayout: "tree",
+  unstagedFileListLayout: "tree",
+  branchFileListLayout: "tree",
   showFileIcons: true,
   openFileOnArrowNav: true,
   maxDiffLines: 1500,
@@ -555,7 +577,10 @@ async function refreshBranchPR(): Promise<void> {
     }
   }
   // Drop any status for a PR we're no longer showing, then refresh.
-  if (app.branchPRChecks && app.branchPRChecks.number !== app.branchPR?.number) {
+  if (
+    app.branchPRChecks &&
+    app.branchPRChecks.number !== app.branchPR?.number
+  ) {
     app.branchPRChecks = null;
   }
   await refreshBranchPRChecks();
@@ -659,9 +684,36 @@ async function refreshUnstagedCount(): Promise<void> {
     });
     if (!app.activeRepo || app.activeRepo.id !== repoId) return;
     app.unstagedFileCount = files.length;
+    setRepoDirty(repoId, files.length > 0);
   } catch {
     // keep previous count
   }
+}
+
+// Flip a single repo's dirty flag in `dirtyRepoIds`. Reassigns the set so
+// Svelte's reactivity picks it up. No-op when the flag already matches.
+function setRepoDirty(repoId: string, dirty: boolean): void {
+  if (dirty === app.dirtyRepoIds.has(repoId)) return;
+  const next = new Set(app.dirtyRepoIds);
+  if (dirty) next.add(repoId);
+  else next.delete(repoId);
+  app.dirtyRepoIds = next;
+}
+
+// Recompute the dirty flag for every known repo in parallel. Drives the repo
+// picker's "uncommitted changes" dot. Each check is a cheap `git status`;
+// failures count as clean so a transient error never sticks a dot on a repo.
+async function refreshDirtyRepos(): Promise<void> {
+  const repos = app.repos;
+  const results = await Promise.all(
+    repos.map(
+      async (r) =>
+        [r.id, await window.api.git.isDirty(r.id).catch(() => false)] as const,
+    ),
+  );
+  app.dirtyRepoIds = new Set(
+    results.filter(([, dirty]) => dirty).map(([id]) => id),
+  );
 }
 
 async function refreshFiles(): Promise<void> {
@@ -715,6 +767,33 @@ async function refreshFiles(): Promise<void> {
     app.collapsedFiles = collapsedSet;
     app.selectedFile = nextSelected;
 
+    // Drop any multi-selection entries for files that left this context (got
+    // committed, discarded, or changed tabs) so bulk actions never target a
+    // path that's no longer in the list.
+    if (app.selectedFiles.size > 0) {
+      const present = new Set(files.map((f) => f.path));
+      const pruned = new Set(
+        [...app.selectedFiles].filter((p) => present.has(p)),
+      );
+      if (pruned.size !== app.selectedFiles.size) {
+        app.selectedFiles = pruned;
+      }
+    }
+
+    // Drop commit-exclusions for files that are no longer in the working tree
+    // (committed, discarded, or reverted) so the "select all" state stays
+    // accurate. Only prune against the working-tree list — the branch/PR
+    // contexts list different files and would wrongly clear the selection.
+    if (ctx.kind === "workingTree" && app.excludedFromCommit.size > 0) {
+      const present = new Set(files.map((f) => f.path));
+      const pruned = new Set(
+        [...app.excludedFromCommit].filter((p) => present.has(p)),
+      );
+      if (pruned.size !== app.excludedFromCommit.size) {
+        app.excludedFromCommit = pruned;
+      }
+    }
+
     filesCache.set(cacheKey, {
       changedFiles: files,
       seenFiles: new Set(seenSet),
@@ -727,6 +806,7 @@ async function refreshFiles(): Promise<void> {
     // need a separate fetch since the active tab isn't tracking it.
     if (ctx.kind === "workingTree") {
       app.unstagedFileCount = files.length;
+      setRepoDirty(repoId, files.length > 0);
     } else {
       void refreshUnstagedCount();
     }
@@ -749,7 +829,8 @@ export const actions = {
   async init(): Promise<void> {
     app.prefs = await window.api.state.getPrefs();
     app.viewMode = app.prefs.viewMode;
-    app.fileListLayout = app.prefs.fileListLayout;
+    app.unstagedFileListLayout = app.prefs.unstagedFileListLayout;
+    app.branchFileListLayout = app.prefs.branchFileListLayout;
     app.showFileIcons = app.prefs.showFileIcons;
     app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
     app.maxDiffLines = app.prefs.maxDiffLines;
@@ -796,6 +877,11 @@ export const actions = {
       }
       await refreshBranchPR();
     }
+    // Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
+    // of init so its per-repo `git status` flood doesn't compete with — and
+    // delay — the first paint of the active repo's view (which would flash the
+    // empty state). The picker also refreshes these whenever it opens.
+    void refreshDirtyRepos();
   },
 
   async openRepo(): Promise<void> {
@@ -808,6 +894,28 @@ export const actions = {
         app.diffContext = { kind: "workingTree" };
         await Promise.all([
           refreshRepos(),
+          refreshBranches(),
+          refreshFiles(),
+          refreshPushStatus(),
+        ]);
+        await refreshBranchPR();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  },
+
+  async openFolder(): Promise<void> {
+    try {
+      const repos = await window.api.repos.openFolder();
+      if (repos.length === 0) return; // Picker cancelled.
+      applyContextTab("unstaged");
+      app.diffContext = { kind: "workingTree" };
+      await refreshRepos();
+      app.activeRepo = await window.api.repos.getActive();
+      if (app.activeRepo) {
+        repoFrecency.use(app.activeRepo.id);
+        await Promise.all([
           refreshBranches(),
           refreshFiles(),
           refreshPushStatus(),
@@ -869,6 +977,7 @@ export const actions = {
       repoFrecency.use(repo.id);
       applyContextTab("unstaged");
       app.diffContext = { kind: "workingTree" };
+      app.excludedFromCommit = new Set();
       app.prs = [];
       app.prsHasMore = false;
       prsPage = 0;
@@ -893,7 +1002,14 @@ export const actions = {
       app.branches = [];
       app.selectedFile = null;
     }
+    setRepoDirty(id, false);
     await refreshRepos();
+  },
+
+  // Recompute the "uncommitted changes" dot for every repo. Called when the
+  // repo picker opens so its dots reflect the current state.
+  async refreshDirtyRepos(): Promise<void> {
+    await refreshDirtyRepos();
   },
 
   async setDiffContext(ctx: DiffContext): Promise<void> {
@@ -958,8 +1074,29 @@ export const actions = {
     app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
   },
 
-  toggleSidebar(): void {
-    app.sidebarCollapsed = !app.sidebarCollapsed;
+  // Collapse the sidebar multi-selection to a single file and open its diff.
+  // Used by plain clicks and keyboard navigation, which always reduce to one.
+  selectOnly(path: string): void {
+    app.selectedFiles = new Set([path]);
+    actions.scrollToFile(path);
+  },
+
+  // Replace the multi-selection with exactly these paths (range select). Does
+  // not change which file's diff is open — the caller decides that.
+  setSelectedFiles(paths: string[]): void {
+    app.selectedFiles = new Set(paths);
+  },
+
+  // Add or remove a single file from the multi-selection (cmd/ctrl-click).
+  toggleSelectedFile(path: string): void {
+    const next = new Set(app.selectedFiles);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    app.selectedFiles = next;
+  },
+
+  clearSelectedFiles(): void {
+    if (app.selectedFiles.size > 0) app.selectedFiles = new Set();
   },
 
   toggleFolder(path: string): void {
@@ -996,6 +1133,36 @@ export const actions = {
     app.seenFiles = new Set();
   },
 
+  // Toggle whether a working-tree file is included in the next commit. Kept in
+  // memory only — the selection resets when the repo changes or a file leaves
+  // the working tree (see refreshFiles / switchRepo).
+  toggleFileIncludedForCommit(filePath: string, included?: boolean): void {
+    const isIncluded = included ?? app.excludedFromCommit.has(filePath);
+    const next = new Set(app.excludedFromCommit);
+    if (isIncluded) next.delete(filePath);
+    else next.add(filePath);
+    app.excludedFromCommit = next;
+  },
+
+  // The header "select all" checkbox. Clearing the exclusion set includes
+  // everything; excluding every current file unchecks the lot.
+  setAllIncludedForCommit(included: boolean): void {
+    app.excludedFromCommit = included
+      ? new Set()
+      : new Set(app.changedFiles.map((f) => f.path));
+  },
+
+  // Include/exclude a whole set of files at once — backs the folder checkboxes
+  // in tree view, which check/uncheck every file beneath them.
+  setFilesIncludedForCommit(paths: string[], included: boolean): void {
+    const next = new Set(app.excludedFromCommit);
+    for (const p of paths) {
+      if (included) next.delete(p);
+      else next.add(p);
+    }
+    app.excludedFromCommit = next;
+  },
+
   async toggleFileCollapsed(
     filePath: string,
     collapsed?: boolean,
@@ -1015,8 +1182,8 @@ export const actions = {
     );
   },
 
-  async checkoutBranch(branch: string): Promise<void> {
-    if (!app.activeRepo) return;
+  async checkoutBranch(branch: string): Promise<boolean> {
+    if (!app.activeRepo) return false;
     try {
       await window.api.git.checkout(app.activeRepo.id, branch);
       // Re-derive the diff context for tabs that depend on currentBranch.
@@ -1029,8 +1196,10 @@ export const actions = {
         refreshPushStatus(),
       ]);
       await refreshBranchPR();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     }
   },
 
@@ -1386,13 +1555,14 @@ export const actions = {
     app.createBranchDialogOpen = false;
   },
 
-  // Create a new branch, mirroring GitHub Desktop's flow. `bringChanges`
-  // applies only when the working tree is dirty: true → checkout into the
-  // new branch (working tree follows); false → create the branch without
-  // switching so changes stay on the current branch.
+  // Create a new branch. `checkout` decides whether we switch onto it as part
+  // of creating it: true → `checkout -b` (the working tree follows along);
+  // false → `git branch` (the branch is created but we stay put). The create
+  // dialog creates without switching while the user is still deciding what to
+  // do with a dirty working tree, then switches separately via checkoutBranch.
   async createBranch(
     name: string,
-    opts: { base?: string; bringChanges: boolean },
+    opts: { base?: string; checkout: boolean },
   ): Promise<boolean> {
     if (!app.activeRepo) return false;
     try {
@@ -1401,7 +1571,7 @@ export const actions = {
         name,
         {
           base: opts.base,
-          checkout: opts.bringChanges,
+          checkout: opts.checkout,
         },
       );
       if (!result.ok) {
@@ -1416,6 +1586,37 @@ export const actions = {
         refreshFiles(),
         refreshPushStatus(),
       ]);
+      await refreshBranchPR();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  },
+
+  // Delete a branch. `deleteRemote` additionally removes its tracking branch on
+  // the remote — only meaningful when the branch actually has one. The remote
+  // ref is derived in the main process from the branch's stored upstream.
+  async deleteBranch(
+    name: string,
+    opts: { deleteRemote: boolean },
+  ): Promise<boolean> {
+    if (!app.activeRepo) return false;
+    const upstream = app.branches.find((b) => b.name === name)?.upstream;
+    try {
+      const result = await window.api.git.deleteBranch(
+        app.activeRepo.id,
+        name,
+        {
+          deleteRemote: opts.deleteRemote,
+          upstream,
+        },
+      );
+      if (!result.ok) {
+        setError(result.error ?? "Could not delete branch.");
+        return false;
+      }
+      await Promise.all([refreshBranches(), refreshPushStatus()]);
       await refreshBranchPR();
       return true;
     } catch (err) {
@@ -1445,13 +1646,24 @@ export const actions = {
     }
   },
 
-  // Stage everything and create a commit. Pushing is a separate, explicit
+  // Commit the checked working-tree files. Pushing is a separate, explicit
   // step driven by the header push button.
   async commit(summary: string, description?: string): Promise<boolean> {
     if (!app.activeRepo || app.push.inProgress) return false;
     const repoId = app.activeRepo.id;
     const trimmedSummary = summary.trim();
     if (!trimmedSummary) return false;
+    // Everything not explicitly unchecked is included. For renames we stage
+    // both sides so git records the move rather than an add + orphaned delete.
+    const included = app.changedFiles.filter(
+      (f) => !app.excludedFromCommit.has(f.path),
+    );
+    if (included.length === 0) return false;
+    const paths: string[] = [];
+    for (const f of included) {
+      paths.push(f.path);
+      if (f.oldPath) paths.push(f.oldPath);
+    }
     const trimmedDescription = description?.trim() ?? "";
     const message = trimmedDescription
       ? `${trimmedSummary}\n\n${trimmedDescription}`
@@ -1463,7 +1675,7 @@ export const actions = {
       error: null,
     };
     try {
-      const commit = await window.api.git.commitAll(repoId, message);
+      const commit = await window.api.git.commit(repoId, message, paths);
       if (!commit.ok) throw new Error(commit.error ?? "Commit failed.");
       app.push.stage = "done";
       await Promise.all([
@@ -1732,15 +1944,40 @@ export const actions = {
         : app.platform === "linux"
           ? "Reveal in File Manager"
           : "Reveal in Finder";
+    // Bulk actions apply when the right-clicked file is part of a multi-file
+    // selection. The caller (onRowContextMenu) guarantees `file` is in the set,
+    // so the count alone decides single vs. bulk.
+    const selectedPaths = [...app.selectedFiles];
+    const isBulk = selectedPaths.length > 1 && app.selectedFiles.has(file.path);
     const action = await window.api.menu.showFileContextMenu({
       filePath: file.path,
       canDiscard: app.diffContext.kind === "workingTree",
+      canInclude: app.contextTab === "unstaged",
+      selectedCount: isBulk ? selectedPaths.length : 1,
       editorLabel: editor ? EDITOR_LABELS[editor] : null,
       revealLabel,
     });
     switch (action) {
       case "discard":
         await actions.discardFile(file.path, file.oldPath);
+        break;
+      case "discardSelected": {
+        // Snapshot the targets before discarding — discardFile mutates
+        // changedFiles as it goes.
+        const targets = app.changedFiles.filter((f) =>
+          app.selectedFiles.has(f.path),
+        );
+        for (const f of targets) {
+          await actions.discardFile(f.path, f.oldPath);
+        }
+        actions.clearSelectedFiles();
+        break;
+      }
+      case "includeSelected":
+        actions.setFilesIncludedForCommit(selectedPaths, true);
+        break;
+      case "excludeSelected":
+        actions.setFilesIncludedForCommit(selectedPaths, false);
         break;
       case "copyPath":
         await actions.copyToClipboard(
@@ -1806,7 +2043,10 @@ export const actions = {
     // Discard only happens in the working-tree context, where the file list IS
     // the unstaged set — keep the tab badge in step.
     const ctx = $state.snapshot(app.diffContext) as DiffContext;
-    if (ctx.kind === "workingTree") app.unstagedFileCount = remaining.length;
+    if (ctx.kind === "workingTree") {
+      app.unstagedFileCount = remaining.length;
+      setRepoDirty(repoId, remaining.length > 0);
+    }
 
     // Drop the stale cached diff and prune the per-context files cache so a tab
     // switch (which hydrates from cache) can't resurrect the discarded file.
@@ -1839,6 +2079,23 @@ export const actions = {
     const full = actions.resolveRepoPath(filePath);
     if (!full) return;
     await window.api.shell.showItemInFolder(full);
+  },
+
+  // Open the repository's folder in the OS file manager.
+  async openRepoInFileManager(): Promise<void> {
+    if (!app.activeRepo) return;
+    const result = await window.api.shell.openPath(app.activeRepo.path);
+    if (!result.ok && result.error) setError(result.error);
+  },
+
+  // Open the repository's page on GitHub in the default browser. No-op when
+  // there's no GitHub remote.
+  async openRepoOnGithub(): Promise<void> {
+    const repo = app.activeRepo;
+    if (!repo?.githubOwner || !repo.githubRepo) return;
+    await window.api.shell.openExternal(
+      `https://github.com/${repo.githubOwner}/${repo.githubRepo}`,
+    );
   },
 
   // Open a file with the OS default program for its type.
@@ -1883,9 +2140,21 @@ export const actions = {
     app.prefs = await window.api.state.setPrefs({ viewMode: mode });
   },
 
+  // Set the file list layout for the active sidebar tab. Unstaged and branch
+  // each persist their own layout; the 'sessions' tab has no file list so it
+  // falls through to the unstaged setting harmlessly.
   async setFileListLayout(layout: FileListLayout): Promise<void> {
-    app.fileListLayout = layout;
-    app.prefs = await window.api.state.setPrefs({ fileListLayout: layout });
+    if (app.contextTab === "branch") {
+      app.branchFileListLayout = layout;
+      app.prefs = await window.api.state.setPrefs({
+        branchFileListLayout: layout,
+      });
+    } else {
+      app.unstagedFileListLayout = layout;
+      app.prefs = await window.api.state.setPrefs({
+        unstagedFileListLayout: layout,
+      });
+    }
   },
 
   async setShowFileIcons(show: boolean): Promise<void> {

@@ -58,7 +58,11 @@
   onDestroy(() => clearTimeout(saveTimer));
 
   const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
-  const fileCount = $derived(app.changedFiles.length);
+  // Only the checked files get committed (see the Unstaged tab checkboxes).
+  // Everything is included unless explicitly excluded.
+  const fileCount = $derived(
+    app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path)).length,
+  );
   const branch = $derived(app.currentBranch ?? 'detached HEAD');
   const canCommit = $derived(!busy && fileCount > 0 && summary.trim().length > 0);
 
