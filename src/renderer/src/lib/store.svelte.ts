@@ -11,6 +11,7 @@ import type {
   LastCommit,
   PRChecksSummary,
   PRReviewComment,
+  PRSource,
   PRSummary,
   PushStatus,
   RepoInfo,
@@ -46,6 +47,14 @@ interface AppState {
   branches: BranchInfo[];
   currentBranch: string | null;
   prs: PRSummary[];
+  // Whether more PR pages remain to be fetched (drives the infinite scroll in
+  // the branch picker's Pull Requests tab).
+  prsHasMore: boolean;
+  // True while a follow-up page of PRs is being appended.
+  loadingMorePRs: boolean;
+  // Which repo the PR list targets: the repo's own remote ("fork") or, when the
+  // active repo is a fork, its parent ("upstream").
+  prsSource: PRSource;
   diffContext: DiffContext;
   contextTab: ContextTab;
   changedFiles: ChangedFile[];
@@ -83,6 +92,9 @@ interface AppState {
   editors: Record<EditorKind, boolean>;
   terminals: Record<TerminalKind, boolean>;
   settingsDialogOpen: boolean;
+  // Cmd/Ctrl+K fuzzy file-search palette. Opened from the header search box or
+  // the global shortcut; selecting a file scrolls the diff to it.
+  commandMenuOpen: boolean;
   githubSignInOpen: boolean;
   pushStatus: PushStatus | null;
   // Tip commit of the current branch, surfaced so the commit box can offer an
@@ -154,6 +166,9 @@ const initial: AppState = {
   branches: [],
   currentBranch: null,
   prs: [],
+  prsHasMore: false,
+  loadingMorePRs: false,
+  prsSource: "fork",
   diffContext: { kind: "workingTree" },
   contextTab: "unstaged",
   changedFiles: [],
@@ -197,6 +212,7 @@ const initial: AppState = {
     powershell: false,
   },
   settingsDialogOpen: false,
+  commandMenuOpen: false,
   githubSignInOpen: false,
   pushStatus: null,
   lastCommit: null,
@@ -215,6 +231,49 @@ const initial: AppState = {
 };
 
 export const app = $state<AppState>(initial);
+
+// Must match the per-page size the main process requests; a short page tells us
+// we've reached the end and there's nothing more to load.
+const PR_PAGE_SIZE = 30;
+// Last PR page successfully loaded for the active repo (0 = none yet).
+let prsPage = 0;
+// Repos whose upstream we've already resolved this session, so we only hit the
+// GitHub API once per repo to detect a fork's parent.
+const upstreamChecked = new Set<string>();
+// A user's explicit PR-source choice per repo, remembered for the session so it
+// survives reopening the picker. Absent → use the repo's default source.
+const prsSourceByRepo = new Map<string, PRSource>();
+
+// The source the PR list defaults to: a fork's upstream when one is known,
+// otherwise the repo's own remote.
+function defaultPRSource(repo: RepoInfo | null): PRSource {
+  return repo?.upstreamOwner && repo.upstreamRepo ? "upstream" : "fork";
+}
+
+// Resolve (once per repo) whether the active repo is a fork and, if so, its
+// upstream — then settle `app.prsSource` to the user's remembered choice or the
+// repo's default. Safe to call before every PR load; the API hit is cached.
+async function detectUpstream(): Promise<void> {
+  const repo = app.activeRepo;
+  if (!repo || !repo.githubOwner || !repo.githubRepo) return;
+  if (!upstreamChecked.has(repo.id)) {
+    upstreamChecked.add(repo.id);
+    try {
+      const updated = await window.api.github.detectUpstream(repo.id);
+      if (updated && app.activeRepo?.id === updated.id) {
+        app.activeRepo = updated;
+        const idx = app.repos.findIndex((r) => r.id === updated.id);
+        if (idx !== -1) app.repos[idx] = updated;
+      }
+    } catch {
+      // Detection is best-effort — fall back to the fork's own PRs.
+    }
+  }
+  if (app.activeRepo) {
+    app.prsSource =
+      prsSourceByRepo.get(app.activeRepo.id) ?? defaultPRSource(app.activeRepo);
+  }
+}
 
 // Stale-while-revalidate caches keyed by repo + diff context. Switching tabs
 // hydrates from these immediately so the file list and diffs feel snappy
@@ -735,6 +794,9 @@ export const actions = {
       applyContextTab("unstaged");
       app.diffContext = { kind: "workingTree" };
       app.prs = [];
+      app.prsHasMore = false;
+      prsPage = 0;
+      app.prsSource = prsSourceByRepo.get(repo.id) ?? defaultPRSource(repo);
       app.branchPR = null;
       await Promise.all([
         refreshRepos(),
@@ -896,17 +958,95 @@ export const actions = {
     }
   },
 
+  // Load (or reload) the first page of PRs, replacing whatever was there.
   async loadPRs(): Promise<void> {
     if (!app.activeRepo) return;
+    // Resolve the fork's upstream (if any) and settle the source before the
+    // first fetch so we hit the right repo and the picker can offer the switch.
+    await detectUpstream();
+    if (!app.activeRepo) return;
+    const repoId = app.activeRepo.id;
+    const source = app.prsSource;
+    prsPage = 0;
     app.loading.prs = true;
     try {
-      app.prs = await window.api.github.listPRs(app.activeRepo.id);
+      const page = await window.api.github.listPRs(repoId, 1, source);
+      if (app.activeRepo?.id !== repoId || app.prsSource !== source) return;
+      app.prs = page;
+      prsPage = 1;
+      app.prsHasMore = page.length >= PR_PAGE_SIZE;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       app.prs = [];
+      app.prsHasMore = false;
     } finally {
       app.loading.prs = false;
     }
+  },
+
+  // Fetch the next page of PRs and append it. Called as the PR list scrolls
+  // near its end. Guards against overlapping / redundant loads so the infinite
+  // scroll can fire it freely.
+  async loadMorePRs(): Promise<void> {
+    if (
+      !app.activeRepo ||
+      app.loading.prs ||
+      app.loadingMorePRs ||
+      !app.prsHasMore
+    ) {
+      return;
+    }
+    const repoId = app.activeRepo.id;
+    const source = app.prsSource;
+    const next = prsPage + 1;
+    app.loadingMorePRs = true;
+    try {
+      const page = await window.api.github.listPRs(repoId, next, source);
+      if (app.activeRepo?.id !== repoId || app.prsSource !== source) return;
+      const seen = new Set(app.prs.map((p) => p.number));
+      app.prs = [...app.prs, ...page.filter((p) => !seen.has(p.number))];
+      prsPage = next;
+      app.prsHasMore = page.length >= PR_PAGE_SIZE;
+    } catch {
+      // Stop paging on error rather than spinning on the same failed page.
+      app.prsHasMore = false;
+    } finally {
+      app.loadingMorePRs = false;
+    }
+  },
+
+  // Check out the head branch of a PR and land on the Branch tab so its diff
+  // (head vs. the repo's default branch) is shown for review. Fetches from the
+  // upstream when the PR list is currently showing the fork's parent.
+  async checkoutPR(pr: PRSummary): Promise<void> {
+    if (!app.activeRepo) return;
+    try {
+      await window.api.git.checkoutPR(
+        app.activeRepo.id,
+        pr.number,
+        pr.headRef,
+        app.prsSource,
+      );
+      applyContextTab("branch");
+      await refreshBranches();
+      app.diffContext = contextForTab("branch");
+      await Promise.all([refreshFiles(), refreshPushStatus()]);
+      await refreshBranchPR();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  },
+
+  // Switch the PR list between the fork and its upstream, remembering the
+  // choice for this repo and reloading from page one.
+  async setPRSource(source: PRSource): Promise<void> {
+    if (!app.activeRepo || app.prsSource === source) return;
+    prsSourceByRepo.set(app.activeRepo.id, source);
+    app.prsSource = source;
+    app.prs = [];
+    app.prsHasMore = false;
+    prsPage = 0;
+    await actions.loadPRs();
   },
 
   async reviewPR(prNumber: number): Promise<void> {
@@ -1496,6 +1636,16 @@ export const actions = {
   },
   closeSettingsDialog(): void {
     app.settingsDialogOpen = false;
+  },
+
+  openCommandMenu(): void {
+    app.commandMenuOpen = true;
+  },
+  closeCommandMenu(): void {
+    app.commandMenuOpen = false;
+  },
+  toggleCommandMenu(): void {
+    app.commandMenuOpen = !app.commandMenuOpen;
   },
 
   openGithubSignIn(): void {

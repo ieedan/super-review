@@ -6,6 +6,11 @@ export interface RepoInfo {
   remoteUrl?: string;
   githubOwner?: string;
   githubRepo?: string;
+  // When this repo is a fork, the parent ("upstream") repo's owner/name as
+  // reported by the GitHub API. Lets the UI offer the upstream's PRs alongside
+  // the fork's own. Unset when the repo isn't a fork (or hasn't been checked).
+  upstreamOwner?: string;
+  upstreamRepo?: string;
   defaultBranch?: string;
   lastOpenedAt: number;
   // GitHub account this project is pinned to. When unset, the app-wide default
@@ -72,6 +77,9 @@ export interface PRSummary {
   draft: boolean;
   updatedAt: string;
   state: "open" | "closed";
+  // True when the PR has been merged. `state` is "closed" for both merged and
+  // plain-closed PRs, so this distinguishes the two for the status icon.
+  merged: boolean;
 }
 
 // Aggregated CI/workflow status for a PR's head commit. Mirrors GitHub's
@@ -144,6 +152,10 @@ export type FileListLayout = "tree" | "list";
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
 export type ContextTab = "unstaged" | "branch" | "sessions";
+
+// Which GitHub repo a PR listing/checkout targets: the repo's own remote
+// ("fork") or, when the repo is a fork, its parent ("upstream").
+export type PRSource = "fork" | "upstream";
 
 export type EditorKind =
   | "cursor"
@@ -286,6 +298,12 @@ export interface PreloadAPI {
     listBranches(repoId: string): Promise<BranchInfo[]>;
     getCurrentBranch(repoId: string): Promise<string | null>;
     checkout(repoId: string, branch: string): Promise<void>;
+    checkoutPR(
+      repoId: string,
+      prNumber: number,
+      headRef: string,
+      source?: PRSource,
+    ): Promise<void>;
     isDirty(repoId: string): Promise<boolean>;
     createBranch(
       repoId: string,
@@ -337,7 +355,14 @@ export interface PreloadAPI {
     startDeviceFlow(): Promise<DeviceFlowStart>;
     pollDeviceFlow(): Promise<DeviceFlowStatus>;
     cancelDeviceFlow(): Promise<void>;
-    listPRs(repoId: string): Promise<PRSummary[]>;
+    listPRs(
+      repoId: string,
+      page?: number,
+      source?: PRSource,
+    ): Promise<PRSummary[]>;
+    // Resolve (and persist) the repo's upstream/parent if it's a fork. Returns
+    // the updated RepoInfo (with upstreamOwner/upstreamRepo set or cleared).
+    detectUpstream(repoId: string): Promise<RepoInfo | null>;
     fetchPR(
       repoId: string,
       prNumber: number,

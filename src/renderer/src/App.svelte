@@ -9,6 +9,7 @@
   import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
   import SettingsDialog from '$lib/components/SettingsDialog.svelte';
   import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
+  import CommandPalette from '$lib/components/CommandPalette.svelte';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import * as Resizable from '$lib/components/ui/resizable';
   import type { PaneAPI } from 'paneforge';
@@ -183,3 +184,4 @@
 <CreateBranchDialog />
 <SettingsDialog />
 <GithubSignInDialog />
+<CommandPalette />

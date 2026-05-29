@@ -93,6 +93,27 @@ export function setRepoGithubAccountId(
   return next;
 }
 
+// Persist (or clear) the fork's upstream/parent repo on a project.
+export function setRepoUpstream(
+  repoId: string,
+  upstream: { owner: string; repo: string } | null,
+): RepoInfo | null {
+  const repos = store.get('repos');
+  const repo = repos[repoId];
+  if (!repo) return null;
+  const next: RepoInfo = { ...repo };
+  if (upstream) {
+    next.upstreamOwner = upstream.owner;
+    next.upstreamRepo = upstream.repo;
+  } else {
+    delete next.upstreamOwner;
+    delete next.upstreamRepo;
+  }
+  repos[repoId] = next;
+  store.set('repos', repos);
+  return next;
+}
+
 export function getPrefs(): UserPrefs {
   // Merge with defaults so prefs files saved by older builds still report
   // values for fields added in later releases.

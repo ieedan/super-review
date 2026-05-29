@@ -193,21 +193,17 @@ export function resolveCommitIdentity(accountId?: string | null): GitIdentity | 
   };
 }
 
-export async function listPullRequests(
-  owner: string,
-  repo: string,
-  accountId?: string | null,
-): Promise<PRSummary[]> {
-  const o = octokit(resolveAccount(accountId));
-  const res = await o.pulls.list({
-    owner,
-    repo,
-    state: 'open',
-    sort: 'updated',
-    direction: 'desc',
-    per_page: 50,
-  });
-  return res.data.map((pr) => ({
+// Number of PRs fetched per page. The renderer pages through these as the
+// user scrolls the Pull Requests list.
+export const PR_PAGE_SIZE = 30;
+
+// Map a raw Octokit pull-request object (from either pulls.list or pulls.get,
+// which share these fields) into our PRSummary shape.
+function toPRSummary(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pr: any,
+): PRSummary {
+  return {
     number: pr.number,
     title: pr.title,
     body: pr.body ?? '',
@@ -221,7 +217,52 @@ export async function listPullRequests(
     draft: pr.draft ?? false,
     updatedAt: pr.updated_at,
     state: pr.state as 'open' | 'closed',
-  }));
+    merged: pr.merged_at != null,
+  };
+}
+
+// List PRs for the repo, most-recently-updated first. `state: 'all'` so the
+// list surfaces open, draft, closed and merged PRs (the renderer distinguishes
+// them by their status icon). Paginated so the renderer can scroll infinitely.
+export async function listPullRequests(
+  owner: string,
+  repo: string,
+  accountId?: string | null,
+  page = 1,
+): Promise<PRSummary[]> {
+  const o = octokit(resolveAccount(accountId));
+  const res = await o.pulls.list({
+    owner,
+    repo,
+    state: 'all',
+    sort: 'updated',
+    direction: 'desc',
+    per_page: PR_PAGE_SIZE,
+    page,
+  });
+  return res.data.map(toPRSummary);
+}
+
+// When `owner/repo` is a fork, return its parent ("upstream") repo's
+// owner/name; null otherwise (not a fork, or the lookup failed). The GitHub
+// API reports this via the `parent` field, so it works even when the user
+// never configured an `upstream` git remote.
+export async function getUpstream(
+  owner: string,
+  repo: string,
+  accountId?: string | null,
+): Promise<{ owner: string; repo: string } | null> {
+  const o = octokit(resolveAccount(accountId));
+  try {
+    const res = await o.repos.get({ owner, repo });
+    const parent = res.data.parent;
+    if (res.data.fork && parent?.owner?.login && parent.name) {
+      return { owner: parent.owner.login, repo: parent.name };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getPRBase(
@@ -244,22 +285,7 @@ export async function getPRSummary(
   const o = octokit(resolveAccount(accountId));
   try {
     const res = await o.pulls.get({ owner, repo, pull_number: prNumber });
-    const pr = res.data;
-    return {
-      number: pr.number,
-      title: pr.title,
-      body: pr.body ?? '',
-      author: pr.user?.login ?? 'unknown',
-      authorAvatarUrl: pr.user?.avatar_url ?? '',
-      headRef: pr.head.ref,
-      baseRef: pr.base.ref,
-      headSha: pr.head.sha,
-      baseSha: pr.base.sha,
-      url: pr.html_url,
-      draft: pr.draft ?? false,
-      updatedAt: pr.updated_at,
-      state: pr.state as 'open' | 'closed',
-    };
+    return toPRSummary(res.data);
   } catch {
     return null;
   }
@@ -469,19 +495,5 @@ export async function findPRForBranch(
   );
   const pr = res.data[0];
   if (!pr) return null;
-  return {
-    number: pr.number,
-    title: pr.title,
-    body: pr.body ?? '',
-    author: pr.user?.login ?? 'unknown',
-    authorAvatarUrl: pr.user?.avatar_url ?? '',
-    headRef: pr.head.ref,
-    baseRef: pr.base.ref,
-    headSha: pr.head.sha,
-    baseSha: pr.base.sha,
-    url: pr.html_url,
-    draft: pr.draft ?? false,
-    updatedAt: pr.updated_at,
-    state: pr.state as 'open' | 'closed',
-  };
+  return toPRSummary(pr);
 }

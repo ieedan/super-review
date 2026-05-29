@@ -1102,6 +1102,31 @@ export async function fetchPRRef(
   };
 }
 
+// Check out the branch a PR was opened from so it can be reviewed locally. If
+// a local branch with the PR's head name already exists (the common case for
+// same-repo PRs) we just switch to it; otherwise we fetch the PR head into a
+// new local branch of that name and switch to it. This works for fork PRs too
+// since `pull/<n>/head` is always available on the host.
+//
+// `remote` is the git remote to pull the PR ref from — usually "origin", but
+// for an upstream PR (when reviewing a fork's parent repo) it's the upstream's
+// URL so the fetch hits the right repository rather than the fork.
+export async function checkoutPR(
+  repoPath: string,
+  prNumber: number,
+  headRef: string,
+  remote = "origin",
+): Promise<void> {
+  const git = simpleGit(repoPath);
+  const local = await git.branchLocal();
+  if (local.all.includes(headRef)) {
+    await git.checkout(headRef);
+    return;
+  }
+  await git.fetch([remote, `pull/${prNumber}/head:${headRef}`]);
+  await git.checkout(headRef);
+}
+
 export async function pinPRBaseRef(
   repoPath: string,
   prNumber: number,

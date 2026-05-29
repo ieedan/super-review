@@ -15,6 +15,7 @@ import type {
   NewReviewCommentInput,
   PRChecksSummary,
   PRReviewComment,
+  PRSource,
   PRSummary,
   PullPushResult,
   PushStatus,
@@ -26,6 +27,7 @@ import {
   abortMerge,
   buildRepoInfo,
   checkout,
+  checkoutPR,
   cloneRepo,
   commitAll,
   continueMerge,
@@ -69,6 +71,7 @@ import {
   setFileCollapsed,
   setPrefs,
   setRepoGithubAccountId,
+  setRepoUpstream,
   setSeen,
   upsertRepo,
 } from "./store.js";
@@ -77,6 +80,22 @@ function repoOrThrow(id: string): RepoInfo {
   const repo = getRepo(id);
   if (!repo) throw new Error(`Repo not found: ${id}`);
   return repo;
+}
+
+// A git-fetchable URL for the fork's upstream repo. Derived by swapping the
+// owner/repo segment of the fork's own remote URL so the auth method (SSH vs
+// HTTPS) and host are preserved; falls back to a public github.com HTTPS URL.
+function upstreamFetchUrl(repo: RepoInfo): string {
+  const { remoteUrl, githubOwner, githubRepo, upstreamOwner, upstreamRepo } =
+    repo;
+  if (remoteUrl && githubOwner && githubRepo) {
+    const swapped = remoteUrl.replace(
+      `${githubOwner}/${githubRepo}`,
+      `${upstreamOwner}/${upstreamRepo}`,
+    );
+    if (swapped !== remoteUrl) return swapped;
+  }
+  return `https://github.com/${upstreamOwner}/${upstreamRepo}.git`;
 }
 
 function broadcast(channel: string, payload: unknown): void {
@@ -212,6 +231,27 @@ export function registerIpc(): void {
   ipcMain.handle("git:checkout", async (_e, repoId: string, branch: string) => {
     await checkout(repoOrThrow(repoId).path, branch);
   });
+
+  ipcMain.handle(
+    "git:checkoutPR",
+    async (
+      _e,
+      repoId: string,
+      prNumber: number,
+      headRef: string,
+      source: PRSource = "fork",
+    ) => {
+      const repo = repoOrThrow(repoId);
+      let remote = "origin";
+      if (source === "upstream") {
+        if (!repo.upstreamOwner || !repo.upstreamRepo) {
+          throw new Error("This repository does not have an upstream.");
+        }
+        remote = upstreamFetchUrl(repo);
+      }
+      await checkoutPR(repo.path, prNumber, headRef, remote);
+    },
+  );
 
   ipcMain.handle(
     "git:isDirty",
@@ -397,16 +437,43 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     "github:listPRs",
-    async (_e, repoId: string): Promise<PRSummary[]> => {
+    async (
+      _e,
+      repoId: string,
+      page = 1,
+      source: PRSource = "fork",
+    ): Promise<PRSummary[]> => {
       const repo = repoOrThrow(repoId);
-      if (!repo.githubOwner || !repo.githubRepo) {
-        throw new Error("This repository does not have a GitHub remote.");
+      const owner =
+        source === "upstream" ? repo.upstreamOwner : repo.githubOwner;
+      const name = source === "upstream" ? repo.upstreamRepo : repo.githubRepo;
+      if (!owner || !name) {
+        throw new Error(
+          source === "upstream"
+            ? "This repository does not have an upstream."
+            : "This repository does not have a GitHub remote.",
+        );
       }
-      return gh.listPullRequests(
-        repo.githubOwner,
-        repo.githubRepo,
-        repo.githubAccountId,
-      );
+      return gh.listPullRequests(owner, name, repo.githubAccountId, page);
+    },
+  );
+
+  ipcMain.handle(
+    "github:detectUpstream",
+    async (_e, repoId: string): Promise<RepoInfo | null> => {
+      const repo = repoOrThrow(repoId);
+      if (!repo.githubOwner || !repo.githubRepo) return repo;
+      let upstream: { owner: string; repo: string } | null = null;
+      try {
+        upstream = await gh.getUpstream(
+          repo.githubOwner,
+          repo.githubRepo,
+          repo.githubAccountId,
+        );
+      } catch {
+        upstream = null;
+      }
+      return setRepoUpstream(repoId, upstream) ?? repo;
     },
   );
 

@@ -53,6 +53,14 @@ const api: PreloadAPI = {
       >,
     checkout: (repoId, branch) =>
       ipcRenderer.invoke("git:checkout", repoId, branch) as Promise<void>,
+    checkoutPR: (repoId, prNumber, headRef, source) =>
+      ipcRenderer.invoke(
+        "git:checkoutPR",
+        repoId,
+        prNumber,
+        headRef,
+        source,
+      ) as Promise<void>,
     isDirty: (repoId) =>
       ipcRenderer.invoke("git:isDirty", repoId) as Promise<boolean>,
     createBranch: (repoId, name, opts) =>
@@ -159,8 +167,15 @@ const api: PreloadAPI = {
       ipcRenderer.invoke("github:pollDeviceFlow") as Promise<DeviceFlowStatus>,
     cancelDeviceFlow: () =>
       ipcRenderer.invoke("github:cancelDeviceFlow") as Promise<void>,
-    listPRs: (repoId) =>
-      ipcRenderer.invoke("github:listPRs", repoId) as Promise<PRSummary[]>,
+    listPRs: (repoId, page, source) =>
+      ipcRenderer.invoke("github:listPRs", repoId, page, source) as Promise<
+        PRSummary[]
+      >,
+    detectUpstream: (repoId) =>
+      ipcRenderer.invoke(
+        "github:detectUpstream",
+        repoId,
+      ) as Promise<RepoInfo | null>,
     fetchPR: (repoId, prNumber) =>
       ipcRenderer.invoke("github:fetchPR", repoId, prNumber) as Promise<{
         headRef: string;

@@ -1,8 +1,10 @@
 <script lang="ts">
   import { mount, unmount, onDestroy } from 'svelte';
-  import { Check, ChevronDown, ChevronRight, Eye } from 'lucide-svelte';
+  import { Check, ChevronDown, ChevronRight, Code, Eye, FileText } from 'lucide-svelte';
   import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
   import { languageIconForPath } from '$lib/file-icons';
+  import { isMarkdownPath, renderMarkdown } from '$lib/markdown';
+  import '$lib/markdown.css';
   import {
     DIFFS_TAG_NAME,
     FileDiff as FileDiffClass,
@@ -582,6 +584,24 @@
     disposeDiff();
   });
 
+  // Markdown preview toggle. `showPreview` swaps the rendered diff for a
+  // GitHub-flavored render of the file's new contents. Reset whenever the
+  // section is reused for a different file (the {#each} recycles components).
+  let showPreview = $state(false);
+  const isMarkdown = $derived(isMarkdownPath(file.path));
+  const canPreview = $derived(
+    isMarkdown && !deferred && !placeholderMessage && !file.isBinary,
+  );
+  const previewHtml = $derived.by(() => {
+    if (!showPreview || !isMarkdown) return '';
+    return renderMarkdown(diffData?.newContents ?? '');
+  });
+  $effect(() => {
+    // Track the path so a recycled section drops a stale preview state.
+    file.path;
+    showPreview = false;
+  });
+
   const isSeen = $derived(app.seenFiles.has(file.path));
   const commentCount = $derived(
     isPRContext ? (app.prComments[file.path] ?? []).length : 0,
@@ -669,6 +689,19 @@
           <span class="text-destructive">−{file.deletions}</span>
         {/if}
       {/if}
+      {#if canPreview}
+        <Button
+          variant={showPreview ? 'secondary' : 'outline'}
+          size="sm"
+          onclick={() => (showPreview = !showPreview)}
+        >
+          {#if showPreview}
+            <Code class="size-3.5" /> Markdown
+          {:else}
+            <FileText class="size-3.5" /> Preview
+          {/if}
+        </Button>
+      {/if}
       <Button
         variant={isSeen ? 'secondary' : 'outline'}
         size="sm"
@@ -684,6 +717,16 @@
   </header>
 
   <div class="bg-card/20" hidden={!expanded}>
+    {#if showPreview && isMarkdown}
+      {#if diffData}
+        <div class="markdown-body p-4">{@html previewHtml}</div>
+      {:else}
+        <div class="p-4 text-xs text-muted-foreground">Loading preview…</div>
+      {/if}
+    {/if}
+    <!-- Keep the diff host mounted (hidden) while previewing so the Pierre
+         render machinery isn't torn down and rebuilt on every toggle. -->
+    <div hidden={showPreview && isMarkdown}>
     {#if placeholderMessage}
       <div class="p-4 text-sm text-muted-foreground">{placeholderMessage}</div>
     {:else if loadError}
@@ -735,6 +778,7 @@
         </ul>
       </div>
     {/if}
+    </div>
   </div>
 </section>
 
