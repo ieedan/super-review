@@ -848,10 +848,6 @@ export const actions = {
     app.editors = await window.api.editor.detect();
     app.terminals = await window.api.terminal.detect();
     await refreshRepos();
-    // Compute which repos have uncommitted changes for the picker's dots. Runs
-    // in the background — it's one `git status` per repo and the dots are
-    // non-critical, so don't hold up the rest of init on it.
-    void refreshDirtyRepos();
     app.activeRepo = await window.api.repos.getActive();
     if (app.activeRepo) {
       repoFrecency.use(app.activeRepo.id);
@@ -881,6 +877,11 @@ export const actions = {
       }
       await refreshBranchPR();
     }
+    // Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
+    // of init so its per-repo `git status` flood doesn't compete with — and
+    // delay — the first paint of the active repo's view (which would flash the
+    // empty state). The picker also refreshes these whenever it opens.
+    void refreshDirtyRepos();
   },
 
   async openRepo(): Promise<void> {

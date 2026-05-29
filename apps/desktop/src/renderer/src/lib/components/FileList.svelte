@@ -7,7 +7,7 @@
     Folder,
     FolderOpen,
     List,
-    ListTree,
+    FolderTree,
     MessageSquare,
     Minus,
     PanelLeft,
@@ -20,7 +20,6 @@
   import { Button } from './ui/button';
   import { Kbd } from './ui/kbd';
   import * as Tabs from './ui/tabs';
-  import * as ToggleGroup from './ui/toggle-group';
   import * as Sidebar from './ui/sidebar';
   import CommitBox from './CommitBox.svelte';
   import { actions, app, type ContextTab } from '$lib/store.svelte';
@@ -29,7 +28,7 @@
   import { truncatePathPrefix } from '$lib/path-truncate';
   import { matchesFileQuery } from '$lib/file-search';
   import { matchesHotkey } from '@shared/hotkeys';
-  import type { ChangedFile, FileListLayout } from '@shared/types';
+  import type { ChangedFile } from '@shared/types';
 
   // Right-clicking a file row opens a native OS context menu (built in the main
   // process). preventDefault stops the default browser menu from also showing.
@@ -97,6 +96,7 @@
       ? app.branchFileListLayout
       : app.unstagedFileListLayout,
   );
+  const isTreeLayout = $derived(fileListLayout === 'tree');
 
   // Build the visible flat list of nodes from the changed files. In 'tree'
   // layout, folders are aggregated from the file paths themselves and may be
@@ -767,29 +767,22 @@
             <Kbd title="Press / to search">/</Kbd>
           {/if}
         </div>
-        <!-- Tree/list toggle for the active tab's file list. Single-select
-             groups allow deselecting the active item; a function binding lets
-             us reject the empty value so a layout is always chosen — the getter
-             keeps returning the current layout, snapping the toggle back. -->
-        <ToggleGroup.Root
-          type="single"
-          bind:value={
-            () => fileListLayout,
-            (v) => {
-              if (v) void actions.setFileListLayout(v as FileListLayout);
-            }
-          }
+        <!-- Single button that swaps the active tab's file list between tree
+             and list layout, showing the current layout's icon. -->
+        <Button
           variant="outline"
-          size="sm"
-          class="shrink-0"
+          size="icon-sm"
+          class="shrink-0 text-muted-foreground"
+          title={isTreeLayout ? 'Switch to list view' : 'Switch to tree view'}
+          aria-label={isTreeLayout ? 'Switch to list view' : 'Switch to tree view'}
+          onclick={() => void actions.setFileListLayout(isTreeLayout ? 'list' : 'tree')}
         >
-          <ToggleGroup.Item value="list" aria-label="List view" title="List view">
+          {#if isTreeLayout}
+            <FolderTree class="size-3.5" />
+          {:else}
             <List class="size-3.5" />
-          </ToggleGroup.Item>
-          <ToggleGroup.Item value="tree" aria-label="Tree view" title="Tree view">
-            <ListTree class="size-3.5" />
-          </ToggleGroup.Item>
-        </ToggleGroup.Root>
+          {/if}
+        </Button>
       </div>
     {/if}
 
