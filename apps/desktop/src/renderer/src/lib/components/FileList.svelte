@@ -298,21 +298,49 @@
     return files.slice(lo, hi + 1).map((n) => n.path);
   }
 
+  // The closest still-selected file row to `from`, searching forward first and
+  // then backward through the visible list. Used when deselecting the open file
+  // to pick what to show next. Returns null when nothing else is selected.
+  function nearestSelectedFile(from: string): string | null {
+    const files = nodes.filter((n) => n.kind === 'file');
+    const i = files.findIndex((n) => n.path === from);
+    if (i === -1) return null;
+    for (let j = i + 1; j < files.length; j++) {
+      if (app.selectedFiles.has(files[j].path)) return files[j].path;
+    }
+    for (let j = i - 1; j >= 0; j--) {
+      if (app.selectedFiles.has(files[j].path)) return files[j].path;
+    }
+    return null;
+  }
+
   // Click handling for a file row, honoring GitHub-Desktop-style modifiers:
   //  • shift-click  → select the range from the anchor to this row
-  //  • cmd/ctrl-click → toggle this row in/out of the selection
+  //  • cmd/ctrl-click → toggle this row in/out of the selection (no navigation)
   //  • plain click  → select just this row (collapses any multi-selection)
-  // In every case the clicked file's diff opens.
+  // Shift- and plain clicks open the clicked file's diff; cmd/ctrl-click only
+  // adjusts the selection so deselecting a row doesn't yank you to it.
   function onFileClick(e: MouseEvent, file: ChangedFile): void {
     if (e.shiftKey && selectionAnchor) {
       actions.setSelectedFiles(filePathsBetween(selectionAnchor, file.path));
       focusedPath = file.path;
       actions.scrollToFile(file.path);
     } else if (e.metaKey || e.ctrlKey) {
+      // Deselecting the row whose diff is currently open: move to the nearest
+      // remaining selected row so we don't keep showing a deselected file. If
+      // nothing stays selected, leave the diff as-is.
+      const deselectingOpen =
+        app.selectedFiles.has(file.path) && app.selectedFile === file.path;
       actions.toggleSelectedFile(file.path);
       selectionAnchor = file.path;
       focusedPath = file.path;
-      actions.scrollToFile(file.path);
+      if (deselectingOpen) {
+        const next = nearestSelectedFile(file.path);
+        if (next) {
+          focusedPath = next;
+          actions.scrollToFile(next);
+        }
+      }
     } else {
       pick(file.path);
     }
@@ -846,7 +874,7 @@
                 aria-selected={false}
                 class={cn(
                   'group flex w-full items-center gap-1.5 pr-2 text-xs text-muted-foreground',
-                  isFocused ? 'bg-accent/60' : 'hover:bg-muted',
+                  isFocused ? 'bg-accent/60' : 'hover:bg-accent/50',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 8}px"
               >
@@ -916,7 +944,7 @@
                       ? 'bg-accent'
                       : isFocused
                         ? 'bg-accent/60'
-                        : 'hover:bg-muted',
+                        : 'hover:bg-accent/50',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 6}px"
                 oncontextmenu={(e) => onRowContextMenu(e, node.file)}

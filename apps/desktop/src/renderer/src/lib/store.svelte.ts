@@ -66,6 +66,10 @@ interface AppState {
   // Count of working-tree changes, kept in sync regardless of the active tab
   // so the Unstaged tab can always show a badge with the current count.
   unstagedFileCount: number;
+  // Ids of repos with a dirty working tree (uncommitted changes), so the repo
+  // picker can flag them with a dot. The active repo's entry is kept in step by
+  // every file refresh; the rest are recomputed when the picker is opened.
+  dirtyRepoIds: Set<string>;
   selectedFile: string | null;
   // Multi-file selection in the sidebar, driven by cmd/shift-click. Distinct
   // from `selectedFile` (the one file whose diff is open): this set highlights
@@ -213,6 +217,7 @@ const initial: AppState = {
   changedFiles: [],
   fileSearchQuery: "",
   unstagedFileCount: 0,
+  dirtyRepoIds: new Set(),
   selectedFile: null,
   selectedFiles: new Set(),
   seenFiles: new Set(),
@@ -679,9 +684,36 @@ async function refreshUnstagedCount(): Promise<void> {
     });
     if (!app.activeRepo || app.activeRepo.id !== repoId) return;
     app.unstagedFileCount = files.length;
+    setRepoDirty(repoId, files.length > 0);
   } catch {
     // keep previous count
   }
+}
+
+// Flip a single repo's dirty flag in `dirtyRepoIds`. Reassigns the set so
+// Svelte's reactivity picks it up. No-op when the flag already matches.
+function setRepoDirty(repoId: string, dirty: boolean): void {
+  if (dirty === app.dirtyRepoIds.has(repoId)) return;
+  const next = new Set(app.dirtyRepoIds);
+  if (dirty) next.add(repoId);
+  else next.delete(repoId);
+  app.dirtyRepoIds = next;
+}
+
+// Recompute the dirty flag for every known repo in parallel. Drives the repo
+// picker's "uncommitted changes" dot. Each check is a cheap `git status`;
+// failures count as clean so a transient error never sticks a dot on a repo.
+async function refreshDirtyRepos(): Promise<void> {
+  const repos = app.repos;
+  const results = await Promise.all(
+    repos.map(
+      async (r) =>
+        [r.id, await window.api.git.isDirty(r.id).catch(() => false)] as const,
+    ),
+  );
+  app.dirtyRepoIds = new Set(
+    results.filter(([, dirty]) => dirty).map(([id]) => id),
+  );
 }
 
 async function refreshFiles(): Promise<void> {
@@ -774,6 +806,7 @@ async function refreshFiles(): Promise<void> {
     // need a separate fetch since the active tab isn't tracking it.
     if (ctx.kind === "workingTree") {
       app.unstagedFileCount = files.length;
+      setRepoDirty(repoId, files.length > 0);
     } else {
       void refreshUnstagedCount();
     }
@@ -815,6 +848,10 @@ export const actions = {
     app.editors = await window.api.editor.detect();
     app.terminals = await window.api.terminal.detect();
     await refreshRepos();
+    // Compute which repos have uncommitted changes for the picker's dots. Runs
+    // in the background — it's one `git status` per repo and the dots are
+    // non-critical, so don't hold up the rest of init on it.
+    void refreshDirtyRepos();
     app.activeRepo = await window.api.repos.getActive();
     if (app.activeRepo) {
       repoFrecency.use(app.activeRepo.id);
@@ -964,7 +1001,14 @@ export const actions = {
       app.branches = [];
       app.selectedFile = null;
     }
+    setRepoDirty(id, false);
     await refreshRepos();
+  },
+
+  // Recompute the "uncommitted changes" dot for every repo. Called when the
+  // repo picker opens so its dots reflect the current state.
+  async refreshDirtyRepos(): Promise<void> {
+    await refreshDirtyRepos();
   },
 
   async setDiffContext(ctx: DiffContext): Promise<void> {
@@ -1998,7 +2042,10 @@ export const actions = {
     // Discard only happens in the working-tree context, where the file list IS
     // the unstaged set — keep the tab badge in step.
     const ctx = $state.snapshot(app.diffContext) as DiffContext;
-    if (ctx.kind === "workingTree") app.unstagedFileCount = remaining.length;
+    if (ctx.kind === "workingTree") {
+      app.unstagedFileCount = remaining.length;
+      setRepoDirty(repoId, remaining.length > 0);
+    }
 
     // Drop the stale cached diff and prune the per-context files cache so a tab
     // switch (which hydrates from cache) can't resurrect the discarded file.

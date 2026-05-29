@@ -24,6 +24,8 @@ import type {
   PRSummary,
   PullPushResult,
   PushStatus,
+  RepoContextMenuAction,
+  RepoContextMenuParams,
   RepoInfo,
   TerminalKind,
   UserPrefs,
@@ -842,34 +844,42 @@ export function registerIpc(): void {
       });
 
       const template: MenuItemConstructorOptions[] = [];
-      // Multi-selection: lead with bulk actions over the whole selection. The
-      // single-file copy/reveal/open items below still target the right-clicked
-      // file, matching Finder/VSCode.
       if (params.selectedCount > 1) {
+        // Multi-selection: only show actions that apply to the whole selection.
+        // The single-file copy/reveal/open items target just one file, so they
+        // are omitted here. Discard and include/exclude live in their own
+        // groups.
         const n = params.selectedCount;
-        let addedBulk = false;
+        const groups: MenuItemConstructorOptions[][] = [];
         if (params.canDiscard) {
-          template.push(item(`Discard ${n} Selected Files`, "discardSelected"));
-          addedBulk = true;
+          groups.push([
+            item(`Discard ${n} Selected Files`, "discardSelected"),
+          ]);
         }
         if (params.canInclude) {
-          template.push(item(`Include ${n} Selected Files`, "includeSelected"));
-          template.push(item(`Exclude ${n} Selected Files`, "excludeSelected"));
-          addedBulk = true;
+          groups.push([
+            item(`Include ${n} Selected Files`, "includeSelected"),
+            item(`Exclude ${n} Selected Files`, "excludeSelected"),
+          ]);
         }
-        if (addedBulk) template.push({ type: "separator" });
-      } else if (params.canDiscard) {
-        template.push(item("Discard Changes", "discard"));
+        groups.forEach((group, i) => {
+          if (i > 0) template.push({ type: "separator" });
+          template.push(...group);
+        });
+      } else {
+        if (params.canDiscard) {
+          template.push(item("Discard Changes", "discard"));
+          template.push({ type: "separator" });
+        }
+        template.push(item("Copy File Path", "copyPath"));
+        template.push(item("Copy Relative File Path", "copyRelativePath"));
         template.push({ type: "separator" });
+        template.push(item(params.revealLabel, "reveal"));
+        if (params.editorLabel) {
+          template.push(item(`Open in ${params.editorLabel}`, "openInEditor"));
+        }
+        template.push(item("Open with Default Program", "openDefault"));
       }
-      template.push(item("Copy File Path", "copyPath"));
-      template.push(item("Copy Relative File Path", "copyRelativePath"));
-      template.push({ type: "separator" });
-      template.push(item(params.revealLabel, "reveal"));
-      if (params.editorLabel) {
-        template.push(item(`Open in ${params.editorLabel}`, "openInEditor"));
-      }
-      template.push(item("Open with Default Program", "openDefault"));
 
       const menu = Menu.buildFromTemplate(template);
       return await new Promise<FileContextMenuAction | null>((resolve) => {
@@ -912,6 +922,43 @@ export function registerIpc(): void {
 
       const menu = Menu.buildFromTemplate(template);
       return await new Promise<BranchContextMenuAction | null>((resolve) => {
+        menu.popup({
+          window: win ?? undefined,
+          callback: () => resolve(chosen),
+        });
+      });
+    },
+  );
+
+  // Repo-row context menu (in the repo picker). Returns the chosen action so the
+  // renderer can run it — "remove" de-registers the repo without touching disk.
+  ipcMain.handle(
+    "menu:showRepoContextMenu",
+    async (
+      e,
+      params: RepoContextMenuParams,
+    ): Promise<RepoContextMenuAction | null> => {
+      const win = BrowserWindow.fromWebContents(e.sender);
+      let chosen: RepoContextMenuAction | null = null;
+      const item = (
+        label: string,
+        action: RepoContextMenuAction,
+      ): MenuItemConstructorOptions => ({
+        label,
+        click: () => {
+          chosen = action;
+        },
+      });
+
+      const template: MenuItemConstructorOptions[] = [
+        item("Copy Path", "copyPath"),
+        item(params.revealLabel, "reveal"),
+        { type: "separator" },
+        item("Remove…", "remove"),
+      ];
+
+      const menu = Menu.buildFromTemplate(template);
+      return await new Promise<RepoContextMenuAction | null>((resolve) => {
         menu.popup({
           window: win ?? undefined,
           callback: () => resolve(chosen),

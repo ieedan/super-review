@@ -23,6 +23,7 @@ import type {
   PreloadAPI,
   PullPushResult,
   PushStatus,
+  RepoContextMenuAction,
   RepoInfo,
   TerminalKind,
   UserPrefs,
@@ -337,6 +338,11 @@ const api: PreloadAPI = {
         "menu:showBranchContextMenu",
         params,
       ) as Promise<BranchContextMenuAction | null>,
+    showRepoContextMenu: (params) =>
+      ipcRenderer.invoke(
+        "menu:showRepoContextMenu",
+        params,
+      ) as Promise<RepoContextMenuAction | null>,
   },
   windowControls: {
     // Ask the main process to re-center the macOS traffic lights for the

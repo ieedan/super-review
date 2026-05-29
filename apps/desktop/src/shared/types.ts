@@ -216,6 +216,18 @@ export type FileContextMenuAction =
 // IPC) means the menu was dismissed without a choice.
 export type BranchContextMenuAction = "copy" | "delete";
 
+// Actions a repo row's native context menu can return. `null` (from the IPC)
+// means the menu was dismissed without a choice.
+export type RepoContextMenuAction = "copyPath" | "reveal" | "remove";
+
+// What the renderer hands the main process to build a repo row's native menu.
+export interface RepoContextMenuParams {
+  // The repo's display name — used in the "Remove" item's label.
+  name: string;
+  // Platform-specific file-manager label, e.g. "Reveal in Finder".
+  revealLabel: string;
+}
+
 // What the renderer hands the main process to build a branch row's native menu.
 export interface BranchContextMenuParams {
   // The branch name — shown back to the user isn't needed here, but kept for
@@ -573,6 +585,11 @@ export interface PreloadAPI {
     showBranchContextMenu(
       params: BranchContextMenuParams,
     ): Promise<BranchContextMenuAction | null>;
+    // Pop up a native OS context menu for a repo row in the picker. Resolves to
+    // the chosen action, or null when the menu is dismissed without a selection.
+    showRepoContextMenu(
+      params: RepoContextMenuParams,
+    ): Promise<RepoContextMenuAction | null>;
   };
   windowControls: {
     // Re-center the macOS traffic lights for the renderer's current zoom factor.
