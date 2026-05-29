@@ -842,7 +842,23 @@ export function registerIpc(): void {
       });
 
       const template: MenuItemConstructorOptions[] = [];
-      if (params.canDiscard) {
+      // Multi-selection: lead with bulk actions over the whole selection. The
+      // single-file copy/reveal/open items below still target the right-clicked
+      // file, matching Finder/VSCode.
+      if (params.selectedCount > 1) {
+        const n = params.selectedCount;
+        let addedBulk = false;
+        if (params.canDiscard) {
+          template.push(item(`Discard ${n} Selected Files`, "discardSelected"));
+          addedBulk = true;
+        }
+        if (params.canInclude) {
+          template.push(item(`Include ${n} Selected Files`, "includeSelected"));
+          template.push(item(`Exclude ${n} Selected Files`, "excludeSelected"));
+          addedBulk = true;
+        }
+        if (addedBulk) template.push({ type: "separator" });
+      } else if (params.canDiscard) {
         template.push(item("Discard Changes", "discard"));
         template.push({ type: "separator" });
       }

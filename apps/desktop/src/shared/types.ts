@@ -198,9 +198,14 @@ export type TerminalKind =
 export type AppPlatform = "darwin" | "win32" | "linux";
 
 // Actions a file row's native context menu can return. `null` (from the IPC)
-// means the menu was dismissed without a choice.
+// means the menu was dismissed without a choice. The `*Selected` variants act
+// on the sidebar's whole multi-selection (cmd/shift-click) rather than the
+// single right-clicked file.
 export type FileContextMenuAction =
   | "discard"
+  | "discardSelected"
+  | "includeSelected"
+  | "excludeSelected"
   | "copyPath"
   | "copyRelativePath"
   | "reveal"
@@ -236,6 +241,13 @@ export interface FileContextMenuParams {
   editorLabel: string | null;
   // Platform-specific file-manager label, e.g. "Reveal in Finder".
   revealLabel: string;
+  // How many files are in the sidebar's current multi-selection. When > 1 the
+  // menu leads with bulk actions ("Discard N Files", etc.) that operate on the
+  // whole selection instead of just `filePath`.
+  selectedCount: number;
+  // Whether to offer commit Include/Exclude items — only in the Unstaged tab,
+  // where the file list drives which changes go into the next commit.
+  canInclude: boolean;
 }
 
 // Which editors/terminals make sense to offer per OS. The Settings UI only

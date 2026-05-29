@@ -35,6 +35,13 @@
   // process). preventDefault stops the default browser menu from also showing.
   function onRowContextMenu(e: MouseEvent, file: ChangedFile): void {
     e.preventDefault();
+    // Right-clicking a row outside the current multi-selection collapses the
+    // selection onto it (Finder/VSCode behavior); right-clicking within the
+    // selection keeps it so the menu can act on the whole set.
+    if (!app.selectedFiles.has(file.path)) {
+      selectionAnchor = file.path;
+      actions.setSelectedFiles([file.path]);
+    }
     void actions.showFileContextMenu(file);
   }
 
@@ -269,7 +276,46 @@
 
   function pick(path: string): void {
     focusedPath = path;
-    actions.scrollToFile(path);
+    selectionAnchor = path;
+    // Plain open (click / keyboard) collapses any multi-selection to this file.
+    actions.selectOnly(path);
+  }
+
+  // Anchor for shift-click range selection — the row a range extends from.
+  // Set on every plain or cmd click so the next shift-click knows where to
+  // start. Null until the user has clicked a file.
+  let selectionAnchor = $state<string | null>(null);
+
+  // The file paths between two rows (inclusive), in the order they're shown in
+  // the current tree/list layout. Folder rows are skipped so a range only ever
+  // covers files. Backs shift-click range selection.
+  function filePathsBetween(a: string, b: string): string[] {
+    const files = nodes.filter((n) => n.kind === 'file');
+    const ia = files.findIndex((n) => n.path === a);
+    const ib = files.findIndex((n) => n.path === b);
+    if (ia === -1 || ib === -1) return [b];
+    const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+    return files.slice(lo, hi + 1).map((n) => n.path);
+  }
+
+  // Click handling for a file row, honoring GitHub-Desktop-style modifiers:
+  //  • shift-click  → select the range from the anchor to this row
+  //  • cmd/ctrl-click → toggle this row in/out of the selection
+  //  • plain click  → select just this row (collapses any multi-selection)
+  // In every case the clicked file's diff opens.
+  function onFileClick(e: MouseEvent, file: ChangedFile): void {
+    if (e.shiftKey && selectionAnchor) {
+      actions.setSelectedFiles(filePathsBetween(selectionAnchor, file.path));
+      focusedPath = file.path;
+      actions.scrollToFile(file.path);
+    } else if (e.metaKey || e.ctrlKey) {
+      actions.toggleSelectedFile(file.path);
+      selectionAnchor = file.path;
+      focusedPath = file.path;
+      actions.scrollToFile(file.path);
+    } else {
+      pick(file.path);
+    }
   }
 
   // Keyboard cursor over the visible flat `nodes` list. Can point at a file OR a
@@ -848,6 +894,7 @@
               {@const isSeen = app.seenFiles.has(node.file.path)}
               {@const iconName = languageIconForPath(node.file.path)}
               {@const isActive = app.selectedFile === node.file.path}
+              {@const isSelected = app.selectedFiles.has(node.file.path)}
               {@const isFocused = focusedPath === node.file.path}
               {@const threadCount = (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo).length}
               <!-- Unstaged rows show a commit-inclusion checkbox instead of the
@@ -862,12 +909,14 @@
                 aria-selected={isActive}
                 tabindex={-1}
                 class={cn(
-                  'group flex w-full items-center gap-1.5 border-l-2 border-transparent pr-2',
+                  'group flex w-full select-none items-center gap-1.5 border-l-2 border-transparent pr-2',
                   isActive
                     ? 'border-l-foreground bg-accent'
-                    : isFocused
-                      ? 'bg-accent/60'
-                      : 'hover:bg-accent/50',
+                    : isSelected
+                      ? 'bg-accent'
+                      : isFocused
+                        ? 'bg-accent/60'
+                        : 'hover:bg-accent/50',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 6}px"
                 oncontextmenu={(e) => onRowContextMenu(e, node.file)}
@@ -909,7 +958,7 @@
                 {/if}
                 <button
                   class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left outline-hidden"
-                  onclick={() => pick(node.file.path)}
+                  onclick={(e) => onFileClick(e, node.file)}
                   type="button"
                 >
                   {#if app.showFileIcons}
