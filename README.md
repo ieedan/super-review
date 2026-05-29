@@ -1,4 +1,4 @@
-# super-local-review
+# super-review
 
 Review tools are so bad you don't even want to look at the code. This fixes that.
 
@@ -18,6 +18,10 @@ a per-repo dropdown with auto-detected favicons.
 
 ## Development
 
+This is a [pnpm workspace](https://pnpm.io/workspaces). The desktop app lives in
+`apps/desktop`. Run scripts from the repo root (they delegate to the app) or from
+within `apps/desktop`.
+
 ```bash
 pnpm install
 pnpm dev
@@ -30,32 +34,37 @@ pointed at it (with HMR). The renderer imports `@pierre/diffs`'s
 ## Build
 
 ```bash
-pnpm build           # type-check + build to ./out
-pnpm package         # produce a distributable in ./release
+pnpm build           # type-check + build to apps/desktop/out
+pnpm package         # produce a distributable in apps/desktop/release
 pnpm package:dir     # unpacked build (faster for smoke tests)
 ```
 
 ## Project layout
 
 ```
-src/
-├── main/            # Electron main process (Node.js)
-│   ├── index.ts     # app + window lifecycle
-│   ├── ipc.ts       # IPC handler registration
-│   ├── store.ts     # electron-store wrapper
-│   ├── git-service.ts    # simple-git wrapper
-│   └── github-service.ts # Octokit + device flow
-├── preload/         # contextBridge exposing typed `window.api`
-├── renderer/        # Svelte app (no Node access)
-│   └── src/
-│       ├── App.svelte
-│       ├── main.ts
-│       ├── app.css
-│       └── lib/
-│           ├── store.svelte.ts   # global runes state
-│           ├── utils.ts
-│           └── components/       # UI
-└── shared/          # type defs shared between main & renderer
+.
+├── apps/
+│   └── desktop/         # Electron + Svelte 5 desktop app (@super-review/desktop)
+│       └── src/
+│           ├── main/            # Electron main process (Node.js)
+│           │   ├── index.ts     # app + window lifecycle
+│           │   ├── ipc.ts       # IPC handler registration
+│           │   ├── store.ts     # electron-store wrapper
+│           │   ├── git-service.ts    # simple-git wrapper
+│           │   └── github-service.ts # Octokit + device flow
+│           ├── preload/         # contextBridge exposing typed `window.api`
+│           ├── renderer/        # Svelte app (no Node access)
+│           │   └── src/
+│           │       ├── App.svelte
+│           │       ├── main.ts
+│           │       ├── app.css
+│           │       └── lib/
+│           │           ├── store.svelte.ts   # global runes state
+│           │           ├── utils.ts
+│           │           └── components/       # UI
+│           └── shared/          # type defs shared between main & renderer
+├── pnpm-workspace.yaml
+└── package.json         # workspace root
 ```
 
 ## Features

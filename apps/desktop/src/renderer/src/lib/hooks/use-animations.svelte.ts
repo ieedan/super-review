@@ -12,7 +12,7 @@ export interface AnimationConfig {
 	readonly animationsEnabled: boolean;
 }
 
-const ANIMATIONS_KEY = Symbol.for("slr-animations");
+const ANIMATIONS_KEY = Symbol.for("sr-animations");
 
 // Falls back to "off" when no provider is mounted (isolated component previews,
 // tests, etc.), matching the app's animations-off default.

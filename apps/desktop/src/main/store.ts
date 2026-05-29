@@ -63,7 +63,7 @@ const defaults: Schema = {
   githubToken: null,
 };
 
-export const store = new Store<Schema>({ defaults, name: 'super-local-review' });
+export const store = new Store<Schema>({ defaults, name: 'super-review' });
 
 export function upsertRepo(repo: RepoInfo): void {
   const repos = store.get('repos');

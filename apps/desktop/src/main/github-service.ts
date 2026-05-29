@@ -27,7 +27,7 @@ import {
 
 // Default GitHub OAuth client ID for "GitHub CLI" - public, ships with `gh`.
 // Users can override via env var for self-hosted GHE later.
-const CLIENT_ID = process.env.SUPER_LOCAL_REVIEW_GH_CLIENT_ID ?? '178c6fc778ccc68e1d6a';
+const CLIENT_ID = process.env.SUPER_REVIEW_GH_CLIENT_ID ?? '178c6fc778ccc68e1d6a';
 const SCOPES = ['repo', 'read:user'];
 
 interface PendingDeviceFlow {
