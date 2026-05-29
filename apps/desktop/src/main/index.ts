@@ -1,9 +1,15 @@
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpc } from './ipc.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// In dev the dock/taskbar would otherwise show the default Electron icon —
+// packaged builds get their icon from electron-builder (build/icon.*), which
+// isn't bundled here, so this is dev-only. Resolves to apps/desktop/build/.
+const isDev = !!process.env['ELECTRON_RENDERER_URL'];
+const devIconPath = path.join(__dirname, '../../build/icon.png');
 
 // Geometry of the renderer's header (TopBar.svelte: `h-11`) and the macOS
 // traffic-light buttons, which the OS draws at a fixed point size regardless of
@@ -49,6 +55,9 @@ function createWindow(): void {
       ? { trafficLightPosition: trafficLightPositionFor(1) }
       : {}),
     backgroundColor: '#0a0a0a',
+    // macOS ignores the window icon (it uses the dock/bundle icon, set below);
+    // Windows/Linux pick up the window + taskbar icon from here in dev.
+    ...(isDev && process.platform !== 'darwin' ? { icon: devIconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
@@ -96,6 +105,12 @@ function setupPermissions(): void {
 }
 
 void app.whenReady().then(() => {
+  // macOS shows the dock icon from the app bundle; in dev there's no bundle, so
+  // set it explicitly. No-op off macOS (app.dock is undefined there).
+  if (isDev && process.platform === 'darwin') {
+    const img = nativeImage.createFromPath(devIconPath);
+    if (!img.isEmpty()) app.dock?.setIcon(img);
+  }
   setupPermissions();
   registerIpc();
   createWindow();
