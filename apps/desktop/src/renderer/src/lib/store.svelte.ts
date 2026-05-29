@@ -2081,6 +2081,23 @@ export const actions = {
     await window.api.shell.showItemInFolder(full);
   },
 
+  // Open the repository's folder in the OS file manager.
+  async openRepoInFileManager(): Promise<void> {
+    if (!app.activeRepo) return;
+    const result = await window.api.shell.openPath(app.activeRepo.path);
+    if (!result.ok && result.error) setError(result.error);
+  },
+
+  // Open the repository's page on GitHub in the default browser. No-op when
+  // there's no GitHub remote.
+  async openRepoOnGithub(): Promise<void> {
+    const repo = app.activeRepo;
+    if (!repo?.githubOwner || !repo.githubRepo) return;
+    await window.api.shell.openExternal(
+      `https://github.com/${repo.githubOwner}/${repo.githubRepo}`,
+    );
+  },
+
   // Open a file with the OS default program for its type.
   async openFileWithDefault(filePath: string): Promise<void> {
     const full = actions.resolveRepoPath(filePath);
@@ -2129,10 +2146,14 @@ export const actions = {
   async setFileListLayout(layout: FileListLayout): Promise<void> {
     if (app.contextTab === "branch") {
       app.branchFileListLayout = layout;
-      app.prefs = await window.api.state.setPrefs({ branchFileListLayout: layout });
+      app.prefs = await window.api.state.setPrefs({
+        branchFileListLayout: layout,
+      });
     } else {
       app.unstagedFileListLayout = layout;
-      app.prefs = await window.api.state.setPrefs({ unstagedFileListLayout: layout });
+      app.prefs = await window.api.state.setPrefs({
+        unstagedFileListLayout: layout,
+      });
     }
   },
 
