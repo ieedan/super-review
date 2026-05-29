@@ -198,6 +198,14 @@
       ? `${r.upstreamOwner}/${r.upstreamRepo}`
       : `${r.githubOwner}/${r.githubRepo}`;
   }
+
+  // When the current branch has an associated PR, mirror its status glyph + tint
+  // in the trigger; otherwise fall back to a plain branch icon.
+  const triggerIcon = $derived(
+    app.branchPR
+      ? prStatus(app.branchPR)
+      : { icon: GitBranch, class: "text-muted-foreground", label: "Branch" },
+  );
 </script>
 
 <Popover.Root
@@ -210,7 +218,11 @@
     disabled={!app.activeRepo}
     class={cn(buttonVariants({ variant: "ghost", size: "sm" }), "font-normal")}
   >
-    <GitBranch class="size-3.5 text-muted-foreground" />
+    {@const TriggerIcon = triggerIcon.icon}
+    <TriggerIcon
+      class={cn("size-3.5", triggerIcon.class)}
+      aria-label={triggerIcon.label}
+    />
     <span>
       {app.currentBranch ?? "no branch"}
     </span>

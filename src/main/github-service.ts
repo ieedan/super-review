@@ -218,7 +218,65 @@ function toPRSummary(
     updatedAt: pr.updated_at,
     state: pr.state as 'open' | 'closed',
     merged: pr.merged_at != null,
+    headRepoCloneUrl: pr.head.repo?.clone_url ?? undefined,
+    headRepoOwner: pr.head.repo?.owner?.login ?? undefined,
+    headRepoName: pr.head.repo?.name ?? undefined,
+    maintainerCanModify: pr.maintainer_can_modify ?? undefined,
+    repoOwner: pr.base.repo?.owner?.login ?? undefined,
+    repoName: pr.base.repo?.name ?? undefined,
   };
+}
+
+// Whether the authenticated account can push commits to a PR's head branch:
+// either it has push access to the head repo directly, or the PR allows
+// maintainer edits and the account has push access to the base repo. Uses
+// `repos.get`, which reports the viewer's own `permissions` on a repo.
+export async function canPushToPR(
+  args: {
+    headOwner?: string;
+    headRepo?: string;
+    baseOwner: string;
+    baseRepo: string;
+    prNumber: number;
+    maintainerCanModify?: boolean;
+  },
+  accountId?: string | null,
+): Promise<boolean> {
+  const o = octokit(resolveAccount(accountId));
+  // Direct push access to the repo the head branch lives in.
+  if (args.headOwner && args.headRepo) {
+    try {
+      const head = await o.repos.get({
+        owner: args.headOwner,
+        repo: args.headRepo,
+      });
+      if (head.data.permissions?.push) return true;
+    } catch {
+      // No visibility into the head repo — fall through to the maintainer path.
+    }
+  }
+  // Maintainer edit: the PR opts in and we can push to the base repo.
+  try {
+    let canModify = args.maintainerCanModify;
+    if (canModify === undefined) {
+      const pr = await o.pulls.get({
+        owner: args.baseOwner,
+        repo: args.baseRepo,
+        pull_number: args.prNumber,
+      });
+      canModify = pr.data.maintainer_can_modify ?? false;
+    }
+    if (canModify) {
+      const base = await o.repos.get({
+        owner: args.baseOwner,
+        repo: args.baseRepo,
+      });
+      if (base.data.permissions?.push) return true;
+    }
+  } catch {
+    // Treat any failure as "can't determine" → not pushable.
+  }
+  return false;
 }
 
 // List PRs for the repo, most-recently-updated first. `state: 'all'` so the
@@ -394,7 +452,66 @@ function mapReviewComment(
     side: (c.side ?? 'RIGHT') as 'LEFT' | 'RIGHT',
     inReplyTo: c.in_reply_to_id ?? undefined,
     canDelete: viewerLogin ? c.user?.login === viewerLogin : false,
+    // Thread info lives in GraphQL, not the REST payload — defaulted here and
+    // stamped on by listReviewComments. Newly created/replied comments keep
+    // these defaults until the next refresh refetches the threads.
+    threadId: undefined,
+    isResolved: false,
   };
+}
+
+// Resolution state lives only in GraphQL (`reviewThreads`), so we fetch the
+// PR's threads and build a databaseId → { threadId, isResolved } map. The REST
+// comment `id` equals the GraphQL `databaseId`, which lets us stamp thread info
+// onto the REST comments. Paginated over threads (their comment lists rarely
+// exceed the first 100, which is all we need to map ids back to a thread).
+async function fetchThreadInfoByCommentId(
+  o: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<Map<number, { threadId: string; isResolved: boolean }>> {
+  const query = `
+    query ($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id
+              isResolved
+              comments(first: 100) {
+                nodes { databaseId }
+              }
+            }
+          }
+        }
+      }
+    }`;
+
+  const map = new Map<number, { threadId: string; isResolved: boolean }>();
+  let cursor: string | null = null;
+  for (;;) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res: any = await o.graphql(query, {
+      owner,
+      repo,
+      number: prNumber,
+      cursor,
+    });
+    const threads = res?.repository?.pullRequest?.reviewThreads;
+    if (!threads) break;
+    for (const t of threads.nodes ?? []) {
+      for (const c of t.comments?.nodes ?? []) {
+        if (c?.databaseId != null) {
+          map.set(c.databaseId, { threadId: t.id, isResolved: t.isResolved });
+        }
+      }
+    }
+    if (!threads.pageInfo?.hasNextPage) break;
+    cursor = threads.pageInfo.endCursor;
+  }
+  return map;
 }
 
 export async function listReviewComments(
@@ -411,7 +528,55 @@ export async function listReviewComments(
     pull_number: prNumber,
     per_page: 100,
   });
-  return all.map((c) => mapReviewComment(c, prNumber, viewer?.login ?? null));
+  // Thread resolution is GraphQL-only. Best-effort: if it fails (scope, GHE
+  // without GraphQL, transient error) we still return the comments, just
+  // without resolved markers rather than failing the whole list.
+  let threadInfo: Map<number, { threadId: string; isResolved: boolean }>;
+  try {
+    threadInfo = await fetchThreadInfoByCommentId(o, owner, repo, prNumber);
+  } catch (err) {
+    console.error(
+      `[github] fetchReviewThreads failed for ${owner}/${repo}#${prNumber}:`,
+      err instanceof Error ? err.message : err,
+    );
+    threadInfo = new Map();
+  }
+  return all.map((c) => {
+    const mapped = mapReviewComment(c, prNumber, viewer?.login ?? null);
+    const info = threadInfo.get(mapped.id);
+    if (info) {
+      mapped.threadId = info.threadId;
+      mapped.isResolved = info.isResolved;
+    }
+    return mapped;
+  });
+}
+
+// Resolve or unresolve a review thread via GraphQL (the REST API has no
+// equivalent). Returns the thread's resolved state as GitHub reports it back.
+export async function setReviewThreadResolved(
+  threadId: string,
+  resolved: boolean,
+  accountId?: string | null,
+): Promise<{ isResolved: boolean }> {
+  const o = octokit(resolveAccount(accountId));
+  const mutation = resolved
+    ? `mutation ($threadId: ID!) {
+         resolveReviewThread(input: { threadId: $threadId }) {
+           thread { id isResolved }
+         }
+       }`
+    : `mutation ($threadId: ID!) {
+         unresolveReviewThread(input: { threadId: $threadId }) {
+           thread { id isResolved }
+         }
+       }`;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const res: any = await o.graphql(mutation, { threadId });
+  const thread = resolved
+    ? res?.resolveReviewThread?.thread
+    : res?.unresolveReviewThread?.thread;
+  return { isResolved: thread?.isResolved ?? resolved };
 }
 
 export async function createReviewComment(

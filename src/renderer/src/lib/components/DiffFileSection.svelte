@@ -38,6 +38,13 @@
   let host = $state<HTMLElement | null>(null);
   let diffContainer: HTMLElement | null = null;
   let instance: FileDiffClass<CommentMeta> | null = null;
+  // The annotation list currently painted into `instance`. The `lineAnnotations`
+  // derived reads the *whole* `app.pendingComposers` object, so opening a
+  // composer on ANY file re-runs the derived (and the update effect) on EVERY
+  // mounted section — and each run hands back a fresh array. We diff against
+  // this snapshot so only the sections whose annotations actually changed pay
+  // for Pierre's expensive `rerender()`; the rest bail out early.
+  let appliedAnnotations: DiffLineAnnotation<CommentMeta>[] = [];
   // Cache of mounted CommentAnnotation instances, keyed by annotation index.
   // FileDiff caches its wrapper element per annotation; we mount our component
   // once and let its $derived expressions react to store changes.
@@ -232,6 +239,9 @@
 
   function disposeDiff(): void {
     unmountAll();
+    // The painted annotations die with the instance; clear the baseline so a
+    // fresh mount re-applies from scratch rather than comparing against stale.
+    appliedAnnotations = [];
     if (instance) {
       try {
         instance.cleanUp();
@@ -248,6 +258,29 @@
 
   function annotationCacheKey(a: DiffLineAnnotation<CommentMeta>, index: number): string {
     return `${index}-${a.side}-${a.lineNumber}`;
+  }
+
+  // Cheap structural compare so the update effect can skip Pierre's `rerender`
+  // when this section's annotations are unchanged. `metadata` is compared by
+  // reference — the caches in `lineAnnotations` hand back the same object until
+  // the underlying comment/composer actually changes, so an edited comment
+  // (fresh meta ref) still triggers a repaint while an unrelated composer
+  // opening elsewhere does not.
+  function annotationsEqual(
+    a: DiffLineAnnotation<CommentMeta>[],
+    b: DiffLineAnnotation<CommentMeta>[],
+  ): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (
+        a[i].metadata !== b[i].metadata ||
+        a[i].side !== b[i].side ||
+        a[i].lineNumber !== b[i].lineNumber
+      ) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function renderAnnotation(
@@ -341,6 +374,9 @@
         newFile,
         lineAnnotations,
       });
+      // render() already painted these — record them as the baseline so the
+      // update effect doesn't fire a redundant rerender on its first pass.
+      appliedAnnotations = lineAnnotations;
     } catch (err) {
       loadError = err instanceof Error ? err.message : String(err);
     }
@@ -524,6 +560,13 @@
   $effect(() => {
     const annotations = lineAnnotations;
     if (!instance) return;
+    // Bail before touching Pierre when nothing on THIS file changed. Opening a
+    // composer reassigns the whole `app.pendingComposers` object, so this
+    // effect fires on every mounted section — but only the section the composer
+    // belongs to has a different annotation list. Skipping the rest keeps the
+    // cost of opening a composer O(1) instead of O(visible diffs).
+    if (annotationsEqual(annotations, appliedAnnotations)) return;
+    appliedAnnotations = annotations;
     // Drop cached mounted components that no longer have a matching index.
     const liveKeys = new Set(annotations.map((a, i) => annotationCacheKey(a, i)));
     for (const key of [...mountedComponents.keys()]) {
@@ -588,13 +631,45 @@
   // GitHub-flavored render of the file's new contents. Reset whenever the
   // section is reused for a different file (the {#each} recycles components).
   let showPreview = $state(false);
+  const pathDir = $derived(
+    file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/') + 1) : '',
+  );
+  const pathBase = $derived(
+    file.path.includes('/') ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path,
+  );
   const isMarkdown = $derived(isMarkdownPath(file.path));
   const canPreview = $derived(
     isMarkdown && !deferred && !placeholderMessage && !file.isBinary,
   );
-  const previewHtml = $derived.by(() => {
-    if (!showPreview || !isMarkdown) return '';
-    return renderMarkdown(diffData?.newContents ?? '');
+  // Rendered preview HTML. Shiki highlighting is async, so we compute it in an
+  // effect and stash the result instead of deriving synchronously. We keep the
+  // previous HTML on screen while a re-render is in flight (e.g. theme change)
+  // so the preview doesn't flash back to "Loading".
+  let previewHtml = $state('');
+  let previewRendering = $state(false);
+  $effect(() => {
+    if (!showPreview || !isMarkdown) {
+      previewHtml = '';
+      previewRendering = false;
+      return;
+    }
+    const src = diffData?.newContents ?? '';
+    const theme = app.theme;
+    let cancelled = false;
+    previewRendering = true;
+    void renderMarkdown(src, theme)
+      .then((html) => {
+        if (!cancelled) previewHtml = html;
+      })
+      .catch(() => {
+        if (!cancelled) previewHtml = '';
+      })
+      .finally(() => {
+        if (!cancelled) previewRendering = false;
+      });
+    return () => {
+      cancelled = true;
+    };
   });
   $effect(() => {
     // Track the path so a recycled section drops a stale preview state.
@@ -667,9 +742,11 @@
       {/if}
     </button>
     <Icon icon={languageIconForPath(file.path)} class="size-3.5 shrink-0" />
-    <span class={['truncate font-mono text-xs', isSeen && 'text-muted-foreground']} title={file.path}>{file.path}</span>
+    <span class={['truncate font-mono text-xs', isSeen && 'text-muted-foreground']} title={file.path}
+      ><span class={[!isSeen && 'text-muted-foreground']}>{pathDir}</span>{pathBase}</span
+    >
     {#if statusBadge}
-      <Badge variant={statusBadge === 'added' ? 'success' : statusBadge === 'deleted' ? 'destructive' : 'warning'}>
+      <Badge variant={statusBadge === 'deleted' ? 'destructive' : 'warning'}>
         {statusBadge}
       </Badge>
     {/if}
@@ -717,9 +794,9 @@
 
   <div class="bg-card/20" hidden={!expanded}>
     {#if showPreview && isMarkdown}
-      {#if diffData}
+      {#if previewHtml}
         <div class="markdown-body p-4">{@html previewHtml}</div>
-      {:else}
+      {:else if !diffData || previewRendering}
         <div class="p-4 text-xs text-muted-foreground">Loading preview…</div>
       {/if}
     {/if}

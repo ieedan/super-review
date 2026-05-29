@@ -148,9 +148,11 @@
 
   const title = $derived.by(() => {
     switch (mode) {
-      case 'push':
+      case 'push': {
+        const remote = status?.pushRemote ?? 'origin';
         if (!status?.hasUpstream) return 'Publish branch to origin';
-        return `Push ${status.ahead} commit${status.ahead === 1 ? '' : 's'} to origin`;
+        return `Push ${status.ahead} commit${status.ahead === 1 ? '' : 's'} to ${remote}`;
+      }
       case 'go-pr':
         return app.branchPR ? `Open PR #${app.branchPR.number}` : 'Open PR';
       case 'create-pr':

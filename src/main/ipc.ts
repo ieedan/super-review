@@ -1,4 +1,5 @@
-import { BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, Menu, dialog, ipcMain, shell } from "electron";
+import type { MenuItemConstructorOptions } from "electron";
 import type {
   BranchInfo,
   ChangedFile,
@@ -10,6 +11,8 @@ import type {
   DiffContext,
   DiffData,
   EditorKind,
+  FileContextMenuAction,
+  FileContextMenuParams,
   GithubAccount,
   LastCommit,
   NewReviewCommentInput,
@@ -32,6 +35,7 @@ import {
   commitAll,
   continueMerge,
   createBranch,
+  discardChanges,
   fetchOrigin,
   fetchPRRef,
   getConflicts,
@@ -70,6 +74,8 @@ import {
   setCommitDraft,
   setFileCollapsed,
   setPrefs,
+  getPRBranch,
+  setPRBranch,
   setRepoGithubAccountId,
   setRepoUpstream,
   setSeen,
@@ -234,22 +240,24 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     "git:checkoutPR",
-    async (
-      _e,
-      repoId: string,
-      prNumber: number,
-      headRef: string,
-      source: PRSource = "fork",
-    ) => {
+    async (_e, repoId: string, pr: PRSummary, source: PRSource = "fork") => {
       const repo = repoOrThrow(repoId);
-      let remote = "origin";
-      if (source === "upstream") {
-        if (!repo.upstreamOwner || !repo.upstreamRepo) {
-          throw new Error("This repository does not have an upstream.");
-        }
-        remote = upstreamFetchUrl(repo);
-      }
-      await checkoutPR(repo.path, prNumber, headRef, remote);
+      // Base remote used only for the read-only fallback (deleted head repo).
+      const fallbackRemote =
+        source === "upstream" && repo.upstreamOwner && repo.upstreamRepo
+          ? upstreamFetchUrl(repo)
+          : "origin";
+      await checkoutPR(repo.path, {
+        prNumber: pr.number,
+        headRef: pr.headRef,
+        headRepoUrl: pr.headRepoCloneUrl,
+        headRepoOwner: pr.headRepoOwner,
+        originUrl: repo.remoteUrl,
+        fallbackRemote,
+      });
+      // Remember which PR this branch maps to so the UI resolves "View PR"
+      // later, even for cross-repo PRs a head-based lookup can't find.
+      setPRBranch(repoId, pr.headRef, { number: pr.number, source });
     },
   );
 
@@ -323,6 +331,17 @@ export function registerIpc(): void {
     "git:stageFile",
     async (_e, repoId: string, filePath: string): Promise<void> =>
       stageFile(repoOrThrow(repoId).path, filePath),
+  );
+
+  ipcMain.handle(
+    "git:discardChanges",
+    async (
+      _e,
+      repoId: string,
+      filePath: string,
+      oldPath?: string,
+    ): Promise<void> =>
+      discardChanges(repoOrThrow(repoId).path, filePath, oldPath),
   );
 
   ipcMain.handle(
@@ -512,39 +531,90 @@ export function registerIpc(): void {
         return null;
       }
       try {
-        return await gh.findPRForBranch(
+        const pr = await gh.findPRForBranch(
           repo.githubOwner,
           repo.githubRepo,
           branch,
           repo.githubAccountId,
         );
+        if (pr) return pr;
       } catch (err) {
         console.error(
           `[github] findPRForBranch failed for ${repo.githubOwner}/${repo.githubRepo} ` +
             `branch=${branch} pinnedAccountId=${repo.githubAccountId ?? '(none)'}:`,
           err instanceof Error ? err.message : err,
         );
-        return null;
+      }
+      // A head-based lookup misses cross-repo PRs (the head owner isn't us).
+      // Fall back to the association we recorded when the branch was checked
+      // out from the PR list, resolving against the right repo.
+      const link = getPRBranch(repoId, branch);
+      if (link) {
+        const owner =
+          link.source === "upstream" ? repo.upstreamOwner : repo.githubOwner;
+        const name =
+          link.source === "upstream" ? repo.upstreamRepo : repo.githubRepo;
+        if (owner && name) {
+          try {
+            return await gh.getPRSummary(
+              owner,
+              name,
+              link.number,
+              repo.githubAccountId,
+            );
+          } catch {
+            return null;
+          }
+        }
+      }
+      return null;
+    },
+  );
+
+  ipcMain.handle(
+    "github:canPushToPR",
+    async (_e, repoId: string, pr: PRSummary): Promise<boolean> => {
+      const repo = repoOrThrow(repoId);
+      const baseOwner = pr.repoOwner ?? repo.githubOwner;
+      const baseRepo = pr.repoName ?? repo.githubRepo;
+      if (!baseOwner || !baseRepo) return false;
+      try {
+        return await gh.canPushToPR(
+          {
+            headOwner: pr.headRepoOwner,
+            headRepo: pr.headRepoName,
+            baseOwner,
+            baseRepo,
+            prNumber: pr.number,
+            maintainerCanModify: pr.maintainerCanModify,
+          },
+          repo.githubAccountId,
+        );
+      } catch {
+        return false;
       }
     },
   );
 
   ipcMain.handle(
     "github:getChecks",
-    async (_e, repoId: string, ref: string): Promise<PRChecksSummary> => {
+    async (
+      _e,
+      repoId: string,
+      ref: string,
+      prOwner?: string,
+      prRepo?: string,
+    ): Promise<PRChecksSummary> => {
       const repo = repoOrThrow(repoId);
       const empty: PRChecksSummary = { state: "none", checks: [] };
-      if (!repo.githubOwner || !repo.githubRepo) return empty;
+      const owner = prOwner ?? repo.githubOwner;
+      const name = prRepo ?? repo.githubRepo;
+      if (!owner || !name) return empty;
       try {
-        return await gh.getChecks(
-          repo.githubOwner,
-          repo.githubRepo,
-          ref,
-          repo.githubAccountId,
-        );
+        return await gh.getChecks(owner, name, ref, repo.githubAccountId);
       } catch (err) {
         console.error(
-          `[github] getChecks failed for ${repo.githubOwner}/${repo.githubRepo} ref=${ref}:`,
+          `[github] getChecks failed for ${owner}/${name} ref=${ref}:`,
           err instanceof Error ? err.message : err,
         );
         return empty;
@@ -554,15 +624,18 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     "github:getPR",
-    async (_e, repoId: string, prNumber: number): Promise<PRSummary | null> => {
+    async (
+      _e,
+      repoId: string,
+      prNumber: number,
+      prOwner?: string,
+      prRepo?: string,
+    ): Promise<PRSummary | null> => {
       const repo = repoOrThrow(repoId);
-      if (!repo.githubOwner || !repo.githubRepo) return null;
-      return gh.getPRSummary(
-        repo.githubOwner,
-        repo.githubRepo,
-        prNumber,
-        repo.githubAccountId,
-      );
+      const owner = prOwner ?? repo.githubOwner;
+      const name = prRepo ?? repo.githubRepo;
+      if (!owner || !name) return null;
+      return gh.getPRSummary(owner, name, prNumber, repo.githubAccountId);
     },
   );
 
@@ -572,17 +645,16 @@ export function registerIpc(): void {
       _e,
       repoId: string,
       prNumber: number,
+      prOwner?: string,
+      prRepo?: string,
     ): Promise<PRReviewComment[]> => {
       const repo = repoOrThrow(repoId);
-      if (!repo.githubOwner || !repo.githubRepo) {
+      const owner = prOwner ?? repo.githubOwner;
+      const name = prRepo ?? repo.githubRepo;
+      if (!owner || !name) {
         throw new Error("This repository does not have a GitHub remote.");
       }
-      return gh.listReviewComments(
-        repo.githubOwner,
-        repo.githubRepo,
-        prNumber,
-        repo.githubAccountId,
-      );
+      return gh.listReviewComments(owner, name, prNumber, repo.githubAccountId);
     },
   );
 
@@ -592,17 +664,16 @@ export function registerIpc(): void {
       _e,
       repoId: string,
       input: NewReviewCommentInput,
+      prOwner?: string,
+      prRepo?: string,
     ): Promise<PRReviewComment> => {
       const repo = repoOrThrow(repoId);
-      if (!repo.githubOwner || !repo.githubRepo) {
+      const owner = prOwner ?? repo.githubOwner;
+      const name = prRepo ?? repo.githubRepo;
+      if (!owner || !name) {
         throw new Error("This repository does not have a GitHub remote.");
       }
-      return gh.createReviewComment(
-        repo.githubOwner,
-        repo.githubRepo,
-        input,
-        repo.githubAccountId,
-      );
+      return gh.createReviewComment(owner, name, input, repo.githubAccountId);
     },
   );
 
@@ -614,14 +685,18 @@ export function registerIpc(): void {
       prNumber: number,
       commentId: number,
       body: string,
+      prOwner?: string,
+      prRepo?: string,
     ): Promise<PRReviewComment> => {
       const repo = repoOrThrow(repoId);
-      if (!repo.githubOwner || !repo.githubRepo) {
+      const owner = prOwner ?? repo.githubOwner;
+      const name = prRepo ?? repo.githubRepo;
+      if (!owner || !name) {
         throw new Error("This repository does not have a GitHub remote.");
       }
       return gh.replyReviewComment(
-        repo.githubOwner,
-        repo.githubRepo,
+        owner,
+        name,
         prNumber,
         commentId,
         body,
@@ -632,15 +707,37 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     "github:deleteReviewComment",
-    async (_e, repoId: string, commentId: number): Promise<void> => {
+    async (
+      _e,
+      repoId: string,
+      commentId: number,
+      prOwner?: string,
+      prRepo?: string,
+    ): Promise<void> => {
       const repo = repoOrThrow(repoId);
-      if (!repo.githubOwner || !repo.githubRepo) {
+      const owner = prOwner ?? repo.githubOwner;
+      const name = prRepo ?? repo.githubRepo;
+      if (!owner || !name) {
         throw new Error("This repository does not have a GitHub remote.");
       }
-      await gh.deleteReviewComment(
-        repo.githubOwner,
-        repo.githubRepo,
-        commentId,
+      await gh.deleteReviewComment(owner, name, commentId, repo.githubAccountId);
+    },
+  );
+
+  ipcMain.handle(
+    "github:setReviewThreadResolved",
+    async (
+      _e,
+      repoId: string,
+      threadId: string,
+      resolved: boolean,
+    ): Promise<{ isResolved: boolean }> => {
+      const repo = repoOrThrow(repoId);
+      // threadId is a global GraphQL node id, so no owner/repo is needed —
+      // only the account whose token authorizes the mutation.
+      return gh.setReviewThreadResolved(
+        threadId,
+        resolved,
         repo.githubAccountId,
       );
     },
@@ -651,6 +748,71 @@ export function registerIpc(): void {
     "shell:openExternal",
     async (_e, url: string): Promise<void> => {
       await shell.openExternal(url);
+    },
+  );
+
+  // Reveal a file in the OS file manager (Finder / Explorer), selecting it.
+  ipcMain.handle(
+    "shell:showItemInFolder",
+    async (_e, fullPath: string): Promise<void> => {
+      shell.showItemInFolder(fullPath);
+    },
+  );
+
+  // Open a file with the OS default program for its type. shell.openPath
+  // resolves to an error string ("" on success), which we surface to the UI.
+  ipcMain.handle(
+    "shell:openPath",
+    async (_e, fullPath: string): Promise<{ ok: boolean; error?: string }> => {
+      const error = await shell.openPath(fullPath);
+      return error ? { ok: false, error } : { ok: true };
+    },
+  );
+
+  // ─── Menu ──────────────────────────────────────────────────────────────
+  // Pop up a native OS context menu for a file row and resolve with the chosen
+  // action. The renderer performs the action itself (reusing its git/shell
+  // calls so it can refresh afterward); we only render the menu and — for the
+  // destructive discard — gate it behind a native confirmation dialog.
+  ipcMain.handle(
+    "menu:showFileContextMenu",
+    async (
+      e,
+      params: FileContextMenuParams,
+    ): Promise<FileContextMenuAction | null> => {
+      const win = BrowserWindow.fromWebContents(e.sender);
+      let chosen: FileContextMenuAction | null = null;
+      const item = (
+        label: string,
+        action: FileContextMenuAction,
+      ): MenuItemConstructorOptions => ({
+        label,
+        click: () => {
+          chosen = action;
+        },
+      });
+
+      const template: MenuItemConstructorOptions[] = [];
+      if (params.canDiscard) {
+        template.push(item("Discard Changes", "discard"));
+        template.push({ type: "separator" });
+      }
+      template.push(item("Copy File Path", "copyPath"));
+      template.push(item("Copy Relative File Path", "copyRelativePath"));
+      template.push({ type: "separator" });
+      template.push(item(params.revealLabel, "reveal"));
+      if (params.editorLabel) {
+        template.push(item(`Open in ${params.editorLabel}`, "openInEditor"));
+      }
+      template.push(item("Open with Default Program", "openDefault"));
+
+      const menu = Menu.buildFromTemplate(template);
+      return await new Promise<FileContextMenuAction | null>((resolve) => {
+        menu.popup({
+          window: win ?? undefined,
+          callback: () => resolve(chosen),
+        });
+      });
     },
   );
 

@@ -1,5 +1,19 @@
 import Store from 'electron-store';
-import type { CommitDraft, GithubAccount, RepoInfo, UserPrefs } from '@shared/types.js';
+import type {
+  CommitDraft,
+  GithubAccount,
+  PRSource,
+  RepoInfo,
+  UserPrefs,
+} from '@shared/types.js';
+
+// Records which PR a locally checked-out branch corresponds to, so the UI can
+// show "View PR" (and resolve the right repo) even for cross-repo PRs that a
+// head-based API lookup can't find.
+export interface PRBranchLink {
+  number: number;
+  source: PRSource;
+}
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
 
 export interface StoredGithubAccount extends GithubAccount {
@@ -15,6 +29,8 @@ interface Schema {
   collapsedFiles: Record<string, Record<string, string[]>>;
   // Unsent commit message drafts, keyed by repoId.
   commitDrafts: Record<string, CommitDraft>;
+  // PR associations for checked-out branches: prBranches[repoId][branch].
+  prBranches: Record<string, Record<string, PRBranchLink>>;
   // Multi-account GitHub auth. Keyed by account id (GitHub user id as string).
   githubAccounts: Record<string, StoredGithubAccount>;
   activeGithubAccountId: string | null;
@@ -29,14 +45,17 @@ const defaults: Schema = {
     theme: 'dark',
     fileListLayout: 'tree',
     showFileIcons: true,
+    openFileOnArrowNav: true,
     codeFont: 'system',
     uiFont: 'system',
     maxDiffLines: 1500,
     hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
+    animationsEnabled: false,
   },
   seen: {},
   collapsedFiles: {},
   commitDrafts: {},
+  prBranches: {},
   githubAccounts: {},
   activeGithubAccountId: null,
   githubToken: null,
@@ -67,6 +86,9 @@ export function removeRepo(id: string): void {
   const drafts = store.get('commitDrafts');
   delete drafts[id];
   store.set('commitDrafts', drafts);
+  const prBranches = store.get('prBranches');
+  delete prBranches[id];
+  store.set('prBranches', prBranches);
   const prefs = store.get('prefs');
   if (prefs.activeRepoId === id) {
     store.set('prefs', { ...prefs, activeRepoId: undefined });
@@ -112,6 +134,27 @@ export function setRepoUpstream(
   repos[repoId] = next;
   store.set('repos', repos);
   return next;
+}
+
+// Remember (or, when link is null, forget) which PR a checked-out branch maps
+// to so the UI can resolve it later regardless of head-based API lookups.
+export function setPRBranch(
+  repoId: string,
+  branch: string,
+  link: PRBranchLink | null,
+): void {
+  const all = store.get('prBranches');
+  const forRepo = (all[repoId] ??= {});
+  if (link) forRepo[branch] = link;
+  else delete forRepo[branch];
+  store.set('prBranches', all);
+}
+
+export function getPRBranch(
+  repoId: string,
+  branch: string,
+): PRBranchLink | null {
+  return store.get('prBranches')[repoId]?.[branch] ?? null;
 }
 
 export function getPrefs(): UserPrefs {

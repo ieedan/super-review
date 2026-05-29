@@ -23,6 +23,13 @@
   import { truncatePathPrefix } from '$lib/path-truncate';
   import type { ChangedFile } from '@shared/types';
 
+  // Right-clicking a file row opens a native OS context menu (built in the main
+  // process). preventDefault stops the default browser menu from also showing.
+  function onRowContextMenu(e: MouseEvent, file: ChangedFile): void {
+    e.preventDefault();
+    void actions.showFileContextMenu(file);
+  }
+
   type Node =
     | { kind: 'folder'; path: string; name: string; depth: number; childCount: number }
     | {
@@ -154,7 +161,159 @@
   );
 
   function pick(path: string): void {
+    focusedPath = path;
     actions.scrollToFile(path);
+  }
+
+  // Keyboard cursor over the visible flat `nodes` list. Can point at a file OR a
+  // folder, independent of `app.selectedFile` (the open file). When
+  // `openFileOnArrowNav` is on, moving the cursor onto a file also opens it, so
+  // the two usually coincide; in "Enter to open" mode the ring moves freely and
+  // Enter/Space commits.
+  let focusedPath = $state<string | null>(null);
+
+  // Resolve the cursor's row index, falling back to the open file's row, then
+  // the top of the list.
+  function currentFocusIndex(): number {
+    if (focusedPath) {
+      const i = nodes.findIndex((n) => n.path === focusedPath);
+      if (i !== -1) return i;
+    }
+    if (app.selectedFile) {
+      const i = nodes.findIndex(
+        (n) => n.kind === 'file' && n.path === app.selectedFile,
+      );
+      if (i !== -1) return i;
+    }
+    return 0;
+  }
+
+  // Move the cursor to a row. Landing on a file opens its diff when
+  // `openFileOnArrowNav` is enabled; folders only ever receive the ring.
+  function focusNode(index: number): void {
+    const node = nodes[index];
+    if (!node) return;
+    if (node.kind === 'file' && app.openFileOnArrowNav) {
+      pick(node.path);
+    } else {
+      focusedPath = node.path;
+    }
+  }
+
+  // Move the cursor to the next/previous file (skipping folder rows) starting
+  // from `i` and stepping in `dir`. Used by the Option/Alt + Up/Down shortcut.
+  function focusFileFrom(i: number, dir: 1 | -1): void {
+    for (let j = i + dir; j >= 0 && j < nodes.length; j += dir) {
+      if (nodes[j].kind === 'file') {
+        focusNode(j);
+        return;
+      }
+    }
+  }
+
+  // Arrow-key navigation over the tree. Bound to the scroll region (see the
+  // scrollRoot effect) so it only fires when the file list is focused and never
+  // steals arrow-scroll from the diff pane.
+  function onTreeKeydown(e: KeyboardEvent): void {
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    // Leave meta/ctrl combos to app/global shortcuts. Alt is handled below.
+    if (e.metaKey || e.ctrlKey) return;
+    if (nodes.length === 0) return;
+
+    // Once we know this is a navigation key, pull DOM focus onto the stable
+    // scroll container. Row buttons get unmounted by virtualization as they
+    // scroll out of view; if focus stayed on one, the keydown would stop
+    // bubbling to this handler and arrow keys would fall back to plain
+    // scrolling. The container never unmounts, so focus survives navigation.
+    const NAV_KEYS = [
+      'ArrowDown',
+      'ArrowUp',
+      'ArrowLeft',
+      'ArrowRight',
+      'Home',
+      'End',
+      'Enter',
+      ' ',
+    ];
+    if (!NAV_KEYS.includes(e.key)) return;
+    scrollRoot?.focus({ preventScroll: true });
+
+    const i = currentFocusIndex();
+    const node = nodes[i];
+
+    // Option/Alt + Up/Down jumps to the next/previous file, skipping folders.
+    if (e.altKey) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        focusFileFrom(i, 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        focusFileFrom(i, -1);
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        focusNode(Math.min(nodes.length - 1, i + 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        focusNode(Math.max(0, i - 1));
+        break;
+      case 'Home':
+        e.preventDefault();
+        focusNode(0);
+        break;
+      case 'End':
+        e.preventDefault();
+        focusNode(nodes.length - 1);
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        if (node?.kind === 'folder') {
+          if (app.collapsedFolders.has(node.path)) {
+            actions.toggleFolder(node.path); // expand in place
+          } else if (i + 1 < nodes.length) {
+            focusNode(i + 1); // step into first child
+          }
+        }
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        if (node?.kind === 'folder' && !app.collapsedFolders.has(node.path)) {
+          actions.toggleFolder(node.path); // collapse in place
+        } else if (node) {
+          // Jump to the parent folder row, if one is visible.
+          const slash = node.path.lastIndexOf('/');
+          const parent = slash >= 0 ? node.path.slice(0, slash) : '';
+          if (parent) {
+            const p = nodes.findIndex(
+              (n) => n.kind === 'folder' && n.path === parent,
+            );
+            if (p !== -1) focusNode(p);
+          }
+        }
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (node?.kind === 'folder') {
+          actions.toggleFolder(node.path);
+        } else if (node?.kind === 'file') {
+          pick(node.path);
+        }
+        break;
+    }
   }
 
   function toggleSeen(e: MouseEvent, f: ChangedFile): void {
@@ -189,10 +348,18 @@
     // text-xs = 12px / 16px in Tailwind. Construct a canvas-compatible font
     // shorthand using the container's inherited font-family.
     rowFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
+    // Make the list a focusable tree region so arrow keys only navigate when
+    // the list has focus — elsewhere (e.g. the diff pane) arrows still scroll.
+    // Suppress the browser's default focus outline on the container itself; the
+    // cursor row carries its own subtle highlight instead.
+    el.tabIndex = 0;
+    el.setAttribute('role', 'tree');
+    el.style.outline = 'none';
     const onScroll = (): void => {
       scrollTop = el.scrollTop;
     };
     el.addEventListener('scroll', onScroll, { passive: true });
+    el.addEventListener('keydown', onTreeKeydown);
     const ro = new ResizeObserver(() => {
       viewportHeight = el.clientHeight;
       scrollRootWidth = el.clientWidth;
@@ -200,6 +367,7 @@
     ro.observe(el);
     return () => {
       el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('keydown', onTreeKeydown);
       ro.disconnect();
     };
   });
@@ -235,16 +403,24 @@
   const topSpacer = $derived(visibleRange.start * ROW_HEIGHT);
   const bottomSpacer = $derived((nodes.length - visibleRange.end) * ROW_HEIGHT);
 
-  // Keep the highlighted file visible as the user scrolls the diff. Because
+  // Keep the cursor synced to the open file whenever it changes from outside
+  // the tree (clicking a row, "next file" in the diff, etc.) so keyboard
+  // navigation resumes from wherever the user last landed.
+  $effect(() => {
+    const sel = app.selectedFile;
+    if (sel) focusedPath = sel;
+  });
+
+  // Keep the keyboard cursor visible as it (or the open file) moves. Because
   // the list is virtualized, `scrollIntoView` on the row element won't work
   // (rows outside the visible window aren't mounted) — we set `scrollTop`
   // directly using the known row index × ROW_HEIGHT layout. Reading
   // `scrollRoot.scrollTop` / `.clientHeight` directly (not the reactive
   // mirrors) keeps this effect from re-firing on every scroll tick.
   $effect(() => {
-    const path = app.selectedFile;
+    const path = focusedPath;
     if (!path || !scrollRoot) return;
-    const idx = nodes.findIndex((n) => n.kind === 'file' && n.file.path === path);
+    const idx = nodes.findIndex((n) => n.path === path);
     if (idx === -1) return;
     const el = scrollRoot;
     const itemTop = idx * ROW_HEIGHT;
@@ -419,11 +595,21 @@
           {#each visibleNodes as node (node.kind + ':' + node.path)}
             {#if node.kind === 'folder'}
               {@const open = !app.collapsedFolders.has(node.path)}
+              {@const isFocused = focusedPath === node.path}
               <button
                 type="button"
-                class="flex w-full items-center gap-1 px-2 text-left text-xs text-muted-foreground hover:bg-accent/50"
+                role="treeitem"
+                aria-expanded={open}
+                aria-selected={false}
+                class={cn(
+                  'flex w-full items-center gap-1 px-2 text-left text-xs text-muted-foreground outline-hidden',
+                  isFocused ? 'bg-accent/60' : 'hover:bg-accent/50',
+                )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 8}px"
-                onclick={() => actions.toggleFolder(node.path)}
+                onclick={() => {
+                  focusedPath = node.path;
+                  actions.toggleFolder(node.path);
+                }}
               >
                 <ChevronRight
                   class={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')}
@@ -439,17 +625,26 @@
               {@const isSeen = app.seenFiles.has(node.file.path)}
               {@const iconName = languageIconForPath(node.file.path)}
               {@const isActive = app.selectedFile === node.file.path}
-              {@const commentCount = (app.prComments[node.file.path] ?? []).length}
+              {@const isFocused = focusedPath === node.file.path}
+              {@const threadCount = (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo).length}
               <div
+                role="treeitem"
+                aria-selected={isActive}
+                tabindex={-1}
                 class={cn(
                   'group flex w-full items-center gap-1.5 border-l-2 border-transparent pr-2',
-                  isActive ? 'border-l-foreground bg-accent' : 'hover:bg-accent/50',
+                  isActive
+                    ? 'border-l-foreground bg-accent'
+                    : isFocused
+                      ? 'bg-accent/60'
+                      : 'hover:bg-accent/50',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 4}px"
+                oncontextmenu={(e) => onRowContextMenu(e, node.file)}
               >
                 <button
                   class={cn(
-                    'grid size-3.5 shrink-0 place-items-center rounded border',
+                    'grid size-3.5 shrink-0 place-items-center rounded border outline-hidden',
                     isSeen
                       ? 'border-success bg-success text-success-foreground'
                       : 'border-border hover:border-foreground',
@@ -463,7 +658,7 @@
                   {/if}
                 </button>
                 <button
-                  class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left"
+                  class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left outline-hidden"
                   onclick={() => pick(node.file.path)}
                   type="button"
                 >
@@ -490,13 +685,13 @@
                     </span>
                   {/if}
                   <span class="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums">
-                    {#if commentCount > 0}
+                    {#if threadCount > 0}
                       <span
                         class="flex items-center gap-0.5 text-muted-foreground"
-                        title="{commentCount} comment{commentCount === 1 ? '' : 's'}"
+                        title="{threadCount} comment thread{threadCount === 1 ? '' : 's'}"
                       >
                         <MessageSquare class="size-3" />
-                        {commentCount}
+                        {threadCount}
                       </span>
                     {/if}
                     <span class="flex items-center gap-0.5">

@@ -94,6 +94,8 @@
   let draftViewMode = $state<ViewMode>('split');
   let draftFileListLayout = $state<FileListLayout>('tree');
   let draftShowFileIcons = $state<boolean>(true);
+  let draftAnimationsEnabled = $state<boolean>(false);
+  let draftOpenFileOnArrowNav = $state<boolean>(true);
   let draftMaxDiffLines = $state<number>(1500);
   let draftHiddenDiffPatterns = $state<string[]>([]);
   let newPattern = $state<string>('');
@@ -108,6 +110,8 @@
       draftViewMode = app.viewMode;
       draftFileListLayout = app.fileListLayout;
       draftShowFileIcons = app.showFileIcons;
+      draftAnimationsEnabled = app.animationsEnabled;
+      draftOpenFileOnArrowNav = app.openFileOnArrowNav;
       draftMaxDiffLines = app.maxDiffLines;
       draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
       newPattern = '';
@@ -151,6 +155,12 @@
     }
     if (draftShowFileIcons !== app.showFileIcons) {
       promises.push(actions.setShowFileIcons(draftShowFileIcons));
+    }
+    if (draftAnimationsEnabled !== app.animationsEnabled) {
+      promises.push(actions.setAnimationsEnabled(draftAnimationsEnabled));
+    }
+    if (draftOpenFileOnArrowNav !== app.openFileOnArrowNav) {
+      promises.push(actions.setOpenFileOnArrowNav(draftOpenFileOnArrowNav));
     }
     const parsedMaxDiffLines = Number(draftMaxDiffLines);
     const clampedMaxDiffLines =
@@ -553,9 +563,97 @@
                 {/each}
               </div>
             </div>
+
+            <div>
+              <h3 class="text-base font-semibold">Animations</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Enable enter/exit and hover transitions on menus, dialogs,
+                tooltips, and other UI. Off by default for a snappier,
+                motion-free feel.
+              </p>
+
+              <div class="mt-4 grid grid-cols-2 gap-3">
+                {#each [{ value: false, label: 'Off', hint: 'UI appears instantly, with no motion.' }, { value: true, label: 'On', hint: 'Menus, dialogs, and tooltips animate in and out.' }] as opt (opt.label)}
+                  {@const active = draftAnimationsEnabled === opt.value}
+                  <button
+                    type="button"
+                    onclick={() => (draftAnimationsEnabled = opt.value)}
+                    class={cn(
+                      'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+                      active
+                        ? 'border-primary'
+                        : 'border-border hover:border-muted-foreground/50',
+                    )}
+                  >
+                    <div
+                      class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+                    >
+                      <span
+                        class={cn(
+                          'grid size-3.5 place-items-center rounded-full border',
+                          active
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border',
+                        )}
+                      >
+                        {#if active}<Check class="size-2.5" />{/if}
+                      </span>
+                      {opt.label}
+                    </div>
+                    <div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
+                      {opt.hint}
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+
           </section>
         {:else if activeTab === 'behavior'}
           <section class="space-y-6">
+            <div>
+              <h3 class="text-base font-semibold">Arrow-key navigation</h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Choose what happens when you move the keyboard cursor onto a file
+                with the arrow keys in the sidebar.
+              </p>
+
+              <div class="mt-4 grid grid-cols-2 gap-3">
+                {#each [{ value: true, label: 'Open on arrow', hint: 'Arrowing onto a file opens its diff immediately.' }, { value: false, label: 'Open on enter', hint: 'Arrows move the cursor only; Enter opens the file.' }] as opt (opt.label)}
+                  {@const active = draftOpenFileOnArrowNav === opt.value}
+                  <button
+                    type="button"
+                    onclick={() => (draftOpenFileOnArrowNav = opt.value)}
+                    class={cn(
+                      'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+                      active
+                        ? 'border-primary'
+                        : 'border-border hover:border-muted-foreground/50',
+                    )}
+                  >
+                    <div
+                      class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+                    >
+                      <span
+                        class={cn(
+                          'grid size-3.5 place-items-center rounded-full border',
+                          active
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border',
+                        )}
+                      >
+                        {#if active}<Check class="size-2.5" />{/if}
+                      </span>
+                      {opt.label}
+                    </div>
+                    <div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
+                      {opt.hint}
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+
             <div>
               <h3 class="text-base font-semibold">Large diffs</h3>
               <p class="mt-1 text-xs text-muted-foreground">

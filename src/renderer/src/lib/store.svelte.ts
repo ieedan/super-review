@@ -71,8 +71,10 @@ interface AppState {
   viewMode: ViewMode;
   fileListLayout: FileListLayout;
   showFileIcons: boolean;
+  openFileOnArrowNav: boolean;
   maxDiffLines: number;
   hiddenDiffPatterns: string[];
+  animationsEnabled: boolean;
   theme: "light" | "dark";
   codeFont: string;
   uiFont: string;
@@ -106,6 +108,10 @@ interface AppState {
   // individual checks for a hover breakdown. Keyed by PR number so a stale poll
   // result can't paint the wrong PR. Polled on an interval while a PR is shown.
   branchPRChecks: { number: number; summary: PRChecksSummary } | null;
+  // Whether the active account can push commits to `branchPR`'s head branch.
+  // null while unknown / not applicable; drives the commit-box warning so it
+  // only fires when a push would actually be rejected.
+  branchPRPushAccess: boolean | null;
   // PR currently being reviewed (when diffContext.kind === 'pr').
   activePR: PRSummary | null;
   // Review comments for the active PR, indexed by file path.
@@ -160,6 +166,23 @@ export function commentablePRNumber(): number | null {
   return null;
 }
 
+// The PR the comment/checks surface currently targets (the one being reviewed,
+// or the current branch's PR).
+function commentablePR(): PRSummary | null {
+  if (app.diffContext.kind === "pr") return app.activePR;
+  return app.branchPR;
+}
+
+// Host repo (owner, repo) a PR's operations must target — its base repo, which
+// for an upstream PR is the parent, not the active fork. Returned as a tuple to
+// spread into the host-aware github IPC calls; undefineds fall back server-side
+// to the active repo's own coordinates.
+function prHostArgs(
+  pr: PRSummary | null,
+): [owner: string | undefined, repo: string | undefined] {
+  return [pr?.repoOwner, pr?.repoName];
+}
+
 const initial: AppState = {
   repos: [],
   activeRepo: null,
@@ -180,8 +203,10 @@ const initial: AppState = {
   viewMode: "split",
   fileListLayout: "tree",
   showFileIcons: true,
+  openFileOnArrowNav: true,
   maxDiffLines: 1500,
   hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
+  animationsEnabled: false,
   theme: "dark",
   codeFont: "system",
   uiFont: "system",
@@ -218,6 +243,7 @@ const initial: AppState = {
   lastCommit: null,
   branchPR: null,
   branchPRChecks: null,
+  branchPRPushAccess: null,
   activePR: null,
   prComments: {},
   loadingComments: false,
@@ -370,6 +396,15 @@ async function loadSystemFonts(): Promise<void> {
   }
 }
 
+// Human-readable names for each editor, shown in menus ("Open in <editor>").
+export const EDITOR_LABELS: Record<EditorKind, string> = {
+  cursor: "Cursor",
+  vscode: "Visual Studio Code",
+  zed: "Zed",
+  xcode: "Xcode",
+  visualstudio: "Visual Studio",
+};
+
 // Editor the user has configured, falling back to whichever is detected.
 // Returns null when nothing is available.
 export function effectiveEditor(): EditorKind | null {
@@ -483,6 +518,7 @@ async function refreshBranchPR(): Promise<void> {
       currentBranch: app.currentBranch ?? null,
     });
     app.branchPR = null;
+    app.branchPRPushAccess = null;
     return;
   }
   console.log(
@@ -520,6 +556,7 @@ async function refreshBranchPR(): Promise<void> {
     app.branchPRChecks = null;
   }
   await refreshBranchPRChecks();
+  void refreshBranchPRPushAccess();
 }
 
 // Poll the CI/workflow status for the current branch PR's head commit. Cheap
@@ -535,6 +572,7 @@ async function refreshBranchPRChecks(): Promise<void> {
     const summary = await window.api.github.getChecks(
       app.activeRepo.id,
       pr.headSha,
+      ...prHostArgs(pr),
     );
     // The PR may have changed while the request was in flight; only apply the
     // result if it still matches what we're showing.
@@ -543,6 +581,38 @@ async function refreshBranchPRChecks(): Promise<void> {
     }
   } catch (err) {
     console.error("[branchPR] checks lookup threw:", err);
+  }
+}
+
+// Push-access answers are stable for a session, so cache per repo+PR to avoid
+// re-hitting the API on every branch-PR refresh.
+const prPushAccess = new Map<string, boolean>();
+
+// Determine whether the active account can push commits to the current branch
+// PR's head branch, so the commit box can warn only when a push would actually
+// be rejected. Failure-silent — leaves the answer unknown (null) on error.
+async function refreshBranchPRPushAccess(): Promise<void> {
+  const pr = app.branchPR;
+  if (!app.activeRepo || !pr) {
+    app.branchPRPushAccess = null;
+    return;
+  }
+  const key = `${app.activeRepo.id}::${pr.number}`;
+  const cached = prPushAccess.get(key);
+  if (cached !== undefined) {
+    app.branchPRPushAccess = cached;
+    return;
+  }
+  app.branchPRPushAccess = null;
+  try {
+    const can = await window.api.github.canPushToPR(
+      app.activeRepo.id,
+      $state.snapshot(pr),
+    );
+    prPushAccess.set(key, can);
+    if (app.branchPR?.number === pr.number) app.branchPRPushAccess = can;
+  } catch {
+    // Leave unknown — better no warning than a wrong one.
   }
 }
 
@@ -678,8 +748,10 @@ export const actions = {
     app.viewMode = app.prefs.viewMode;
     app.fileListLayout = app.prefs.fileListLayout;
     app.showFileIcons = app.prefs.showFileIcons;
+    app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
     app.maxDiffLines = app.prefs.maxDiffLines;
     app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
+    app.animationsEnabled = app.prefs.animationsEnabled ?? false;
     app.theme = app.prefs.theme;
     applyTheme(app.theme);
     app.codeFont = app.prefs.codeFont;
@@ -1021,10 +1093,11 @@ export const actions = {
   async checkoutPR(pr: PRSummary): Promise<void> {
     if (!app.activeRepo) return;
     try {
+      // `pr` is a $state proxy; snapshot to a plain object so it survives the
+      // structured-clone across the IPC boundary ("object could not be cloned").
       await window.api.git.checkoutPR(
         app.activeRepo.id,
-        pr.number,
-        pr.headRef,
+        $state.snapshot(pr),
         app.prsSource,
       );
       applyContextTab("branch");
@@ -1070,11 +1143,13 @@ export const actions = {
     if (!app.activeRepo) return;
     const prNumber = commentablePRNumber();
     if (prNumber == null) return;
+    const host = prHostArgs(commentablePR());
     app.loadingComments = true;
     try {
       const comments = await window.api.github.listReviewComments(
         app.activeRepo.id,
         prNumber,
+        ...host,
       );
       const byPath: Record<string, PRReviewComment[]> = {};
       for (const c of comments) {
@@ -1129,6 +1204,7 @@ export const actions = {
     if (!app.activeRepo) return;
     const prNumber = commentablePRNumber();
     if (prNumber == null) return;
+    const host = prHostArgs(commentablePR());
     const c = app.pendingComposers[key];
     if (!c || !c.draft.trim() || c.submitting) return;
     // Mutate in place — same rationale as setComposerDraft. Flipping
@@ -1141,14 +1217,19 @@ export const actions = {
             prNumber,
             c.replyTo,
             c.draft.trim(),
+            ...host,
           )
-        : await window.api.github.createReviewComment(app.activeRepo.id, {
-            prNumber,
-            path: c.filePath,
-            line: c.line,
-            side: c.side,
-            body: c.draft.trim(),
-          });
+        : await window.api.github.createReviewComment(
+            app.activeRepo.id,
+            {
+              prNumber,
+              path: c.filePath,
+              line: c.line,
+              side: c.side,
+              body: c.draft.trim(),
+            },
+            ...host,
+          );
       const existing = app.prComments[c.filePath] ?? [];
       app.prComments = {
         ...app.prComments,
@@ -1163,6 +1244,41 @@ export const actions = {
     }
   },
 
+  // Post a reply to an existing thread directly from an inline input, without
+  // going through the pendingComposer/annotation machinery — the inline reply
+  // box stays put rather than swapping in a separate composer row. Returns true
+  // on success so the caller can clear its input.
+  async submitReply(
+    filePath: string,
+    replyTo: number,
+    body: string,
+  ): Promise<boolean> {
+    if (!app.activeRepo) return false;
+    const prNumber = commentablePRNumber();
+    if (prNumber == null) return false;
+    const trimmed = body.trim();
+    if (!trimmed) return false;
+    const host = prHostArgs(commentablePR());
+    try {
+      const created = await window.api.github.replyReviewComment(
+        app.activeRepo.id,
+        prNumber,
+        replyTo,
+        trimmed,
+        ...host,
+      );
+      const existing = app.prComments[filePath] ?? [];
+      app.prComments = {
+        ...app.prComments,
+        [filePath]: [...existing, created],
+      };
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  },
+
   async deleteComment(commentId: number, filePath: string): Promise<void> {
     if (!app.activeRepo) return;
     // Optimistically remove the comment so the UI feels instant — the
@@ -1172,9 +1288,44 @@ export const actions = {
     const next = prev.filter((c) => c.id !== commentId);
     app.prComments = { ...app.prComments, [filePath]: next };
     try {
-      await window.api.github.deleteReviewComment(app.activeRepo.id, commentId);
+      await window.api.github.deleteReviewComment(
+        app.activeRepo.id,
+        commentId,
+        ...prHostArgs(commentablePR()),
+      );
     } catch (err) {
       app.prComments = { ...app.prComments, [filePath]: prev };
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  },
+
+  // Resolve / unresolve a review thread. A thread can span files (and every
+  // comment in it carries the same threadId), so we flip `isResolved` on every
+  // matching comment across the whole map. Optimistic, with rollback + a
+  // reconcile to the server's reported state on success.
+  async setThreadResolved(threadId: string, resolved: boolean): Promise<void> {
+    if (!app.activeRepo) return;
+    const prev = app.prComments;
+    const apply = (value: boolean): void => {
+      const next: Record<string, PRReviewComment[]> = {};
+      for (const [path, list] of Object.entries(prev)) {
+        next[path] = list.map((c) =>
+          c.threadId === threadId ? { ...c, isResolved: value } : c,
+        );
+      }
+      app.prComments = next;
+    };
+    apply(resolved);
+    try {
+      const res = await window.api.github.setReviewThreadResolved(
+        app.activeRepo.id,
+        threadId,
+        resolved,
+      );
+      // Reconcile if GitHub ended up in a different state than we assumed.
+      if (res.isResolved !== resolved) apply(res.isResolved);
+    } catch (err) {
+      app.prComments = prev;
       setError(err instanceof Error ? err.message : String(err));
     }
   },
@@ -1565,6 +1716,144 @@ export const actions = {
     if (!result.ok && result.error) setError(result.error);
   },
 
+  // Pop up the native file-row context menu, then run whatever the user chose.
+  // The destructive discard is confirmed natively in the main process, so by
+  // the time "discard" comes back the user has already agreed.
+  async showFileContextMenu(file: ChangedFile): Promise<void> {
+    if (!app.activeRepo) return;
+    const editor = effectiveEditor();
+    const revealLabel =
+      app.platform === "win32"
+        ? "Reveal in Explorer"
+        : app.platform === "linux"
+          ? "Reveal in File Manager"
+          : "Reveal in Finder";
+    const action = await window.api.menu.showFileContextMenu({
+      filePath: file.path,
+      canDiscard: app.diffContext.kind === "workingTree",
+      editorLabel: editor ? EDITOR_LABELS[editor] : null,
+      revealLabel,
+    });
+    switch (action) {
+      case "discard":
+        await actions.discardFile(file.path, file.oldPath);
+        break;
+      case "copyPath":
+        await actions.copyToClipboard(
+          actions.resolveRepoPath(file.path) ?? file.path,
+        );
+        break;
+      case "copyRelativePath":
+        await actions.copyToClipboard(file.path);
+        break;
+      case "reveal":
+        await actions.revealFile(file.path);
+        break;
+      case "openInEditor":
+        await actions.openInEditor(file.path);
+        break;
+      case "openDefault":
+        await actions.openFileWithDefault(file.path);
+        break;
+    }
+  },
+
+  // Discard a file's changes via the file-list context menu. Tracked files are
+  // reverted to HEAD; new/untracked files are moved to the trash.
+  //
+  // Rather than re-fetching the whole file list (which swaps in fresh
+  // ChangedFile objects and makes every diff section re-render — a visible
+  // flash), we surgically drop just the discarded file: its sidebar row and
+  // its diff section. Every other file keeps its identity, so nothing else
+  // re-renders.
+  async discardFile(filePath: string, oldPath?: string): Promise<void> {
+    if (!app.activeRepo) return;
+    const repoId = app.activeRepo.id;
+    try {
+      await window.api.git.discardChanges(repoId, filePath, oldPath);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    const idx = app.changedFiles.findIndex((f) => f.path === filePath);
+    if (idx === -1) return; // already gone — nothing to update
+    const remaining = app.changedFiles.filter((f) => f.path !== filePath);
+
+    // If the discarded file was the open one, move the selection to a neighbor
+    // (next, else previous) so the diff view lands somewhere sensible.
+    if (app.selectedFile === filePath) {
+      const next = remaining[idx] ?? remaining[idx - 1] ?? null;
+      app.selectedFile = next?.path ?? null;
+    }
+
+    app.changedFiles = remaining;
+    if (app.seenFiles.has(filePath)) {
+      const seen = new Set(app.seenFiles);
+      seen.delete(filePath);
+      app.seenFiles = seen;
+    }
+    if (app.collapsedFiles.has(filePath)) {
+      const collapsed = new Set(app.collapsedFiles);
+      collapsed.delete(filePath);
+      app.collapsedFiles = collapsed;
+    }
+
+    // Discard only happens in the working-tree context, where the file list IS
+    // the unstaged set — keep the tab badge in step.
+    const ctx = $state.snapshot(app.diffContext) as DiffContext;
+    if (ctx.kind === "workingTree") app.unstagedFileCount = remaining.length;
+
+    // Drop the stale cached diff and prune the per-context files cache so a tab
+    // switch (which hydrates from cache) can't resurrect the discarded file.
+    diffCache.delete(diffCacheKeyFor(repoId, ctx, filePath));
+    const cached = filesCache.get(filesCacheKey(repoId, ctx));
+    if (cached) {
+      cached.changedFiles = cached.changedFiles.filter(
+        (f) => f.path !== filePath,
+      );
+      cached.seenFiles.delete(filePath);
+      cached.collapsedFiles.delete(filePath);
+      if (cached.selectedFile === filePath) {
+        cached.selectedFile = app.selectedFile;
+      }
+    }
+
+    // Push status can shift (e.g. discarding leaves the tree clean); refresh it
+    // in the background since it only feeds the header, not the diff/sidebar.
+    void refreshPushStatus();
+  },
+
+  // Resolve a repo-relative path to an absolute one for the shell helpers.
+  resolveRepoPath(filePath: string): string | null {
+    if (!app.activeRepo) return null;
+    return `${app.activeRepo.path}/${filePath}`;
+  },
+
+  // Reveal a file in the OS file manager (Finder / Explorer).
+  async revealFile(filePath: string): Promise<void> {
+    const full = actions.resolveRepoPath(filePath);
+    if (!full) return;
+    await window.api.shell.showItemInFolder(full);
+  },
+
+  // Open a file with the OS default program for its type.
+  async openFileWithDefault(filePath: string): Promise<void> {
+    const full = actions.resolveRepoPath(filePath);
+    if (!full) return;
+    const result = await window.api.shell.openPath(full);
+    if (!result.ok && result.error) setError(result.error);
+  },
+
+  // Copy text (a file path) to the clipboard.
+  async copyToClipboard(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  },
+
   async setExternalTerminal(terminal: TerminalKind | null): Promise<void> {
     app.prefs = await window.api.state.setPrefs({ externalTerminal: terminal });
   },
@@ -1600,6 +1889,11 @@ export const actions = {
     app.prefs = await window.api.state.setPrefs({ showFileIcons: show });
   },
 
+  async setOpenFileOnArrowNav(value: boolean): Promise<void> {
+    app.openFileOnArrowNav = value;
+    app.prefs = await window.api.state.setPrefs({ openFileOnArrowNav: value });
+  },
+
   async setMaxDiffLines(max: number): Promise<void> {
     const next = Number.isFinite(max) && max >= 0 ? Math.floor(max) : 0;
     app.maxDiffLines = next;
@@ -1611,6 +1905,11 @@ export const actions = {
     const next = [...new Set(patterns.map((p) => p.trim()).filter(Boolean))];
     app.hiddenDiffPatterns = next;
     app.prefs = await window.api.state.setPrefs({ hiddenDiffPatterns: next });
+  },
+
+  async setAnimationsEnabled(enabled: boolean): Promise<void> {
+    app.animationsEnabled = enabled;
+    app.prefs = await window.api.state.setPrefs({ animationsEnabled: enabled });
   },
 
   async setTheme(theme: "light" | "dark"): Promise<void> {

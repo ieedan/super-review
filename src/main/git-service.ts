@@ -1,4 +1,5 @@
 import { simpleGit, type SimpleGit } from "simple-git";
+import { shell } from "electron";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -719,6 +720,7 @@ export interface PushStatus {
   hasUpstream: boolean;
   hasRemote: boolean;
   aheadOfDefault: number;
+  pushRemote?: string;
 }
 
 async function countAheadOfDefault(
@@ -805,6 +807,14 @@ export async function getPushStatus(
   } catch {
     // ignore
   }
+  let pushRemote: string | undefined;
+  try {
+    pushRemote =
+      (await git.raw(["config", "--get", `branch.${branch}.remote`])).trim() ||
+      undefined;
+  } catch {
+    pushRemote = undefined;
+  }
   return {
     branch,
     ahead,
@@ -812,6 +822,7 @@ export async function getPushStatus(
     hasUpstream: true,
     hasRemote,
     aheadOfDefault,
+    pushRemote,
   };
 }
 
@@ -878,6 +889,46 @@ export async function stageFile(
   filePath: string,
 ): Promise<void> {
   await simpleGit(repoPath).add([filePath]);
+}
+
+// Whether `relPath` exists in the current HEAD commit. False for new/untracked
+// files and for repos with no commits yet (`HEAD:<path>` can't be resolved).
+async function pathExistsInHead(
+  git: SimpleGit,
+  relPath: string,
+): Promise<boolean> {
+  try {
+    await git.raw(["cat-file", "-e", `HEAD:${relPath}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Discard a file's working-tree (and staged) changes, mirroring GitHub
+// Desktop's "Discard Changes". Tracked files are reset to their HEAD state
+// (recoverable from history); files with no HEAD version — new or untracked —
+// are moved to the OS trash so the discard stays recoverable. `oldPath` is the
+// pre-rename path: a rename also leaves the original deleted from the worktree,
+// so we restore it too.
+export async function discardChanges(
+  repoPath: string,
+  filePath: string,
+  oldPath?: string,
+): Promise<void> {
+  const git = simpleGit(repoPath);
+  const restoreOrTrash = async (relPath: string): Promise<void> => {
+    const inHead = await pathExistsInHead(git, relPath);
+    // Unstage first so the worktree restore (or trash) isn't left partial.
+    await git.raw(["reset", "-q", "HEAD", "--", relPath]).catch(() => {});
+    if (inHead) {
+      await git.raw(["checkout", "HEAD", "--", relPath]);
+    } else {
+      await shell.trashItem(path.join(repoPath, relPath)).catch(() => {});
+    }
+  };
+  await restoreOrTrash(filePath);
+  if (oldPath && oldPath !== filePath) await restoreOrTrash(oldPath);
 }
 
 // Try to wrap up an in-progress merge. If unmerged paths remain we surface
@@ -1104,27 +1155,113 @@ export async function fetchPRRef(
 
 // Check out the branch a PR was opened from so it can be reviewed locally. If
 // a local branch with the PR's head name already exists (the common case for
-// same-repo PRs) we just switch to it; otherwise we fetch the PR head into a
-// new local branch of that name and switch to it. This works for fork PRs too
-// since `pull/<n>/head` is always available on the host.
+export interface CheckoutPROptions {
+  prNumber: number;
+  // The PR head branch name; also used as the local branch name so a plain
+  // `git push` (push.default=simple) targets the matching remote branch.
+  headRef: string;
+  // Clone URL + owner of the repo the head branch lives in (the push target).
+  // Undefined when the head repo was deleted — we then fall back to a
+  // read-only snapshot with no push tracking.
+  headRepoUrl?: string;
+  headRepoOwner?: string;
+  // The fork's own remote URL, so we can reuse "origin" instead of adding a
+  // duplicate remote when the head repo is the fork itself.
+  originUrl?: string;
+  // Remote (name or URL) to read the PR head snapshot from in the fallback
+  // path, when the head repo is unknown.
+  fallbackRemote?: string;
+}
+
+// Check out the branch a PR was opened from so it can be reviewed — and so
+// commits can be pushed back to it. We point a remote at the PR's head repo
+// (reusing "origin" or any existing remote already aimed there, otherwise
+// adding one named after the head owner), fetch the head branch, and create a
+// local branch that tracks it. Tracking is what makes the commit box show
+// "View PR"/"Push" instead of "Publish", and routes `git push` to the PR's
+// branch (which fails cleanly when you lack write access).
 //
-// `remote` is the git remote to pull the PR ref from — usually "origin", but
-// for an upstream PR (when reviewing a fork's parent repo) it's the upstream's
-// URL so the fetch hits the right repository rather than the fork.
+// When the head repo is unknown (deleted fork), we fall back to fetching a
+// read-only `pull/<n>/head` snapshot with no tracking.
 export async function checkoutPR(
   repoPath: string,
-  prNumber: number,
-  headRef: string,
-  remote = "origin",
+  opts: CheckoutPROptions,
 ): Promise<void> {
   const git = simpleGit(repoPath);
-  const local = await git.branchLocal();
-  if (local.all.includes(headRef)) {
+  const { prNumber, headRef, headRepoUrl, headRepoOwner } = opts;
+
+  if (!headRepoUrl || !headRepoOwner) {
+    const local = await git.branchLocal();
+    if (!local.all.includes(headRef)) {
+      await git.fetch([
+        opts.fallbackRemote ?? "origin",
+        `pull/${prNumber}/head:${headRef}`,
+      ]);
+    }
     await git.checkout(headRef);
     return;
   }
-  await git.fetch([remote, `pull/${prNumber}/head:${headRef}`]);
-  await git.checkout(headRef);
+
+  const remote = await ensureRemoteForUrl(
+    git,
+    headRepoOwner,
+    headRepoUrl,
+    opts.originUrl,
+  );
+  await git.fetch([remote, headRef]);
+
+  const local = await git.branchLocal();
+  if (local.all.includes(headRef)) {
+    await git.checkout(headRef);
+    // Re-point tracking in case this branch previously tracked elsewhere.
+    await git
+      .raw(["branch", `--set-upstream-to=${remote}/${headRef}`, headRef])
+      .catch(() => {});
+  } else {
+    await git.checkout(["-b", headRef, "--track", `${remote}/${headRef}`]);
+  }
+}
+
+// True when two remote URLs point at the same github.com owner/repo, ignoring
+// protocol (SSH vs HTTPS) and a trailing ".git".
+async function sameGithubRepo(a: string, b: string): Promise<boolean> {
+  const ga = await parseGithubFromUrl(a);
+  const gb = await parseGithubFromUrl(b);
+  return (
+    !!ga &&
+    !!gb &&
+    ga.owner.toLowerCase() === gb.owner.toLowerCase() &&
+    ga.repo.toLowerCase() === gb.repo.toLowerCase()
+  );
+}
+
+function sanitizeRemoteName(owner: string): string {
+  return owner.replace(/[^A-Za-z0-9._-]/g, "-") || "fork";
+}
+
+// Resolve a remote name pointing at `url`, reusing "origin" or any existing
+// remote already aimed at that repo; otherwise add one named after `owner`.
+async function ensureRemoteForUrl(
+  git: SimpleGit,
+  owner: string,
+  url: string,
+  originUrl?: string,
+): Promise<string> {
+  if (originUrl && (await sameGithubRepo(originUrl, url))) return "origin";
+  const remotes = await git.getRemotes(true).catch(() => []);
+  for (const r of remotes) {
+    if (r.refs.fetch && (await sameGithubRepo(r.refs.fetch, url))) return r.name;
+  }
+  let name = sanitizeRemoteName(owner);
+  // The preferred name is taken by a remote pointing elsewhere (none matched
+  // the URL above) — don't clobber it (e.g. "origin"); use a PR-scoped name.
+  if (remotes.some((r) => r.name === name)) name = `pr-${name}`;
+  if (remotes.some((r) => r.name === name)) {
+    await git.remote(["set-url", name, url]);
+  } else {
+    await git.addRemote(name, url);
+  }
+  return name;
 }
 
 export async function pinPRBaseRef(

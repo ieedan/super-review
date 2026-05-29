@@ -80,6 +80,23 @@ export interface PRSummary {
   // True when the PR has been merged. `state` is "closed" for both merged and
   // plain-closed PRs, so this distinguishes the two for the status icon.
   merged: boolean;
+  // The repo the PR's head branch lives in — the contributor's fork for a
+  // cross-repo PR, or the base repo for a same-repo PR. Used to set up branch
+  // tracking on checkout so commits push back to the PR. Both undefined when
+  // the head repo has been deleted.
+  headRepoCloneUrl?: string;
+  headRepoOwner?: string;
+  headRepoName?: string;
+  // Whether the PR opts into "allow edits from maintainers". Combined with the
+  // viewer's push access to the base repo, this determines whether the viewer
+  // can push commits to the PR branch. Undefined when the listing endpoint
+  // didn't include it (resolved lazily server-side when needed).
+  maintainerCanModify?: boolean;
+  // The repo that hosts the PR itself (its base repo) — where its comments,
+  // reviews and checks live. For an upstream PR this is the parent repo, not
+  // the fork, so PR operations must target it rather than the active repo.
+  repoOwner?: string;
+  repoName?: string;
 }
 
 // Aggregated CI/workflow status for a PR's head commit. Mirrors GitHub's
@@ -133,6 +150,15 @@ export interface PRReviewComment {
   // The viewer's permission to delete: true when this comment was authored
   // by the active GitHub account.
   canDelete: boolean;
+  // GraphQL node id of the review thread this comment belongs to. Needed to
+  // resolve/unresolve the thread (the REST API can't). Undefined when the
+  // thread couldn't be resolved (e.g. GraphQL lookup failed, or a comment we
+  // just created locally that hasn't been refetched yet).
+  threadId?: string;
+  // Whether the comment's review thread is resolved on GitHub. Sourced from
+  // GraphQL — the REST review-comment payload doesn't expose it — so it
+  // defaults to false when the thread lookup is unavailable.
+  isResolved: boolean;
 }
 
 export interface NewReviewCommentInput {
@@ -174,6 +200,33 @@ export type TerminalKind =
 
 export type AppPlatform = "darwin" | "win32" | "linux";
 
+// Actions a file row's native context menu can return. `null` (from the IPC)
+// means the menu was dismissed without a choice.
+export type FileContextMenuAction =
+  | "discard"
+  | "copyPath"
+  | "copyRelativePath"
+  | "reveal"
+  | "openInEditor"
+  | "openDefault";
+
+// What the renderer hands the main process to build a file row's native menu.
+// The labels are resolved renderer-side (platform name, configured editor) so
+// the main process just renders them.
+export interface FileContextMenuParams {
+  // Repo-relative path of the file the menu targets — used in the discard
+  // confirmation message.
+  filePath: string;
+  // Whether to show "Discard Changes" (only meaningful for working-tree
+  // changes, not committed branch/PR diffs).
+  canDiscard: boolean;
+  // Label for the "Open in <editor>" item, or null to hide it when no editor
+  // is configured/detected.
+  editorLabel: string | null;
+  // Platform-specific file-manager label, e.g. "Reveal in Finder".
+  revealLabel: string;
+}
+
 // Which editors/terminals make sense to offer per OS. The Settings UI only
 // lists these (e.g. Xcode/iTerm are macOS-only, Visual Studio is Windows-only).
 export const EDITORS_BY_PLATFORM: Record<AppPlatform, EditorKind[]> = {
@@ -198,6 +251,10 @@ export interface PushStatus {
   // decide whether a PR would have any content. 0 when on the default branch
   // or when the branch hasn't diverged.
   aheadOfDefault: number;
+  // Name of the remote the branch's upstream lives on (`branch.<x>.remote`).
+  // Usually "origin", but a checked-out PR branch tracks the PR's head repo
+  // remote. Undefined when there's no upstream. Drives accurate push labels.
+  pushRemote?: string;
 }
 
 export interface PullPushResult {
@@ -248,6 +305,10 @@ export interface UserPrefs {
   externalTerminal?: TerminalKind | null;
   fileListLayout: FileListLayout;
   showFileIcons: boolean;
+  // When true, moving the file-tree keyboard cursor onto a file opens its diff
+  // immediately. When false, arrows only move the focus ring and Enter/Space
+  // opens the focused file.
+  openFileOnArrowNav: boolean;
   // Font family for the diff/code surface. "system" uses the built-in
   // monospace stack; any other value is a family name installed on the
   // user's machine.
@@ -262,6 +323,10 @@ export interface UserPrefs {
   // "Load diff" button by default (lock files, build outputs, etc.). See
   // DEFAULT_HIDDEN_DIFF_PATTERNS in @shared/diff-defer for match semantics.
   hiddenDiffPatterns: string[];
+  // When true, UI components include shadcn-svelte's enter/exit and transition
+  // animation classes. Off by default — components render without motion unless
+  // the user opts in. Consumed via the useAnimations() context hook.
+  animationsEnabled: boolean;
 }
 
 export interface DeviceFlowStart {
@@ -298,12 +363,7 @@ export interface PreloadAPI {
     listBranches(repoId: string): Promise<BranchInfo[]>;
     getCurrentBranch(repoId: string): Promise<string | null>;
     checkout(repoId: string, branch: string): Promise<void>;
-    checkoutPR(
-      repoId: string,
-      prNumber: number,
-      headRef: string,
-      source?: PRSource,
-    ): Promise<void>;
+    checkoutPR(repoId: string, pr: PRSummary, source?: PRSource): Promise<void>;
     isDirty(repoId: string): Promise<boolean>;
     createBranch(
       repoId: string,
@@ -322,6 +382,13 @@ export interface PreloadAPI {
     push(repoId: string): Promise<PullPushResult>;
     getConflicts(repoId: string): Promise<string[]>;
     stageFile(repoId: string, filePath: string): Promise<void>;
+    // Discard a file's working-tree + staged changes. `oldPath` is the
+    // pre-rename path, so discarding a rename also restores the original.
+    discardChanges(
+      repoId: string,
+      filePath: string,
+      oldPath?: string,
+    ): Promise<void>;
     continueMerge(repoId: string): Promise<PullPushResult>;
     abortMerge(repoId: string): Promise<void>;
     commitAll(repoId: string, message: string): Promise<CommitResult>;
@@ -368,23 +435,57 @@ export interface PreloadAPI {
       prNumber: number,
     ): Promise<{ headRef: string; baseRef: string }>;
     findPRForBranch(repoId: string, branch: string): Promise<PRSummary | null>;
-    getChecks(repoId: string, ref: string): Promise<PRChecksSummary>;
-    getPR(repoId: string, prNumber: number): Promise<PRSummary | null>;
+    // PR operations accept the PR's host repo (owner/repo) so they target the
+    // right repository — an upstream PR lives on the parent, not the fork.
+    // When omitted, the active repo's own coordinates are used.
+    // Whether the active account can push commits to the PR's head branch
+    // (direct push access to the head repo, or maintainer-edit on the base).
+    canPushToPR(repoId: string, pr: PRSummary): Promise<boolean>;
+    getChecks(
+      repoId: string,
+      ref: string,
+      owner?: string,
+      repo?: string,
+    ): Promise<PRChecksSummary>;
+    getPR(
+      repoId: string,
+      prNumber: number,
+      owner?: string,
+      repo?: string,
+    ): Promise<PRSummary | null>;
     listReviewComments(
       repoId: string,
       prNumber: number,
+      owner?: string,
+      repo?: string,
     ): Promise<PRReviewComment[]>;
     createReviewComment(
       repoId: string,
       input: NewReviewCommentInput,
+      owner?: string,
+      repo?: string,
     ): Promise<PRReviewComment>;
     replyReviewComment(
       repoId: string,
       prNumber: number,
       commentId: number,
       body: string,
+      owner?: string,
+      repo?: string,
     ): Promise<PRReviewComment>;
-    deleteReviewComment(repoId: string, commentId: number): Promise<void>;
+    deleteReviewComment(
+      repoId: string,
+      commentId: number,
+      owner?: string,
+      repo?: string,
+    ): Promise<void>;
+    // Resolve or unresolve a review thread by its GraphQL node id. Returns the
+    // thread's resolved state as reported back by GitHub.
+    setReviewThreadResolved(
+      repoId: string,
+      threadId: string,
+      resolved: boolean,
+    ): Promise<{ isResolved: boolean }>;
   };
   state: {
     getPrefs(): Promise<UserPrefs>;
@@ -410,6 +511,17 @@ export interface PreloadAPI {
   };
   shell: {
     openExternal(url: string): Promise<void>;
+    // Reveal a file in the OS file manager (Finder / Explorer), selecting it.
+    showItemInFolder(fullPath: string): Promise<void>;
+    // Open a file with the OS default program for its type.
+    openPath(fullPath: string): Promise<{ ok: boolean; error?: string }>;
+  };
+  menu: {
+    // Pop up a native OS context menu for a file row. Resolves to the chosen
+    // action, or null when the menu is dismissed without a selection.
+    showFileContextMenu(
+      params: FileContextMenuParams,
+    ): Promise<FileContextMenuAction | null>;
   };
   events: {
     onRepoChanged(handler: (repo: RepoInfo | null) => void): () => void;

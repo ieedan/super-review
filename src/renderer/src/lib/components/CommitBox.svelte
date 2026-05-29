@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { ChevronDown, Loader2, User } from 'lucide-svelte';
+  import {
+    ChevronDown,
+    GitPullRequest,
+    Loader2,
+    TriangleAlert,
+    User,
+  } from 'lucide-svelte';
   import { Button } from './ui/button';
   import * as Avatar from './ui/avatar';
   import { Input } from './ui/input';
@@ -79,6 +85,20 @@
   // otherwise the app-wide default.
   const effectiveAccount = $derived(effectiveGithubAccount());
 
+  // When the checked-out branch is a PR opened by someone else, committing here
+  // targets their PR branch. We resolve actual push access (direct or via
+  // maintainer-edit) so we can tell the user definitively whether a push will
+  // land — rather than warning on every foreign PR.
+  const foreignPR = $derived(
+    app.branchPR &&
+      effectiveAccount &&
+      app.branchPR.author !== effectiveAccount.login
+      ? app.branchPR
+      : null,
+  );
+  // null = still resolving / unknown; true = pushable; false = will be rejected.
+  const pushAccess = $derived(app.branchPRPushAccess);
+
   const lastCommit = $derived(app.lastCommit);
   const canUndo = $derived(!busy && (lastCommit?.canUndo ?? false));
 
@@ -146,6 +166,30 @@
     disabled={busy}
     class="min-h-0 resize-none px-2 py-1.5 text-xs"
   />
+
+  {#if foreignPR && pushAccess === false}
+    <div
+      class="flex items-start gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-muted-foreground"
+    >
+      <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-destructive" />
+      <span>
+        You can't push to <span class="font-medium text-foreground"
+          >@{foreignPR.author}</span
+        >'s PR branch, so these commits can't be pushed back to the PR.
+      </span>
+    </div>
+  {:else if foreignPR && pushAccess === true}
+    <div
+      class="flex items-start gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground"
+    >
+      <GitPullRequest class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      <span>
+        Commits will be pushed to <span class="font-medium text-foreground"
+          >@{foreignPR.author}</span
+        >'s PR branch.
+      </span>
+    </div>
+  {/if}
 
   <Button type="submit" size="sm" class="w-full" disabled={!canCommit}>
     {#if busy}

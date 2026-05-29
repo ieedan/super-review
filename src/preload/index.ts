@@ -11,6 +11,7 @@ import type {
   DiffContext,
   DiffData,
   EditorKind,
+  FileContextMenuAction,
   GithubAccount,
   LastCommit,
   NewReviewCommentInput,
@@ -53,12 +54,11 @@ const api: PreloadAPI = {
       >,
     checkout: (repoId, branch) =>
       ipcRenderer.invoke("git:checkout", repoId, branch) as Promise<void>,
-    checkoutPR: (repoId, prNumber, headRef, source) =>
+    checkoutPR: (repoId, pr, source) =>
       ipcRenderer.invoke(
         "git:checkoutPR",
         repoId,
-        prNumber,
-        headRef,
+        pr,
         source,
       ) as Promise<void>,
     isDirty: (repoId) =>
@@ -96,6 +96,13 @@ const api: PreloadAPI = {
       ipcRenderer.invoke("git:getConflicts", repoId) as Promise<string[]>,
     stageFile: (repoId, filePath) =>
       ipcRenderer.invoke("git:stageFile", repoId, filePath) as Promise<void>,
+    discardChanges: (repoId, filePath, oldPath) =>
+      ipcRenderer.invoke(
+        "git:discardChanges",
+        repoId,
+        filePath,
+        oldPath,
+      ) as Promise<void>,
     continueMerge: (repoId) =>
       ipcRenderer.invoke(
         "git:continueMerge",
@@ -187,44 +194,65 @@ const api: PreloadAPI = {
         repoId,
         branch,
       ) as Promise<PRSummary | null>,
-    getChecks: (repoId, ref) =>
+    canPushToPR: (repoId, pr) =>
+      ipcRenderer.invoke("github:canPushToPR", repoId, pr) as Promise<boolean>,
+    getChecks: (repoId, ref, owner, repo) =>
       ipcRenderer.invoke(
         "github:getChecks",
         repoId,
         ref,
+        owner,
+        repo,
       ) as Promise<PRChecksSummary>,
-    getPR: (repoId, prNumber) =>
+    getPR: (repoId, prNumber, owner, repo) =>
       ipcRenderer.invoke(
         "github:getPR",
         repoId,
         prNumber,
+        owner,
+        repo,
       ) as Promise<PRSummary | null>,
-    listReviewComments: (repoId, prNumber) =>
+    listReviewComments: (repoId, prNumber, owner, repo) =>
       ipcRenderer.invoke(
         "github:listReviewComments",
         repoId,
         prNumber,
+        owner,
+        repo,
       ) as Promise<PRReviewComment[]>,
-    createReviewComment: (repoId, input: NewReviewCommentInput) =>
+    createReviewComment: (repoId, input: NewReviewCommentInput, owner, repo) =>
       ipcRenderer.invoke(
         "github:createReviewComment",
         repoId,
         input,
+        owner,
+        repo,
       ) as Promise<PRReviewComment>,
-    replyReviewComment: (repoId, prNumber, commentId, body) =>
+    replyReviewComment: (repoId, prNumber, commentId, body, owner, repo) =>
       ipcRenderer.invoke(
         "github:replyReviewComment",
         repoId,
         prNumber,
         commentId,
         body,
+        owner,
+        repo,
       ) as Promise<PRReviewComment>,
-    deleteReviewComment: (repoId, commentId) =>
+    deleteReviewComment: (repoId, commentId, owner, repo) =>
       ipcRenderer.invoke(
         "github:deleteReviewComment",
         repoId,
         commentId,
+        owner,
+        repo,
       ) as Promise<void>,
+    setReviewThreadResolved: (repoId, threadId, resolved) =>
+      ipcRenderer.invoke(
+        "github:setReviewThreadResolved",
+        repoId,
+        threadId,
+        resolved,
+      ) as Promise<{ isResolved: boolean }>,
   },
   state: {
     getPrefs: () => ipcRenderer.invoke("state:getPrefs") as Promise<UserPrefs>,
@@ -283,6 +311,20 @@ const api: PreloadAPI = {
   shell: {
     openExternal: (url) =>
       ipcRenderer.invoke("shell:openExternal", url) as Promise<void>,
+    showItemInFolder: (fullPath) =>
+      ipcRenderer.invoke("shell:showItemInFolder", fullPath) as Promise<void>,
+    openPath: (fullPath) =>
+      ipcRenderer.invoke("shell:openPath", fullPath) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+  },
+  menu: {
+    showFileContextMenu: (params) =>
+      ipcRenderer.invoke(
+        "menu:showFileContextMenu",
+        params,
+      ) as Promise<FileContextMenuAction | null>,
   },
   events: {
     onRepoChanged(handler) {
