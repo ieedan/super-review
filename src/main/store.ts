@@ -15,6 +15,7 @@ export interface PRBranchLink {
   source: PRSource;
 }
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
+import { DEFAULT_HOTKEYS } from '@shared/hotkeys.js';
 
 export interface StoredGithubAccount extends GithubAccount {
   token: string;
@@ -51,6 +52,7 @@ const defaults: Schema = {
     maxDiffLines: 1500,
     hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
     animationsEnabled: false,
+    hotkeys: DEFAULT_HOTKEYS,
   },
   seen: {},
   collapsedFiles: {},
@@ -165,6 +167,9 @@ export function getPrefs(): UserPrefs {
   if ((merged.theme as string) !== 'light' && (merged.theme as string) !== 'dark') {
     merged.theme = defaults.prefs.theme;
   }
+  // Merge per-action so bindings added in later releases get their defaults
+  // even when an older prefs file already has a (partial) hotkeys object.
+  merged.hotkeys = { ...defaults.prefs.hotkeys, ...merged.hotkeys };
   return merged;
 }
 

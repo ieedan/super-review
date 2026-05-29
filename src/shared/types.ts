@@ -1,3 +1,5 @@
+import type { Hotkeys } from "./hotkeys.js";
+
 export interface RepoInfo {
   id: string;
   path: string;
@@ -327,6 +329,9 @@ export interface UserPrefs {
   // animation classes. Off by default — components render without motion unless
   // the user opts in. Consumed via the useAnimations() context hook.
   animationsEnabled: boolean;
+  // User-configurable keyboard shortcuts, keyed by action. See DEFAULT_HOTKEYS
+  // in @shared/hotkeys for the defaults and matching semantics.
+  hotkeys: Hotkeys;
 }
 
 export interface DeviceFlowStart {

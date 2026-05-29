@@ -2,6 +2,7 @@
   import {
     Check,
     Code2,
+    Keyboard,
     LogOut,
     Palette,
     Plus,
@@ -38,7 +39,17 @@
     effectiveTerminal,
     uiFontCss,
   } from '$lib/store.svelte';
+  import HotkeyInput from './HotkeyInput.svelte';
   import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
+  import {
+    DEFAULT_HOTKEYS,
+    HOTKEY_ACTIONS,
+    HOTKEY_LABELS,
+    hotkeysEqual,
+    type Hotkey,
+    type HotkeyAction,
+    type Hotkeys,
+  } from '@shared/hotkeys';
   import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM } from '@shared/types';
   import { cn } from '$lib/utils';
   import type {
@@ -48,14 +59,20 @@
     ViewMode,
   } from '@shared/types';
 
-  type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'editor';
+  type SettingsTab =
+    | 'accounts'
+    | 'appearance'
+    | 'behavior'
+    | 'editor'
+    | 'hotkeys';
   let activeTab = $state<SettingsTab>('accounts');
 
   const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
     { id: 'accounts', label: 'Accounts', icon: User },
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
-    { id: 'editor', label: 'Editor', icon: Code2 },
+    { id: 'editor', label: 'Integrations', icon: Code2 },
+    { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
   ];
 
   const EDITOR_LABELS: Record<EditorKind, string> = {
@@ -104,6 +121,7 @@
   let draftUiFont = $state<string>('system');
   let draftEditor = $state<EditorKind | null>(null);
   let draftTerminal = $state<TerminalKind | null>(null);
+  let draftHotkeys = $state<Hotkeys>({ ...DEFAULT_HOTKEYS });
 
   $effect(() => {
     if (dialogOpen) {
@@ -120,8 +138,41 @@
       draftUiFont = app.uiFont;
       draftEditor = effectiveEditor();
       draftTerminal = effectiveTerminal();
+      draftHotkeys = { ...DEFAULT_HOTKEYS, ...$state.snapshot(app.hotkeys) };
     }
   });
+
+  function setHotkey(action: HotkeyAction, hk: Hotkey): void {
+    draftHotkeys = { ...draftHotkeys, [action]: hk };
+  }
+
+  function resetHotkeys(): void {
+    draftHotkeys = { ...DEFAULT_HOTKEYS };
+  }
+
+  // The other action a binding collides with, if any — drives the conflict
+  // highlight so two actions can't silently share the same combination.
+  function hotkeyConflict(action: HotkeyAction): HotkeyAction | null {
+    const hk = draftHotkeys[action];
+    for (const other of HOTKEY_ACTIONS) {
+      if (other !== action && hotkeysEqual(draftHotkeys[other], hk)) {
+        return other;
+      }
+    }
+    return null;
+  }
+
+  const hasHotkeyConflict = $derived(
+    HOTKEY_ACTIONS.some((a) => hotkeyConflict(a) !== null),
+  );
+
+  const hotkeysChanged = $derived(
+    HOTKEY_ACTIONS.some((a) => !hotkeysEqual(draftHotkeys[a], app.hotkeys[a])),
+  );
+
+  const hotkeysAreDefault = $derived(
+    HOTKEY_ACTIONS.every((a) => hotkeysEqual(draftHotkeys[a], DEFAULT_HOTKEYS[a])),
+  );
 
   function addPattern(): void {
     const p = newPattern.trim();
@@ -189,6 +240,9 @@
     const savedTerminal = app.prefs?.externalTerminal ?? null;
     if (draftTerminal !== savedTerminal) {
       promises.push(actions.setExternalTerminal(draftTerminal));
+    }
+    if (hotkeysChanged) {
+      promises.push(actions.setHotkeys($state.snapshot(draftHotkeys)));
     }
     await Promise.all(promises);
     actions.closeSettingsDialog();
@@ -819,6 +873,52 @@
               </div>
             </div>
           </section>
+        {:else if activeTab === 'hotkeys'}
+          <section class="space-y-6">
+            <div>
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-base font-semibold">Keyboard shortcuts</h3>
+                {#if !hotkeysAreDefault}
+                  <Button variant="ghost" size="sm" onclick={resetHotkeys}>
+                    <RotateCcw class="size-3.5" /> Reset to defaults
+                  </Button>
+                {/if}
+              </div>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Click a shortcut, then press the key combination you'd like to
+                use. Press <kbd class="font-mono">Esc</kbd> to cancel.
+              </p>
+
+              <ul class="mt-4 space-y-2">
+                {#each HOTKEY_ACTIONS as action (action)}
+                  {@const conflictWith = hotkeyConflict(action)}
+                  <li
+                    class="flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <div class="text-sm font-medium">
+                        {HOTKEY_LABELS[action].label}
+                      </div>
+                      <div class="text-xs text-muted-foreground">
+                        {#if conflictWith}
+                          <span class="text-destructive">
+                            Conflicts with “{HOTKEY_LABELS[conflictWith].label}”.
+                          </span>
+                        {:else}
+                          {HOTKEY_LABELS[action].description}
+                        {/if}
+                      </div>
+                    </div>
+                    <HotkeyInput
+                      value={draftHotkeys[action]}
+                      conflict={conflictWith !== null}
+                      onChange={(hk) => setHotkey(action, hk)}
+                    />
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          </section>
         {/if}
       </div>
     </div>
@@ -827,7 +927,7 @@
       class="flex items-center justify-end gap-2 border-t border-border bg-muted/30 px-4 py-3"
     >
       <Button variant="secondary" size="sm" onclick={cancel}>Cancel</Button>
-      <Button size="sm" onclick={save}>Save</Button>
+      <Button size="sm" onclick={save} disabled={hasHotkeyConflict}>Save</Button>
     </footer>
   </Dialog.Content>
 </Dialog.Root>

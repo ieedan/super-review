@@ -21,6 +21,7 @@ import type {
 } from "@shared/types";
 import { diffContextKey } from "@shared/diff-context";
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from "@shared/diff-defer";
+import { DEFAULT_HOTKEYS, type Hotkeys } from "@shared/hotkeys";
 import { comparePathsVSCodeStyle } from "$lib/utils";
 import { repoFrecency } from "$lib/repo-frecency.svelte";
 
@@ -75,6 +76,7 @@ interface AppState {
   maxDiffLines: number;
   hiddenDiffPatterns: string[];
   animationsEnabled: boolean;
+  hotkeys: Hotkeys;
   theme: "light" | "dark";
   codeFont: string;
   uiFont: string;
@@ -207,6 +209,7 @@ const initial: AppState = {
   maxDiffLines: 1500,
   hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
   animationsEnabled: false,
+  hotkeys: DEFAULT_HOTKEYS,
   theme: "dark",
   codeFont: "system",
   uiFont: "system",
@@ -752,6 +755,7 @@ export const actions = {
     app.maxDiffLines = app.prefs.maxDiffLines;
     app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
     app.animationsEnabled = app.prefs.animationsEnabled ?? false;
+    app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
     app.theme = app.prefs.theme;
     applyTheme(app.theme);
     app.codeFont = app.prefs.codeFont;
@@ -1910,6 +1914,11 @@ export const actions = {
   async setAnimationsEnabled(enabled: boolean): Promise<void> {
     app.animationsEnabled = enabled;
     app.prefs = await window.api.state.setPrefs({ animationsEnabled: enabled });
+  },
+
+  async setHotkeys(hotkeys: Hotkeys): Promise<void> {
+    app.hotkeys = hotkeys;
+    app.prefs = await window.api.state.setPrefs({ hotkeys });
   },
 
   async setTheme(theme: "light" | "dark"): Promise<void> {

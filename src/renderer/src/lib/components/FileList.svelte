@@ -21,6 +21,7 @@
   import { cn } from '$lib/utils';
   import { languageIconForPath } from '$lib/file-icons';
   import { truncatePathPrefix } from '$lib/path-truncate';
+  import { matchesHotkey } from '@shared/hotkeys';
   import type { ChangedFile } from '@shared/types';
 
   // Right-clicking a file row opens a native OS context menu (built in the main
@@ -438,23 +439,26 @@
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const toggleShortcut = isMac ? '⌘B' : 'Ctrl+B';
 
-  // `/` jumps focus to the search input from anywhere in the app. Skipped when
-  // the user is already typing in an editable target (so it doesn't hijack the
-  // commit composer, comment composer, or the search input itself) and when
-  // any modifier is held (so it doesn't fight legitimate ⌘//Ctrl+/ shortcuts).
+  // The configurable "search files (sidebar)" shortcut jumps focus to the
+  // search input from anywhere in the app. When the binding has no modifier
+  // (the default is `/`), it's skipped while the user is typing in an editable
+  // target so it doesn't hijack the commit composer, comment composer, or the
+  // search input itself. A modifier combo is deliberate and fires anywhere.
   let searchInput = $state<HTMLInputElement | null>(null);
   $effect(() => {
     function onKeydown(e: KeyboardEvent): void {
-      if (e.key !== '/') return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
-      ) {
-        return;
+      const hk = app.hotkeys.searchFilesSidebar;
+      if (!matchesHotkey(e, hk)) return;
+      if (!hk.mod && !hk.alt) {
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
       }
       if (!searchInput) return;
       e.preventDefault();
