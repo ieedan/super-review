@@ -67,6 +67,12 @@ interface AppState {
   // so the Unstaged tab can always show a badge with the current count.
   unstagedFileCount: number;
   selectedFile: string | null;
+  // Multi-file selection in the sidebar, driven by cmd/shift-click. Distinct
+  // from `selectedFile` (the one file whose diff is open): this set highlights
+  // every selected row and is the target of bulk context-menu actions (discard
+  // / include / exclude). A plain click or keyboard navigation collapses it
+  // back to the single active file.
+  selectedFiles: Set<string>;
   seenFiles: Set<string>;
   // Working-tree files explicitly unchecked in the Unstaged tab so they're
   // left out of the next commit. Tracking exclusions (rather than inclusions)
@@ -208,6 +214,7 @@ const initial: AppState = {
   fileSearchQuery: "",
   unstagedFileCount: 0,
   selectedFile: null,
+  selectedFiles: new Set(),
   seenFiles: new Set(),
   excludedFromCommit: new Set(),
   collapsedFiles: new Set(),
@@ -728,6 +735,19 @@ async function refreshFiles(): Promise<void> {
     app.collapsedFiles = collapsedSet;
     app.selectedFile = nextSelected;
 
+    // Drop any multi-selection entries for files that left this context (got
+    // committed, discarded, or changed tabs) so bulk actions never target a
+    // path that's no longer in the list.
+    if (app.selectedFiles.size > 0) {
+      const present = new Set(files.map((f) => f.path));
+      const pruned = new Set(
+        [...app.selectedFiles].filter((p) => present.has(p)),
+      );
+      if (pruned.size !== app.selectedFiles.size) {
+        app.selectedFiles = pruned;
+      }
+    }
+
     // Drop commit-exclusions for files that are no longer in the working tree
     // (committed, discarded, or reverted) so the "select all" state stays
     // accurate. Only prune against the working-tree list — the branch/PR
@@ -1007,6 +1027,31 @@ export const actions = {
   scrollToFile(path: string): void {
     app.selectedFile = path;
     app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
+  },
+
+  // Collapse the sidebar multi-selection to a single file and open its diff.
+  // Used by plain clicks and keyboard navigation, which always reduce to one.
+  selectOnly(path: string): void {
+    app.selectedFiles = new Set([path]);
+    actions.scrollToFile(path);
+  },
+
+  // Replace the multi-selection with exactly these paths (range select). Does
+  // not change which file's diff is open — the caller decides that.
+  setSelectedFiles(paths: string[]): void {
+    app.selectedFiles = new Set(paths);
+  },
+
+  // Add or remove a single file from the multi-selection (cmd/ctrl-click).
+  toggleSelectedFile(path: string): void {
+    const next = new Set(app.selectedFiles);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    app.selectedFiles = next;
+  },
+
+  clearSelectedFiles(): void {
+    if (app.selectedFiles.size > 0) app.selectedFiles = new Set();
   },
 
   toggleFolder(path: string): void {
@@ -1854,15 +1899,40 @@ export const actions = {
         : app.platform === "linux"
           ? "Reveal in File Manager"
           : "Reveal in Finder";
+    // Bulk actions apply when the right-clicked file is part of a multi-file
+    // selection. The caller (onRowContextMenu) guarantees `file` is in the set,
+    // so the count alone decides single vs. bulk.
+    const selectedPaths = [...app.selectedFiles];
+    const isBulk = selectedPaths.length > 1 && app.selectedFiles.has(file.path);
     const action = await window.api.menu.showFileContextMenu({
       filePath: file.path,
       canDiscard: app.diffContext.kind === "workingTree",
+      canInclude: app.contextTab === "unstaged",
+      selectedCount: isBulk ? selectedPaths.length : 1,
       editorLabel: editor ? EDITOR_LABELS[editor] : null,
       revealLabel,
     });
     switch (action) {
       case "discard":
         await actions.discardFile(file.path, file.oldPath);
+        break;
+      case "discardSelected": {
+        // Snapshot the targets before discarding — discardFile mutates
+        // changedFiles as it goes.
+        const targets = app.changedFiles.filter((f) =>
+          app.selectedFiles.has(f.path),
+        );
+        for (const f of targets) {
+          await actions.discardFile(f.path, f.oldPath);
+        }
+        actions.clearSelectedFiles();
+        break;
+      }
+      case "includeSelected":
+        actions.setFilesIncludedForCommit(selectedPaths, true);
+        break;
+      case "excludeSelected":
+        actions.setFilesIncludedForCommit(selectedPaths, false);
         break;
       case "copyPath":
         await actions.copyToClipboard(
