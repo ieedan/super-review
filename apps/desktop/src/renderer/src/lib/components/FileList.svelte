@@ -846,7 +846,7 @@
                 aria-selected={false}
                 class={cn(
                   'group flex w-full items-center gap-1.5 pr-2 text-xs text-muted-foreground',
-                  isFocused ? 'bg-accent/60' : 'hover:bg-accent/50',
+                  isFocused ? 'bg-accent/60' : 'hover:bg-muted',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 8}px"
               >
@@ -916,7 +916,7 @@
                       ? 'bg-accent'
                       : isFocused
                         ? 'bg-accent/60'
-                        : 'hover:bg-accent/50',
+                        : 'hover:bg-muted',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 6}px"
                 oncontextmenu={(e) => onRowContextMenu(e, node.file)}
