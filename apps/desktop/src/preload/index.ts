@@ -326,6 +326,12 @@ const api: PreloadAPI = {
     remove: (repoId, id) =>
       ipcRenderer.invoke("sessions:remove", repoId, id) as Promise<void>,
   },
+  skill: {
+    isInstalled: (repoId) =>
+      ipcRenderer.invoke("skill:isInstalled", repoId) as Promise<boolean>,
+    install: (repoId) =>
+      ipcRenderer.invoke("skill:install", repoId) as Promise<void>,
+  },
   shell: {
     openExternal: (url) =>
       ipcRenderer.invoke("shell:openExternal", url) as Promise<void>,

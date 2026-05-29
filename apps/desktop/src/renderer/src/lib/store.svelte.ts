@@ -65,6 +65,10 @@ interface AppState {
   // The session whose frozen diff is currently open, or null when the Sessions
   // tab is showing the list. Ephemeral — not persisted across launches.
   activeSessionId: string | null;
+  // Whether the document-session skill is installed in the active repo. null
+  // while unknown (no active repo, or the check hasn't returned yet); false
+  // drives the "Install skill" prompts in the header and sessions empty state.
+  skillInstalled: boolean | null;
   changedFiles: ChangedFile[];
   // Free-text filter applied to the changed-files list. Shared between the
   // sidebar (where it's typed) and the diff view (which hides sections for
@@ -223,6 +227,7 @@ const initial: AppState = {
   contextTab: "unstaged",
   sessions: [],
   activeSessionId: null,
+  skillInstalled: null,
   changedFiles: [],
   fileSearchQuery: "",
   unstagedFileCount: 0,
@@ -703,6 +708,23 @@ async function refreshUnstagedCount(): Promise<void> {
   }
 }
 
+// Check whether the document-session skill is installed in the active repo and
+// store the result. Failure-silent — leaves the answer unknown (null) so the
+// install prompts stay hidden rather than flashing on a transient error.
+async function refreshSkillInstalled(): Promise<void> {
+  if (!app.activeRepo) {
+    app.skillInstalled = null;
+    return;
+  }
+  const repoId = app.activeRepo.id;
+  try {
+    const installed = await window.api.skill.isInstalled(repoId);
+    if (app.activeRepo?.id === repoId) app.skillInstalled = installed;
+  } catch {
+    // Leave unknown — don't surface a banner over a non-critical check.
+  }
+}
+
 // Flip a single repo's dirty flag in `dirtyRepoIds`. Reassigns the set so
 // Svelte's reactivity picks it up. No-op when the flag already matches.
 function setRepoDirty(repoId: string, dirty: boolean): void {
@@ -882,12 +904,14 @@ export const actions = {
         await Promise.all([refreshFiles(), refreshPushStatus()]);
       } else if (savedTab === "sessions") {
         app.contextTab = "sessions";
-        // Sessions is a placeholder — no file list to fetch. We still want the
-        // Unstaged tab badge to be accurate on launch, so fetch the count.
+        // The Sessions tab shows the documented-sessions list (in the sidebar),
+        // not a working-tree file list — load the sessions. Still fetch the
+        // Unstaged badge count so it's accurate on launch.
         await Promise.all([
           refreshBranches(),
           refreshPushStatus(),
           refreshUnstagedCount(),
+          actions.loadSessions(),
         ]);
       } else {
         await Promise.all([
@@ -897,6 +921,7 @@ export const actions = {
         ]);
       }
       await refreshBranchPR();
+      void refreshSkillInstalled();
     }
     // Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
     // of init so its per-repo `git status` flood doesn't compete with — and
@@ -920,6 +945,7 @@ export const actions = {
           refreshPushStatus(),
         ]);
         await refreshBranchPR();
+        void refreshSkillInstalled();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -942,6 +968,7 @@ export const actions = {
           refreshPushStatus(),
         ]);
         await refreshBranchPR();
+        void refreshSkillInstalled();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -969,6 +996,7 @@ export const actions = {
           refreshPushStatus(),
         ]);
         await refreshBranchPR();
+        void refreshSkillInstalled();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1000,6 +1028,7 @@ export const actions = {
       app.diffContext = { kind: "workingTree" };
       app.activeSessionId = null;
       app.sessions = [];
+      app.skillInstalled = null;
       app.excludedFromCommit = new Set();
       app.prs = [];
       app.prsHasMore = false;
@@ -1013,6 +1042,7 @@ export const actions = {
         refreshPushStatus(),
       ]);
       await refreshBranchPR();
+      void refreshSkillInstalled();
     }
   },
 
@@ -1024,6 +1054,7 @@ export const actions = {
       app.unstagedFileCount = 0;
       app.branches = [];
       app.selectedFile = null;
+      app.skillInstalled = null;
     }
     setRepoDirty(id, false);
     await refreshRepos();
@@ -1139,6 +1170,24 @@ export const actions = {
     await window.api.sessions.remove(app.activeRepo.id, id);
     if (app.activeSessionId === id) actions.closeSession();
     await actions.loadSessions();
+  },
+
+  // Re-check whether the document-session skill is installed in the active repo
+  // (e.g. after the repo's `.claude` dir may have changed on disk).
+  async refreshSkillInstalled(): Promise<void> {
+    await refreshSkillInstalled();
+  },
+
+  // Install the document-session skill into the active repo, then re-check so
+  // the "Install skill" prompts clear once it's in place.
+  async installSkill(): Promise<void> {
+    if (!app.activeRepo) return;
+    try {
+      await window.api.skill.install(app.activeRepo.id);
+      await refreshSkillInstalled();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   },
 
   async selectFile(path: string): Promise<void> {

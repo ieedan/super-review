@@ -635,6 +635,13 @@ export interface PreloadAPI {
     get(repoId: string, id: string): Promise<Session | null>;
     remove(repoId: string, id: string): Promise<void>;
   };
+  skill: {
+    // Whether the document-session skill is installed in the repo
+    // (`.claude/skills/document-session/SKILL.md` exists).
+    isInstalled(repoId: string): Promise<boolean>;
+    // Write the bundled document-session skill into the repo.
+    install(repoId: string): Promise<void>;
+  };
   shell: {
     openExternal(url: string): Promise<void>;
     // Reveal a file in the OS file manager (Finder / Explorer), selecting it.

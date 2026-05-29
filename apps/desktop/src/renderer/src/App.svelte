@@ -5,7 +5,7 @@
   import TopBar from "$lib/components/TopBar.svelte";
   import FileList from "$lib/components/FileList.svelte";
   import DiffView from "$lib/components/DiffView.svelte";
-  import SessionsList from "$lib/components/SessionsList.svelte";
+  import SessionsEmptyState from "$lib/components/SessionsEmptyState.svelte";
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
   import AddRepoDialog from "$lib/components/AddRepoDialog.svelte";
   import CreateBranchDialog from "$lib/components/CreateBranchDialog.svelte";
@@ -245,7 +245,7 @@
         <Resizable.Handle class="hover:bg-foreground/20 transition-colors" />
         <Resizable.Pane defaultSize={78}>
           {#if app.contextTab === "sessions" && !app.activeSessionId}
-            <SessionsList />
+            <SessionsEmptyState />
           {:else}
             <DiffView />
           {/if}

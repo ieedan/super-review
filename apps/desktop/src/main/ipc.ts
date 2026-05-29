@@ -74,6 +74,7 @@ import {
   getSession,
   listSessions,
 } from "./session-store.js";
+import { installSkill, isSkillInstalled } from "./skill-service.js";
 import {
   clearCollapsedFiles,
   clearSeen,
@@ -1100,4 +1101,18 @@ export function registerIpc(): void {
     async (_e, repoId: string, id: string): Promise<void> =>
       deleteSession(repoId, id),
   );
+
+  // ─── Skill ─────────────────────────────────────────────────────────────
+  // The document-session skill teaches an agent how/when to record a session.
+  // The UI checks whether it's installed in the active repo and offers to drop
+  // it in when it isn't.
+  ipcMain.handle(
+    "skill:isInstalled",
+    async (_e, repoId: string): Promise<boolean> =>
+      isSkillInstalled(repoOrThrow(repoId).path),
+  );
+
+  ipcMain.handle("skill:install", async (_e, repoId: string): Promise<void> => {
+    await installSkill(repoOrThrow(repoId).path);
+  });
 }

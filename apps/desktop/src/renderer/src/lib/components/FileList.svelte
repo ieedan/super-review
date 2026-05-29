@@ -23,6 +23,9 @@
   import * as Tabs from './ui/tabs';
   import * as Sidebar from './ui/sidebar';
   import CommitBox from './CommitBox.svelte';
+  import SessionsList from './SessionsList.svelte';
+  import HarnessLogo from './HarnessLogo.svelte';
+  import { harnessLabel } from '$lib/harness-logos';
   import { actions, app, type ContextTab } from '$lib/store.svelte';
   import { cn } from '$lib/utils';
   import { languageIconForPath } from '$lib/file-icons';
@@ -693,8 +696,9 @@
          header height so their bottom borders line up across panes. -->
     <div class="flex h-11 items-center gap-2 border-b border-border pl-1 pr-2">
       {#if app.activeSessionId}
-        <!-- A session's diff is open: replace the tab strip with a back button
-             and the session name so the user can navigate out of the session. -->
+        <!-- A session's diff is open: the tab strip is replaced with a back
+             button and a muted "Sessions" label naming where it returns to.
+             The session's own logo/name/description live in the row below. -->
         <Button
           variant="ghost"
           size="icon"
@@ -704,8 +708,8 @@
         >
           <ArrowLeft class="size-4" />
         </Button>
-        <span class="min-w-0 flex-1 truncate text-sm font-medium">
-          {activeSession?.name ?? 'Session'}
+        <span class="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+          Sessions
         </span>
       {:else}
       <!-- Tab strip: drives which diff context fuels the file list. -->
@@ -766,6 +770,32 @@
         <PanelLeft class="size-3.5" />
       </Button>
     </div>
+
+    {#if app.activeSessionId}
+      <!-- The open session's identity, on its own row so the top header isn't
+           cramming the title in beside the back button and totals. -->
+      <div class="flex items-start gap-2.5 border-b border-border px-2 py-2">
+        <div
+          class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card"
+          title={harnessLabel(
+            activeSession?.harness ?? 'other',
+            activeSession?.harnessLabel,
+          )}
+        >
+          <HarnessLogo harness={activeSession?.harness ?? 'other'} size={16} />
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="truncate text-sm font-medium">
+            {activeSession?.name ?? 'Session'}
+          </div>
+          {#if activeSession?.description}
+            <p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+              {activeSession.description}
+            </p>
+          {/if}
+        </div>
+      </div>
+    {/if}
 
     {#if app.contextTab !== 'sessions'}
       <div class="flex items-center gap-1.5 border-b border-border pl-1 pr-2 py-1.5">
@@ -850,10 +880,11 @@
   </Sidebar.Header>
 
   <Sidebar.Content bind:ref={scrollRoot}>
-      {#if app.contextTab === 'sessions'}
-        <div class="px-3 py-8 text-center text-xs text-muted-foreground">
-          Agent sessions are coming soon.
-        </div>
+      {#if app.contextTab === 'sessions' && !app.activeSessionId}
+        <!-- Sessions tab with no session open: list the documented sessions.
+             Once one is opened, activeSessionId is set and we fall through to
+             the file-list rendering below, which shows that session's files. -->
+        <SessionsList />
       {:else if app.loading.files && app.changedFiles.length === 0}
         <div class="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</div>
       {:else if app.changedFiles.length === 0}
