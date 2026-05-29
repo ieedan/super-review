@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "description": "A faster, saner desktop UI for reviewing agent-written code",
   "main": "out/main/index.js",
+  "bin": {
+    "super-review": "out/main/cli.js"
+  },
   "type": "module",
   "private": true,
   "author": "",

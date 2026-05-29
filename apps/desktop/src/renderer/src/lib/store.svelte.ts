@@ -15,6 +15,7 @@ import type {
   PRSummary,
   PushStatus,
   RepoInfo,
+  SessionSummary,
   TerminalKind,
   UserPrefs,
   ViewMode,
@@ -58,6 +59,12 @@ interface AppState {
   prsSource: PRSource;
   diffContext: DiffContext;
   contextTab: ContextTab;
+  // Agent-documented sessions for the active repo, newest-updated first. Shown
+  // as a list on the Sessions tab; loaded on entering the tab / refresh.
+  sessions: SessionSummary[];
+  // The session whose frozen diff is currently open, or null when the Sessions
+  // tab is showing the list. Ephemeral — not persisted across launches.
+  activeSessionId: string | null;
   changedFiles: ChangedFile[];
   // Free-text filter applied to the changed-files list. Shared between the
   // sidebar (where it's typed) and the diff view (which hides sections for
@@ -214,6 +221,8 @@ const initial: AppState = {
   prsSource: "fork",
   diffContext: { kind: "workingTree" },
   contextTab: "unstaged",
+  sessions: [],
+  activeSessionId: null,
   changedFiles: [],
   fileSearchQuery: "",
   unstagedFileCount: 0,
@@ -664,7 +673,11 @@ function contextForTab(tab: ContextTab): DiffContext {
     const head = app.currentBranch ?? "HEAD";
     return { kind: "branch", base, head };
   }
-  // 'sessions' is a placeholder — treat like workingTree until implemented.
+  if (tab === "sessions" && app.activeSessionId) {
+    return { kind: "session", sessionId: app.activeSessionId };
+  }
+  // Sessions without an open session show the list, not a diff — fall back to
+  // the working tree context (unused while the list is shown).
   return { kind: "workingTree" };
 }
 
@@ -720,6 +733,14 @@ async function refreshFiles(): Promise<void> {
   if (!app.activeRepo) {
     app.changedFiles = [];
     app.unstagedFileCount = 0;
+    return;
+  }
+  // The Sessions tab with no session open shows the sessions list, not a file
+  // list — don't let a background refresh (focus/poll) repopulate the sidebar
+  // with working-tree files behind it. Keep the Unstaged badge fresh, though.
+  if (app.contextTab === "sessions" && !app.activeSessionId) {
+    app.changedFiles = [];
+    void refreshUnstagedCount();
     return;
   }
   const repoId = app.activeRepo.id;
@@ -977,6 +998,8 @@ export const actions = {
       repoFrecency.use(repo.id);
       applyContextTab("unstaged");
       app.diffContext = { kind: "workingTree" };
+      app.activeSessionId = null;
+      app.sessions = [];
       app.excludedFromCommit = new Set();
       app.prs = [];
       app.prsHasMore = false;
@@ -1030,12 +1053,15 @@ export const actions = {
     if (app.contextTab === tab) return;
     applyContextTab(tab);
     if (tab === "sessions") {
-      // No sessions yet — clear the file list and skip the IPC roundtrip.
+      // Show the sessions list: clear the file list and load the manifests.
+      // Selecting a session (openSession) is what populates the diff view.
+      app.activeSessionId = null;
       app.changedFiles = [];
       app.selectedFile = null;
       app.seenFiles = new Set();
       app.collapsedFiles = new Set();
       app.diffContext = { kind: "workingTree" };
+      void actions.loadSessions();
       return;
     }
     app.diffContext = contextForTab(tab);
@@ -1063,6 +1089,56 @@ export const actions = {
       app.pendingComposers = {};
     }
     await refreshFiles();
+  },
+
+  // Load the active repo's documented sessions into `app.sessions`. Called on
+  // entering the Sessions tab and on refresh, so an agent's CLI update is
+  // picked up. If a session is open, re-open it so its diff reflects the latest
+  // re-capture; if it has since been removed, fall back to the list.
+  async loadSessions(): Promise<void> {
+    if (!app.activeRepo) {
+      app.sessions = [];
+      return;
+    }
+    const repoId = app.activeRepo.id;
+    const sessions = await window.api.sessions.list(repoId);
+    if (!app.activeRepo || app.activeRepo.id !== repoId) return;
+    app.sessions = sessions;
+    if (app.activeSessionId) {
+      if (sessions.some((s) => s.id === app.activeSessionId)) {
+        await actions.openSession(app.activeSessionId);
+      } else {
+        actions.closeSession();
+      }
+    }
+  },
+
+  // Open a session's frozen diff: drives the file list + diff view through the
+  // existing context machinery via a `session` DiffContext.
+  async openSession(id: string): Promise<void> {
+    app.activeSessionId = id;
+    app.diffContext = { kind: "session", sessionId: id };
+    app.activePR = null;
+    app.prComments = {};
+    app.pendingComposers = {};
+    await refreshFiles();
+  },
+
+  // Leave an open session and return to the sessions list.
+  closeSession(): void {
+    app.activeSessionId = null;
+    app.changedFiles = [];
+    app.selectedFile = null;
+    app.seenFiles = new Set();
+    app.collapsedFiles = new Set();
+    app.diffContext = { kind: "workingTree" };
+  },
+
+  async deleteSession(id: string): Promise<void> {
+    if (!app.activeRepo) return;
+    await window.api.sessions.remove(app.activeRepo.id, id);
+    if (app.activeSessionId === id) actions.closeSession();
+    await actions.loadSessions();
   },
 
   async selectFile(path: string): Promise<void> {
@@ -1515,6 +1591,9 @@ export const actions = {
   // top-bar refresh button and the window-focus listener.
   async refresh(): Promise<void> {
     if (!app.activeRepo) return;
+    // On the Sessions tab, reload the manifests so an agent's CLI update lands
+    // (loadSessions re-opens the active session if one is showing).
+    if (app.contextTab === "sessions") await actions.loadSessions();
     await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
     await refreshBranchPR();
   },

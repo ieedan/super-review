@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    ArrowLeft,
     Check,
     ChevronRight,
     FileMinus,
@@ -522,6 +523,14 @@
     void actions.setContextTab(v as ContextTab);
   }
 
+  // The session whose diff is currently open (Sessions tab). When set, the
+  // header swaps its tab strip for a back button + session name.
+  const activeSession = $derived(
+    app.activeSessionId
+      ? app.sessions.find((s) => s.id === app.activeSessionId)
+      : undefined,
+  );
+
   // Virtualizer state — wired up to the Sidebar.Content scroll container
   // through its `ref` prop. We re-measure on scroll (for scrollTop) and on
   // resize (for clientHeight — pane drags, window resize, sidebar collapse).
@@ -683,6 +692,22 @@
          totals, and the collapse trigger pinned right. Matches the diff sticky
          header height so their bottom borders line up across panes. -->
     <div class="flex h-11 items-center gap-2 border-b border-border pl-1 pr-2">
+      {#if app.activeSessionId}
+        <!-- A session's diff is open: replace the tab strip with a back button
+             and the session name so the user can navigate out of the session. -->
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-7 flex-none"
+          title="Back to sessions"
+          onclick={() => actions.closeSession()}
+        >
+          <ArrowLeft class="size-4" />
+        </Button>
+        <span class="min-w-0 flex-1 truncate text-sm font-medium">
+          {activeSession?.name ?? 'Session'}
+        </span>
+      {:else}
       <!-- Tab strip: drives which diff context fuels the file list. -->
       <Tabs.Root
         value={app.contextTab}
@@ -719,6 +744,7 @@
           </Tabs.Trigger>
         </Tabs.List>
       </Tabs.Root>
+      {/if}
 
       {#if app.changedFiles.length > 0 && app.contextTab !== 'unstaged'}
         <span class="text-xs tabular-nums text-muted-foreground">
