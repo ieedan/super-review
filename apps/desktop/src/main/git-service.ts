@@ -1,7 +1,7 @@
 import { simpleGit, type SimpleGit } from "simple-git";
 import { shell } from "electron";
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs, type Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -161,6 +161,67 @@ const NON_CANONICAL_SEGMENTS = new Set([
   ".storybook",
 ]);
 
+// electron-builder config filenames. Any of these at a directory marks it as
+// an Electron project root; `package.json` deps / a `build` key also count
+// (see electronIconIn).
+const ELECTRON_CONFIG_FILES = new Set([
+  "electron-builder.yml",
+  "electron-builder.yaml",
+  "electron-builder.json",
+  "electron-builder.json5",
+  "electron-builder.js",
+  "electron-builder.cjs",
+  "electron-builder.mjs",
+  "electron-builder.ts",
+]);
+
+// Electron apps have no favicon; their brand icon is whatever electron-builder
+// packages from its buildResources dir (default `build/`) as icon.png/.ico.
+// That dir is in SKIP_DIRS — build output for most projects — so the generic
+// scan never reaches it. Detect an Electron project at `dir` and return its
+// build icon if present. Bounded to one package.json read + a few stat()s.
+async function electronIconIn(
+  dir: string,
+  entries: Dirent[],
+): Promise<string | undefined> {
+  let isElectron = entries.some(
+    (e) => e.isFile() && ELECTRON_CONFIG_FILES.has(e.name.toLowerCase()),
+  );
+  let buildResources = "build";
+  if (entries.some((e) => e.isFile() && e.name === "package.json")) {
+    try {
+      const pkg = JSON.parse(
+        await fs.readFile(path.join(dir, "package.json"), "utf8"),
+      );
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (deps.electron || deps["electron-builder"] || pkg.build) {
+        isElectron = true;
+      }
+      const br = pkg.build?.directories?.buildResources;
+      if (typeof br === "string" && br) buildResources = br;
+    } catch {
+      // unreadable / non-JSON package.json — rely on config-file detection
+    }
+  }
+  if (!isElectron) return undefined;
+  // Prefer png/ico (renderable in an <img>); .icns isn't, so skip it. Covers
+  // the buildResources icon and the linux `icons/` dir convention.
+  for (const rel of [
+    `${buildResources}/icon.png`,
+    `${buildResources}/icon.ico`,
+    `${buildResources}/icons/512x512.png`,
+  ]) {
+    const candidate = path.join(dir, rel);
+    try {
+      const st = await fs.stat(candidate);
+      if (st.isFile() && st.size > 0 && st.size <= 256 * 1024) return candidate;
+    } catch {
+      // not present — try the next
+    }
+  }
+  return undefined;
+}
+
 // Walk the repo up to MAX_DEPTH looking for the best-ranked icon. Bounded
 // because monorepos can have thousands of subdirs and we don't want to stall
 // the picker. A "best so far" tracker lets us short-circuit when we hit the
@@ -180,6 +241,19 @@ async function findRepoIcon(repoPath: string): Promise<string | undefined> {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
       return;
+    }
+    // An Electron app's build icon (build/icon.png) sits in a SKIP_DIRS dir the
+    // loop below won't descend into — check for it explicitly and score it as
+    // authoritatively as a favicon (basePriority 0).
+    const elIcon = await electronIconIn(dir, entries);
+    if (elIcon) {
+      const ext = path.extname(elIcon).slice(1).toLowerCase();
+      const score =
+        (ICON_EXT_PRIORITY[ext] ?? 1) * 10 + depth + (nonCanonical ? 500 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        bestPath = elIcon;
+      }
     }
     for (const entry of entries) {
       if (entry.name.startsWith(".") && entry.name !== ".well-known") {
