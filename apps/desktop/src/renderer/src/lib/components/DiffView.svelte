@@ -1,12 +1,18 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
-  import { Inbox } from 'lucide-svelte';
-  import DiffFileSection from './DiffFileSection.svelte';
-  import FindBar from './FindBar.svelte';
-  import { app } from '$lib/store.svelte';
-  import { openFind, closeFind, setFindRoot, find } from '$lib/diff-find.svelte';
-  import { matchesFileQuery } from '$lib/file-search';
-  import type { ChangedFile } from '@shared/types';
+  import { onDestroy } from "svelte";
+  import { Inbox } from "lucide-svelte";
+  import DiffFileSection from "./DiffFileSection.svelte";
+  import NoChanges from "./NoChanges.svelte";
+  import FindBar from "./FindBar.svelte";
+  import { app } from "$lib/store.svelte";
+  import {
+    openFind,
+    closeFind,
+    setFindRoot,
+    find,
+  } from "$lib/diff-find.svelte";
+  import { matchesFileQuery } from "$lib/file-search";
+  import type { ChangedFile } from "@shared/types";
 
   // Mirror the sidebar's path filter so hidden files don't render a diff
   // section here either. Both views read from `app.fileSearchQuery` and run it
@@ -29,9 +35,11 @@
     observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          const setter = (entry.target as HTMLElement & {
-            __setInView?: (v: boolean) => void;
-          }).__setInView;
+          const setter = (
+            entry.target as HTMLElement & {
+              __setInView?: (v: boolean) => void;
+            }
+          ).__setInView;
           setter?.(entry.isIntersecting);
         }
       },
@@ -39,7 +47,7 @@
         root: scrollContainer,
         // Render diffs a viewport ahead so they're ready by the time the user
         // scrolls there.
-        rootMargin: '600px 0px',
+        rootMargin: "600px 0px",
         threshold: 0,
       },
     );
@@ -55,7 +63,10 @@
       `[data-file-path="${CSS.escape(req.path)}"]`,
     );
     if (target) {
-      (target as HTMLElement).scrollIntoView({ behavior: 'auto', block: 'start' });
+      (target as HTMLElement).scrollIntoView({
+        behavior: "auto",
+        block: "start",
+      });
     }
   });
 
@@ -75,7 +86,9 @@
     function updateActiveFile(): void {
       ticking = false;
       const containerTop = el.getBoundingClientRect().top;
-      const sections = el.querySelectorAll<HTMLElement>('section[data-file-path]');
+      const sections = el.querySelectorAll<HTMLElement>(
+        "section[data-file-path]",
+      );
       if (sections.length === 0) return;
       let active: string | null = null;
       let activeRelTop = -Infinity;
@@ -85,11 +98,11 @@
         // one closest to 0 (i.e., the one most recently scrolled into).
         if (relTop <= 1 && relTop > activeRelTop) {
           activeRelTop = relTop;
-          active = section.getAttribute('data-file-path');
+          active = section.getAttribute("data-file-path");
         }
       }
       // Scrolled above all sections — anchor to the first visible file.
-      if (!active) active = sections[0].getAttribute('data-file-path');
+      if (!active) active = sections[0].getAttribute("data-file-path");
       if (active && app.selectedFile !== active) {
         app.selectedFile = active;
       }
@@ -101,12 +114,12 @@
       requestAnimationFrame(updateActiveFile);
     }
 
-    el.addEventListener('scroll', schedule, { passive: true });
+    el.addEventListener("scroll", schedule, { passive: true });
     const ro = new ResizeObserver(schedule);
     ro.observe(el);
     schedule();
     return () => {
-      el.removeEventListener('scroll', schedule);
+      el.removeEventListener("scroll", schedule);
       ro.disconnect();
     };
   });
@@ -124,13 +137,13 @@
   $effect(() => {
     function onKeydown(e: KeyboardEvent): void {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      if (e.key !== 'f' && e.key !== 'F') return;
+      if (e.key !== "f" && e.key !== "F") return;
       if (!app.activeRepo) return;
       e.preventDefault();
       openFind();
     }
-    window.addEventListener('keydown', onKeydown);
-    return () => window.removeEventListener('keydown', onKeydown);
+    window.addEventListener("keydown", onKeydown);
+    return () => window.removeEventListener("keydown", onKeydown);
   });
 
   onDestroy(() => {
@@ -143,14 +156,28 @@
   <FindBar />
   <div bind:this={scrollContainer} class="flex-1 overflow-auto">
     {#if app.changedFiles.length === 0}
-      <div class="grid h-full place-items-center text-muted-foreground">
-        <div class="flex flex-col items-center gap-2 text-center">
-          <Inbox class="size-8 opacity-40" />
-          <p class="text-sm">
-            {app.loading.files ? 'Loading…' : 'No changes'}
-          </p>
+      {#if app.loading.files}
+        <div class="grid h-full place-items-center text-muted-foreground">
+          <div class="flex flex-col items-center gap-2 text-center">
+            <Inbox class="size-8 opacity-40" />
+            <p class="text-sm">Loading…</p>
+          </div>
         </div>
-      </div>
+      {:else if app.contextTab === "unstaged"}
+        <!-- Working tree is clean — offer repo-level next steps. -->
+        <NoChanges />
+      {:else}
+        <div class="grid h-full place-items-center text-muted-foreground">
+          <div class="flex flex-col items-center gap-2 text-center">
+            <Inbox class="size-8 opacity-40" />
+            <p class="text-sm">
+              {app.contextTab === "branch"
+                ? "No changes on this branch"
+                : "No changes"}
+            </p>
+          </div>
+        </div>
+      {/if}
     {:else if visibleFiles.length === 0}
       <div class="grid h-full place-items-center text-muted-foreground">
         <div class="flex flex-col items-center gap-2 text-center">
