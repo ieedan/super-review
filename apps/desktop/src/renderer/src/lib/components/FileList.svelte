@@ -7,11 +7,13 @@
     Folder,
     FolderOpen,
     MessageSquare,
-    PanelLeftClose,
+    PanelLeft,
     Search,
     X,
   } from 'lucide-svelte';
   import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
+  import { Tween } from 'svelte/motion';
+  import { cubicOut } from 'svelte/easing';
   import { Button } from './ui/button';
   import { Kbd } from './ui/kbd';
   import * as Tabs from './ui/tabs';
@@ -21,6 +23,7 @@
   import { cn } from '$lib/utils';
   import { languageIconForPath } from '$lib/file-icons';
   import { truncatePathPrefix } from '$lib/path-truncate';
+  import { matchesFileQuery } from '$lib/file-search';
   import { matchesHotkey } from '@shared/hotkeys';
   import type { ChangedFile } from '@shared/types';
 
@@ -53,13 +56,14 @@
   // animation frame fills them in.
   const BUFFER_ROWS = 8;
 
-  // Filter changed files by the shared search query (case-insensitive substring
-  // match on the full path). When the query is empty, this is the full list.
-  // Lives on the store so the diff view applies the same filter.
+  // Filter changed files by the shared search query. Supports plain substring
+  // matching and glob patterns like `*.svelte` (see matchesFileQuery). When the
+  // query is empty, this is the full list. The query lives on the store so the
+  // diff view applies the same filter.
   const filteredFiles = $derived.by<ChangedFile[]>(() => {
-    const q = app.fileSearchQuery.trim().toLowerCase();
+    const q = app.fileSearchQuery.trim();
     if (!q) return app.changedFiles;
-    return app.changedFiles.filter((f) => f.path.toLowerCase().includes(q));
+    return app.changedFiles.filter((f) => matchesFileQuery(f.path, q));
   });
 
   // Build the visible flat list of nodes from the changed files. In 'tree'
@@ -160,6 +164,24 @@
   const seenCount = $derived(
     app.changedFiles.filter((f) => app.seenFiles.has(f.path)).length,
   );
+
+  // Animate the header counters ticking toward their new values when animations
+  // are enabled. Each Tween's `target` is driven by the underlying derived
+  // value; with animations off we collapse the duration to 0 so the number
+  // snaps instantly. `current` is fractional mid-flight, so the display values
+  // round to whole integers.
+  const seenTween = new Tween(0, { duration: 400, easing: cubicOut });
+  const addTween = new Tween(0, { duration: 400, easing: cubicOut });
+  const delTween = new Tween(0, { duration: 400, easing: cubicOut });
+  $effect(() => {
+    const duration = app.animationsEnabled ? 400 : 0;
+    void seenTween.set(seenCount, { duration });
+    void addTween.set(totals.add, { duration });
+    void delTween.set(totals.del, { duration });
+  });
+  const seenDisplay = $derived(Math.round(seenTween.current));
+  const addDisplay = $derived(Math.round(addTween.current));
+  const delDisplay = $derived(Math.round(delTween.current));
 
   function pick(path: string): void {
     focusedPath = path;
@@ -439,6 +461,11 @@
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const toggleShortcut = isMac ? '⌘B' : 'Ctrl+B';
 
+  // Sidebar context from the app-level Sidebar.Provider. Its toggle() drives the
+  // resizable pane (via onOpenChange → pane.expand/collapse), which is the real
+  // source of truth — flipping app.sidebarCollapsed alone wouldn't move the pane.
+  const sidebar = Sidebar.useSidebar();
+
   // The configurable "search files (sidebar)" shortcut jumps focus to the
   // search input from anywhere in the app. When the binding has no modifier
   // (the default is `/`), it's skipped while the user is typing in an editable
@@ -478,66 +505,67 @@
 -->
 <Sidebar.Root collapsible="none" class="h-full w-full border-r border-sidebar-border bg-card/30">
   <Sidebar.Header class="gap-0 p-0">
-    <!-- Progress strip — seen/total, +adds, -dels, collapse. -->
-    <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
+    <!-- Combined header — context tabs on the left, then seen/total + adds/dels
+         totals, and the collapse trigger pinned right. Matches the diff sticky
+         header height so their bottom borders line up across panes. -->
+    <div class="flex h-11 items-center gap-2 border-b border-border pl-1 pr-2">
+      <!-- Tab strip: drives which diff context fuels the file list. -->
+      <Tabs.Root
+        value={app.contextTab}
+        onValueChange={setTab}
+        class="min-w-0 flex-1 gap-0"
+      >
+        <Tabs.List
+          class="no-scrollbar w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent p-0"
+        >
+          <Tabs.Trigger
+            value="unstaged"
+            class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+          >
+            Unstaged
+            {#if app.unstagedFileCount > 0}
+              <span
+                class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] font-medium tabular-nums leading-none text-foreground"
+              >
+                {app.unstagedFileCount > 99 ? '99+' : app.unstagedFileCount}
+              </span>
+            {/if}
+          </Tabs.Trigger>
+          <Tabs.Trigger
+            value="branch"
+            class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+          >
+            Branch
+          </Tabs.Trigger>
+          <Tabs.Trigger
+            value="sessions"
+            class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+          >
+            Sessions
+          </Tabs.Trigger>
+        </Tabs.List>
+      </Tabs.Root>
+
       {#if app.changedFiles.length > 0}
-        <span class="text-xs tabular-nums">
-          <span class="font-medium">{seenCount}/{app.changedFiles.length}</span>
+        <span class="text-xs tabular-nums text-muted-foreground">
+          <span class="font-medium">{seenDisplay}/{app.changedFiles.length}</span>
         </span>
       {/if}
-      {#if app.changedFiles.length > 0 && (totals.add > 0 || totals.del > 0)}
+      {#if app.changedFiles.length > 0}
         <span class="text-[11px] tabular-nums">
-          {#if totals.add > 0}
-            <span class="text-success">+{totals.add}</span>
-          {/if}
-          {#if totals.del > 0}
-            <span class="ml-0.5 text-destructive">−{totals.del}</span>
-          {/if}
+          <span class="text-success">+{addDisplay}</span>
+          <span class="ml-0.5 text-destructive">−{delDisplay}</span>
         </span>
       {/if}
-      <span class="flex-1"></span>
       <Button
         variant="ghost"
-        size="icon-xs"
+        size="icon"
         title={`Collapse sidebar (${toggleShortcut})`}
-        onclick={() => actions.toggleSidebar()}
+        onclick={() => sidebar.toggle()}
       >
-        <PanelLeftClose class="size-3.5" />
+        <PanelLeft class="size-3.5" />
       </Button>
     </div>
-
-    <!-- Tab strip: drives which diff context fuels the file list. -->
-    <Tabs.Root value={app.contextTab} onValueChange={setTab} class="gap-0">
-      <Tabs.List
-        class="no-scrollbar group-data-horizontal/tabs:h-9 w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent px-1 py-0"
-      >
-        <Tabs.Trigger
-          value="unstaged"
-          class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-        >
-          Unstaged
-          {#if app.unstagedFileCount > 0}
-            <span
-              class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] font-medium tabular-nums leading-none text-foreground"
-            >
-              {app.unstagedFileCount > 99 ? '99+' : app.unstagedFileCount}
-            </span>
-          {/if}
-        </Tabs.Trigger>
-        <Tabs.Trigger
-          value="branch"
-          class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-        >
-          Branch
-        </Tabs.Trigger>
-        <Tabs.Trigger
-          value="sessions"
-          class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-        >
-          Sessions
-        </Tabs.Trigger>
-      </Tabs.List>
-    </Tabs.Root>
 
     {#if app.contextTab !== 'sessions'}
       <div class="border-b border-border px-2 py-1.5">
@@ -549,7 +577,7 @@
             bind:this={searchInput}
             type="text"
             bind:value={app.fileSearchQuery}
-            placeholder="Search files…"
+            placeholder="Search files or *.svelte…"
             class="h-full w-full min-w-0 bg-transparent text-xs outline-hidden placeholder:text-muted-foreground"
           />
           {#if app.fileSearchQuery}

@@ -1,11 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  BranchContextMenuAction,
   BranchInfo,
   ChangedFile,
   CloneResult,
   CommitDraft,
   CommitResult,
   CreateBranchResult,
+  DeleteBranchResult,
   DeviceFlowStart,
   DeviceFlowStatus,
   DiffContext,
@@ -37,6 +39,8 @@ const api: PreloadAPI = {
     list: () => ipcRenderer.invoke("repos:list") as Promise<RepoInfo[]>,
     openPicker: () =>
       ipcRenderer.invoke("repos:openPicker") as Promise<RepoInfo | null>,
+    openFolder: () =>
+      ipcRenderer.invoke("repos:openFolder") as Promise<RepoInfo[]>,
     createPicker: () =>
       ipcRenderer.invoke("repos:createPicker") as Promise<RepoInfo | null>,
     remove: (id) => ipcRenderer.invoke("repos:remove", id) as Promise<void>,
@@ -55,12 +59,7 @@ const api: PreloadAPI = {
     checkout: (repoId, branch) =>
       ipcRenderer.invoke("git:checkout", repoId, branch) as Promise<void>,
     checkoutPR: (repoId, pr, source) =>
-      ipcRenderer.invoke(
-        "git:checkoutPR",
-        repoId,
-        pr,
-        source,
-      ) as Promise<void>,
+      ipcRenderer.invoke("git:checkoutPR", repoId, pr, source) as Promise<void>,
     isDirty: (repoId) =>
       ipcRenderer.invoke("git:isDirty", repoId) as Promise<boolean>,
     createBranch: (repoId, name, opts) =>
@@ -70,6 +69,13 @@ const api: PreloadAPI = {
         name,
         opts,
       ) as Promise<CreateBranchResult>,
+    deleteBranch: (repoId, name, opts) =>
+      ipcRenderer.invoke(
+        "git:deleteBranch",
+        repoId,
+        name,
+        opts,
+      ) as Promise<DeleteBranchResult>,
     listChangedFiles: (repoId, ctx: DiffContext) =>
       ipcRenderer.invoke("git:listChangedFiles", repoId, ctx) as Promise<
         ChangedFile[]
@@ -325,6 +331,11 @@ const api: PreloadAPI = {
         "menu:showFileContextMenu",
         params,
       ) as Promise<FileContextMenuAction | null>,
+    showBranchContextMenu: (params) =>
+      ipcRenderer.invoke(
+        "menu:showBranchContextMenu",
+        params,
+      ) as Promise<BranchContextMenuAction | null>,
   },
   events: {
     onRepoChanged(handler) {

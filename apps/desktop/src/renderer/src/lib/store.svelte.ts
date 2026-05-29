@@ -555,7 +555,10 @@ async function refreshBranchPR(): Promise<void> {
     }
   }
   // Drop any status for a PR we're no longer showing, then refresh.
-  if (app.branchPRChecks && app.branchPRChecks.number !== app.branchPR?.number) {
+  if (
+    app.branchPRChecks &&
+    app.branchPRChecks.number !== app.branchPR?.number
+  ) {
     app.branchPRChecks = null;
   }
   await refreshBranchPRChecks();
@@ -819,6 +822,28 @@ export const actions = {
     }
   },
 
+  async openFolder(): Promise<void> {
+    try {
+      const repos = await window.api.repos.openFolder();
+      if (repos.length === 0) return; // Picker cancelled.
+      applyContextTab("unstaged");
+      app.diffContext = { kind: "workingTree" };
+      await refreshRepos();
+      app.activeRepo = await window.api.repos.getActive();
+      if (app.activeRepo) {
+        repoFrecency.use(app.activeRepo.id);
+        await Promise.all([
+          refreshBranches(),
+          refreshFiles(),
+          refreshPushStatus(),
+        ]);
+        await refreshBranchPR();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  },
+
   async cloneRepo(url: string): Promise<void> {
     try {
       const result = await window.api.git.cloneRepo(url);
@@ -958,10 +983,6 @@ export const actions = {
     app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
   },
 
-  toggleSidebar(): void {
-    app.sidebarCollapsed = !app.sidebarCollapsed;
-  },
-
   toggleFolder(path: string): void {
     const next = new Set(app.collapsedFolders);
     if (next.has(path)) next.delete(path);
@@ -1015,8 +1036,8 @@ export const actions = {
     );
   },
 
-  async checkoutBranch(branch: string): Promise<void> {
-    if (!app.activeRepo) return;
+  async checkoutBranch(branch: string): Promise<boolean> {
+    if (!app.activeRepo) return false;
     try {
       await window.api.git.checkout(app.activeRepo.id, branch);
       // Re-derive the diff context for tabs that depend on currentBranch.
@@ -1029,8 +1050,10 @@ export const actions = {
         refreshPushStatus(),
       ]);
       await refreshBranchPR();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     }
   },
 
@@ -1386,13 +1409,14 @@ export const actions = {
     app.createBranchDialogOpen = false;
   },
 
-  // Create a new branch, mirroring GitHub Desktop's flow. `bringChanges`
-  // applies only when the working tree is dirty: true → checkout into the
-  // new branch (working tree follows); false → create the branch without
-  // switching so changes stay on the current branch.
+  // Create a new branch. `checkout` decides whether we switch onto it as part
+  // of creating it: true → `checkout -b` (the working tree follows along);
+  // false → `git branch` (the branch is created but we stay put). The create
+  // dialog creates without switching while the user is still deciding what to
+  // do with a dirty working tree, then switches separately via checkoutBranch.
   async createBranch(
     name: string,
-    opts: { base?: string; bringChanges: boolean },
+    opts: { base?: string; checkout: boolean },
   ): Promise<boolean> {
     if (!app.activeRepo) return false;
     try {
@@ -1401,7 +1425,7 @@ export const actions = {
         name,
         {
           base: opts.base,
-          checkout: opts.bringChanges,
+          checkout: opts.checkout,
         },
       );
       if (!result.ok) {
@@ -1416,6 +1440,37 @@ export const actions = {
         refreshFiles(),
         refreshPushStatus(),
       ]);
+      await refreshBranchPR();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  },
+
+  // Delete a branch. `deleteRemote` additionally removes its tracking branch on
+  // the remote — only meaningful when the branch actually has one. The remote
+  // ref is derived in the main process from the branch's stored upstream.
+  async deleteBranch(
+    name: string,
+    opts: { deleteRemote: boolean },
+  ): Promise<boolean> {
+    if (!app.activeRepo) return false;
+    const upstream = app.branches.find((b) => b.name === name)?.upstream;
+    try {
+      const result = await window.api.git.deleteBranch(
+        app.activeRepo.id,
+        name,
+        {
+          deleteRemote: opts.deleteRemote,
+          upstream,
+        },
+      );
+      if (!result.ok) {
+        setError(result.error ?? "Could not delete branch.");
+        return false;
+      }
+      await Promise.all([refreshBranches(), refreshPushStatus()]);
       await refreshBranchPR();
       return true;
     } catch (err) {

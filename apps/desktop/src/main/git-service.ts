@@ -29,6 +29,77 @@ export async function isGitRepo(dirPath: string): Promise<boolean> {
   }
 }
 
+// Directories we never descend into while scanning a folder for repos: package
+// caches, build output, and other VCS metadata. They never contain a repo we
+// want to surface and can hold tens of thousands of files.
+const SCAN_IGNORE_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".svn",
+  ".hg",
+  "dist",
+  "build",
+  "out",
+  "target",
+  ".next",
+  ".turbo",
+  ".cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "vendor",
+  "Pods",
+]);
+
+// How deep below the chosen folder we'll look. Repos are normally checked out a
+// level or two down (e.g. ~/code/<repo> or ~/code/<org>/<repo>); a bound keeps a
+// stray deep tree from turning the scan into a full-disk walk.
+const MAX_SCAN_DEPTH = 4;
+
+// Recursively find git repositories under `rootPath`. A directory containing a
+// `.git` entry is treated as a repo and is not descended into (so nested repos
+// inside a checkout aren't double-counted). Returns absolute repo paths.
+export async function scanForRepos(rootPath: string): Promise<string[]> {
+  const found: string[] = [];
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    // `.git` is a directory in a normal checkout and a file in a worktree or
+    // submodule — either marks `dir` as a repository.
+    let isRepo = false;
+    try {
+      await fs.stat(path.join(dir, ".git"));
+      isRepo = true;
+    } catch {
+      // No `.git` here — keep descending.
+    }
+    if (isRepo) {
+      found.push(dir);
+      return;
+    }
+    if (depth >= MAX_SCAN_DEPTH) return;
+
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return; // Unreadable directory (permissions, etc.) — skip it.
+    }
+
+    const subdirs = entries.filter(
+      (e) =>
+        e.isDirectory() &&
+        !e.name.startsWith(".") &&
+        !SCAN_IGNORE_DIRS.has(e.name),
+    );
+    await Promise.all(
+      subdirs.map((e) => walk(path.join(dir, e.name), depth + 1)),
+    );
+  }
+
+  await walk(path.resolve(rootPath), 0);
+  return found;
+}
+
 // Names we're willing to treat as a repo icon, ranked best → worst. A real
 // favicon beats a generic logo; `app-icon`/`AppIcon` cover macOS bundles.
 const ICON_BASE_PRIORITY: Record<string, number> = {
@@ -192,10 +263,12 @@ async function sshHostMap(): Promise<Map<string, string>> {
       const sep = line.search(/\s|=/);
       if (sep === -1) continue;
       const key = line.slice(0, sep).toLowerCase();
-      const value = line.slice(sep + 1).replace(/^[=\s]+/, "").trim();
+      const value = line
+        .slice(sep + 1)
+        .replace(/^[=\s]+/, "")
+        .trim();
       if (key === "host") aliases = value.split(/\s+/);
-      else if (key === "hostname")
-        for (const a of aliases) map.set(a, value);
+      else if (key === "hostname") for (const a of aliases) map.set(a, value);
     }
   } catch {
     // No ssh config (or unreadable) — nothing to resolve.
@@ -274,7 +347,10 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
       );
     }
   } catch (err) {
-    console.error(`[repo] buildRepoInfo "${name}" failed to read remotes:`, err);
+    console.error(
+      `[repo] buildRepoInfo "${name}" failed to read remotes:`,
+      err,
+    );
   }
   try {
     const head = await git.raw([
@@ -309,20 +385,23 @@ export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
     git.raw(["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => ""),
     git.raw([
       "for-each-ref",
-      "--format=%(refname:short)\t%(committerdate:unix)",
+      "--format=%(refname:short)\t%(committerdate:unix)\t%(upstream:short)",
       "refs/heads",
     ]),
   ]);
   const current = currentRaw.trim();
   const branches: BranchInfo[] = [];
   for (const line of raw.split("\n").filter(Boolean)) {
-    const [name, tsRaw] = line.split("\t");
+    const [name, tsRaw, upstreamRaw] = line.split("\t");
     if (!name) continue;
     const ts = Number(tsRaw);
     branches.push({
       name,
       current: name === current,
-      upstream: undefined,
+      // `%(upstream:short)` is the configured tracking branch (e.g.
+      // "origin/feat") — its presence is how we tell a branch also lives on a
+      // remote. Empty when the branch tracks nothing.
+      upstream: upstreamRaw ? upstreamRaw : undefined,
       isRemote: false,
       lastCommitAt: Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined,
     });
@@ -373,6 +452,11 @@ export interface CreateBranchResult {
   error?: string;
 }
 
+export interface DeleteBranchResult {
+  ok: boolean;
+  error?: string;
+}
+
 // Create a new branch off of `base` (defaults to current HEAD). When
 // `checkout` is true we use `checkout -b` so the working tree follows along
 // (GitHub Desktop's "Bring my changes" path); otherwise the branch is created
@@ -394,6 +478,38 @@ export async function createBranch(
       const args = ["branch", trimmed];
       if (opts.base) args.push(opts.base);
       await git.raw(args);
+    }
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// Delete a local branch (force, so we don't fail on "not fully merged" — the
+// UI already gates this behind an explicit confirmation). When `deleteRemote`
+// is set and the branch has a tracking ref, also delete it on the remote.
+// `upstream` is the short tracking ref (e.g. "origin/feat"); we split off the
+// remote name (which can't contain a slash) to get the remote-side ref.
+export async function deleteBranch(
+  repoPath: string,
+  name: string,
+  opts: { deleteRemote: boolean; upstream?: string },
+): Promise<DeleteBranchResult> {
+  const trimmed = name.trim();
+  if (!trimmed) return { ok: false, error: "Branch name is required." };
+  const git = simpleGit(repoPath);
+  try {
+    await git.raw(["branch", "-D", trimmed]);
+    if (opts.deleteRemote && opts.upstream) {
+      const slash = opts.upstream.indexOf("/");
+      if (slash > 0) {
+        const remote = opts.upstream.slice(0, slash);
+        const ref = opts.upstream.slice(slash + 1);
+        await git.push([remote, "--delete", ref]);
+      }
     }
     return { ok: true };
   } catch (err) {
@@ -1250,7 +1366,8 @@ async function ensureRemoteForUrl(
   if (originUrl && (await sameGithubRepo(originUrl, url))) return "origin";
   const remotes = await git.getRemotes(true).catch(() => []);
   for (const r of remotes) {
-    if (r.refs.fetch && (await sameGithubRepo(r.refs.fetch, url))) return r.name;
+    if (r.refs.fetch && (await sameGithubRepo(r.refs.fetch, url)))
+      return r.name;
   }
   let name = sanitizeRemoteName(owner);
   // The preferred name is taken by a remote pointing elsewhere (none matched

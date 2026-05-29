@@ -5,14 +5,16 @@
   import FindBar from './FindBar.svelte';
   import { app } from '$lib/store.svelte';
   import { openFind, closeFind, setFindRoot, find } from '$lib/diff-find.svelte';
+  import { matchesFileQuery } from '$lib/file-search';
   import type { ChangedFile } from '@shared/types';
 
   // Mirror the sidebar's path filter so hidden files don't render a diff
-  // section here either. Both views read from `app.fileSearchQuery`.
+  // section here either. Both views read from `app.fileSearchQuery` and run it
+  // through the same matcher (substring + glob; see matchesFileQuery).
   const visibleFiles = $derived.by<ChangedFile[]>(() => {
-    const q = app.fileSearchQuery.trim().toLowerCase();
+    const q = app.fileSearchQuery.trim();
     if (!q) return app.changedFiles;
-    return app.changedFiles.filter((f) => f.path.toLowerCase().includes(q));
+    return app.changedFiles.filter((f) => matchesFileQuery(f.path, q));
   });
 
   let scrollContainer = $state<HTMLElement | null>(null);

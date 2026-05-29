@@ -17,6 +17,7 @@
   import * as Popover from "./ui/popover";
   import * as Command from "./ui/command";
   import * as Tabs from "./ui/tabs";
+  import { confirmDelete } from "./ui/confirm-delete-dialog";
   import { actions, app } from "$lib/store.svelte";
   import { cn, formatRelative } from "$lib/utils";
   import type { BranchInfo, PRSource, PRSummary } from "@shared/types";
@@ -63,6 +64,48 @@
   async function checkout(name: string): Promise<void> {
     open = false;
     await actions.checkoutBranch(name);
+  }
+
+  // Right-click a branch row: pop the native OS context menu and dispatch the
+  // chosen action. Copy goes straight through; delete routes via the confirm
+  // dialog so the remote-delete checkbox/warning still applies.
+  async function showContextMenu(e: MouseEvent, b: BranchInfo): Promise<void> {
+    e.preventDefault();
+    const action = await window.api.menu.showBranchContextMenu({
+      name: b.name,
+      canDelete: !b.current,
+    });
+    if (action === "copy") {
+      await actions.copyToClipboard(b.name);
+    } else if (action === "delete") {
+      requestDelete(b);
+    }
+  }
+
+  // Confirm before deleting. When the branch also lives on a remote we surface
+  // an opt-in checkbox to delete it there too, plus a warning since that can
+  // strip collaborators of unpushed work. onConfirm throws on failure so the
+  // dialog stays open and the error toast explains why.
+  function requestDelete(b: BranchInfo): void {
+    open = false;
+    const hasRemote = !!b.upstream;
+    confirmDelete({
+      title: `Delete branch "${b.name}"?`,
+      description: `This deletes the local branch "${b.name}". This can't be undone.`,
+      checkbox: hasRemote
+        ? {
+            label: `Also delete ${b.upstream} on the remote`,
+            description:
+              "Collaborators who track this branch may lose work that isn't pushed.",
+            default: false,
+          }
+        : undefined,
+      confirm: { text: "Delete branch" },
+      onConfirm: async ({ checked }) => {
+        const ok = await actions.deleteBranch(b.name, { deleteRemote: checked });
+        if (!ok) throw new Error("delete failed");
+      },
+    });
   }
 
   async function openPR(pr: PRSummary): Promise<void> {
@@ -300,6 +343,7 @@
                         <Command.Item
                           value={b.name}
                           onSelect={() => checkout(b.name)}
+                          oncontextmenu={(e) => showContextMenu(e, b)}
                           class={cn(
                             "flex items-center gap-2",
                             b.current && "bg-accent/60",

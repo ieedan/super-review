@@ -1,7 +1,12 @@
 <script lang="ts">
   import { mount, unmount, onDestroy } from 'svelte';
-  import { Check, ChevronDown, ChevronRight, Code, Eye, FileText } from 'lucide-svelte';
+  import { Check, ChevronDown, ChevronRight, Code, Code2, Eye, FileText } from 'lucide-svelte';
   import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
+  import CursorIcon from './icons/CursorIcon.svelte';
+  import VSCodeIcon from './icons/VSCodeIcon.svelte';
+  import XcodeIcon from './icons/XcodeIcon.svelte';
+  import ZedIcon from './icons/ZedIcon.svelte';
+  import VisualStudioIcon from './icons/VisualStudioIcon.svelte';
   import { languageIconForPath } from '$lib/file-icons';
   import { isMarkdownPath, renderMarkdown } from '$lib/markdown';
   import '$lib/markdown.css';
@@ -15,13 +20,26 @@
   } from '@pierre/diffs';
   import { Button } from './ui/button';
   import { Badge } from './ui/badge';
-  import { actions, app, composerKey, getCachedDiff, setCachedDiff } from '$lib/store.svelte';
+  import {
+    actions,
+    app,
+    composerKey,
+    effectiveEditor,
+    getCachedDiff,
+    setCachedDiff,
+  } from '$lib/store.svelte';
   import { diffDeferReason } from '@shared/diff-defer';
   import { scheduleRender } from '$lib/render-scheduler';
   import { diffContextKey } from '@shared/diff-context';
   import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
   import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
-  import type { ChangedFile, DiffContext, DiffData, PRReviewComment } from '@shared/types';
+  import type {
+    ChangedFile,
+    DiffContext,
+    DiffData,
+    EditorKind,
+    PRReviewComment,
+  } from '@shared/types';
 
   interface Props {
     file: ChangedFile;
@@ -711,6 +729,25 @@
     const next = idx >= 0 ? visible[idx + 1] : undefined;
     if (next) actions.scrollToFile(next.path);
   }
+
+  // Mirrors the toolbar's EditorButton, but opens this specific file rather
+  // than the repo root.
+  const editor = $derived<EditorKind | null>(effectiveEditor());
+  const anyEditorAvailable = $derived(
+    app.editors.cursor ||
+      app.editors.vscode ||
+      app.editors.zed ||
+      app.editors.xcode ||
+      app.editors.visualstudio,
+  );
+  const editorLabels: Record<EditorKind, string> = {
+    cursor: 'Cursor',
+    vscode: 'Visual Studio Code',
+    zed: 'Zed',
+    xcode: 'Xcode',
+    visualstudio: 'Visual Studio',
+  };
+
   // Surface comments that fall outside the rendered diff (e.g. on lines we
   // skipped) so they aren't silently lost.
   const orphanComments = $derived.by<PRReviewComment[]>(() => {
@@ -775,6 +812,28 @@
             <Code class="size-3.5" /> Markdown
           {:else}
             <FileText class="size-3.5" /> Preview
+          {/if}
+        </Button>
+      {/if}
+      {#if anyEditorAvailable}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onclick={() => actions.openInEditor(file.path)}
+          title={editor ? `Open in ${editorLabels[editor]}` : 'Open in editor'}
+        >
+          {#if editor === 'cursor'}
+            <CursorIcon class="size-3.5" />
+          {:else if editor === 'vscode'}
+            <VSCodeIcon class="size-3.5" />
+          {:else if editor === 'zed'}
+            <ZedIcon class="size-3.5" />
+          {:else if editor === 'xcode'}
+            <XcodeIcon class="size-3.5" />
+          {:else if editor === 'visualstudio'}
+            <VisualStudioIcon class="size-3.5" />
+          {:else}
+            <Code2 class="size-3.5" />
           {/if}
         </Button>
       {/if}

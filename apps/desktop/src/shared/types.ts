@@ -185,12 +185,7 @@ export type ContextTab = "unstaged" | "branch" | "sessions";
 // ("fork") or, when the repo is a fork, its parent ("upstream").
 export type PRSource = "fork" | "upstream";
 
-export type EditorKind =
-  | "cursor"
-  | "vscode"
-  | "zed"
-  | "xcode"
-  | "visualstudio";
+export type EditorKind = "cursor" | "vscode" | "zed" | "xcode" | "visualstudio";
 
 export type TerminalKind =
   | "terminal"
@@ -211,6 +206,20 @@ export type FileContextMenuAction =
   | "reveal"
   | "openInEditor"
   | "openDefault";
+
+// Actions a branch row's native context menu can return. `null` (from the
+// IPC) means the menu was dismissed without a choice.
+export type BranchContextMenuAction = "copy" | "delete";
+
+// What the renderer hands the main process to build a branch row's native menu.
+export interface BranchContextMenuParams {
+  // The branch name — shown back to the user isn't needed here, but kept for
+  // parity/labelling if the menu grows.
+  name: string;
+  // Whether to show "Delete Branch…" — hidden for the currently checked-out
+  // branch (which git can't delete anyway).
+  canDelete: boolean;
+}
 
 // What the renderer hands the main process to build a file row's native menu.
 // The labels are resolved renderer-side (platform name, configured editor) so
@@ -281,6 +290,11 @@ export interface LastCommit {
 }
 
 export interface CreateBranchResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface DeleteBranchResult {
   ok: boolean;
   error?: string;
 }
@@ -359,6 +373,9 @@ export interface PreloadAPI {
   repos: {
     list(): Promise<RepoInfo[]>;
     openPicker(): Promise<RepoInfo | null>;
+    // Pick a parent folder; scan it for git repos, add them all, and return the
+    // ones that were found (empty if the picker was cancelled).
+    openFolder(): Promise<RepoInfo[]>;
     createPicker(): Promise<RepoInfo | null>;
     remove(id: string): Promise<void>;
     setActive(id: string): Promise<RepoInfo | null>;
@@ -375,6 +392,11 @@ export interface PreloadAPI {
       name: string,
       opts: { base?: string; checkout: boolean },
     ): Promise<CreateBranchResult>;
+    deleteBranch(
+      repoId: string,
+      name: string,
+      opts: { deleteRemote: boolean; upstream?: string },
+    ): Promise<DeleteBranchResult>;
     listChangedFiles(repoId: string, ctx: DiffContext): Promise<ChangedFile[]>;
     getDiff(
       repoId: string,
@@ -527,6 +549,11 @@ export interface PreloadAPI {
     showFileContextMenu(
       params: FileContextMenuParams,
     ): Promise<FileContextMenuAction | null>;
+    // Pop up a native OS context menu for a branch row. Resolves to the chosen
+    // action, or null when the menu is dismissed without a selection.
+    showBranchContextMenu(
+      params: BranchContextMenuParams,
+    ): Promise<BranchContextMenuAction | null>;
   };
   events: {
     onRepoChanged(handler: (repo: RepoInfo | null) => void): () => void;
