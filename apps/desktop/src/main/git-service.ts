@@ -1076,18 +1076,22 @@ export interface CommitResult {
   error?: string;
 }
 
-// Stages every tracked + untracked change, then commits with the given message.
-// Mirrors the "Commit all" affordance of the primary action button.
-export async function commitAll(
+// Stages and commits exactly the given pathspecs. The renderer decides which
+// changed files are checked for inclusion; `paths` is that selection (with the
+// old path included for renames so both sides of the rename are staged).
+export async function commit(
   repoPath: string,
   message: string,
+  paths: string[],
   identity?: GitIdentity | null,
 ): Promise<CommitResult> {
   const git = simpleGit(repoPath);
   try {
-    await git.raw(["add", "-A"]);
     const trimmed = message.trim();
     if (!trimmed) throw new Error("Commit message is required.");
+    if (paths.length === 0) throw new Error("No files selected to commit.");
+    // Stage only the selected paths (handles adds, edits, and deletions).
+    await git.raw(["add", "-A", "--", ...paths]);
     // `-c` sets config for this invocation only, overriding both author and
     // committer without touching the repo's git config.
     const identityArgs = identity
@@ -1098,7 +1102,9 @@ export async function commitAll(
           `user.email=${identity.email}`,
         ]
       : [];
-    await git.raw([...identityArgs, "commit", "-m", trimmed]);
+    // Pin the commit to the selected pathspecs so anything else that may be
+    // staged in the index is left out — only the checked files are committed.
+    await git.raw([...identityArgs, "commit", "-m", trimmed, "--", ...paths]);
     return { ok: true };
   } catch (err) {
     return {

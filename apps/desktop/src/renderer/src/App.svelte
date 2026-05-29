@@ -81,6 +81,23 @@
     };
     window.addEventListener("focus", onFocus);
 
+    // The macOS traffic lights are drawn by the OS at a fixed point size, but
+    // our header scales with the renderer's zoom factor — so on every zoom
+    // change we ask the main process to re-center them. Zoom changes the layout
+    // viewport, which fires 'resize'; coalesce with rAF to avoid spamming during
+    // live window drags. No-op off macOS.
+    let syncQueued = false;
+    const syncWindowControls = (): void => {
+      if (window.api.platform !== "darwin" || syncQueued) return;
+      syncQueued = true;
+      requestAnimationFrame(() => {
+        syncQueued = false;
+        window.api.windowControls.sync();
+      });
+    };
+    window.addEventListener("resize", syncWindowControls);
+    syncWindowControls();
+
     // Configurable sidebar toggle (default Cmd/Ctrl+B). Driving the pane handle
     // directly keeps the layout the single source of truth, same as the trigger
     // buttons; onCollapse/onExpand then sync app.sidebarCollapsed back.
@@ -132,6 +149,7 @@
     return () => {
       offRepoChanged();
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("resize", syncWindowControls);
       window.removeEventListener("keydown", onSidebarHotkey);
       document.removeEventListener("visibilitychange", onVisibility);
       stopPoll();

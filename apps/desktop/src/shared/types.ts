@@ -319,7 +319,10 @@ export interface UserPrefs {
   contextTab?: ContextTab;
   externalEditor?: EditorKind | null;
   externalTerminal?: TerminalKind | null;
-  fileListLayout: FileListLayout;
+  // File list layout is tracked per sidebar tab so the user can keep, say, a
+  // tree in Unstaged and a flat list in Branch.
+  unstagedFileListLayout: FileListLayout;
+  branchFileListLayout: FileListLayout;
   showFileIcons: boolean;
   // When true, moving the file-tree keyboard cursor onto a file opens its diff
   // immediately. When false, arrows only move the focus ring and Enter/Space
@@ -418,7 +421,11 @@ export interface PreloadAPI {
     ): Promise<void>;
     continueMerge(repoId: string): Promise<PullPushResult>;
     abortMerge(repoId: string): Promise<void>;
-    commitAll(repoId: string, message: string): Promise<CommitResult>;
+    commit(
+      repoId: string,
+      message: string,
+      paths: string[],
+    ): Promise<CommitResult>;
     getLastCommit(repoId: string): Promise<LastCommit | null>;
     undoLastCommit(repoId: string): Promise<CommitResult>;
     cloneRepo(url: string): Promise<CloneResult>;
@@ -554,6 +561,10 @@ export interface PreloadAPI {
     showBranchContextMenu(
       params: BranchContextMenuParams,
     ): Promise<BranchContextMenuAction | null>;
+  };
+  windowControls: {
+    // Re-center the macOS traffic lights for the renderer's current zoom factor.
+    sync(): void;
   };
   events: {
     onRepoChanged(handler: (repo: RepoInfo | null) => void): () => void;

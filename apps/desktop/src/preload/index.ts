@@ -116,11 +116,12 @@ const api: PreloadAPI = {
       ) as Promise<PullPushResult>,
     abortMerge: (repoId) =>
       ipcRenderer.invoke("git:abortMerge", repoId) as Promise<void>,
-    commitAll: (repoId, message) =>
+    commit: (repoId, message, paths) =>
       ipcRenderer.invoke(
-        "git:commitAll",
+        "git:commit",
         repoId,
         message,
+        paths,
       ) as Promise<CommitResult>,
     getLastCommit: (repoId) =>
       ipcRenderer.invoke(
@@ -336,6 +337,12 @@ const api: PreloadAPI = {
         "menu:showBranchContextMenu",
         params,
       ) as Promise<BranchContextMenuAction | null>,
+  },
+  windowControls: {
+    // Ask the main process to re-center the macOS traffic lights for the
+    // current zoom factor. The renderer fires this on zoom changes (which the
+    // main 'zoom-changed' event misses for keyboard/menu zoom).
+    sync: () => ipcRenderer.send("window:syncControls"),
   },
   events: {
     onRepoChanged(handler) {

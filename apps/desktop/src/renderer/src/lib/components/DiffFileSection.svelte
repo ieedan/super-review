@@ -802,19 +802,6 @@
           <span class="text-destructive">−{file.deletions}</span>
         {/if}
       {/if}
-      {#if canPreview}
-        <Button
-          variant={showPreview ? 'secondary' : 'outline'}
-          size="sm"
-          onclick={() => (showPreview = !showPreview)}
-        >
-          {#if showPreview}
-            <Code class="size-3.5" /> Markdown
-          {:else}
-            <FileText class="size-3.5" /> Preview
-          {/if}
-        </Button>
-      {/if}
       {#if anyEditorAvailable}
         <Button
           variant="ghost"
@@ -834,6 +821,19 @@
             <VisualStudioIcon class="size-3.5" />
           {:else}
             <Code2 class="size-3.5" />
+          {/if}
+        </Button>
+      {/if}
+      {#if canPreview}
+        <Button
+          variant={showPreview ? 'secondary' : 'outline'}
+          size="sm"
+          onclick={() => (showPreview = !showPreview)}
+        >
+          {#if showPreview}
+            <Code class="size-3.5" /> Markdown
+          {:else}
+            <FileText class="size-3.5" /> Preview
           {/if}
         </Button>
       {/if}

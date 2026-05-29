@@ -6,7 +6,10 @@
     FileEdit,
     Folder,
     FolderOpen,
+    List,
+    ListTree,
     MessageSquare,
+    Minus,
     PanelLeft,
     Search,
     X,
@@ -17,6 +20,7 @@
   import { Button } from './ui/button';
   import { Kbd } from './ui/kbd';
   import * as Tabs from './ui/tabs';
+  import * as ToggleGroup from './ui/toggle-group';
   import * as Sidebar from './ui/sidebar';
   import CommitBox from './CommitBox.svelte';
   import { actions, app, type ContextTab } from '$lib/store.svelte';
@@ -25,7 +29,7 @@
   import { truncatePathPrefix } from '$lib/path-truncate';
   import { matchesFileQuery } from '$lib/file-search';
   import { matchesHotkey } from '@shared/hotkeys';
-  import type { ChangedFile } from '@shared/types';
+  import type { ChangedFile, FileListLayout } from '@shared/types';
 
   // Right-clicking a file row opens a native OS context menu (built in the main
   // process). preventDefault stops the default browser menu from also showing.
@@ -35,7 +39,19 @@
   }
 
   type Node =
-    | { kind: 'folder'; path: string; name: string; depth: number; childCount: number }
+    | {
+        kind: 'folder';
+        path: string;
+        // Display name. With compact folders on, a chain of single-child
+        // folders is shown as one row, so this can be a joined path like
+        // `src/lib/components`.
+        name: string;
+        depth: number;
+        childCount: number;
+        // Every changed file beneath this folder (any depth). Drives the
+        // folder's tri-state commit checkbox in the Unstaged tab.
+        filePaths: string[];
+      }
     | {
         kind: 'file';
         path: string;
@@ -66,12 +82,21 @@
     return app.changedFiles.filter((f) => matchesFileQuery(f.path, q));
   });
 
+  // The list/tree layout is tracked per sidebar tab, so the active tab decides
+  // which persisted setting drives the node layout (and the toggle below).
+  // 'sessions' has no file list; it falls back to the unstaged layout.
+  const fileListLayout = $derived(
+    app.contextTab === 'branch'
+      ? app.branchFileListLayout
+      : app.unstagedFileListLayout,
+  );
+
   // Build the visible flat list of nodes from the changed files. In 'tree'
   // layout, folders are aggregated from the file paths themselves and may be
   // collapsed. In 'list' layout, each file gets its own row at depth 0 with
   // its full path as the display name — no folder rows.
   const nodes = $derived.by<Node[]>(() => {
-    if (app.fileListLayout === 'list') {
+    if (fileListLayout === 'list') {
       const out: Node[] = [];
       for (const f of filteredFiles) {
         const slash = f.path.lastIndexOf('/');
@@ -99,55 +124,103 @@
     // are always visible without forcing the user to expand parents.
     const isSearching = app.fileSearchQuery.trim().length > 0;
     const collapsed = isSearching ? new Set<string>() : app.collapsedFolders;
-    const folderCounts = new Map<string, number>();
-    for (const f of filteredFiles) {
-      const parts = f.path.split('/');
-      for (let i = 1; i < parts.length; i++) {
-        const dir = parts.slice(0, i).join('/');
-        folderCounts.set(dir, (folderCounts.get(dir) ?? 0) + 1);
-      }
-    }
 
-    // The store sorts app.changedFiles VSCode-style (folders before files at
-    // each level), so iterating in order yields the correct tree layout.
-    const out: Node[] = [];
-    const seenFolders = new Set<string>();
-    let skipPrefix: string | null = null;
-
+    // Build a real folder tree from the file paths. The store already sorts
+    // app.changedFiles VSCode-style, so Map insertion order (first-seen) keeps
+    // folders and files in sorted order at every level.
+    type Tmp = {
+      path: string;
+      // Display segments. Compaction appends a single child's segments here so
+      // `src` + `lib` + `components` renders as one `src/lib/components` row.
+      segments: string[];
+      folders: Map<string, Tmp>;
+      files: ChangedFile[];
+      // All descendant file paths, filled in by annotate().
+      filePaths: string[];
+    };
+    const root: Tmp = {
+      path: '',
+      segments: [],
+      folders: new Map(),
+      files: [],
+      filePaths: [],
+    };
     for (const f of filteredFiles) {
       const parts = f.path.split('/');
       const dirs = parts.slice(0, -1);
-      const name = parts[parts.length - 1];
+      let cur = root;
+      let acc = '';
+      for (const d of dirs) {
+        acc = acc ? `${acc}/${d}` : d;
+        let next = cur.folders.get(d);
+        if (!next) {
+          next = {
+            path: acc,
+            segments: [d],
+            folders: new Map(),
+            files: [],
+            filePaths: [],
+          };
+          cur.folders.set(d, next);
+        }
+        cur = next;
+      }
+      cur.files.push(f);
+    }
 
-      if (skipPrefix && f.path.startsWith(skipPrefix + '/')) continue;
-      skipPrefix = null;
+    // Compact folders (VSCode-style): a folder holding nothing but a single
+    // subfolder is merged into that child, so deep single-child chains collapse
+    // into one row. Done bottom-up so chains of any length fold fully.
+    function compact(folder: Tmp): void {
+      for (const child of folder.folders.values()) compact(child);
+      while (folder.files.length === 0 && folder.folders.size === 1) {
+        const child = folder.folders.values().next().value as Tmp;
+        folder.segments = [...folder.segments, ...child.segments];
+        folder.path = child.path;
+        folder.files = child.files;
+        folder.folders = child.folders;
+      }
+    }
+    // Cache each folder's descendant file paths for its commit checkbox.
+    function annotate(folder: Tmp): string[] {
+      const paths = folder.files.map((f) => f.path);
+      for (const child of folder.folders.values())
+        paths.push(...annotate(child));
+      folder.filePaths = paths;
+      return paths;
+    }
+    for (const child of root.folders.values()) {
+      compact(child);
+      annotate(child);
+    }
 
-      for (let i = 0; i < dirs.length; i++) {
-        const dirPath = parts.slice(0, i + 1).join('/');
-        if (seenFolders.has(dirPath)) continue;
-        seenFolders.add(dirPath);
+    // Flatten to the virtualized row list: subfolders first (sorted), then
+    // files, recursing into expanded folders only.
+    const out: Node[] = [];
+    function walk(folder: Tmp, depth: number): void {
+      for (const sub of folder.folders.values()) {
         out.push({
           kind: 'folder',
-          path: dirPath,
-          name: dirs[i],
-          depth: i,
-          childCount: folderCounts.get(dirPath) ?? 0,
+          path: sub.path,
+          name: sub.segments.join('/'),
+          depth,
+          childCount: sub.filePaths.length,
+          filePaths: sub.filePaths,
         });
-        if (collapsed.has(dirPath)) {
-          skipPrefix = dirPath;
-          break;
-        }
+        if (!collapsed.has(sub.path)) walk(sub, depth + 1);
       }
-      if (skipPrefix) continue;
-
-      out.push({
-        kind: 'file',
-        path: f.path,
-        name,
-        depth: dirs.length,
-        file: f,
-      });
+      for (const f of folder.files) {
+        const parts = f.path.split('/');
+        out.push({
+          kind: 'file',
+          path: f.path,
+          name: parts[parts.length - 1],
+          depth,
+          file: f,
+        });
+      }
     }
+    walk(root, 0);
     return out;
   });
 
@@ -164,6 +237,17 @@
   const seenCount = $derived(
     app.changedFiles.filter((f) => app.seenFiles.has(f.path)).length,
   );
+
+  // Commit-inclusion state for the Unstaged tab. A file is included unless the
+  // user has explicitly unchecked it (tracked as an exclusion set on the
+  // store), so newly-changed files start checked.
+  const includedCount = $derived(
+    app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path)).length,
+  );
+  const allIncluded = $derived(
+    app.changedFiles.length > 0 && includedCount === app.changedFiles.length,
+  );
+  const someIncluded = $derived(includedCount > 0 && !allIncluded);
 
   // Animate the header counters ticking toward their new values when animations
   // are enabled. Each Tween's `target` is driven by the underlying derived
@@ -344,6 +428,22 @@
     void actions.toggleSeen(f.path);
   }
 
+  function toggleInclude(e: MouseEvent, f: ChangedFile): void {
+    e.stopPropagation();
+    actions.toggleFileIncludedForCommit(f.path);
+  }
+
+  // Folder checkbox: if every descendant is already included, unchecking it
+  // excludes them all; otherwise (none or some) checking it includes them all.
+  function toggleFolderInclude(
+    e: MouseEvent,
+    filePaths: string[],
+    allIncluded: boolean,
+  ): void {
+    e.stopPropagation();
+    actions.setFilesIncludedForCommit(filePaths, !allIncluded);
+  }
+
   function setTab(v: string): void {
     void actions.setContextTab(v as ContextTab);
   }
@@ -403,7 +503,7 @@
     const checkbox = 14;
     const icon = app.showFileIcons ? 14 + 6 : 0;
     const statsReserve = 70;
-    const gapsAndPadding = 6 + 6 + 8 + 4;
+    const gapsAndPadding = 6 + 6 + 8 + 8;
     return Math.max(0, scrollRootWidth - checkbox - icon - statsReserve - gapsAndPadding);
   });
 
@@ -546,7 +646,7 @@
         </Tabs.List>
       </Tabs.Root>
 
-      {#if app.changedFiles.length > 0}
+      {#if app.changedFiles.length > 0 && app.contextTab !== 'unstaged'}
         <span class="text-xs tabular-nums text-muted-foreground">
           <span class="font-medium">{seenDisplay}/{app.changedFiles.length}</span>
         </span>
@@ -568,9 +668,9 @@
     </div>
 
     {#if app.contextTab !== 'sessions'}
-      <div class="border-b border-border px-2 py-1.5">
+      <div class="flex items-center gap-1.5 border-b border-border pl-1 pr-2 py-1.5">
         <div
-          class="flex h-7 items-center gap-1.5 rounded-md border border-input bg-background px-2"
+          class="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input bg-background px-2"
         >
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input
@@ -593,7 +693,66 @@
             <Kbd title="Press / to search">/</Kbd>
           {/if}
         </div>
+        <!-- Tree/list toggle for the active tab's file list. Single-select
+             groups allow deselecting the active item; a function binding lets
+             us reject the empty value so a layout is always chosen — the getter
+             keeps returning the current layout, snapping the toggle back. -->
+        <ToggleGroup.Root
+          type="single"
+          bind:value={
+            () => fileListLayout,
+            (v) => {
+              if (v) void actions.setFileListLayout(v as FileListLayout);
+            }
+          }
+          variant="outline"
+          size="sm"
+          class="shrink-0"
+        >
+          <ToggleGroup.Item value="list" aria-label="List view" title="List view">
+            <List class="size-3.5" />
+          </ToggleGroup.Item>
+          <ToggleGroup.Item value="tree" aria-label="Tree view" title="Tree view">
+            <ListTree class="size-3.5" />
+          </ToggleGroup.Item>
+        </ToggleGroup.Root>
       </div>
+    {/if}
+
+    {#if app.contextTab === 'unstaged' && app.changedFiles.length > 0}
+      <!-- GitHub-Desktop-style master checkbox: check/uncheck every changed
+           file at once. Custom button (not the Checkbox component) so its box,
+           border and check glyph match the per-row checkboxes exactly. Shows a
+           dash when only some files are checked. -->
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={allIncluded ? true : someIncluded ? 'mixed' : false}
+        aria-label="Select all changed files"
+        onclick={() => actions.setAllIncludedForCommit(!allIncluded)}
+        class="flex h-8 w-full cursor-pointer select-none items-center gap-1.5 border-b border-border px-2 text-left text-xs text-muted-foreground outline-hidden hover:text-foreground"
+      >
+        <span
+          class={cn(
+            'grid size-3.5 shrink-0 place-items-center rounded-[4px] border',
+            allIncluded || someIncluded
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-input',
+          )}
+        >
+          {#if allIncluded}
+            <Check class="size-2.5" />
+          {:else if someIncluded}
+            <Minus class="size-2.5" />
+          {/if}
+        </span>
+        <span class="tabular-nums">
+          {includedCount} of {app.changedFiles.length} changed file{app.changedFiles
+            .length === 1
+            ? ''
+            : 's'}
+        </span>
+      </button>
     {/if}
   </Sidebar.Header>
 
@@ -628,37 +787,76 @@
             {#if node.kind === 'folder'}
               {@const open = !app.collapsedFolders.has(node.path)}
               {@const isFocused = focusedPath === node.path}
-              <button
-                type="button"
+              {@const isUnstaged = app.contextTab === 'unstaged'}
+              <!-- Folder commit checkbox (Unstaged only): tri-state over every
+                   descendant file — checked when all are included, a dash when
+                   only some are, empty when none. -->
+              {@const folderIncluded = node.filePaths.filter((p) => !app.excludedFromCommit.has(p)).length}
+              {@const folderAll = folderIncluded === node.filePaths.length}
+              {@const folderNone = folderIncluded === 0}
+              <div
                 role="treeitem"
                 aria-expanded={open}
                 aria-selected={false}
                 class={cn(
-                  'flex w-full items-center gap-1 px-2 text-left text-xs text-muted-foreground outline-hidden',
+                  'group flex w-full items-center gap-1.5 pr-2 text-xs text-muted-foreground',
                   isFocused ? 'bg-accent/60' : 'hover:bg-accent/50',
                 )}
                 style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 8}px"
-                onclick={() => {
-                  focusedPath = node.path;
-                  actions.toggleFolder(node.path);
-                }}
               >
-                <ChevronRight
-                  class={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')}
-                />
-                {#if open}
-                  <FolderOpen class="size-3.5 shrink-0 text-muted-foreground" />
-                {:else}
-                  <Folder class="size-3.5 shrink-0 text-muted-foreground" />
+                {#if isUnstaged}
+                  <button
+                    class={cn(
+                      'grid size-3.5 shrink-0 place-items-center rounded-[4px] border outline-hidden',
+                      folderNone
+                        ? 'border-input hover:border-foreground'
+                        : 'border-primary bg-primary text-primary-foreground',
+                    )}
+                    onclick={(e) => toggleFolderInclude(e, node.filePaths, folderAll)}
+                    aria-label={folderAll ? 'Exclude folder from commit' : 'Include folder in commit'}
+                    role="checkbox"
+                    aria-checked={folderAll ? true : folderNone ? false : 'mixed'}
+                    type="button"
+                  >
+                    {#if folderAll}
+                      <Check class="size-2.5" />
+                    {:else if !folderNone}
+                      <Minus class="size-2.5" />
+                    {/if}
+                  </button>
                 {/if}
-                <span class="truncate">{node.name}</span>
-              </button>
+                <button
+                  type="button"
+                  class="flex h-full min-w-0 flex-1 items-center gap-1 text-left outline-hidden"
+                  onclick={() => {
+                    focusedPath = node.path;
+                    actions.toggleFolder(node.path);
+                  }}
+                >
+                  <ChevronRight
+                    class={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')}
+                  />
+                  {#if open}
+                    <FolderOpen class="size-3.5 shrink-0 text-muted-foreground" />
+                  {:else}
+                    <Folder class="size-3.5 shrink-0 text-muted-foreground" />
+                  {/if}
+                  <span class="truncate">{node.name}</span>
+                </button>
+              </div>
             {:else}
               {@const isSeen = app.seenFiles.has(node.file.path)}
               {@const iconName = languageIconForPath(node.file.path)}
               {@const isActive = app.selectedFile === node.file.path}
               {@const isFocused = focusedPath === node.file.path}
               {@const threadCount = (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo).length}
+              <!-- Unstaged rows show a commit-inclusion checkbox instead of the
+                   "seen" indicator; the seen flow still drives collapse, but its
+                   state isn't surfaced here. `seenVisual` gates the strikethrough
+                   so unstaged filenames never read as "seen". -->
+              {@const isUnstaged = app.contextTab === 'unstaged'}
+              {@const isIncluded = !app.excludedFromCommit.has(node.file.path)}
+              {@const seenVisual = isSeen && !isUnstaged}
               <div
                 role="treeitem"
                 aria-selected={isActive}
@@ -671,24 +869,44 @@
                       ? 'bg-accent/60'
                       : 'hover:bg-accent/50',
                 )}
-                style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 4}px"
+                style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 12 + 6}px"
                 oncontextmenu={(e) => onRowContextMenu(e, node.file)}
               >
-                <button
-                  class={cn(
-                    'grid size-3.5 shrink-0 place-items-center rounded border outline-hidden',
-                    isSeen
-                      ? 'border-success bg-success text-success-foreground'
-                      : 'border-border hover:border-foreground',
-                  )}
-                  onclick={(e) => toggleSeen(e, node.file)}
-                  aria-label={isSeen ? 'Mark unseen' : 'Mark seen'}
-                  type="button"
-                >
-                  {#if isSeen}
-                    <Check class="size-2.5" />
-                  {/if}
-                </button>
+                {#if isUnstaged}
+                  <button
+                    class={cn(
+                      'grid size-3.5 shrink-0 place-items-center rounded-[4px] border outline-hidden',
+                      isIncluded
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-input hover:border-foreground',
+                    )}
+                    onclick={(e) => toggleInclude(e, node.file)}
+                    aria-label={isIncluded ? 'Exclude from commit' : 'Include in commit'}
+                    role="checkbox"
+                    aria-checked={isIncluded}
+                    type="button"
+                  >
+                    {#if isIncluded}
+                      <Check class="size-2.5" />
+                    {/if}
+                  </button>
+                {:else}
+                  <button
+                    class={cn(
+                      'grid size-3.5 shrink-0 place-items-center rounded border outline-hidden',
+                      isSeen
+                        ? 'border-success bg-success text-success-foreground'
+                        : 'border-border hover:border-foreground',
+                    )}
+                    onclick={(e) => toggleSeen(e, node.file)}
+                    aria-label={isSeen ? 'Mark unseen' : 'Mark seen'}
+                    type="button"
+                  >
+                    {#if isSeen}
+                      <Check class="size-2.5" />
+                    {/if}
+                  </button>
+                {/if}
                 <button
                   class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left outline-hidden"
                   onclick={() => pick(node.file.path)}
@@ -710,9 +928,9 @@
                          needed — that's the whole point of doing this in JS,
                          since text-overflow re-flows every row on every
                          pixel of a sidebar resize. -->
-                    <span class={cn('flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-xs', isSeen && 'text-muted-foreground line-through')}>{#if displayPrefix}<span class="text-muted-foreground">{displayPrefix}</span>{/if}<span class="shrink-0">{node.name}</span></span>
+                    <span class={cn('flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-xs', seenVisual && 'text-muted-foreground line-through')}>{#if displayPrefix}<span class="text-muted-foreground">{displayPrefix}</span>{/if}<span class="shrink-0">{node.name}</span></span>
                   {:else}
-                    <span class={cn('truncate text-xs', isSeen && 'text-muted-foreground line-through')}>
+                    <span class={cn('truncate text-xs', seenVisual && 'text-muted-foreground line-through')}>
                       {node.name}
                     </span>
                   {/if}

@@ -52,12 +52,7 @@
   } from '@shared/hotkeys';
   import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM } from '@shared/types';
   import { cn } from '$lib/utils';
-  import type {
-    EditorKind,
-    FileListLayout,
-    TerminalKind,
-    ViewMode,
-  } from '@shared/types';
+  import type { EditorKind, TerminalKind, ViewMode } from '@shared/types';
 
   type SettingsTab =
     | 'accounts'
@@ -109,7 +104,6 @@
 
   // Draft state — snapshot when the dialog opens, applied on Save.
   let draftViewMode = $state<ViewMode>('split');
-  let draftFileListLayout = $state<FileListLayout>('tree');
   let draftShowFileIcons = $state<boolean>(true);
   let draftAnimationsEnabled = $state<boolean>(false);
   let draftOpenFileOnArrowNav = $state<boolean>(true);
@@ -126,7 +120,6 @@
   $effect(() => {
     if (dialogOpen) {
       draftViewMode = app.viewMode;
-      draftFileListLayout = app.fileListLayout;
       draftShowFileIcons = app.showFileIcons;
       draftAnimationsEnabled = app.animationsEnabled;
       draftOpenFileOnArrowNav = app.openFileOnArrowNav;
@@ -200,9 +193,6 @@
     const promises: Promise<unknown>[] = [];
     if (draftViewMode !== app.viewMode) {
       promises.push(actions.setViewMode(draftViewMode));
-    }
-    if (draftFileListLayout !== app.fileListLayout) {
-      promises.push(actions.setFileListLayout(draftFileListLayout));
     }
     if (draftShowFileIcons !== app.showFileIcons) {
       promises.push(actions.setShowFileIcons(draftShowFileIcons));
@@ -467,7 +457,7 @@
                 class="mt-3 overflow-hidden rounded-lg border border-border bg-background py-1"
                 style="font-family: {uiFontCss(draftUiFont)}"
               >
-                <FileListPreview layout={draftFileListLayout} showIcons={draftShowFileIcons} />
+                <FileListPreview layout="tree" showIcons={draftShowFileIcons} />
               </div>
             </div>
 
@@ -535,48 +525,6 @@
             </div>
 
             <div>
-              <h3 class="text-base font-semibold">File list</h3>
-              <p class="mt-1 text-xs text-muted-foreground">
-                Choose how changed files are organized in the sidebar.
-              </p>
-
-              <div class="mt-4 grid grid-cols-2 gap-3">
-                {#each [{ layout: 'tree' as FileListLayout, label: 'Tree' }, { layout: 'list' as FileListLayout, label: 'List' }] as opt (opt.layout)}
-                  {@const active = draftFileListLayout === opt.layout}
-                  <button
-                    type="button"
-                    onclick={() => (draftFileListLayout = opt.layout)}
-                    class={cn(
-                      'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-                      active
-                        ? 'border-primary'
-                        : 'border-border hover:border-muted-foreground/50',
-                    )}
-                  >
-                    <div
-                      class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-                    >
-                      <span
-                        class={cn(
-                          'grid size-3.5 place-items-center rounded-full border',
-                          active
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : 'border-border',
-                        )}
-                      >
-                        {#if active}<Check class="size-2.5" />{/if}
-                      </span>
-                      {opt.label}
-                    </div>
-                    <div class="w-full bg-background py-1">
-                      <FileListPreview layout={opt.layout} showIcons={draftShowFileIcons} />
-                    </div>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div>
               <h3 class="text-base font-semibold">File icons</h3>
               <p class="mt-1 text-xs text-muted-foreground">
                 Show language-specific icons next to file names in the sidebar.
@@ -611,7 +559,7 @@
                       {opt.label}
                     </div>
                     <div class="w-full bg-background py-1">
-                      <FileListPreview layout={draftFileListLayout} showIcons={opt.value} />
+                      <FileListPreview layout="tree" showIcons={opt.value} />
                     </div>
                   </button>
                 {/each}

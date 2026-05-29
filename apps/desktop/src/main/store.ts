@@ -44,7 +44,8 @@ const defaults: Schema = {
   prefs: {
     viewMode: 'split',
     theme: 'dark',
-    fileListLayout: 'tree',
+    unstagedFileListLayout: 'tree',
+    branchFileListLayout: 'tree',
     showFileIcons: true,
     openFileOnArrowNav: true,
     codeFont: 'system',

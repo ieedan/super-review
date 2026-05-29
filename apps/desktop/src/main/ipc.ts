@@ -34,7 +34,7 @@ import {
   checkout,
   checkoutPR,
   cloneRepo,
-  commitAll,
+  commit,
   continueMerge,
   createBranch,
   deleteBranch,
@@ -397,11 +397,16 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
-    "git:commitAll",
-    async (_e, repoId: string, message: string): Promise<CommitResult> => {
+    "git:commit",
+    async (
+      _e,
+      repoId: string,
+      message: string,
+      paths: string[],
+    ): Promise<CommitResult> => {
       const repo = repoOrThrow(repoId);
       const identity = gh.resolveCommitIdentity(repo.githubAccountId);
-      return commitAll(repo.path, message, identity);
+      return commit(repo.path, message, paths, identity);
     },
   );
 

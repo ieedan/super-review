@@ -68,9 +68,17 @@ interface AppState {
   unstagedFileCount: number;
   selectedFile: string | null;
   seenFiles: Set<string>;
+  // Working-tree files explicitly unchecked in the Unstaged tab so they're
+  // left out of the next commit. Tracking exclusions (rather than inclusions)
+  // means everything is committed by default and newly-changed files show up
+  // checked — matching GitHub Desktop. Only meaningful for the working tree.
+  excludedFromCommit: Set<string>;
   collapsedFiles: Set<string>;
   viewMode: ViewMode;
-  fileListLayout: FileListLayout;
+  // File list layout per sidebar tab. The active tab decides which one the
+  // sidebar's tree/list toggle reads and writes.
+  unstagedFileListLayout: FileListLayout;
+  branchFileListLayout: FileListLayout;
   showFileIcons: boolean;
   openFileOnArrowNav: boolean;
   maxDiffLines: number;
@@ -201,9 +209,11 @@ const initial: AppState = {
   unstagedFileCount: 0,
   selectedFile: null,
   seenFiles: new Set(),
+  excludedFromCommit: new Set(),
   collapsedFiles: new Set(),
   viewMode: "split",
-  fileListLayout: "tree",
+  unstagedFileListLayout: "tree",
+  branchFileListLayout: "tree",
   showFileIcons: true,
   openFileOnArrowNav: true,
   maxDiffLines: 1500,
@@ -718,6 +728,20 @@ async function refreshFiles(): Promise<void> {
     app.collapsedFiles = collapsedSet;
     app.selectedFile = nextSelected;
 
+    // Drop commit-exclusions for files that are no longer in the working tree
+    // (committed, discarded, or reverted) so the "select all" state stays
+    // accurate. Only prune against the working-tree list — the branch/PR
+    // contexts list different files and would wrongly clear the selection.
+    if (ctx.kind === "workingTree" && app.excludedFromCommit.size > 0) {
+      const present = new Set(files.map((f) => f.path));
+      const pruned = new Set(
+        [...app.excludedFromCommit].filter((p) => present.has(p)),
+      );
+      if (pruned.size !== app.excludedFromCommit.size) {
+        app.excludedFromCommit = pruned;
+      }
+    }
+
     filesCache.set(cacheKey, {
       changedFiles: files,
       seenFiles: new Set(seenSet),
@@ -752,7 +776,8 @@ export const actions = {
   async init(): Promise<void> {
     app.prefs = await window.api.state.getPrefs();
     app.viewMode = app.prefs.viewMode;
-    app.fileListLayout = app.prefs.fileListLayout;
+    app.unstagedFileListLayout = app.prefs.unstagedFileListLayout;
+    app.branchFileListLayout = app.prefs.branchFileListLayout;
     app.showFileIcons = app.prefs.showFileIcons;
     app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
     app.maxDiffLines = app.prefs.maxDiffLines;
@@ -894,6 +919,7 @@ export const actions = {
       repoFrecency.use(repo.id);
       applyContextTab("unstaged");
       app.diffContext = { kind: "workingTree" };
+      app.excludedFromCommit = new Set();
       app.prs = [];
       app.prsHasMore = false;
       prsPage = 0;
@@ -1015,6 +1041,36 @@ export const actions = {
     const ctx = $state.snapshot(app.diffContext) as DiffContext;
     await window.api.state.clearSeen(app.activeRepo.id, diffContextKey(ctx));
     app.seenFiles = new Set();
+  },
+
+  // Toggle whether a working-tree file is included in the next commit. Kept in
+  // memory only — the selection resets when the repo changes or a file leaves
+  // the working tree (see refreshFiles / switchRepo).
+  toggleFileIncludedForCommit(filePath: string, included?: boolean): void {
+    const isIncluded = included ?? app.excludedFromCommit.has(filePath);
+    const next = new Set(app.excludedFromCommit);
+    if (isIncluded) next.delete(filePath);
+    else next.add(filePath);
+    app.excludedFromCommit = next;
+  },
+
+  // The header "select all" checkbox. Clearing the exclusion set includes
+  // everything; excluding every current file unchecks the lot.
+  setAllIncludedForCommit(included: boolean): void {
+    app.excludedFromCommit = included
+      ? new Set()
+      : new Set(app.changedFiles.map((f) => f.path));
+  },
+
+  // Include/exclude a whole set of files at once — backs the folder checkboxes
+  // in tree view, which check/uncheck every file beneath them.
+  setFilesIncludedForCommit(paths: string[], included: boolean): void {
+    const next = new Set(app.excludedFromCommit);
+    for (const p of paths) {
+      if (included) next.delete(p);
+      else next.add(p);
+    }
+    app.excludedFromCommit = next;
   },
 
   async toggleFileCollapsed(
@@ -1500,13 +1556,24 @@ export const actions = {
     }
   },
 
-  // Stage everything and create a commit. Pushing is a separate, explicit
+  // Commit the checked working-tree files. Pushing is a separate, explicit
   // step driven by the header push button.
   async commit(summary: string, description?: string): Promise<boolean> {
     if (!app.activeRepo || app.push.inProgress) return false;
     const repoId = app.activeRepo.id;
     const trimmedSummary = summary.trim();
     if (!trimmedSummary) return false;
+    // Everything not explicitly unchecked is included. For renames we stage
+    // both sides so git records the move rather than an add + orphaned delete.
+    const included = app.changedFiles.filter(
+      (f) => !app.excludedFromCommit.has(f.path),
+    );
+    if (included.length === 0) return false;
+    const paths: string[] = [];
+    for (const f of included) {
+      paths.push(f.path);
+      if (f.oldPath) paths.push(f.oldPath);
+    }
     const trimmedDescription = description?.trim() ?? "";
     const message = trimmedDescription
       ? `${trimmedSummary}\n\n${trimmedDescription}`
@@ -1518,7 +1585,7 @@ export const actions = {
       error: null,
     };
     try {
-      const commit = await window.api.git.commitAll(repoId, message);
+      const commit = await window.api.git.commit(repoId, message, paths);
       if (!commit.ok) throw new Error(commit.error ?? "Commit failed.");
       app.push.stage = "done";
       await Promise.all([
@@ -1938,9 +2005,17 @@ export const actions = {
     app.prefs = await window.api.state.setPrefs({ viewMode: mode });
   },
 
+  // Set the file list layout for the active sidebar tab. Unstaged and branch
+  // each persist their own layout; the 'sessions' tab has no file list so it
+  // falls through to the unstaged setting harmlessly.
   async setFileListLayout(layout: FileListLayout): Promise<void> {
-    app.fileListLayout = layout;
-    app.prefs = await window.api.state.setPrefs({ fileListLayout: layout });
+    if (app.contextTab === "branch") {
+      app.branchFileListLayout = layout;
+      app.prefs = await window.api.state.setPrefs({ branchFileListLayout: layout });
+    } else {
+      app.unstagedFileListLayout = layout;
+      app.prefs = await window.api.state.setPrefs({ unstagedFileListLayout: layout });
+    }
   },
 
   async setShowFileIcons(show: boolean): Promise<void> {
