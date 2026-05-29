@@ -12,8 +12,8 @@ import { actions, app, getCachedDiff, setCachedDiff } from '$lib/store.svelte';
 import { diffContextKey } from '@shared/diff-context';
 import type { ChangedFile, DiffContext, DiffData } from '@shared/types';
 
-const ALL_HIGHLIGHT = 'slr-find-match';
-const CURRENT_HIGHLIGHT = 'slr-find-current';
+const ALL_HIGHLIGHT = 'sr-find-match';
+const CURRENT_HIGHLIGHT = 'sr-find-current';
 
 const HIGHLIGHT_CSS = `
 ::highlight(${ALL_HIGHLIGHT}) {
@@ -163,7 +163,7 @@ function ensureShadowHighlightStyle(shadow: ShadowRoot): void {
     }
   }
   const styleEl = document.createElement('style');
-  styleEl.setAttribute('data-slr-find', '');
+  styleEl.setAttribute('data-sr-find', '');
   styleEl.textContent = HIGHLIGHT_CSS;
   shadow.appendChild(styleEl);
   styledShadowRoots.add(shadow);

@@ -1,5 +1,5 @@
-appId: com.superlocalreview.app
-productName: Super Local Review
+appId: dev.superreview.app
+productName: Super Review
 directories:
   output: release
   buildResources: build

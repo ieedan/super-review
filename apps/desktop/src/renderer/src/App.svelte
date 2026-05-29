@@ -126,7 +126,7 @@
     {#if !app.activeRepo}
       <div class="grid h-full w-full place-items-center text-center">
         <div class="max-w-md">
-          <h1 class="text-2xl font-semibold">Super Local Review</h1>
+          <h1 class="text-2xl font-semibold">Super Review</h1>
           <p class="mt-2 text-sm text-muted-foreground">
             Open a git repository to start reviewing changes.
           </p>
@@ -141,7 +141,7 @@
     {:else}
       <Resizable.PaneGroup
         direction="horizontal"
-        autoSaveId="slr-main-layout"
+        autoSaveId="sr-main-layout"
         class="h-full w-full"
       >
         <Resizable.Pane

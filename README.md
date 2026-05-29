@@ -1,4 +1,4 @@
-# super-local-review
+# super-review
 
 Review tools are so bad you don't even want to look at the code. This fixes that.
 
@@ -44,7 +44,7 @@ pnpm package:dir     # unpacked build (faster for smoke tests)
 ```
 .
 ├── apps/
-│   └── desktop/         # Electron + Svelte 5 desktop app (@super-local-review/desktop)
+│   └── desktop/         # Electron + Svelte 5 desktop app (@super-review/desktop)
 │       └── src/
 │           ├── main/            # Electron main process (Node.js)
 │           │   ├── index.ts     # app + window lifecycle
