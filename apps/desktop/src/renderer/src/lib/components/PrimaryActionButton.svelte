@@ -16,8 +16,10 @@
 	import type { PRCheck } from '@shared/types';
 
 	const status = $derived(app.pushStatus);
-	const busy = $derived(app.push.inProgress);
 	const stage = $derived(app.push.stage);
+	// While stage is 'conflicts' the flow is paused waiting on the conflict
+	// dialog, not actively working — don't spin (this isn't even a push).
+	const busy = $derived(app.push.inProgress && stage !== 'conflicts');
 
 	type Mode = 'push' | 'go-pr' | 'create-pr' | 'none';
 

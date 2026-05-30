@@ -605,11 +605,18 @@
 		return true;
 	}
 
+	// The diff-reload token last applied here. When the store bumps the token
+	// (after a merge/pull/etc. rewrites files in place) this section re-fetches
+	// even though its context is unchanged.
+	let appliedReloadToken = -1;
+
 	// Fetch the diff the first time the section enters view (and stays expanded).
 	// Hydrates from the cross-tab diff cache when available so switching back
 	// to a context renders instantly, then refreshes in the background. The
 	// actual DOM render is kicked off by the render effect below.
 	$effect(() => {
+		// Read first so the effect re-runs when an op forces a reload.
+		const reloadToken = app.diffReloadToken;
 		if (!inView || !expanded || !app.activeRepo) return;
 		// Don't fetch hidden diffs — wait until the user clicks "Load diff". When
 		// they do, `deferred` flips false and this effect re-runs to fetch.
@@ -619,15 +626,18 @@
 		const repo = app.activeRepo;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
 		const ctxKey = diffContextKey(ctx);
+		// A bumped token means this file was rewritten in place — re-fetch even
+		// though the context matches what's already loaded.
+		const forced = reloadToken !== appliedReloadToken;
 		// Already up to date for this context, or a fetch is in flight.
-		if (diffData && loadedCtxKey === ctxKey) return;
-		if (loading) return;
+		if (diffData && loadedCtxKey === ctxKey && !forced) return;
+		if (loading && !forced) return;
+		appliedReloadToken = reloadToken;
 
 		const cached = getCachedDiff(repo.id, ctx, file.path);
-		// Always drop stale DOM/render state when the context changed — the cached
-		// hit (if any) belongs to a different context's data, so showing it would
-		// be misleading.
-		if (loadedCtxKey && loadedCtxKey !== ctxKey) clearLoadedDiff();
+		// Drop stale DOM/render state when the context changed or a reload was
+		// forced — the cached hit (if any) no longer reflects the file on disk.
+		if (forced || (loadedCtxKey && loadedCtxKey !== ctxKey)) clearLoadedDiff();
 
 		if (cached) {
 			setLoadedDiff(cached, ctxKey);

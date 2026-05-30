@@ -3,6 +3,7 @@
 	import BranchPicker from './BranchPicker.svelte';
 	import GithubSignIn from './GithubSignIn.svelte';
 	import PrimaryActionButton from './PrimaryActionButton.svelte';
+	import UpdateBranchButton from './UpdateBranchButton.svelte';
 	import EditorButton from './EditorButton.svelte';
 	import TerminalButton from './TerminalButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
@@ -30,6 +31,7 @@
 	<div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
 		{#if app.activeRepo}
 			<RefreshButton />
+			<UpdateBranchButton />
 			<EditorButton />
 			<TerminalButton />
 			<PrimaryActionButton />

@@ -2,7 +2,13 @@ import { app, BrowserWindow, ipcMain, nativeImage, session, shell } from 'electr
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpc } from './ipc.js';
+import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
+
+// Set before the app menu is built so macOS shows our name (not "Electron") in
+// the app menu and its About/Hide/Quit items. Matches electron-builder's
+// productName so dev and packaged builds read the same.
+app.setName('Super Review');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -110,6 +116,7 @@ void app.whenReady().then(() => {
 	}
 	setupPermissions();
 	registerIpc();
+	setupAppMenu();
 	createWindow();
 	initAutoUpdates();
 	app.on('activate', () => {

@@ -6,6 +6,7 @@
 	import * as Popover from './ui/popover';
 	import * as Command from './ui/command';
 	import { actions, app } from '$lib/store.svelte';
+	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import { cn, repoPlaceholder, groupReposByOwner } from '$lib/utils';
 	import type { RepoInfo } from '@shared/types';
 
@@ -35,8 +36,8 @@
 	}
 
 	// Right-click a repo row: pop the native OS context menu and run the chosen
-	// action. "Remove" only de-registers the repo from the app — it never touches
-	// the files on disk.
+	// action. "Remove" de-registers the repo from the app and, by default, leaves
+	// the files on disk — the confirmation offers an opt-in to trash the folder.
 	async function showContextMenu(e: MouseEvent, repo: RepoInfo): Promise<void> {
 		e.preventDefault();
 		const revealLabel =
@@ -50,12 +51,38 @@
 			revealLabel
 		});
 		if (action === 'remove') {
-			await actions.removeRepo(repo.id);
+			confirmRemove(repo);
 		} else if (action === 'copyPath') {
 			await actions.copyToClipboard(repo.path);
 		} else if (action === 'reveal') {
 			await window.api.shell.showItemInFolder(repo.path);
 		}
+	}
+
+	// Mirror GitHub Desktop's remove dialog: a warning icon, the repo's path, and
+	// an opt-in checkbox to also move the repo's folder to the OS trash.
+	function confirmRemove(repo: RepoInfo): void {
+		const trashLabel = app.platform === 'win32' ? 'Recycle Bin' : 'Trash';
+		confirmDelete({
+			title: 'Remove repository',
+			icon: 'warning',
+			description: `Are you sure you want to remove the repository "${repo.name}" from super-review?`,
+			details: {
+				caption: 'The repository will be removed from super-review:',
+				value: repo.path
+			},
+			checkbox: {
+				label: `Also move this repository to ${trashLabel}`,
+				default: false
+			},
+			confirm: { text: 'Remove' },
+			onConfirm: async ({ checked }) => {
+				await actions.removeRepo(repo.id, checked);
+				// Close the picker once the removal lands so the user drops straight
+				// onto the newly-active repo instead of back into the open list.
+				open = false;
+			}
+		});
 	}
 
 	function placeholderFor(repo: RepoInfo | null | undefined): {

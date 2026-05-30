@@ -1,20 +1,32 @@
 <script lang="ts">
-	import { AlertTriangle, Check, ExternalLink, X } from 'lucide-svelte';
+	import { AlertTriangle, Check, SquarePen, X } from 'lucide-svelte';
 	import { Button } from './ui/button';
 	import * as Dialog from './ui/dialog';
-	import { actions, app, effectiveEditor } from '$lib/store.svelte';
+	import { actions, app, effectiveEditor, EDITOR_LABELS } from '$lib/store.svelte';
 
 	const editor = $derived(effectiveEditor());
-	const allResolved = $derived(app.conflictFiles.length === 0);
 	const open = $derived(app.push.stage === 'conflicts');
 	const isPullOnly = $derived(app.push.intent === 'pull');
 
+	// A file is resolved once its conflict markers are gone — recheckConflicts
+	// (polled below) stages it and drops it from the unresolved set. The dialog
+	// keeps showing every file, flipping its icon from alert to check.
+	const unresolved = $derived(new Set(app.conflictUnresolved));
+	const allResolved = $derived(app.conflictFiles.length > 0 && unresolved.size === 0);
+
+	const editorLabel = $derived(editor ? EDITOR_LABELS[editor] : null);
+
+	// While the dialog is open, poll for resolution so editing a file to remove
+	// its markers (in the editor) flips it to a check without any extra click.
+	$effect(() => {
+		if (!open) return;
+		void actions.recheckConflicts();
+		const id = setInterval(() => void actions.recheckConflicts(), 1000);
+		return () => clearInterval(id);
+	});
+
 	async function openFile(file: string): Promise<void> {
 		await actions.openInEditor(file);
-	}
-
-	async function resolve(file: string): Promise<void> {
-		await actions.resolveConflict(file);
 	}
 </script>
 
@@ -23,6 +35,7 @@
 		showCloseButton={false}
 		onInteractOutside={(e) => e.preventDefault()}
 		onEscapeKeydown={(e) => e.preventDefault()}
+		onFocusOutside={(e) => e.preventDefault()}
 		class="max-h-[80vh] w-[560px] max-w-[90vw] gap-0 overflow-hidden p-0"
 	>
 		<Dialog.Header class="flex flex-row items-start gap-2 space-y-0 border-b border-border p-4">
@@ -30,47 +43,44 @@
 			<div class="flex-1">
 				<Dialog.Title class="text-sm font-semibold">Resolve merge conflicts</Dialog.Title>
 				<Dialog.Description class="mt-1 text-xs">
-					Pulling from origin produced conflicts. Open each file in your editor, resolve the
-					markers, then mark it resolved.
+					Merging produced conflicts. Open each file{editorLabel ? ` in ${editorLabel}` : ''},
+					resolve the markers, and save — each file is checked off automatically once its markers
+					are gone.
 					{#if isPullOnly}
-						We'll finish the merge.
+						Then we'll finish the merge.
 					{:else}
-						We'll finish the merge and continue the push.
+						Then we'll finish the merge and continue the push.
 					{/if}
 				</Dialog.Description>
 			</div>
 		</Dialog.Header>
 
 		<div class="max-h-[50vh] overflow-auto p-2">
-			{#if allResolved}
-				<p class="px-2 py-3 text-xs text-muted-foreground">
-					All files resolved. Continue the merge to finish.
-				</p>
-			{/if}
 			{#each app.conflictFiles as file (file)}
+				{@const resolved = !unresolved.has(file)}
 				<div class="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-accent/50">
-					<AlertTriangle class="size-3.5 shrink-0 text-warning" />
+					{#if resolved}
+						<Check class="size-3.5 shrink-0 text-success" aria-label="Resolved" />
+					{:else}
+						<AlertTriangle class="size-3.5 shrink-0 text-warning" aria-label="Unresolved" />
+					{/if}
 					<span class="flex-1 truncate font-mono text-xs" title={file}>{file}</span>
 					<Button
-						variant="ghost"
+						variant="outline"
 						size="sm"
 						onclick={() => openFile(file)}
 						disabled={!editor}
-						title={editor ? `Open in ${editor}` : 'No editor configured'}
+						title={editor ? `Open in ${editorLabel}` : 'No editor configured'}
 					>
-						<ExternalLink class="size-3.5" />
-						<span class="hidden sm:inline">Open</span>
-					</Button>
-					<Button variant="outline" size="sm" onclick={() => resolve(file)}>
-						<Check class="size-3.5" />
-						Mark resolved
+						<SquarePen class="size-3.5" />
+						{editorLabel ? `Resolve in ${editorLabel}` : 'Resolve'}
 					</Button>
 				</div>
 			{/each}
 		</div>
 
 		<Dialog.Footer
-			class="flex flex-row items-center justify-between gap-2 border-t border-border p-3 sm:justify-between"
+			class="mx-0 mb-0 flex-row items-center justify-between border-t border-border p-3 sm:justify-between"
 		>
 			<Button variant="ghost" size="sm" onclick={() => actions.abortMerge()}>
 				<X class="size-3.5" /> Abort merge

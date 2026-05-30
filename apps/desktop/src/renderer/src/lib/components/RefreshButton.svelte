@@ -58,7 +58,11 @@
 		if (mode === 'pull') {
 			void actions.pull();
 		} else {
-			void actions.refresh();
+			// An explicit refresh means "go get the latest now" — fetch origin so the
+			// behind count and branch base diffs update, rather than only re-reading
+			// stale local state (which left the Pull affordance dependent on whenever
+			// the background poll last fetched).
+			void actions.fetchAndRefresh();
 		}
 	}
 </script>

@@ -2,8 +2,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
 	BranchContextMenuAction,
 	BranchInfo,
+	BranchMenuAction,
+	BranchMenuState,
 	ChangedFile,
 	CloneResult,
+	CreateRepoDefaults,
 	CommitDraft,
 	CommitResult,
 	CreateBranchResult,
@@ -37,9 +40,16 @@ const api: PreloadAPI = {
 	repos: {
 		list: () => ipcRenderer.invoke('repos:list') as Promise<RepoInfo[]>,
 		openPicker: () => ipcRenderer.invoke('repos:openPicker') as Promise<RepoInfo | null>,
+		addByPath: (path) => ipcRenderer.invoke('repos:addByPath', path) as Promise<RepoInfo | null>,
 		openFolder: () => ipcRenderer.invoke('repos:openFolder') as Promise<RepoInfo[]>,
-		createPicker: () => ipcRenderer.invoke('repos:createPicker') as Promise<RepoInfo | null>,
-		remove: (id) => ipcRenderer.invoke('repos:remove', id) as Promise<void>,
+		chooseDirectory: () => ipcRenderer.invoke('repos:chooseDirectory') as Promise<string | null>,
+		isGitRepo: (path) => ipcRenderer.invoke('repos:isGitRepo', path) as Promise<boolean>,
+		getCreateDefaults: () =>
+			ipcRenderer.invoke('repos:getCreateDefaults') as Promise<CreateRepoDefaults>,
+		createRepo: (options) =>
+			ipcRenderer.invoke('repos:createRepo', options) as Promise<RepoInfo | null>,
+		remove: (id, moveToTrash) =>
+			ipcRenderer.invoke('repos:remove', id, moveToTrash) as Promise<void>,
 		setActive: (id) => ipcRenderer.invoke('repos:setActive', id) as Promise<RepoInfo | null>,
 		getActive: () => ipcRenderer.invoke('repos:getActive') as Promise<RepoInfo | null>
 	},
@@ -70,7 +80,11 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:getPushStatus', repoId) as Promise<PushStatus>,
 		pull: (repoId) => ipcRenderer.invoke('git:pull', repoId) as Promise<PullPushResult>,
 		push: (repoId) => ipcRenderer.invoke('git:push', repoId) as Promise<PullPushResult>,
+		mergeIntoCurrent: (repoId, ref) =>
+			ipcRenderer.invoke('git:mergeIntoCurrent', repoId, ref) as Promise<PullPushResult>,
 		getConflicts: (repoId) => ipcRenderer.invoke('git:getConflicts', repoId) as Promise<string[]>,
+		recheckConflicts: (repoId, files) =>
+			ipcRenderer.invoke('git:recheckConflicts', repoId, files) as Promise<string[]>,
 		stageFile: (repoId, filePath) =>
 			ipcRenderer.invoke('git:stageFile', repoId, filePath) as Promise<void>,
 		discardChanges: (repoId, filePath, oldPath) =>
@@ -232,7 +246,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke(
 				'menu:showRepoContextMenu',
 				params
-			) as Promise<RepoContextMenuAction | null>
+			) as Promise<RepoContextMenuAction | null>,
+		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state)
 	},
 	windowControls: {
 		// Ask the main process to re-center the macOS traffic lights for the
@@ -246,6 +261,16 @@ const api: PreloadAPI = {
 				handler(payload);
 			ipcRenderer.on('repos:active-changed', listener);
 			return () => ipcRenderer.off('repos:active-changed', listener);
+		},
+		onBranchMenuAction(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, action: BranchMenuAction) => handler(action);
+			ipcRenderer.on('menu:branch-action', listener);
+			return () => ipcRenderer.off('menu:branch-action', listener);
+		},
+		onRepoTrashFailed(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, name: string) => handler(name);
+			ipcRenderer.on('repos:trash-failed', listener);
+			return () => ipcRenderer.off('repos:trash-failed', listener);
 		}
 	}
 };
