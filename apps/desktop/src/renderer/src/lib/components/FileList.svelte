@@ -24,6 +24,7 @@
   import * as Sidebar from './ui/sidebar';
   import CommitBox from './CommitBox.svelte';
   import SessionsList from './SessionsList.svelte';
+  import SessionTour from './SessionTour.svelte';
   import HarnessLogo from './HarnessLogo.svelte';
   import { harnessLabel } from '$lib/harness-logos';
   import { actions, app, type ContextTab } from '$lib/store.svelte';
@@ -101,6 +102,23 @@
       : app.unstagedFileListLayout,
   );
   const isTreeLayout = $derived(fileListLayout === 'tree');
+
+  // An open session with a tour offers Tour / Changes sub-tabs. Without steps
+  // there's no tour, so it behaves like a plain changes review.
+  const sessionHasSteps = $derived(
+    (app.activeSessionDetail?.steps?.length ?? 0) > 0,
+  );
+  // The Tour view owns its own navigation; everything else (normal tabs, a
+  // session's Changes view, a stepless session) gets the file search + the
+  // tree/list toggle.
+  const showFileControls = $derived(
+    app.contextTab !== 'sessions' ||
+      (app.activeSessionId != null &&
+        (!sessionHasSteps || app.sessionView === 'changes')),
+  );
+  const showSessionTour = $derived(
+    app.activeSessionId != null && sessionHasSteps && app.sessionView === 'tour',
+  );
 
   // Build the visible flat list of nodes from the changed files. In 'tree'
   // layout, folders are aggregated from the file paths themselves and may be
@@ -797,7 +815,37 @@
       </div>
     {/if}
 
-    {#if app.contextTab !== 'sessions'}
+    {#if app.activeSessionId && sessionHasSteps}
+      <!-- Toggle between the narrated tour and the plain file-by-file review. -->
+      <div class="flex items-center gap-1 border-b border-border px-2 py-1.5">
+        <button
+          type="button"
+          class={cn(
+            'h-7 rounded-md px-3 text-xs font-medium',
+            app.sessionView === 'tour'
+              ? 'bg-muted text-foreground'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+          onclick={() => actions.setSessionView('tour')}
+        >
+          Tour
+        </button>
+        <button
+          type="button"
+          class={cn(
+            'h-7 rounded-md px-3 text-xs font-medium',
+            app.sessionView === 'changes'
+              ? 'bg-muted text-foreground'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+          onclick={() => actions.setSessionView('changes')}
+        >
+          Changes
+        </button>
+      </div>
+    {/if}
+
+    {#if showFileControls}
       <div class="flex items-center gap-1.5 border-b border-border pl-1 pr-2 py-1.5">
         <div
           class="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input bg-background px-2"
@@ -881,10 +929,12 @@
 
   <Sidebar.Content bind:ref={scrollRoot}>
       {#if app.contextTab === 'sessions' && !app.activeSessionId}
-        <!-- Sessions tab with no session open: list the documented sessions.
-             Once one is opened, activeSessionId is set and we fall through to
-             the file-list rendering below, which shows that session's files. -->
+        <!-- Sessions tab with no session open: list the documented sessions. -->
         <SessionsList />
+      {:else if showSessionTour}
+        <!-- An open session's Tour view: grouped step-by-step navigation. The
+             Changes view (and stepless sessions) fall through to the file list. -->
+        <SessionTour />
       {:else if app.loading.files && app.changedFiles.length === 0}
         <div class="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</div>
       {:else if app.changedFiles.length === 0}

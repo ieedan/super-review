@@ -187,11 +187,48 @@ export interface SessionSummary {
   fileCount: number;
   additions: number;
   deletions: number;
+  // Number of tour steps. 0 for a flat session saved without a tour, which
+  // renders as a plain file list.
+  stepCount: number;
 }
 
-// A full session: its summary plus the frozen per-file diffs.
+// A callout pins commentary to a specific line range within a file's diff, so
+// the agent can say "look right here" instead of describing it in prose. The
+// range is 1-based inclusive on the given side of the frozen diff, so it never
+// drifts. `body` is Markdown.
+export interface SessionCallout {
+  // Stable id within the session, assigned at capture.
+  id: string;
+  // The file this callout sits in (one of its step's files).
+  file: string;
+  startLine: number;
+  endLine: number;
+  // Which side the line numbers refer to: "new" = additions (the new file),
+  // "old" = deletions (the original).
+  side: "new" | "old";
+  body: string;
+}
+
+// One stop on a session's guided tour: a titled, explained group of related
+// changed files, so the reviewer reads the change as a narrative instead of an
+// alphabetical pile of diffs. `body` is Markdown commentary; `paths` reference
+// files in the session's `files`, in the order the agent wants them read.
+// `callouts` optionally pin finer-grained notes to line ranges within them.
+export interface SessionStep {
+  // Stable id within the session, assigned at capture.
+  id: string;
+  title: string;
+  body: string;
+  paths: string[];
+  callouts: SessionCallout[];
+}
+
+// A full session: its summary, the guided tour, and the frozen per-file diffs.
 export interface Session extends SessionSummary {
   files: SessionFile[];
+  // Ordered tour steps. Empty when saved without a tour; then `files` is shown
+  // as a flat list with no step headers.
+  steps: SessionStep[];
 }
 
 // A review comment attached to a specific line in a PR diff.

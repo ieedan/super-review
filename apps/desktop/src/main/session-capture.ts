@@ -6,7 +6,30 @@ import {
   listChangedFiles,
   repoIdFromPath,
 } from "./git-service.js";
-import type { Session, SessionFile } from "@shared/types.js";
+import type {
+  Session,
+  SessionCallout,
+  SessionFile,
+  SessionStep,
+} from "@shared/types.js";
+
+// A line-range callout as authored by the caller, before validation.
+export interface TourCalloutInput {
+  file: string;
+  startLine: number;
+  endLine?: number;
+  side?: "new" | "old";
+  body: string;
+}
+
+// A tour step as authored by the caller (CLI), before validation. `files` are
+// repo-relative paths that should match the captured working-tree changes.
+export interface TourStepInput {
+  title: string;
+  body?: string;
+  files: string[];
+  callouts?: TourCalloutInput[];
+}
 
 // Metadata supplied by the caller (CLI) when saving a session. Everything but
 // the diff itself — the diff is always re-captured from the live working tree.
@@ -17,6 +40,51 @@ export interface SessionMeta {
   harness?: Session["harness"];
   harnessLabel?: string;
   harnessUrl?: string;
+  // The guided tour. When omitted on an update, the existing session's steps
+  // are carried over (and re-validated against the fresh file set).
+  steps?: TourStepInput[];
+}
+
+// Build validated tour steps from authored input: keep only paths that match a
+// captured file, preserve authoring order, and assign stable ids. Steps left
+// with no surviving paths (their files vanished from the working tree) are
+// dropped so the tour never points at a file that isn't in the snapshot.
+function buildSteps(
+  input: TourStepInput[],
+  knownPaths: Set<string>,
+): SessionStep[] {
+  const steps: SessionStep[] = [];
+  for (const raw of input) {
+    const paths = raw.files.filter((p) => knownPaths.has(p));
+    if (paths.length === 0) continue;
+    const stepId = `step-${steps.length + 1}`;
+    // Keep only callouts whose file is part of this step and whose range is
+    // sane; normalize the side and order the bounds.
+    const stepPaths = new Set(paths);
+    const callouts: SessionCallout[] = [];
+    for (const c of raw.callouts ?? []) {
+      if (!stepPaths.has(c.file)) continue;
+      const start = Math.max(1, Math.floor(c.startLine));
+      const end = Math.max(start, Math.floor(c.endLine ?? c.startLine));
+      if (!Number.isFinite(start)) continue;
+      callouts.push({
+        id: `${stepId}-c${callouts.length + 1}`,
+        file: c.file,
+        startLine: start,
+        endLine: end,
+        side: c.side === "old" ? "old" : "new",
+        body: c.body ?? "",
+      });
+    }
+    steps.push({
+      id: stepId,
+      title: raw.title,
+      body: raw.body ?? "",
+      paths,
+      callouts,
+    });
+  }
+  return steps;
 }
 
 // Capture a frozen snapshot of the repo's current working-tree changes into a
@@ -59,6 +127,27 @@ export async function captureSession(
     deletions += diff.file.deletions;
   }
 
+  // Tour steps: use the freshly authored ones, else carry over the existing
+  // session's tour (re-validated below against the new file set). Either way
+  // buildSteps prunes paths that aren't in the current snapshot.
+  const stepInput: TourStepInput[] =
+    meta.steps ??
+    existing?.steps?.map((s) => ({
+      title: s.title,
+      body: s.body,
+      files: s.paths,
+      callouts: s.callouts?.map((c) => ({
+        file: c.file,
+        startLine: c.startLine,
+        endLine: c.endLine,
+        side: c.side,
+        body: c.body,
+      })),
+    })) ??
+    [];
+  const knownPaths = new Set(files.map((f) => f.path));
+  const steps = buildSteps(stepInput, knownPaths);
+
   const now = Date.now();
   return {
     id: existing?.id ?? randomUUID(),
@@ -76,6 +165,8 @@ export async function captureSession(
     fileCount: files.length,
     additions,
     deletions,
+    stepCount: steps.length,
+    steps,
     files,
   };
 }

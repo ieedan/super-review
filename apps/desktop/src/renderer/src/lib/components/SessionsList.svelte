@@ -76,6 +76,14 @@
           >
             <span>{relative(session.updatedAt)}</span>
             <span>·</span>
+            {#if session.stepCount > 0}
+              <span
+                >{session.stepCount} step{session.stepCount === 1
+                  ? ""
+                  : "s"}</span
+              >
+              <span>·</span>
+            {/if}
             <span
               >{session.fileCount} file{session.fileCount === 1 ? "" : "s"}</span
             >

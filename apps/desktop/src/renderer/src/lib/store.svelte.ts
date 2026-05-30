@@ -15,6 +15,7 @@ import type {
   PRSummary,
   PushStatus,
   RepoInfo,
+  Session,
   SessionSummary,
   TerminalKind,
   UserPrefs,
@@ -65,6 +66,14 @@ interface AppState {
   // The session whose frozen diff is currently open, or null when the Sessions
   // tab is showing the list. Ephemeral — not persisted across launches.
   activeSessionId: string | null;
+  // Full detail (incl. tour steps) of the open session, loaded alongside its
+  // files so the diff view and sidebar can render the tour. null when no
+  // session is open or while it's loading.
+  activeSessionDetail: Session | null;
+  // Which view an open session shows: the narrated "tour" (grouped steps +
+  // callouts) or "changes" (the plain file-by-file review, with search and
+  // tree/list toggle). Only meaningful while a session with steps is open.
+  sessionView: "tour" | "changes";
   // Whether the document-session skill is installed in the active repo. null
   // while unknown (no active repo, or the check hasn't returned yet); false
   // drives the "Install skill" prompts in the header and sessions empty state.
@@ -117,7 +126,16 @@ interface AppState {
   activeGithubAccount: GithubAccount | null;
   sidebarCollapsed: boolean;
   collapsedFolders: Set<string>;
-  scrollRequest: { path: string; nonce: number } | null;
+  // A request to scroll the diff view to a file (`path`), a tour step header
+  // (`stepId`), or a specific callout (`calloutId`, handled by the owning file
+  // section since the note lives inside the diff). The nonce makes repeat
+  // requests to the same target fire again.
+  scrollRequest: {
+    path?: string;
+    stepId?: string;
+    calloutId?: string;
+    nonce: number;
+  } | null;
   lastRefreshAt: number | null;
   fetchingOrigin: boolean;
   nowTick: number;
@@ -227,6 +245,8 @@ const initial: AppState = {
   contextTab: "unstaged",
   sessions: [],
   activeSessionId: null,
+  activeSessionDetail: null,
+  sessionView: "tour",
   skillInstalled: null,
   changedFiles: [],
   fileSearchQuery: "",
@@ -1027,6 +1047,7 @@ export const actions = {
       applyContextTab("unstaged");
       app.diffContext = { kind: "workingTree" };
       app.activeSessionId = null;
+      app.activeSessionDetail = null;
       app.sessions = [];
       app.skillInstalled = null;
       app.excludedFromCommit = new Set();
@@ -1087,6 +1108,7 @@ export const actions = {
       // Show the sessions list: clear the file list and load the manifests.
       // Selecting a session (openSession) is what populates the diff view.
       app.activeSessionId = null;
+      app.activeSessionDetail = null;
       app.changedFiles = [];
       app.selectedFile = null;
       app.seenFiles = new Set();
@@ -1145,19 +1167,43 @@ export const actions = {
   },
 
   // Open a session's frozen diff: drives the file list + diff view through the
-  // existing context machinery via a `session` DiffContext.
+  // existing context machinery via a `session` DiffContext. Also loads the full
+  // session detail (incl. tour steps) so the tour can render.
   async openSession(id: string): Promise<void> {
     app.activeSessionId = id;
     app.diffContext = { kind: "session", sessionId: id };
     app.activePR = null;
     app.prComments = {};
     app.pendingComposers = {};
+    app.activeSessionDetail = null;
+    // Land on the tour; the file search query carries no meaning into a fresh
+    // session, so clear it (the Changes tab re-enables search).
+    app.sessionView = "tour";
+    app.fileSearchQuery = "";
+    if (app.activeRepo) {
+      const repoId = app.activeRepo.id;
+      void window.api.sessions.get(repoId, id).then((detail) => {
+        // Guard against a slow fetch landing after the user moved on.
+        if (app.activeSessionId === id && app.activeRepo?.id === repoId) {
+          app.activeSessionDetail = detail;
+        }
+      });
+    }
     await refreshFiles();
+  },
+
+  // Switch an open session between its tour and the plain changes view. Moving
+  // to the tour drops any file-search filter (the tour has no search box).
+  setSessionView(view: "tour" | "changes"): void {
+    if (app.sessionView === view) return;
+    app.sessionView = view;
+    if (view === "tour") app.fileSearchQuery = "";
   },
 
   // Leave an open session and return to the sessions list.
   closeSession(): void {
     app.activeSessionId = null;
+    app.activeSessionDetail = null;
     app.changedFiles = [];
     app.selectedFile = null;
     app.seenFiles = new Set();
@@ -1197,6 +1243,23 @@ export const actions = {
   scrollToFile(path: string): void {
     app.selectedFile = path;
     app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
+  },
+
+  // Scroll the diff view to a tour step's header (Sessions tab).
+  scrollToStep(stepId: string): void {
+    app.scrollRequest = { stepId, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
+  },
+
+  // Scroll the diff to a specific callout. The owning file section brings
+  // itself into view and aligns to the callout's note once it has rendered.
+  // `selectedFile` is set so the sidebar highlights the right file too.
+  scrollToCallout(filePath: string, calloutId: string): void {
+    app.selectedFile = filePath;
+    app.scrollRequest = {
+      path: filePath,
+      calloutId,
+      nonce: (app.scrollRequest?.nonce ?? 0) + 1,
+    };
   },
 
   // Collapse the sidebar multi-selection to a single file and open its diff.

@@ -21,10 +21,11 @@ function sessionPath(repoId: string, id: string): string {
   return path.join(repoDir(repoId), `${id}.json`);
 }
 
-// Drop the heavy per-file contents so listings stay cheap.
+// Drop the heavy per-file contents and tour steps so listings stay cheap; the
+// summary keeps just the step count for the list to show.
 function toSummary(session: Session): SessionSummary {
-  const { files: _files, ...summary } = session;
-  return summary;
+  const { files: _files, steps, ...rest } = session;
+  return { ...rest, stepCount: steps?.length ?? 0 };
 }
 
 async function readSession(file: string): Promise<Session | null> {
