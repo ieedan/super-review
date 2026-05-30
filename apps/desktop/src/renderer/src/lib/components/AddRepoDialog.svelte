@@ -327,7 +327,7 @@
 					<div class="relative">
 						<select bind:value={gitignore} disabled={busy} class={selectClass}>
 							<option value={null}>None</option>
-							{#each gitignoreOptions as opt}
+							{#each gitignoreOptions as opt (opt)}
 								<option value={opt}>{opt}</option>
 							{/each}
 						</select>
@@ -343,7 +343,7 @@
 					<div class="relative">
 						<select bind:value={license} disabled={busy} class={selectClass}>
 							<option value={null}>None</option>
-							{#each licenseOptions as opt}
+							{#each licenseOptions as opt (opt)}
 								<option value={opt}>{opt}</option>
 							{/each}
 						</select>
