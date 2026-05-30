@@ -14,17 +14,17 @@ const { autoUpdater } = electronUpdater;
 // electron-updater would only log "checkForUpdates called, ... app is not
 // packaged" noise.
 export function initAutoUpdates(): void {
-  if (!app.isPackaged) return;
+	if (!app.isPackaged) return;
 
-  // Download in the background and swap the binary on the next quit. macOS
-  // updates require a signed build; an unsigned app logs an error here and
-  // keeps running rather than crashing.
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+	// Download in the background and swap the binary on the next quit. macOS
+	// updates require a signed build; an unsigned app logs an error here and
+	// keeps running rather than crashing.
+	autoUpdater.autoDownload = true;
+	autoUpdater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on('error', (err) => {
-    console.error('[updater] update check failed:', err);
-  });
+	autoUpdater.on('error', (err) => {
+		console.error('[updater] update check failed:', err);
+	});
 
-  void autoUpdater.checkForUpdatesAndNotify();
+	void autoUpdater.checkForUpdatesAndNotify();
 }

@@ -8,7 +8,7 @@ const cache = new Map<string, string>();
 const ELLIPSIS = '…';
 
 function measure(text: string, font: string): number {
-  return measureNaturalWidth(prepareWithSegments(text, font));
+	return measureNaturalWidth(prepareWithSegments(text, font));
 }
 
 /**
@@ -21,33 +21,33 @@ function measure(text: string, font: string): number {
  * `suffix`) is never truncated — only the directory prefix shrinks.
  */
 export function truncatePathPrefix(
-  prefix: string,
-  suffix: string,
-  maxWidth: number,
-  font: string,
+	prefix: string,
+	suffix: string,
+	maxWidth: number,
+	font: string
 ): string {
-  if (!prefix || maxWidth <= 0) return prefix;
-  const key = `${font}|${maxWidth}|${prefix}|${suffix}`;
-  const hit = cache.get(key);
-  if (hit !== undefined) return hit;
+	if (!prefix || maxWidth <= 0) return prefix;
+	const key = `${font}|${maxWidth}|${prefix}|${suffix}`;
+	const hit = cache.get(key);
+	if (hit !== undefined) return hit;
 
-  if (measure(prefix + suffix, font) <= maxWidth) {
-    cache.set(key, prefix);
-    return prefix;
-  }
+	if (measure(prefix + suffix, font) <= maxWidth) {
+		cache.set(key, prefix);
+		return prefix;
+	}
 
-  // Binary-search the longest prefix slice that, with the ellipsis tacked on,
-  // still leaves room for the full suffix at this maxWidth.
-  let lo = 0;
-  let hi = prefix.length;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    const candidate = prefix.slice(0, mid) + ELLIPSIS + suffix;
-    if (measure(candidate, font) <= maxWidth) lo = mid;
-    else hi = mid - 1;
-  }
+	// Binary-search the longest prefix slice that, with the ellipsis tacked on,
+	// still leaves room for the full suffix at this maxWidth.
+	let lo = 0;
+	let hi = prefix.length;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		const candidate = prefix.slice(0, mid) + ELLIPSIS + suffix;
+		if (measure(candidate, font) <= maxWidth) lo = mid;
+		else hi = mid - 1;
+	}
 
-  const out = lo > 0 ? prefix.slice(0, lo) + ELLIPSIS : ELLIPSIS;
-  cache.set(key, out);
-  return out;
+	const out = lo > 0 ? prefix.slice(0, lo) + ELLIPSIS : ELLIPSIS;
+	cache.set(key, out);
+	return out;
 }

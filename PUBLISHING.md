@@ -10,13 +10,13 @@ those releases via [electron-updater](https://www.electron.build/auto-update).
 
 Each release contains:
 
-| Platform | Artifact | Purpose |
-| --- | --- | --- |
-| macOS arm64 | `Super-Review-<version>-arm64.dmg` | Manual download / install |
-| macOS arm64 | `Super-Review-<version>-arm64-mac.zip` | Auto-update payload |
-| macOS arm64 | `latest-mac.yml` | Auto-update feed |
-| Windows x64 | `Super-Review-Setup-<version>.exe` | NSIS installer |
-| Windows x64 | `latest.yml` | Auto-update feed |
+| Platform    | Artifact                               | Purpose                   |
+| ----------- | -------------------------------------- | ------------------------- |
+| macOS arm64 | `Super-Review-<version>-arm64.dmg`     | Manual download / install |
+| macOS arm64 | `Super-Review-<version>-arm64-mac.zip` | Auto-update payload       |
+| macOS arm64 | `latest-mac.yml`                       | Auto-update feed          |
+| Windows x64 | `Super-Review-Setup-<version>.exe`     | NSIS installer            |
+| Windows x64 | `latest.yml`                           | Auto-update feed          |
 
 ## Cutting a release
 
@@ -50,20 +50,20 @@ these repository secrets (Settings → Secrets and variables → Actions):
 
 **macOS**
 
-| Secret | Value |
-| --- | --- |
-| `MAC_CSC_LINK` | base64 of your Developer ID Application `.p12` |
-| `MAC_CSC_KEY_PASSWORD` | password for that `.p12` |
-| `APPLE_ID` | Apple ID email for notarization |
-| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password for that Apple ID |
-| `APPLE_TEAM_ID` | your Apple Developer Team ID |
+| Secret                        | Value                                          |
+| ----------------------------- | ---------------------------------------------- |
+| `MAC_CSC_LINK`                | base64 of your Developer ID Application `.p12` |
+| `MAC_CSC_KEY_PASSWORD`        | password for that `.p12`                       |
+| `APPLE_ID`                    | Apple ID email for notarization                |
+| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password for that Apple ID        |
+| `APPLE_TEAM_ID`               | your Apple Developer Team ID                   |
 
 **Windows**
 
-| Secret | Value |
-| --- | --- |
-| `WIN_CSC_LINK` | base64 of your code-signing `.pfx` |
-| `WIN_CSC_KEY_PASSWORD` | password for that `.pfx` |
+| Secret                 | Value                              |
+| ---------------------- | ---------------------------------- |
+| `WIN_CSC_LINK`         | base64 of your code-signing `.pfx` |
+| `WIN_CSC_KEY_PASSWORD` | password for that `.pfx`           |
 
 Notarization runs automatically once the macOS build is signed and the `APPLE_*`
 secrets are present.

@@ -1,30 +1,30 @@
 <script lang="ts" module>
-	import { type VariantProps, tv } from "tailwind-variants";
+	import { type VariantProps, tv } from 'tailwind-variants';
 
 	export const kbdVariants = tv({
-		base: "pointer-events-none inline-flex h-5 select-none items-center justify-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground",
+		base: 'pointer-events-none inline-flex h-5 items-center justify-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground select-none',
 		variants: {
 			variant: {
-				default: "",
-				outline: "bg-transparent",
-			},
+				default: '',
+				outline: 'bg-transparent'
+			}
 		},
 		defaultVariants: {
-			variant: "default",
-		},
+			variant: 'default'
+		}
 	});
 
-	export type KbdVariant = VariantProps<typeof kbdVariants>["variant"];
+	export type KbdVariant = VariantProps<typeof kbdVariants>['variant'];
 </script>
 
 <script lang="ts">
-	import type { HTMLAttributes } from "svelte/elements";
-	import { cn, type WithElementRef } from "$lib/utils.js";
+	import type { HTMLAttributes } from 'svelte/elements';
+	import { cn, type WithElementRef } from '$lib/utils.js';
 
 	let {
 		ref = $bindable(null),
 		class: className,
-		variant = "default",
+		variant = 'default',
 		children,
 		...restProps
 	}: WithElementRef<HTMLAttributes<HTMLElement>> & {
@@ -32,11 +32,6 @@
 	} = $props();
 </script>
 
-<kbd
-	bind:this={ref}
-	data-slot="kbd"
-	class={cn(kbdVariants({ variant }), className)}
-	{...restProps}
->
+<kbd bind:this={ref} data-slot="kbd" class={cn(kbdVariants({ variant }), className)} {...restProps}>
 	{@render children?.()}
 </kbd>

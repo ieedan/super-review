@@ -20,20 +20,20 @@ let cachedMatcher: ((path: string) => boolean) | null = null;
 let cachedUseBasename = false;
 
 export function matchesFileQuery(path: string, rawQuery: string): boolean {
-  const q = rawQuery.trim();
-  if (!q) return true;
-  if (!GLOB_META.test(q)) {
-    return path.toLowerCase().includes(q.toLowerCase());
-  }
-  if (q !== cachedQuery) {
-    cachedQuery = q;
-    cachedMatcher = picomatch(q, { nocase: true, dot: true });
-    cachedUseBasename = !q.includes('/');
-  }
-  return cachedMatcher!(cachedUseBasename ? basename(path) : path);
+	const q = rawQuery.trim();
+	if (!q) return true;
+	if (!GLOB_META.test(q)) {
+		return path.toLowerCase().includes(q.toLowerCase());
+	}
+	if (q !== cachedQuery) {
+		cachedQuery = q;
+		cachedMatcher = picomatch(q, { nocase: true, dot: true });
+		cachedUseBasename = !q.includes('/');
+	}
+	return cachedMatcher!(cachedUseBasename ? basename(path) : path);
 }
 
 function basename(path: string): string {
-  const slash = path.lastIndexOf('/');
-  return slash === -1 ? path : path.slice(slash + 1);
+	const slash = path.lastIndexOf('/');
+	return slash === -1 ? path : path.slice(slash + 1);
 }

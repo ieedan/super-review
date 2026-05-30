@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { RadioGroup as RadioGroupPrimitive } from "bits-ui";
-	import CircleIcon from "@lucide/svelte/icons/circle";
-	import { cn, type WithoutChild } from "$lib/utils.js";
-	import { useAnimations } from "$lib/hooks/use-animations.svelte";
+	import { RadioGroup as RadioGroupPrimitive } from 'bits-ui';
+	import CircleIcon from '@lucide/svelte/icons/circle';
+	import { cn, type WithoutChild } from '$lib/utils.js';
+	import { useAnimations } from '$lib/hooks/use-animations.svelte';
 
 	const animations = useAnimations();
 
@@ -17,8 +17,8 @@
 	bind:ref
 	data-slot="radio-group-item"
 	class={cn(
-		"border-input text-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 relative aspect-square size-4 shrink-0 rounded-full border shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
-		animations.animationsEnabled && "transition-[color,box-shadow]",
+		'relative aspect-square size-4 shrink-0 rounded-full border border-input text-primary shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:bg-input/30 dark:aria-invalid:ring-destructive/40',
+		animations.animationsEnabled && 'transition-[color,box-shadow]',
 		className
 	)}
 	{...restProps}
@@ -29,7 +29,7 @@
 			data-slot="radio-group-item-indicator"
 		>
 			{#if checked}
-				<CircleIcon class="fill-primary size-2 text-primary" />
+				<CircleIcon class="size-2 fill-primary text-primary" />
 			{/if}
 		</span>
 	{/snippet}

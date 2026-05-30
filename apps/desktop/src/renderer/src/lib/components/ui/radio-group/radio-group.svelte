@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { RadioGroup as RadioGroupPrimitive } from "bits-ui";
-	import { cn } from "$lib/utils.js";
+	import { RadioGroup as RadioGroupPrimitive } from 'bits-ui';
+	import { cn } from '$lib/utils.js';
 
 	let {
 		ref = $bindable(null),
@@ -14,6 +14,6 @@
 	bind:value
 	bind:ref
 	data-slot="radio-group"
-	class={cn("grid gap-2", className)}
+	class={cn('grid gap-2', className)}
 	{...restProps}
 />

@@ -5,113 +5,116 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --color-background: hsl(0 0% 100%);
-  --color-foreground: hsl(0 0% 3.9%);
-  --color-card: hsl(0 0% 100%);
-  --color-card-foreground: hsl(0 0% 3.9%);
-  --color-popover: hsl(0 0% 100%);
-  --color-popover-foreground: hsl(0 0% 3.9%);
-  --color-primary: hsl(0 0% 9%);
-  --color-primary-foreground: hsl(0 0% 98%);
-  --color-secondary: hsl(0 0% 96.1%);
-  --color-secondary-foreground: hsl(0 0% 9%);
-  --color-muted: hsl(0 0% 96.1%);
-  --color-muted-foreground: hsl(0 0% 45.1%);
-  --color-accent: hsl(0 0% 96.1%);
-  --color-accent-foreground: hsl(0 0% 9%);
-  --color-destructive: hsl(0 84.2% 60.2%);
-  --color-destructive-foreground: hsl(0 0% 98%);
-  --color-border: hsl(0 0% 89.8%);
-  --color-input: hsl(0 0% 89.8%);
-  --color-ring: hsl(0 0% 3.9%);
-  --color-success: hsl(142 76% 36%);
-  --color-warning: hsl(38 92% 50%);
-  --color-merged: hsl(265 60% 52%);
-  --color-sidebar: hsl(0 0% 98%);
-  --color-sidebar-foreground: hsl(0 0% 3.9%);
-  --color-sidebar-border: hsl(0 0% 89.8%);
-  --color-sidebar-accent: hsl(0 0% 96.1%);
-  --color-sidebar-accent-foreground: hsl(0 0% 9%);
-  --color-sidebar-primary: hsl(0 0% 9%);
-  --color-sidebar-primary-foreground: hsl(0 0% 98%);
-  --color-sidebar-ring: hsl(0 0% 3.9%);
-  --radius: 0.5rem;
+	--color-background: hsl(0 0% 100%);
+	--color-foreground: hsl(0 0% 3.9%);
+	--color-card: hsl(0 0% 100%);
+	--color-card-foreground: hsl(0 0% 3.9%);
+	--color-popover: hsl(0 0% 100%);
+	--color-popover-foreground: hsl(0 0% 3.9%);
+	--color-primary: hsl(0 0% 9%);
+	--color-primary-foreground: hsl(0 0% 98%);
+	--color-secondary: hsl(0 0% 96.1%);
+	--color-secondary-foreground: hsl(0 0% 9%);
+	--color-muted: hsl(0 0% 96.1%);
+	--color-muted-foreground: hsl(0 0% 45.1%);
+	--color-accent: hsl(0 0% 96.1%);
+	--color-accent-foreground: hsl(0 0% 9%);
+	--color-destructive: hsl(0 84.2% 60.2%);
+	--color-destructive-foreground: hsl(0 0% 98%);
+	--color-border: hsl(0 0% 89.8%);
+	--color-input: hsl(0 0% 89.8%);
+	--color-ring: hsl(0 0% 3.9%);
+	--color-success: hsl(142 76% 36%);
+	--color-warning: hsl(38 92% 50%);
+	--color-merged: hsl(265 60% 52%);
+	--color-sidebar: hsl(0 0% 98%);
+	--color-sidebar-foreground: hsl(0 0% 3.9%);
+	--color-sidebar-border: hsl(0 0% 89.8%);
+	--color-sidebar-accent: hsl(0 0% 96.1%);
+	--color-sidebar-accent-foreground: hsl(0 0% 9%);
+	--color-sidebar-primary: hsl(0 0% 9%);
+	--color-sidebar-primary-foreground: hsl(0 0% 98%);
+	--color-sidebar-ring: hsl(0 0% 3.9%);
+	--radius: 0.5rem;
 }
 
 .dark {
-  color-scheme: dark;
-  --color-background: hsl(0 0% 6%);
-  --color-foreground: hsl(0 0% 98%);
-  --color-card: hsl(0 0% 8%);
-  --color-card-foreground: hsl(0 0% 98%);
-  --color-popover: hsl(0 0% 8%);
-  --color-popover-foreground: hsl(0 0% 98%);
-  --color-primary: hsl(0 0% 98%);
-  --color-primary-foreground: hsl(0 0% 9%);
-  --color-secondary: hsl(0 0% 14.9%);
-  --color-secondary-foreground: hsl(0 0% 98%);
-  --color-muted: hsl(0 0% 14.9%);
-  --color-muted-foreground: hsl(0 0% 63.9%);
-  --color-accent: hsl(0 0% 14.9%);
-  --color-accent-foreground: hsl(0 0% 98%);
-  --color-destructive: hsl(0 62.8% 40.6%);
-  --color-destructive-foreground: hsl(0 0% 98%);
-  --color-border: hsl(0 0% 14.9%);
-  --color-input: hsl(0 0% 14.9%);
-  --color-ring: hsl(0 0% 83.1%);
-  --color-success: hsl(142 70% 45%);
-  --color-warning: hsl(38 92% 60%);
-  --color-merged: hsl(265 70% 65%);
-  --color-sidebar: hsl(0 0% 7%);
-  --color-sidebar-foreground: hsl(0 0% 98%);
-  --color-sidebar-border: hsl(0 0% 14.9%);
-  --color-sidebar-accent: hsl(0 0% 14.9%);
-  --color-sidebar-accent-foreground: hsl(0 0% 98%);
-  --color-sidebar-primary: hsl(0 0% 98%);
-  --color-sidebar-primary-foreground: hsl(0 0% 9%);
-  --color-sidebar-ring: hsl(0 0% 83.1%);
+	color-scheme: dark;
+	--color-background: hsl(0 0% 6%);
+	--color-foreground: hsl(0 0% 98%);
+	--color-card: hsl(0 0% 8%);
+	--color-card-foreground: hsl(0 0% 98%);
+	--color-popover: hsl(0 0% 8%);
+	--color-popover-foreground: hsl(0 0% 98%);
+	--color-primary: hsl(0 0% 98%);
+	--color-primary-foreground: hsl(0 0% 9%);
+	--color-secondary: hsl(0 0% 14.9%);
+	--color-secondary-foreground: hsl(0 0% 98%);
+	--color-muted: hsl(0 0% 14.9%);
+	--color-muted-foreground: hsl(0 0% 63.9%);
+	--color-accent: hsl(0 0% 14.9%);
+	--color-accent-foreground: hsl(0 0% 98%);
+	--color-destructive: hsl(0 62.8% 40.6%);
+	--color-destructive-foreground: hsl(0 0% 98%);
+	--color-border: hsl(0 0% 14.9%);
+	--color-input: hsl(0 0% 14.9%);
+	--color-ring: hsl(0 0% 83.1%);
+	--color-success: hsl(142 70% 45%);
+	--color-warning: hsl(38 92% 60%);
+	--color-merged: hsl(265 70% 65%);
+	--color-sidebar: hsl(0 0% 7%);
+	--color-sidebar-foreground: hsl(0 0% 98%);
+	--color-sidebar-border: hsl(0 0% 14.9%);
+	--color-sidebar-accent: hsl(0 0% 14.9%);
+	--color-sidebar-accent-foreground: hsl(0 0% 98%);
+	--color-sidebar-primary: hsl(0 0% 98%);
+	--color-sidebar-primary-foreground: hsl(0 0% 9%);
+	--color-sidebar-ring: hsl(0 0% 83.1%);
 }
 
 :root {
-  color-scheme: light;
-  --ui-font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    'Segoe UI', Roboto, sans-serif;
-  --code-font: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+	color-scheme: light;
+	--ui-font:
+		ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--code-font: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
 }
 
-html, body, #app {
-  height: 100%;
-  margin: 0;
-  padding: 0;
+html,
+body,
+#app {
+	height: 100%;
+	margin: 0;
+	padding: 0;
 }
 
 body {
-  font-family: var(--ui-font);
-  font-feature-settings: 'cv11', 'ss01';
-  -webkit-font-smoothing: antialiased;
+	font-family: var(--ui-font);
+	font-feature-settings: 'cv11', 'ss01';
+	-webkit-font-smoothing: antialiased;
 }
 
-button, [role="button"] {
-  cursor: default;
+button,
+[role='button'] {
+	cursor: default;
 }
 
 ::selection {
-  background: var(--color-primary);
-  color: var(--color-primary-foreground);
+	background: var(--color-primary);
+	color: var(--color-primary-foreground);
 }
 
 /* Pierre diffs container baseline */
 diffs-container {
-  display: block;
-  /* @pierre/diffs renders code into a shadow root and sets
+	display: block;
+	/* @pierre/diffs renders code into a shadow root and sets
      `font-family: var(--diffs-font-family, var(--diffs-font-fallback))` on the
      code lines, so an inherited font-family on the host is overridden. Feed our
      choice through the library's own override hook instead — custom properties
      inherit across the shadow boundary. */
-  --diffs-font-family: var(--code-font);
-  font-family: var(--code-font);
-  font-size: 12px;
-  line-height: 1.5;
+	--diffs-font-family: var(--code-font);
+	font-family: var(--code-font);
+	font-size: 12px;
+	line-height: 1.5;
 }
 
 /* Find-in-changes highlight bands (CSS Custom Highlight API). The "all"
@@ -119,10 +122,10 @@ diffs-container {
    the active match in a brighter orange so the user can see where they are
    while paging through. */
 ::highlight(sr-find-match) {
-  background-color: rgba(250, 204, 21, 0.35);
-  color: inherit;
+	background-color: rgba(250, 204, 21, 0.35);
+	color: inherit;
 }
 ::highlight(sr-find-current) {
-  background-color: rgba(249, 115, 22, 0.6);
-  color: inherit;
+	background-color: rgba(249, 115, 22, 0.6);
+	color: inherit;
 }
