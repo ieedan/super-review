@@ -9,16 +9,40 @@ files:
 extraMetadata:
   main: out/main/index.js
 asar: true
+
+# Where `--publish` uploads artifacts and where electron-updater looks for
+# updates. The GitHub release tag must be `v${version}` (see PUBLISHING.md).
+publish:
+  provider: github
+  owner: ieedan
+  repo: super-review
+
+# --- Apple silicon (arm64) -------------------------------------------------
+# Signing/notarization run only when Apple credentials are present in the env
+# (CSC_LINK / CSC_KEY_PASSWORD + APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+# APPLE_TEAM_ID). Without them electron-builder produces an unsigned build.
 mac:
   category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   target:
+    # dmg = manual download; zip = the artifact electron-updater consumes.
     - target: dmg
-      arch:
-        - arm64
-        - x64
+      arch: arm64
+    - target: zip
+      arch: arm64
+dmg:
+  writeUpdateInfo: false
+
+# --- Windows (x64) ---------------------------------------------------------
+# Code signing runs only when CSC_LINK / CSC_KEY_PASSWORD are set.
 win:
-  target: nsis
-linux:
   target:
-    - AppImage
-  category: Development
+    - target: nsis
+      arch: x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

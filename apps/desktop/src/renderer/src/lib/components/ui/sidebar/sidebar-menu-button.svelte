@@ -1,39 +1,38 @@
 <script lang="ts" module>
-	import { tv, type VariantProps } from "tailwind-variants";
+	import { tv, type VariantProps } from 'tailwind-variants';
 
 	export const sidebarMenuButtonVariants = tv({
-		base: "ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground gap-2 rounded-md p-2 text-left text-sm group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! focus-visible:ring-2 data-active:font-medium peer/menu-button group/menu-button flex w-full items-center overflow-hidden outline-hidden disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
+		base: 'peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate',
 		variants: {
 			variant: {
-				default: "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-				outline: "bg-background hover:bg-sidebar-accent hover:text-sidebar-accent-foreground shadow-[0_0_0_1px_var(--sidebar-border)] hover:shadow-[0_0_0_1px_var(--sidebar-accent)]",
+				default: 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+				outline:
+					'bg-background shadow-[0_0_0_1px_var(--sidebar-border)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_var(--sidebar-accent)]'
 			},
 			size: {
-				default: "h-8 text-sm",
-				sm: "h-7 text-xs",
-				lg: "h-12 text-sm group-data-[collapsible=icon]:p-0!",
-			},
+				default: 'h-8 text-sm',
+				sm: 'h-7 text-xs',
+				lg: 'h-12 text-sm group-data-[collapsible=icon]:p-0!'
+			}
 		},
 		defaultVariants: {
-			variant: "default",
-			size: "default",
-		},
+			variant: 'default',
+			size: 'default'
+		}
 	});
 
-	export type SidebarMenuButtonVariant = VariantProps<
-		typeof sidebarMenuButtonVariants
-	>["variant"];
-	export type SidebarMenuButtonSize = VariantProps<typeof sidebarMenuButtonVariants>["size"];
+	export type SidebarMenuButtonVariant = VariantProps<typeof sidebarMenuButtonVariants>['variant'];
+	export type SidebarMenuButtonSize = VariantProps<typeof sidebarMenuButtonVariants>['size'];
 </script>
 
 <script lang="ts">
-	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
-	import { cn, type WithElementRef, type WithoutChildrenOrChild } from "$lib/utils.js";
-	import { mergeProps } from "bits-ui";
-	import type { ComponentProps, Snippet } from "svelte";
-	import type { HTMLAttributes } from "svelte/elements";
-	import { useSidebar } from "./context.svelte.js";
-	import { useAnimations } from "$lib/hooks/use-animations.svelte";
+	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+	import { cn, type WithElementRef, type WithoutChildrenOrChild } from '$lib/utils.js';
+	import { mergeProps } from 'bits-ui';
+	import type { ComponentProps, Snippet } from 'svelte';
+	import type { HTMLAttributes } from 'svelte/elements';
+	import { useSidebar } from './context.svelte.js';
+	import { useAnimations } from '$lib/hooks/use-animations.svelte';
 
 	const animations = useAnimations();
 
@@ -42,8 +41,8 @@
 		class: className,
 		children,
 		child,
-		variant = "default",
-		size = "default",
+		variant = 'default',
+		size = 'default',
 		isActive = false,
 		tooltipContent,
 		tooltipContentProps,
@@ -60,12 +59,16 @@
 	const sidebar = useSidebar();
 
 	const buttonProps = $derived({
-		class: cn(sidebarMenuButtonVariants({ variant, size }), animations.animationsEnabled && "transition-[width,height,padding]", className),
-		"data-slot": "sidebar-menu-button",
-		"data-sidebar": "menu-button",
-		"data-size": size,
-		"data-active": isActive,
-		...restProps,
+		class: cn(
+			sidebarMenuButtonVariants({ variant, size }),
+			animations.animationsEnabled && 'transition-[width,height,padding]',
+			className
+		),
+		'data-slot': 'sidebar-menu-button',
+		'data-sidebar': 'menu-button',
+		'data-size': size,
+		'data-active': isActive,
+		...restProps
 	});
 </script>
 
@@ -92,10 +95,10 @@
 		<Tooltip.Content
 			side="right"
 			align="center"
-			hidden={sidebar.state !== "collapsed" || sidebar.isMobile}
+			hidden={sidebar.state !== 'collapsed' || sidebar.isMobile}
 			{...tooltipContentProps}
 		>
-			{#if typeof tooltipContent === "string"}
+			{#if typeof tooltipContent === 'string'}
 				{tooltipContent}
 			{:else if tooltipContent}
 				{@render tooltipContent()}

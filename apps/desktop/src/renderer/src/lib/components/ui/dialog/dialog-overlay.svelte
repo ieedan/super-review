@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { Dialog as DialogPrimitive } from "bits-ui";
-	import { cn } from "$lib/utils.js";
-	import { useAnimations } from "$lib/hooks/use-animations.svelte";
+	import { Dialog as DialogPrimitive } from 'bits-ui';
+	import { cn } from '$lib/utils.js';
+	import { useAnimations } from '$lib/hooks/use-animations.svelte';
 
 	const animations = useAnimations();
 
@@ -15,6 +15,11 @@
 <DialogPrimitive.Overlay
 	bind:ref
 	data-slot="dialog-overlay"
-	class={cn("bg-black/50 fixed inset-0 isolate z-50", animations.animationsEnabled && "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 duration-100", className)}
+	class={cn(
+		'fixed inset-0 isolate z-50 bg-black/50',
+		animations.animationsEnabled &&
+			'duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',
+		className
+	)}
 	{...restProps}
 />

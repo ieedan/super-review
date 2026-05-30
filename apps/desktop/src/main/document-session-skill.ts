@@ -9,7 +9,7 @@
 // Where a skill lives inside a repo. Agents (Claude Code et al.) discover a
 // skill by the presence of `<dir>/SKILL.md`, so this path is both what we
 // check for (detection) and what we write (install).
-export const DOCUMENT_SESSION_SKILL_DIR = ".claude/skills/document-session";
+export const DOCUMENT_SESSION_SKILL_DIR = '.claude/skills/document-session';
 export const DOCUMENT_SESSION_SKILL_FILE = `${DOCUMENT_SESSION_SKILL_DIR}/SKILL.md`;
 
 export const DOCUMENT_SESSION_SKILL = `---

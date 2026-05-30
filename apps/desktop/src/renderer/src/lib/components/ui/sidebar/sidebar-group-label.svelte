@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { cn, type WithElementRef } from "$lib/utils.js";
-	import { useAnimations } from "$lib/hooks/use-animations.svelte";
-	import type { Snippet } from "svelte";
-	import type { HTMLAttributes } from "svelte/elements";
+	import { cn, type WithElementRef } from '$lib/utils.js';
+	import { useAnimations } from '$lib/hooks/use-animations.svelte';
+	import type { Snippet } from 'svelte';
+	import type { HTMLAttributes } from 'svelte/elements';
 
 	const animations = useAnimations();
 
@@ -18,13 +18,13 @@
 
 	const mergedProps = $derived({
 		class: cn(
-			"text-sidebar-foreground/70 ring-sidebar-ring h-8 rounded-md px-2 text-xs font-medium group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 focus-visible:ring-2 [&>svg]:size-4 flex shrink-0 items-center outline-hidden [&>svg]:shrink-0",
-			animations.animationsEnabled && "transition-[margin,opacity] duration-200 ease-linear",
+			'text-sidebar-foreground/70 ring-sidebar-ring h-8 rounded-md px-2 text-xs font-medium group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 focus-visible:ring-2 [&>svg]:size-4 flex shrink-0 items-center outline-hidden [&>svg]:shrink-0',
+			animations.animationsEnabled && 'transition-[margin,opacity] duration-200 ease-linear',
 			className
 		),
-		"data-slot": "sidebar-group-label",
-		"data-sidebar": "group-label",
-		...restProps,
+		'data-slot': 'sidebar-group-label',
+		'data-sidebar': 'group-label',
+		...restProps
 	});
 </script>
 

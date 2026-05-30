@@ -1,4 +1,4 @@
-import { getContext, setContext } from "svelte";
+import { getContext, setContext } from 'svelte';
 
 /**
  * Shared animation configuration, provided once near the app root and read by
@@ -12,7 +12,7 @@ export interface AnimationConfig {
 	readonly animationsEnabled: boolean;
 }
 
-const ANIMATIONS_KEY = Symbol.for("sr-animations");
+const ANIMATIONS_KEY = Symbol.for('sr-animations');
 
 // Falls back to "off" when no provider is mounted (isolated component previews,
 // tests, etc.), matching the app's animations-off default.
@@ -28,7 +28,7 @@ export function setAnimations(enabled: () => boolean): AnimationConfig {
 	const config: AnimationConfig = {
 		get animationsEnabled() {
 			return enabled();
-		},
+		}
 	};
 	return setContext(ANIMATIONS_KEY, config);
 }

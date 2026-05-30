@@ -8,32 +8,32 @@
 // triggers an async load + rerender on its own, so awaiting is optional).
 
 import {
-  DEFAULT_THEMES,
-  isHighlighterLoaded,
-  getHighlighterIfLoaded,
-  preloadHighlighter,
+	DEFAULT_THEMES,
+	isHighlighterLoaded,
+	getHighlighterIfLoaded,
+	preloadHighlighter
 } from '@pierre/diffs';
 
 let preloadPromise: Promise<void> | null = null;
 
 export function ensureDiffHighlighter(): Promise<void> {
-  if (isHighlighterLoaded(getHighlighterIfLoaded())) return Promise.resolve();
-  if (!preloadPromise) {
-    console.log('[diff-highlighter] preload start');
-    preloadPromise = preloadHighlighter({
-      themes: [DEFAULT_THEMES.dark, DEFAULT_THEMES.light],
-      langs: ['javascript', 'typescript', 'tsx', 'jsx', 'json', 'css', 'html'],
-    })
-      .then(() => {
-        console.log('[diff-highlighter] preload complete');
-      })
-      .catch((err) => {
-        console.error('[diff-highlighter] preload failed:', err);
-      });
-  }
-  return preloadPromise;
+	if (isHighlighterLoaded(getHighlighterIfLoaded())) return Promise.resolve();
+	if (!preloadPromise) {
+		console.log('[diff-highlighter] preload start');
+		preloadPromise = preloadHighlighter({
+			themes: [DEFAULT_THEMES.dark, DEFAULT_THEMES.light],
+			langs: ['javascript', 'typescript', 'tsx', 'jsx', 'json', 'css', 'html']
+		})
+			.then(() => {
+				console.log('[diff-highlighter] preload complete');
+			})
+			.catch((err) => {
+				console.error('[diff-highlighter] preload failed:', err);
+			});
+	}
+	return preloadPromise;
 }
 
 export function initDiffHighlighter(): void {
-  void ensureDiffHighlighter();
+	void ensureDiffHighlighter();
 }

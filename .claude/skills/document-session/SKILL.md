@@ -31,31 +31,31 @@ super-review session save --key "<your conversation/run id>" --tour tour.json
 
 ```json
 {
-  "name": "Short title for the whole change",
-  "description": "One or two sentences of overview.",
-  "harness": "claude-code",
-  "harnessUrl": "<optional resume/permalink to this run>",
-  "steps": [
-    {
-      "title": "Data model",
-      "body": "What this group establishes and why. Markdown is supported — **bold**, lists, and `code` all render.",
-      "files": ["src/shared/types.ts", "src/main/store.ts"],
-      "callouts": [
-        {
-          "file": "src/shared/types.ts",
-          "startLine": 42,
-          "endLine": 48,
-          "side": "new",
-          "body": "The key bit: this field is what everything downstream keys off."
-        }
-      ]
-    },
-    {
-      "title": "UI",
-      "body": "How the new state is surfaced to the user.",
-      "files": ["src/components/Thing.svelte"]
-    }
-  ]
+	"name": "Short title for the whole change",
+	"description": "One or two sentences of overview.",
+	"harness": "claude-code",
+	"harnessUrl": "<optional resume/permalink to this run>",
+	"steps": [
+		{
+			"title": "Data model",
+			"body": "What this group establishes and why. Markdown is supported — **bold**, lists, and `code` all render.",
+			"files": ["src/shared/types.ts", "src/main/store.ts"],
+			"callouts": [
+				{
+					"file": "src/shared/types.ts",
+					"startLine": 42,
+					"endLine": 48,
+					"side": "new",
+					"body": "The key bit: this field is what everything downstream keys off."
+				}
+			]
+		},
+		{
+			"title": "UI",
+			"body": "How the new state is surfaced to the user.",
+			"files": ["src/components/Thing.svelte"]
+		}
+	]
 }
 ```
 
@@ -81,8 +81,8 @@ the overview. Don't annotate every line — callouts are for what's easy to miss
   belong in one step.
 - **Order for reading.** Lead with the step that makes the rest make sense
   (often the data model / types); end with tests or cleanup.
-- **Explain the why.** The diff already shows *what* changed — the body should
-  say *why*, point at the key line, and flag anything non-obvious.
+- **Explain the why.** The diff already shows _what_ changed — the body should
+  say _why_, point at the key line, and flag anything non-obvious.
 - **List files in reading order** within a step.
 - Any changed file you don't place in a step still shows, grouped under
   **"Other changes"** at the end — nothing is hidden, but anything worth the

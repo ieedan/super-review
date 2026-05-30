@@ -1,30 +1,30 @@
 <script lang="ts">
-  import { Download, Loader2 } from "lucide-svelte";
-  import { Button } from "./ui/button";
-  import { actions } from "$lib/store.svelte";
+	import { Download, Loader2 } from 'lucide-svelte';
+	import { Button } from './ui/button';
+	import { actions } from '$lib/store.svelte';
 
-  // Installs the document-session skill into the active repo. Visibility is the
-  // caller's call (e.g. the sessions empty state only shows it when the skill
-  // is missing) — this is just the button.
-  let installing = $state(false);
+	// Installs the document-session skill into the active repo. Visibility is the
+	// caller's call (e.g. the sessions empty state only shows it when the skill
+	// is missing) — this is just the button.
+	let installing = $state(false);
 
-  async function install(): Promise<void> {
-    if (installing) return;
-    installing = true;
-    try {
-      await actions.installSkill();
-    } finally {
-      installing = false;
-    }
-  }
+	async function install(): Promise<void> {
+		if (installing) return;
+		installing = true;
+		try {
+			await actions.installSkill();
+		} finally {
+			installing = false;
+		}
+	}
 </script>
 
 <Button onclick={install} disabled={installing} size="sm">
-  {#if installing}
-    <Loader2 class="size-3.5 animate-spin" />
-    Installing…
-  {:else}
-    <Download class="size-3.5" />
-    Install skill
-  {/if}
+	{#if installing}
+		<Loader2 class="size-3.5 animate-spin" />
+		Installing…
+	{:else}
+		<Download class="size-3.5" />
+		Install skill
+	{/if}
 </Button>

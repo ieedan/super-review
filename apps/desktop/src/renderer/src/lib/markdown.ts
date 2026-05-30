@@ -29,38 +29,38 @@ type ShikiTheme = 'github-dark' | 'github-light';
 // languages, and to null if even that fails (the renderer emits an escaped
 // <pre> in that case).
 async function highlightToHtml(
-  code: string,
-  lang: string,
-  theme: ShikiTheme,
+	code: string,
+	lang: string,
+	theme: ShikiTheme
 ): Promise<string | null> {
-  const wanted = lang || 'text';
-  try {
-    const hl = await getSharedHighlighter({ themes: [theme], langs: [wanted] });
-    return hl.codeToHtml(code, { lang: wanted, theme });
-  } catch {
-    try {
-      const hl = await getSharedHighlighter({ themes: [theme], langs: ['text'] });
-      return hl.codeToHtml(code, { lang: 'text', theme });
-    } catch {
-      return null;
-    }
-  }
+	const wanted = lang || 'text';
+	try {
+		const hl = await getSharedHighlighter({ themes: [theme], langs: [wanted] });
+		return hl.codeToHtml(code, { lang: wanted, theme });
+	} catch {
+		try {
+			const hl = await getSharedHighlighter({ themes: [theme], langs: ['text'] });
+			return hl.codeToHtml(code, { lang: 'text', theme });
+		} catch {
+			return null;
+		}
+	}
 }
 
 marked.setOptions({
-  gfm: true,
-  // GitHub doesn't turn a single newline into a <br> for regular `.md` files,
-  // so leave `breaks` off to match its rendering.
-  breaks: false,
+	gfm: true,
+	// GitHub doesn't turn a single newline into a <br> for regular `.md` files,
+	// so leave `breaks` off to match its rendering.
+	breaks: false
 });
 
 // Force links to open in a new context and strip referrer/opener, and never
 // let a `javascript:` URL slip through (DOMPurify drops those too).
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A' && node.getAttribute('href')) {
-    node.setAttribute('target', '_blank');
-    node.setAttribute('rel', 'noopener noreferrer');
-  }
+	if (node.tagName === 'A' && node.getAttribute('href')) {
+		node.setAttribute('target', '_blank');
+		node.setAttribute('rel', 'noopener noreferrer');
+	}
 });
 
 // Highlighted HTML for each code token, populated by the async `walkTokens`
@@ -74,51 +74,45 @@ const highlightedCode = new WeakMap<Tokens.Code, string>();
 let currentShikiTheme: ShikiTheme = 'github-light';
 
 function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 marked.use({
-  async: true,
-  async walkTokens(token) {
-    if (token.type !== 'code') return;
-    const code = token as Tokens.Code;
-    const lang = (code.lang ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
-    const html = await highlightToHtml(code.text, lang, currentShikiTheme);
-    if (html) highlightedCode.set(code, html);
-  },
-  renderer: {
-    code(token: Tokens.Code) {
-      const html = highlightedCode.get(token);
-      if (html) {
-        highlightedCode.delete(token);
-        return html;
-      }
-      return `<pre><code>${escapeHtml(token.text)}</code></pre>`;
-    },
-  },
+	async: true,
+	async walkTokens(token) {
+		if (token.type !== 'code') return;
+		const code = token as Tokens.Code;
+		const lang = (code.lang ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+		const html = await highlightToHtml(code.text, lang, currentShikiTheme);
+		if (html) highlightedCode.set(code, html);
+	},
+	renderer: {
+		code(token: Tokens.Code) {
+			const html = highlightedCode.get(token);
+			if (html) {
+				highlightedCode.delete(token);
+				return html;
+			}
+			return `<pre><code>${escapeHtml(token.text)}</code></pre>`;
+		}
+	}
 });
 
 const FILE_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd', 'mkdn']);
 
 /** True when the path's extension is a Markdown one we can preview. */
 export function isMarkdownPath(path: string): boolean {
-  const dot = path.lastIndexOf('.');
-  if (dot === -1) return false;
-  return FILE_EXTENSIONS.has(path.slice(dot + 1).toLowerCase());
+	const dot = path.lastIndexOf('.');
+	if (dot === -1) return false;
+	return FILE_EXTENSIONS.has(path.slice(dot + 1).toLowerCase());
 }
 
 /**
  * Render Markdown source to sanitized, GFM-compatible HTML with Shiki-
  * highlighted code blocks. `theme` selects the Shiki theme to match the app.
  */
-export async function renderMarkdown(
-  src: string,
-  theme: 'light' | 'dark',
-): Promise<string> {
-  currentShikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
-  const html = (await marked.parse(src, { async: true })) as string;
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+export async function renderMarkdown(src: string, theme: 'light' | 'dark'): Promise<string> {
+	currentShikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
+	const html = (await marked.parse(src, { async: true })) as string;
+	return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 }

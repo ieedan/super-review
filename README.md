@@ -39,6 +39,13 @@ pnpm package         # produce a distributable in apps/desktop/release
 pnpm package:dir     # unpacked build (faster for smoke tests)
 ```
 
+## Releases
+
+Tagged releases are built by CI and published to GitHub Releases for **Windows
+(x64)** and **macOS (Apple silicon)**, and the app auto-updates from them. Push a
+`v*` tag to cut one — see [PUBLISHING.md](PUBLISHING.md) for the full walkthrough
+(including optional code signing / notarization).
+
 ## Project layout
 
 ```
