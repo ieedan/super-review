@@ -12,6 +12,7 @@
     "start": "pnpm --filter @super-review/desktop start",
     "package": "pnpm --filter @super-review/desktop package",
     "package:dir": "pnpm --filter @super-review/desktop package:dir",
+    "release": "pnpm --filter @super-review/desktop release",
     "typecheck": "pnpm -r typecheck",
     "format": "pnpm -r format",
     "lint": "pnpm -r lint"

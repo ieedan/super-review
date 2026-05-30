@@ -1,0 +1,65 @@
+name: Release Desktop
+
+# Builds and publishes the desktop app to a GitHub Release. Triggered by pushing
+# a version tag (e.g. `v0.1.0`); the tag must match apps/desktop/package.json's
+# `version`. See PUBLISHING.md for the cutting-a-release walkthrough.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  # Manual trigger for re-running a build against the current tag/commit.
+  workflow_dispatch:
+
+permissions:
+  # electron-builder needs write access to create/upload the GitHub Release.
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple silicon (arm64) — macos-14 runners are arm64.
+          - os: macos-14
+            name: macOS (Apple silicon)
+          # Windows x64.
+          - os: windows-latest
+            name: Windows (x64)
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build & publish
+        working-directory: apps/desktop
+        run: pnpm run release
+        env:
+          # Token electron-builder uses to create/upload the GitHub Release.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Code signing is optional. With no secrets set these resolve to empty
+          # and electron-builder produces an unsigned build. Per-OS expressions
+          # keep the macOS certificate off the Windows runner and vice versa.
+          # electron-builder reads CSC_LINK / CSC_KEY_PASSWORD generically on
+          # both platforms.
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || (runner.os == 'Windows' && secrets.WIN_CSC_LINK || '') }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || (runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '') }}
+
+          # macOS notarization (used only when the build above is signed).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

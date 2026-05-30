@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, nativeImage, session, shell } from 'electr
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpc } from './ipc.js';
+import { initAutoUpdates } from './updater.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -114,6 +115,7 @@ void app.whenReady().then(() => {
   setupPermissions();
   registerIpc();
   createWindow();
+  initAutoUpdates();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
