@@ -1,5 +1,4 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
-import { shell } from 'electron';
 import { createHash } from 'node:crypto';
 import { promises as fs, type Dirent } from 'node:fs';
 import os from 'node:os';
@@ -582,6 +581,10 @@ async function refsForContext(
 				head: `pr/${ctx.prNumber}/head`,
 				workingTree: false
 			};
+		case 'session':
+			// Sessions are frozen snapshots served from disk by the IPC layer; they
+			// never reach git-service. Guard the invariant rather than guess a ref.
+			throw new Error('session context is not backed by git');
 	}
 	void git;
 }
@@ -1031,6 +1034,9 @@ export async function discardChanges(
 		if (inHead) {
 			await git.raw(['checkout', 'HEAD', '--', relPath]);
 		} else {
+			// Lazy-import electron so this module stays importable from the plain-node
+			// CLI (which captures sessions but never discards files).
+			const { shell } = await import('electron');
 			await shell.trashItem(path.join(repoPath, relPath)).catch(() => {});
 		}
 	};

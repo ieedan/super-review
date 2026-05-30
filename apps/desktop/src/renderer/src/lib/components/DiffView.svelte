@@ -2,11 +2,13 @@
 	import { onDestroy } from 'svelte';
 	import { Inbox } from 'lucide-svelte';
 	import DiffFileSection from './DiffFileSection.svelte';
+	import SessionStepHeader from './SessionStepHeader.svelte';
 	import NoChanges from './NoChanges.svelte';
 	import FindBar from './FindBar.svelte';
 	import { app } from '$lib/store.svelte';
 	import { openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
 	import { matchesFileQuery } from '$lib/file-search';
+	import { tourGroups } from '$lib/session-tour';
 	import type { ChangedFile } from '@shared/types';
 
 	// Mirror the sidebar's path filter so hidden files don't render a diff
@@ -17,6 +19,42 @@
 		if (!q) return app.changedFiles;
 		return app.changedFiles.filter((f) => matchesFileQuery(f.path, q));
 	});
+
+	// The flat render plan: for a session tour, file sections are grouped under
+	// step headers (in tour order); otherwise it's just the files in order. The
+	// "Other changes" group carries no step number (index 0).
+	type PlanItem =
+		| { kind: 'step'; id: string; title: string; body: string; index: number; total: number }
+		| { kind: 'file'; file: ChangedFile };
+	const renderPlan = $derived.by<PlanItem[]>(() => {
+		// Step grouping only in a session's Tour view; the Changes view (and every
+		// non-session context) renders the files flat.
+		const groups =
+			app.sessionView === 'tour' ? tourGroups(app.activeSessionDetail, visibleFiles) : null;
+		if (!groups) return visibleFiles.map((f) => ({ kind: 'file', file: f }));
+		const total = groups.filter((g) => !g.synthetic).length;
+		let stepIndex = 0;
+		const out: PlanItem[] = [];
+		for (const g of groups) {
+			if (!g.synthetic) stepIndex++;
+			out.push({
+				kind: 'step',
+				id: g.id,
+				title: g.title,
+				body: g.body,
+				index: g.synthetic ? 0 : stepIndex,
+				total
+			});
+			for (const f of g.files) out.push({ kind: 'file', file: f });
+		}
+		return out;
+	});
+
+	// Index of the last file item, so it gets the min-height treatment that lets
+	// its top scroll to the viewport top.
+	const lastFileIndex = $derived(
+		renderPlan.reduce((acc, it, i) => (it.kind === 'file' ? i : acc), -1)
+	);
 
 	let scrollContainer = $state<HTMLElement | null>(null);
 	let observer = $state<IntersectionObserver | null>(null);
@@ -49,18 +87,78 @@
 		return () => observer?.disconnect();
 	});
 
-	// Honor scroll requests from the sidebar tree.
+	// Pin a target to the top of the scroll container and keep it pinned while
+	// the surrounding diffs settle. Jumping to a file/step/callout scrolls
+	// instantly, but the sections that land in view then fetch + render their
+	// diffs asynchronously — sections *above* the target grow and shove it out
+	// from under the initial scroll, so it ends up off-position. We re-align
+	// whenever the total content height changes, for a short window, and bail the
+	// moment the user scrolls or navigates themselves.
+	let cancelSettle: (() => void) | null = null;
+	function pinToTop(target: HTMLElement): void {
+		cancelSettle?.();
+		const container = scrollContainer;
+		if (!container) return;
+		const align = (): void => target.scrollIntoView({ behavior: 'auto', block: 'start' });
+		align();
+		let raf = 0;
+		let lastHeight = container.scrollHeight;
+		const deadline = performance.now() + 800;
+		const stop = (): void => {
+			if (raf) cancelAnimationFrame(raf);
+			raf = 0;
+			container.removeEventListener('wheel', stop);
+			container.removeEventListener('touchstart', stop);
+			window.removeEventListener('keydown', onNavKey);
+			cancelSettle = null;
+		};
+		// Programmatic scrolls don't fire wheel/touchstart, so those only trigger on
+		// the user taking over. Among keys, only genuine scroll/navigation ones
+		// should cancel — typing in a composer shouldn't.
+		const onNavKey = (e: KeyboardEvent): void => {
+			if (
+				e.key.startsWith('Arrow') ||
+				e.key === 'PageUp' ||
+				e.key === 'PageDown' ||
+				e.key === 'Home' ||
+				e.key === 'End' ||
+				e.key === ' '
+			) {
+				stop();
+			}
+		};
+		const tick = (): void => {
+			const h = container.scrollHeight;
+			if (h !== lastHeight) {
+				lastHeight = h;
+				align();
+			}
+			if (performance.now() < deadline) raf = requestAnimationFrame(tick);
+			else stop();
+		};
+		container.addEventListener('wheel', stop, { passive: true });
+		container.addEventListener('touchstart', stop, { passive: true });
+		window.addEventListener('keydown', onNavKey);
+		raf = requestAnimationFrame(tick);
+		cancelSettle = stop;
+	}
+
+	// Honor scroll requests from the sidebar (file row, step header). Callout
+	// requests are left to the owning DiffFileSection — the note lives inside the
+	// diff, so the section brings itself into view and aligns to it.
 	$effect(() => {
 		const req = app.scrollRequest;
 		if (!req || req.nonce === lastNonce || !scrollContainer) return;
 		lastNonce = req.nonce;
-		const target = scrollContainer.querySelector(`[data-file-path="${CSS.escape(req.path)}"]`);
-		if (target) {
-			(target as HTMLElement).scrollIntoView({
-				behavior: 'auto',
-				block: 'start'
-			});
-		}
+		if (req.calloutId) return;
+		const selector = req.stepId
+			? `[data-step-id="${CSS.escape(req.stepId)}"]`
+			: req.path
+				? `[data-file-path="${CSS.escape(req.path)}"]`
+				: null;
+		if (!selector) return;
+		const target = scrollContainer.querySelector(selector) as HTMLElement | null;
+		if (target) pinToTop(target);
 	});
 
 	// Track which file section is currently being viewed so the sidebar can
@@ -139,6 +237,7 @@
 
 	onDestroy(() => {
 		observer?.disconnect();
+		cancelSettle?.();
 		closeFind();
 	});
 </script>
@@ -176,8 +275,18 @@
 			</div>
 		{/if}
 
-		{#each visibleFiles as file, i (file.path)}
-			<DiffFileSection {file} {observer} isLast={i === visibleFiles.length - 1} />
+		{#each renderPlan as item, i (item.kind === 'step' ? `step:${item.id}` : `file:${item.file.path}`)}
+			{#if item.kind === 'step'}
+				<SessionStepHeader
+					id={item.id}
+					title={item.title}
+					body={item.body}
+					index={item.index}
+					total={item.total}
+				/>
+			{:else}
+				<DiffFileSection file={item.file} {observer} isLast={i === lastFileIndex} />
+			{/if}
 		{/each}
 	</div>
 </section>

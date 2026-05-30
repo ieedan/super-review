@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		ArrowLeft,
 		Check,
 		ChevronRight,
 		FileMinus,
@@ -22,6 +23,10 @@
 	import * as Tabs from './ui/tabs';
 	import * as Sidebar from './ui/sidebar';
 	import CommitBox from './CommitBox.svelte';
+	import SessionsList from './SessionsList.svelte';
+	import SessionTour from './SessionTour.svelte';
+	import HarnessLogo from './HarnessLogo.svelte';
+	import { harnessLabel } from '$lib/harness-logos';
 	import { actions, app, type ContextTab } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import { languageIconForPath } from '$lib/file-icons';
@@ -95,6 +100,20 @@
 		app.contextTab === 'branch' ? app.branchFileListLayout : app.unstagedFileListLayout
 	);
 	const isTreeLayout = $derived(fileListLayout === 'tree');
+
+	// An open session with a tour offers Tour / Changes sub-tabs. Without steps
+	// there's no tour, so it behaves like a plain changes review.
+	const sessionHasSteps = $derived((app.activeSessionDetail?.steps?.length ?? 0) > 0);
+	// The Tour view owns its own navigation; everything else (normal tabs, a
+	// session's Changes view, a stepless session) gets the file search + the
+	// tree/list toggle.
+	const showFileControls = $derived(
+		app.contextTab !== 'sessions' ||
+			(app.activeSessionId != null && (!sessionHasSteps || app.sessionView === 'changes'))
+	);
+	const showSessionTour = $derived(
+		app.activeSessionId != null && sessionHasSteps && app.sessionView === 'tour'
+	);
 
 	// Build the visible flat list of nodes from the changed files. In 'tree'
 	// layout, folders are aggregated from the file paths themselves and may be
@@ -506,6 +525,12 @@
 		void actions.setContextTab(v as ContextTab);
 	}
 
+	// The session whose diff is currently open (Sessions tab). When set, the
+	// header swaps its tab strip for a back button + session name.
+	const activeSession = $derived(
+		app.activeSessionId ? app.sessions.find((s) => s.id === app.activeSessionId) : undefined
+	);
+
 	// Virtualizer state — wired up to the Sidebar.Content scroll container
 	// through its `ref` prop. We re-measure on scroll (for scrollTop) and on
 	// resize (for clientHeight — pane drags, window resize, sidebar collapse).
@@ -664,38 +689,54 @@
          totals, and the collapse trigger pinned right. Matches the diff sticky
          header height so their bottom borders line up across panes. -->
 		<div class="flex h-11 items-center gap-2 border-b border-border pr-2 pl-1">
-			<!-- Tab strip: drives which diff context fuels the file list. -->
-			<Tabs.Root value={app.contextTab} onValueChange={setTab} class="min-w-0 flex-1 gap-0">
-				<Tabs.List
-					class="no-scrollbar w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent p-0"
+			{#if app.activeSessionId}
+				<!-- A session's diff is open: the tab strip is replaced with a back
+             button and a muted "Sessions" label naming where it returns to.
+             The session's own logo/name/description live in the row below. -->
+				<Button
+					variant="ghost"
+					size="icon"
+					class="size-7 flex-none"
+					title="Back to sessions"
+					onclick={() => actions.closeSession()}
 				>
-					<Tabs.Trigger
-						value="unstaged"
-						class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+					<ArrowLeft class="size-4" />
+				</Button>
+				<span class="min-w-0 flex-1 truncate text-sm text-muted-foreground"> Sessions </span>
+			{:else}
+				<!-- Tab strip: drives which diff context fuels the file list. -->
+				<Tabs.Root value={app.contextTab} onValueChange={setTab} class="min-w-0 flex-1 gap-0">
+					<Tabs.List
+						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent p-0"
 					>
-						Unstaged
-						{#if app.unstagedFileCount > 0}
-							<span
-								class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
-							>
-								{app.unstagedFileCount > 99 ? '99+' : app.unstagedFileCount}
-							</span>
-						{/if}
-					</Tabs.Trigger>
-					<Tabs.Trigger
-						value="branch"
-						class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-					>
-						Branch
-					</Tabs.Trigger>
-					<Tabs.Trigger
-						value="sessions"
-						class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-					>
-						Sessions
-					</Tabs.Trigger>
-				</Tabs.List>
-			</Tabs.Root>
+						<Tabs.Trigger
+							value="unstaged"
+							class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+						>
+							Unstaged
+							{#if app.unstagedFileCount > 0}
+								<span
+									class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
+								>
+									{app.unstagedFileCount > 99 ? '99+' : app.unstagedFileCount}
+								</span>
+							{/if}
+						</Tabs.Trigger>
+						<Tabs.Trigger
+							value="branch"
+							class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+						>
+							Branch
+						</Tabs.Trigger>
+						<Tabs.Trigger
+							value="sessions"
+							class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+						>
+							Sessions
+						</Tabs.Trigger>
+					</Tabs.List>
+				</Tabs.Root>
+			{/if}
 
 			{#if app.changedFiles.length > 0 && app.contextTab !== 'unstaged'}
 				<span class="text-xs text-muted-foreground tabular-nums">
@@ -718,7 +759,60 @@
 			</Button>
 		</div>
 
-		{#if app.contextTab !== 'sessions'}
+		{#if app.activeSessionId}
+			<!-- The open session's identity, on its own row so the top header isn't
+           cramming the title in beside the back button and totals. -->
+			<div class="flex items-start gap-2.5 border-b border-border px-2 py-2">
+				<div
+					class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card"
+					title={harnessLabel(activeSession?.harness ?? 'other', activeSession?.harnessLabel)}
+				>
+					<HarnessLogo harness={activeSession?.harness ?? 'other'} size={16} />
+				</div>
+				<div class="min-w-0 flex-1">
+					<div class="truncate text-sm font-medium">
+						{activeSession?.name ?? 'Session'}
+					</div>
+					{#if activeSession?.description}
+						<p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+							{activeSession.description}
+						</p>
+					{/if}
+				</div>
+			</div>
+		{/if}
+
+		{#if app.activeSessionId && sessionHasSteps}
+			<!-- Toggle between the narrated tour and the plain file-by-file review. -->
+			<div class="flex items-center gap-1 border-b border-border px-2 py-1.5">
+				<button
+					type="button"
+					class={cn(
+						'h-7 rounded-md px-3 text-xs font-medium',
+						app.sessionView === 'tour'
+							? 'bg-muted text-foreground'
+							: 'text-muted-foreground hover:text-foreground'
+					)}
+					onclick={() => actions.setSessionView('tour')}
+				>
+					Tour
+				</button>
+				<button
+					type="button"
+					class={cn(
+						'h-7 rounded-md px-3 text-xs font-medium',
+						app.sessionView === 'changes'
+							? 'bg-muted text-foreground'
+							: 'text-muted-foreground hover:text-foreground'
+					)}
+					onclick={() => actions.setSessionView('changes')}
+				>
+					Changes
+				</button>
+			</div>
+		{/if}
+
+		{#if showFileControls}
 			<div class="flex items-center gap-1.5 border-b border-border py-1.5 pr-2 pl-1">
 				<div
 					class="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input bg-background px-2"
@@ -800,10 +894,13 @@
 	</Sidebar.Header>
 
 	<Sidebar.Content bind:ref={scrollRoot}>
-		{#if app.contextTab === 'sessions'}
-			<div class="px-3 py-8 text-center text-xs text-muted-foreground">
-				Agent sessions are coming soon.
-			</div>
+		{#if app.contextTab === 'sessions' && !app.activeSessionId}
+			<!-- Sessions tab with no session open: list the documented sessions. -->
+			<SessionsList />
+		{:else if showSessionTour}
+			<!-- An open session's Tour view: grouped step-by-step navigation. The
+             Changes view (and stepless sessions) fall through to the file list. -->
+			<SessionTour />
 		{:else if app.loading.files && app.changedFiles.length === 0}
 			<div class="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</div>
 		{:else if app.changedFiles.length === 0}

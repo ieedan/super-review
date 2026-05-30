@@ -27,6 +27,8 @@ import type {
 	RepoContextMenuAction,
 	RepoContextMenuParams,
 	RepoInfo,
+	Session,
+	SessionSummary,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -62,6 +64,8 @@ import {
 } from './git-service.js';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import * as gh from './github-service.js';
+import { deleteSession, getSession, listSessions } from './session-store.js';
+import { installSkill, isSkillInstalled } from './skill-service.js';
 import {
 	clearCollapsedFiles,
 	clearSeen,
@@ -290,6 +294,19 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:listChangedFiles',
 		async (_e, repoId: string, ctx: DiffContext): Promise<ChangedFile[]> => {
+			// Sessions are frozen snapshots on disk, not live git state — serve their
+			// file list straight from the manifest.
+			if (ctx.kind === 'session') {
+				const session = await getSession(repoId, ctx.sessionId);
+				return (session?.files ?? []).map((f) => ({
+					path: f.path,
+					oldPath: f.oldPath,
+					status: f.status,
+					additions: f.additions,
+					deletions: f.deletions,
+					isBinary: f.isBinary
+				}));
+			}
 			return listChangedFiles(repoOrThrow(repoId).path, ctx);
 		}
 	);
@@ -297,6 +314,28 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:getDiff',
 		async (_e, repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData> => {
+			// Session diffs come from the manifest, not git.
+			if (ctx.kind === 'session') {
+				const session = await getSession(repoId, ctx.sessionId);
+				const f = session?.files.find((x) => x.path === filePath);
+				if (!f) {
+					throw new Error(`File not in session ${ctx.sessionId}: ${filePath}`);
+				}
+				return {
+					file: {
+						path: f.path,
+						oldPath: f.oldPath,
+						status: f.status,
+						additions: f.additions,
+						deletions: f.deletions,
+						isBinary: f.isBinary
+					},
+					patch: f.patch,
+					oldContents: f.oldContents,
+					newContents: f.newContents,
+					truncated: f.truncated
+				};
+			}
 			return getDiff(repoOrThrow(repoId).path, filePath, ctx);
 		}
 	);
@@ -881,4 +920,32 @@ export function registerIpc(): void {
 			setCommitDraft(repoId, draft);
 		}
 	);
+
+	ipcMain.handle(
+		'sessions:list',
+		async (_e, repoId: string): Promise<SessionSummary[]> => listSessions(repoId)
+	);
+
+	ipcMain.handle(
+		'sessions:get',
+		async (_e, repoId: string, id: string): Promise<Session | null> => getSession(repoId, id)
+	);
+
+	ipcMain.handle(
+		'sessions:remove',
+		async (_e, repoId: string, id: string): Promise<void> => deleteSession(repoId, id)
+	);
+
+	// ─── Skill ─────────────────────────────────────────────────────────────
+	// The document-session skill teaches an agent how/when to record a session.
+	// The UI checks whether it's installed in the active repo and offers to drop
+	// it in when it isn't.
+	ipcMain.handle(
+		'skill:isInstalled',
+		async (_e, repoId: string): Promise<boolean> => isSkillInstalled(repoOrThrow(repoId).path)
+	);
+
+	ipcMain.handle('skill:install', async (_e, repoId: string): Promise<void> => {
+		await installSkill(repoOrThrow(repoId).path);
+	});
 }

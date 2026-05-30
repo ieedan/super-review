@@ -8,7 +8,12 @@ export default defineConfig({
 		plugins: [externalizeDepsPlugin()],
 		build: {
 			rollupOptions: {
-				input: resolve(__dirname, 'src/main/index.ts')
+				// `index` is the Electron main entry; `cli` is a standalone node entry
+				// (the super-review CLI) emitted to out/main/cli.js.
+				input: {
+					index: resolve(__dirname, 'src/main/index.ts'),
+					cli: resolve(__dirname, 'src/cli/index.ts')
+				}
 			}
 		},
 		resolve: {

@@ -8,5 +8,7 @@ export function diffContextKey(ctx: DiffContext): string {
 			return `branch:${ctx.base}..${ctx.head}`;
 		case 'pr':
 			return `pr:${ctx.prNumber}`;
+		case 'session':
+			return `session:${ctx.sessionId}`;
 	}
 }

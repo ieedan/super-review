@@ -25,6 +25,8 @@ import type {
 	PushStatus,
 	RepoContextMenuAction,
 	RepoInfo,
+	Session,
+	SessionSummary,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -195,6 +197,15 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('state:getCommitDraft', repoId) as Promise<CommitDraft>,
 		setCommitDraft: (repoId, draft) =>
 			ipcRenderer.invoke('state:setCommitDraft', repoId, draft) as Promise<void>
+	},
+	sessions: {
+		list: (repoId) => ipcRenderer.invoke('sessions:list', repoId) as Promise<SessionSummary[]>,
+		get: (repoId, id) => ipcRenderer.invoke('sessions:get', repoId, id) as Promise<Session | null>,
+		remove: (repoId, id) => ipcRenderer.invoke('sessions:remove', repoId, id) as Promise<void>
+	},
+	skill: {
+		isInstalled: (repoId) => ipcRenderer.invoke('skill:isInstalled', repoId) as Promise<boolean>,
+		install: (repoId) => ipcRenderer.invoke('skill:install', repoId) as Promise<void>
 	},
 	shell: {
 		openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,
