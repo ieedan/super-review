@@ -129,7 +129,107 @@ export interface PRChecksSummary {
 export type DiffContext =
   | { kind: "branch"; base: string; head: string }
   | { kind: "workingTree" }
-  | { kind: "pr"; prNumber: number };
+  | { kind: "pr"; prNumber: number }
+  // A frozen snapshot of changes documented by a coding agent. Files don't come
+  // from git — they're read back from the session manifest on disk.
+  | { kind: "session"; sessionId: string };
+
+// Which coding-agent harness produced a session. Drives the logo shown on the
+// session card; "other" falls back to a generic icon + `harnessLabel`.
+export type HarnessKind =
+  | "claude-code"
+  | "cursor"
+  | "codex"
+  | "opencode"
+  | "copilot"
+  | "other";
+
+// A single changed file frozen into a session: the diff metadata plus the
+// captured patch and file contents, so the session renders without touching
+// git. Contents are "" for added/deleted/binary/truncated sides, matching the
+// conventions of `DiffData`.
+export interface SessionFile {
+  path: string;
+  oldPath?: string;
+  status: FileStatus;
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
+  patch: string;
+  oldContents: string;
+  newContents: string;
+  truncated: boolean;
+}
+
+// Listing-level view of a session — everything but the (potentially large)
+// per-file contents, so the Sessions tab can render the list cheaply.
+export interface SessionSummary {
+  id: string;
+  repoId: string;
+  // The harness's own conversation/run id. Used by the CLI to upsert: the same
+  // key re-captures (updates) the existing session instead of creating a new
+  // one. Undefined for sessions created without a key.
+  key?: string;
+  name: string;
+  description: string;
+  harness: HarnessKind;
+  // Freeform harness name shown when `harness === "other"`.
+  harnessLabel?: string;
+  // Optional deep link back to the agent run (resume/permalink). When present
+  // the card shows an "open in harness" button.
+  harnessUrl?: string;
+  // Branch the snapshot was taken on, and the commit it was diffed against.
+  branch?: string;
+  baseRef?: string;
+  createdAt: number;
+  // Bumped on every re-capture so the list can sort by most-recently-updated.
+  updatedAt: number;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  // Number of tour steps. 0 for a flat session saved without a tour, which
+  // renders as a plain file list.
+  stepCount: number;
+}
+
+// A callout pins commentary to a specific line range within a file's diff, so
+// the agent can say "look right here" instead of describing it in prose. The
+// range is 1-based inclusive on the given side of the frozen diff, so it never
+// drifts. `body` is Markdown.
+export interface SessionCallout {
+  // Stable id within the session, assigned at capture.
+  id: string;
+  // The file this callout sits in (one of its step's files).
+  file: string;
+  startLine: number;
+  endLine: number;
+  // Which side the line numbers refer to: "new" = additions (the new file),
+  // "old" = deletions (the original).
+  side: "new" | "old";
+  body: string;
+}
+
+// One stop on a session's guided tour: a titled, explained group of related
+// changed files, so the reviewer reads the change as a narrative instead of an
+// alphabetical pile of diffs. `body` is Markdown commentary; `paths` reference
+// files in the session's `files`, in the order the agent wants them read.
+// `callouts` optionally pin finer-grained notes to line ranges within them.
+export interface SessionStep {
+  // Stable id within the session, assigned at capture.
+  id: string;
+  title: string;
+  body: string;
+  paths: string[];
+  callouts: SessionCallout[];
+}
+
+// A full session: its summary, the guided tour, and the frozen per-file diffs.
+export interface Session extends SessionSummary {
+  files: SessionFile[];
+  // Ordered tour steps. Empty when saved without a tour; then `files` is shown
+  // as a flat list with no step headers.
+  steps: SessionStep[];
+}
 
 // A review comment attached to a specific line in a PR diff.
 // `side: 'RIGHT'` lives in the head file (additions); `'LEFT'` in the base
@@ -566,6 +666,18 @@ export interface PreloadAPI {
     clearCollapsedFiles(repoId: string, contextKey: string): Promise<void>;
     getCommitDraft(repoId: string): Promise<CommitDraft>;
     setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
+  };
+  sessions: {
+    list(repoId: string): Promise<SessionSummary[]>;
+    get(repoId: string, id: string): Promise<Session | null>;
+    remove(repoId: string, id: string): Promise<void>;
+  };
+  skill: {
+    // Whether the document-session skill is installed in the repo
+    // (`.claude/skills/document-session/SKILL.md` exists).
+    isInstalled(repoId: string): Promise<boolean>;
+    // Write the bundled document-session skill into the repo.
+    install(repoId: string): Promise<void>;
   };
   shell: {
     openExternal(url: string): Promise<void>;

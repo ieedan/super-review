@@ -77,6 +77,42 @@ pnpm package:dir     # unpacked build (faster for smoke tests)
 - Per-repo, per-context "seen file" tracking — seen files collapse and dim out.
 - GitHub PR list via Device Flow auth; selecting a PR fetches `refs/pr/<n>/head`
   and pins `refs/pr/<n>/base` to the PR base branch tip, then diffs locally.
+- **Sessions** — agent-documented collections of changes (see below).
+
+## Sessions
+
+A **session** is a frozen, agent-documented snapshot of the changes a coding
+agent made: a name, a description, the harness that produced it (shown with a
+logo, and an optional link back to the run), and the diff of every changed file.
+Sessions let you review one agent run in isolation instead of one
+undifferentiated pile of unstaged changes.
+
+The **Sessions** tab lists the documented sessions for the active repo; pick one
+to open its frozen diff in the sidebar + diff view, and use the back arrow to
+return to the list.
+
+### Documenting a session (CLI)
+
+Agents record a session with the bundled CLI (`apps/desktop/out/main/cli.js`,
+exposed as the `super-review` bin after building):
+
+```bash
+super-review session save \
+  --key "<conversation id>" \
+  --name "What I changed" \
+  --description "Details" \
+  --harness claude-code \
+  [--harness-url "<resume/permalink>"]
+```
+
+Re-running with the same `--key` **updates** the existing session with the
+latest working-tree changes rather than creating a duplicate. The snapshot is
+taken from the current working tree (changes need not be committed). Manifests
+are stored under `~/.super-review/sessions/<repoId>/`.
+
+A ready-to-use Claude Code skill lives at
+`.claude/skills/document-session/SKILL.md`; agents can invoke it when they
+finish a task.
 
 ## Known limitations (v1)
 

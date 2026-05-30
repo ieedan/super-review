@@ -33,13 +33,22 @@
   import { diffContextKey } from '@shared/diff-context';
   import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
   import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
+  import CalloutAnnotation from './CalloutAnnotation.svelte';
+  import { calloutsForFile } from '$lib/session-tour';
   import type {
     ChangedFile,
     DiffContext,
     DiffData,
     EditorKind,
     PRReviewComment,
+    SessionCallout,
   } from '@shared/types';
+
+  // Metadata Pierre carries on each line annotation. Review comments/composers
+  // use CommentMeta; agent tour callouts add a third variant. renderAnnotation
+  // branches on `kind` to mount the right component.
+  type CalloutMeta = { kind: 'callout'; callout: SessionCallout };
+  type AnnotationMeta = CommentMeta | CalloutMeta;
 
   interface Props {
     file: ChangedFile;
@@ -55,18 +64,23 @@
   let section = $state<HTMLElement | null>(null);
   let host = $state<HTMLElement | null>(null);
   let diffContainer: HTMLElement | null = null;
-  let instance: FileDiffClass<CommentMeta> | null = null;
+  let instance: FileDiffClass<AnnotationMeta> | null = null;
   // The annotation list currently painted into `instance`. The `lineAnnotations`
   // derived reads the *whole* `app.pendingComposers` object, so opening a
   // composer on ANY file re-runs the derived (and the update effect) on EVERY
   // mounted section — and each run hands back a fresh array. We diff against
   // this snapshot so only the sections whose annotations actually changed pay
   // for Pierre's expensive `rerender()`; the rest bail out early.
-  let appliedAnnotations: DiffLineAnnotation<CommentMeta>[] = [];
+  let appliedAnnotations: DiffLineAnnotation<AnnotationMeta>[] = [];
   // Cache of mounted CommentAnnotation instances, keyed by annotation index.
   // FileDiff caches its wrapper element per annotation; we mount our component
   // once and let its $derived expressions react to store changes.
   const mountedComponents = new Map<string, ReturnType<typeof mount>>();
+  // Live DOM containers for rendered callout notes, keyed by callout id, so a
+  // "scroll to callout" request can align the note into view even though it
+  // lives inside the diff's DOM. Repopulated on every render.
+  const calloutContainers = new Map<string, HTMLElement>();
+  let cancelCalloutScroll: (() => void) | null = null;
   let diffData = $state<DiffData | null>(null);
   // Context key the current `diffData` was loaded for. When the user switches
   // tabs and the {#each} reuses this component (because the file exists in
@@ -137,53 +151,79 @@
   type CommentMetaComposer = Extract<CommentMeta, { kind: 'composer' }>;
   const commentMetaCache = new Map<number, CommentMetaComment>();
   const composerMetaCache = new Map<string, CommentMetaComposer>();
+  // Same reference-stability trick for tour callouts, keyed by callout id.
+  const calloutMetaCache = new Map<string, CalloutMeta>();
 
-  // Build the annotation list FileDiff renders: every existing comment +
-  // any pending composers on this file. Annotation order matters for the
-  // cache key — `${index}-${side}-${line}` — but as long as we deterministically
-  // append composers after comments we get stable identities across updates.
-  const lineAnnotations = $derived.by<DiffLineAnnotation<CommentMeta>[]>(() => {
-    if (!isPRContext) return [];
-    const out: DiffLineAnnotation<CommentMeta>[] = [];
+  // Session tour callouts pinned to this file (empty outside a session). Read
+  // reactively so the annotation list rebuilds when the open session changes.
+  const fileCallouts = $derived(
+    app.diffContext.kind === 'session'
+      ? calloutsForFile(app.activeSessionDetail, file.path)
+      : [],
+  );
+
+  // Build the annotation list FileDiff renders: PR comments + pending composers
+  // (PR contexts only), plus agent tour callouts (session context). Annotation
+  // order is part of the cache key — `${index}-${side}-${line}` — so we append
+  // deterministically (comments, composers, then callouts) for stable identity.
+  const lineAnnotations = $derived.by<DiffLineAnnotation<AnnotationMeta>[]>(() => {
+    const out: DiffLineAnnotation<AnnotationMeta>[] = [];
     const liveCommentIds = new Set<number>();
     const liveComposerKeys = new Set<string>();
+    const liveCalloutIds = new Set<string>();
 
-    const comments = app.prComments[file.path] ?? [];
-    for (const c of comments) {
-      if (c.line == null) continue;
-      liveCommentIds.add(c.id);
-      let meta = commentMetaCache.get(c.id);
-      // Invalidate the cached metadata if the underlying comment object was
-      // replaced (e.g. server returned an edited copy).
-      if (meta == null || meta.comment !== c) {
-        meta = { kind: 'comment', comment: c };
-        commentMetaCache.set(c.id, meta);
+    if (isPRContext) {
+      const comments = app.prComments[file.path] ?? [];
+      for (const c of comments) {
+        if (c.line == null) continue;
+        liveCommentIds.add(c.id);
+        let meta = commentMetaCache.get(c.id);
+        // Invalidate the cached metadata if the underlying comment object was
+        // replaced (e.g. server returned an edited copy).
+        if (meta == null || meta.comment !== c) {
+          meta = { kind: 'comment', comment: c };
+          commentMetaCache.set(c.id, meta);
+        }
+        out.push({
+          side: c.side === 'LEFT' ? 'deletions' : 'additions',
+          lineNumber: c.line,
+          metadata: meta,
+        });
       }
-      out.push({
-        side: c.side === 'LEFT' ? 'deletions' : 'additions',
-        lineNumber: c.line,
-        metadata: meta,
-      });
+
+      for (const composer of Object.values(app.pendingComposers)) {
+        if (composer.filePath !== file.path) continue;
+        const key = composerKey(composer.filePath, composer.side, composer.line);
+        liveComposerKeys.add(key);
+        let meta = composerMetaCache.get(key);
+        if (meta == null || meta.replyTo !== composer.replyTo) {
+          meta = {
+            kind: 'composer',
+            filePath: composer.filePath,
+            line: composer.line,
+            side: composer.side,
+            replyTo: composer.replyTo,
+          };
+          composerMetaCache.set(key, meta);
+        }
+        out.push({
+          side: composer.side === 'LEFT' ? 'deletions' : 'additions',
+          lineNumber: composer.line,
+          metadata: meta,
+        });
+      }
     }
 
-    for (const composer of Object.values(app.pendingComposers)) {
-      if (composer.filePath !== file.path) continue;
-      const key = composerKey(composer.filePath, composer.side, composer.line);
-      liveComposerKeys.add(key);
-      let meta = composerMetaCache.get(key);
-      if (meta == null || meta.replyTo !== composer.replyTo) {
-        meta = {
-          kind: 'composer',
-          filePath: composer.filePath,
-          line: composer.line,
-          side: composer.side,
-          replyTo: composer.replyTo,
-        };
-        composerMetaCache.set(key, meta);
+    for (const callout of fileCallouts) {
+      liveCalloutIds.add(callout.id);
+      let meta = calloutMetaCache.get(callout.id);
+      if (meta == null || meta.callout !== callout) {
+        meta = { kind: 'callout', callout };
+        calloutMetaCache.set(callout.id, meta);
       }
       out.push({
-        side: composer.side === 'LEFT' ? 'deletions' : 'additions',
-        lineNumber: composer.line,
+        side: callout.side === 'old' ? 'deletions' : 'additions',
+        lineNumber: callout.startLine,
         metadata: meta,
       });
     }
@@ -195,6 +235,9 @@
     }
     for (const k of [...composerMetaCache.keys()]) {
       if (!liveComposerKeys.has(k)) composerMetaCache.delete(k);
+    }
+    for (const id of [...calloutMetaCache.keys()]) {
+      if (!liveCalloutIds.has(id)) calloutMetaCache.delete(id);
     }
 
     return out;
@@ -244,6 +287,63 @@
     notifySectionState(file.path, { inView });
   });
 
+  // Scroll a specific callout's note into view when the sidebar requests it and
+  // the callout belongs to this file. Bring the section into view first (which
+  // triggers the lazy diff fetch/render), then center the note once it exists,
+  // re-aligning while the diff settles. Bounded; cancels if the user scrolls.
+  let lastCalloutScrollNonce = 0;
+  function scrollToCallout(id: string): void {
+    cancelCalloutScroll?.();
+    section?.scrollIntoView({ behavior: 'auto', block: 'start' });
+    // Render synchronously from cache if possible; otherwise the in-view fetch
+    // kicked off above lands within the retry window below.
+    forceRenderForFind();
+    let raf = 0;
+    let stableFrames = 0;
+    let lastTop = Number.NaN;
+    const deadline = performance.now() + 1500;
+    const stop = (): void => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      window.removeEventListener('wheel', stop);
+      window.removeEventListener('touchstart', stop);
+      window.removeEventListener('keydown', stop);
+      cancelCalloutScroll = null;
+    };
+    const tick = (): void => {
+      const el = calloutContainers.get(id);
+      if (el?.isConnected) {
+        el.scrollIntoView({ behavior: 'auto', block: 'center' });
+        // Stop once the note has held still for a few frames (diff settled).
+        const top = el.getBoundingClientRect().top;
+        stableFrames = Math.abs(top - lastTop) < 1 ? stableFrames + 1 : 0;
+        lastTop = top;
+        if (stableFrames >= 3) {
+          stop();
+          return;
+        }
+      }
+      if (performance.now() < deadline) raf = requestAnimationFrame(tick);
+      else stop();
+    };
+    // Programmatic scrolls don't fire these, so they only trigger on the user
+    // taking over.
+    window.addEventListener('wheel', stop, { passive: true });
+    window.addEventListener('touchstart', stop, { passive: true });
+    window.addEventListener('keydown', stop);
+    raf = requestAnimationFrame(tick);
+    cancelCalloutScroll = stop;
+  }
+
+  $effect(() => {
+    const req = app.scrollRequest;
+    if (!req || !req.calloutId || req.nonce === lastCalloutScrollNonce) return;
+    // Only the section that owns this callout responds.
+    if (!fileCallouts.some((c) => c.id === req.calloutId)) return;
+    lastCalloutScrollNonce = req.nonce;
+    scrollToCallout(req.calloutId);
+  });
+
   function unmountAll(): void {
     for (const cmp of mountedComponents.values()) {
       try {
@@ -257,6 +357,9 @@
 
   function disposeDiff(): void {
     unmountAll();
+    // The callout nodes die with the instance; clear the map so the scroll
+    // handler waits for the fresh ones rather than a detached node.
+    calloutContainers.clear();
     // The painted annotations die with the instance; clear the baseline so a
     // fresh mount re-applies from scratch rather than comparing against stale.
     appliedAnnotations = [];
@@ -274,7 +377,7 @@
     }
   }
 
-  function annotationCacheKey(a: DiffLineAnnotation<CommentMeta>, index: number): string {
+  function annotationCacheKey(a: DiffLineAnnotation<AnnotationMeta>, index: number): string {
     return `${index}-${a.side}-${a.lineNumber}`;
   }
 
@@ -285,8 +388,8 @@
   // (fresh meta ref) still triggers a repaint while an unrelated composer
   // opening elsewhere does not.
   function annotationsEqual(
-    a: DiffLineAnnotation<CommentMeta>[],
-    b: DiffLineAnnotation<CommentMeta>[],
+    a: DiffLineAnnotation<AnnotationMeta>[],
+    b: DiffLineAnnotation<AnnotationMeta>[],
   ): boolean {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) {
@@ -302,9 +405,10 @@
   }
 
   function renderAnnotation(
-    annotation: DiffLineAnnotation<CommentMeta>,
+    annotation: DiffLineAnnotation<AnnotationMeta>,
   ): HTMLElement | undefined {
-    if (!annotation.metadata) return undefined;
+    const meta = annotation.metadata;
+    if (!meta) return undefined;
     const container = document.createElement('div');
     // Stamp the same cache key Pierre uses so we can unmount the matching
     // component when the annotation list changes. The current index isn't
@@ -320,11 +424,24 @@
           // ignore
         }
       }
-      const cmp = mount(CommentAnnotation, {
-        target: container,
-        props: { meta: annotation.metadata },
-      });
-      mountedComponents.set(key, cmp);
+      // Agent tour callouts mount their own narration component; everything
+      // else is a review comment / composer. Stash the callout's container so a
+      // "scroll to callout" request can align it into view.
+      if (meta.kind === 'callout') {
+        container.dataset.calloutId = meta.callout.id;
+        calloutContainers.set(meta.callout.id, container);
+        const cmp = mount(CalloutAnnotation, {
+          target: container,
+          props: { callout: meta.callout },
+        });
+        mountedComponents.set(key, cmp);
+      } else {
+        const cmp = mount(CommentAnnotation, {
+          target: container,
+          props: { meta },
+        });
+        mountedComponents.set(key, cmp);
+      }
     }
     return container;
   }
@@ -355,7 +472,7 @@
 
     diffContainer = document.createElement(DIFFS_TAG_NAME);
     host.appendChild(diffContainer);
-    instance = new FileDiffClass<CommentMeta>({
+    instance = new FileDiffClass<AnnotationMeta>({
       diffStyle: app.viewMode,
       themeType: app.theme,
       disableFileHeader: true,
@@ -642,6 +759,7 @@
   onDestroy(() => {
     cancelPendingRender?.();
     cancelPendingRender = null;
+    cancelCalloutScroll?.();
     disposeDiff();
   });
 

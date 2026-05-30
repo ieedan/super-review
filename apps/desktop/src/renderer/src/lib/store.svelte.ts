@@ -15,6 +15,8 @@ import type {
   PRSummary,
   PushStatus,
   RepoInfo,
+  Session,
+  SessionSummary,
   TerminalKind,
   UserPrefs,
   ViewMode,
@@ -58,6 +60,24 @@ interface AppState {
   prsSource: PRSource;
   diffContext: DiffContext;
   contextTab: ContextTab;
+  // Agent-documented sessions for the active repo, newest-updated first. Shown
+  // as a list on the Sessions tab; loaded on entering the tab / refresh.
+  sessions: SessionSummary[];
+  // The session whose frozen diff is currently open, or null when the Sessions
+  // tab is showing the list. Ephemeral — not persisted across launches.
+  activeSessionId: string | null;
+  // Full detail (incl. tour steps) of the open session, loaded alongside its
+  // files so the diff view and sidebar can render the tour. null when no
+  // session is open or while it's loading.
+  activeSessionDetail: Session | null;
+  // Which view an open session shows: the narrated "tour" (grouped steps +
+  // callouts) or "changes" (the plain file-by-file review, with search and
+  // tree/list toggle). Only meaningful while a session with steps is open.
+  sessionView: "tour" | "changes";
+  // Whether the document-session skill is installed in the active repo. null
+  // while unknown (no active repo, or the check hasn't returned yet); false
+  // drives the "Install skill" prompts in the header and sessions empty state.
+  skillInstalled: boolean | null;
   changedFiles: ChangedFile[];
   // Free-text filter applied to the changed-files list. Shared between the
   // sidebar (where it's typed) and the diff view (which hides sections for
@@ -106,7 +126,16 @@ interface AppState {
   activeGithubAccount: GithubAccount | null;
   sidebarCollapsed: boolean;
   collapsedFolders: Set<string>;
-  scrollRequest: { path: string; nonce: number } | null;
+  // A request to scroll the diff view to a file (`path`), a tour step header
+  // (`stepId`), or a specific callout (`calloutId`, handled by the owning file
+  // section since the note lives inside the diff). The nonce makes repeat
+  // requests to the same target fire again.
+  scrollRequest: {
+    path?: string;
+    stepId?: string;
+    calloutId?: string;
+    nonce: number;
+  } | null;
   lastRefreshAt: number | null;
   fetchingOrigin: boolean;
   nowTick: number;
@@ -214,6 +243,11 @@ const initial: AppState = {
   prsSource: "fork",
   diffContext: { kind: "workingTree" },
   contextTab: "unstaged",
+  sessions: [],
+  activeSessionId: null,
+  activeSessionDetail: null,
+  sessionView: "tour",
+  skillInstalled: null,
   changedFiles: [],
   fileSearchQuery: "",
   unstagedFileCount: 0,
@@ -664,7 +698,11 @@ function contextForTab(tab: ContextTab): DiffContext {
     const head = app.currentBranch ?? "HEAD";
     return { kind: "branch", base, head };
   }
-  // 'sessions' is a placeholder — treat like workingTree until implemented.
+  if (tab === "sessions" && app.activeSessionId) {
+    return { kind: "session", sessionId: app.activeSessionId };
+  }
+  // Sessions without an open session show the list, not a diff — fall back to
+  // the working tree context (unused while the list is shown).
   return { kind: "workingTree" };
 }
 
@@ -687,6 +725,23 @@ async function refreshUnstagedCount(): Promise<void> {
     setRepoDirty(repoId, files.length > 0);
   } catch {
     // keep previous count
+  }
+}
+
+// Check whether the document-session skill is installed in the active repo and
+// store the result. Failure-silent — leaves the answer unknown (null) so the
+// install prompts stay hidden rather than flashing on a transient error.
+async function refreshSkillInstalled(): Promise<void> {
+  if (!app.activeRepo) {
+    app.skillInstalled = null;
+    return;
+  }
+  const repoId = app.activeRepo.id;
+  try {
+    const installed = await window.api.skill.isInstalled(repoId);
+    if (app.activeRepo?.id === repoId) app.skillInstalled = installed;
+  } catch {
+    // Leave unknown — don't surface a banner over a non-critical check.
   }
 }
 
@@ -720,6 +775,14 @@ async function refreshFiles(): Promise<void> {
   if (!app.activeRepo) {
     app.changedFiles = [];
     app.unstagedFileCount = 0;
+    return;
+  }
+  // The Sessions tab with no session open shows the sessions list, not a file
+  // list — don't let a background refresh (focus/poll) repopulate the sidebar
+  // with working-tree files behind it. Keep the Unstaged badge fresh, though.
+  if (app.contextTab === "sessions" && !app.activeSessionId) {
+    app.changedFiles = [];
+    void refreshUnstagedCount();
     return;
   }
   const repoId = app.activeRepo.id;
@@ -861,12 +924,14 @@ export const actions = {
         await Promise.all([refreshFiles(), refreshPushStatus()]);
       } else if (savedTab === "sessions") {
         app.contextTab = "sessions";
-        // Sessions is a placeholder — no file list to fetch. We still want the
-        // Unstaged tab badge to be accurate on launch, so fetch the count.
+        // The Sessions tab shows the documented-sessions list (in the sidebar),
+        // not a working-tree file list — load the sessions. Still fetch the
+        // Unstaged badge count so it's accurate on launch.
         await Promise.all([
           refreshBranches(),
           refreshPushStatus(),
           refreshUnstagedCount(),
+          actions.loadSessions(),
         ]);
       } else {
         await Promise.all([
@@ -876,6 +941,7 @@ export const actions = {
         ]);
       }
       await refreshBranchPR();
+      void refreshSkillInstalled();
     }
     // Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
     // of init so its per-repo `git status` flood doesn't compete with — and
@@ -899,6 +965,7 @@ export const actions = {
           refreshPushStatus(),
         ]);
         await refreshBranchPR();
+        void refreshSkillInstalled();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -921,6 +988,7 @@ export const actions = {
           refreshPushStatus(),
         ]);
         await refreshBranchPR();
+        void refreshSkillInstalled();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -948,6 +1016,7 @@ export const actions = {
           refreshPushStatus(),
         ]);
         await refreshBranchPR();
+        void refreshSkillInstalled();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -977,6 +1046,10 @@ export const actions = {
       repoFrecency.use(repo.id);
       applyContextTab("unstaged");
       app.diffContext = { kind: "workingTree" };
+      app.activeSessionId = null;
+      app.activeSessionDetail = null;
+      app.sessions = [];
+      app.skillInstalled = null;
       app.excludedFromCommit = new Set();
       app.prs = [];
       app.prsHasMore = false;
@@ -990,6 +1063,7 @@ export const actions = {
         refreshPushStatus(),
       ]);
       await refreshBranchPR();
+      void refreshSkillInstalled();
     }
   },
 
@@ -1001,6 +1075,7 @@ export const actions = {
       app.unstagedFileCount = 0;
       app.branches = [];
       app.selectedFile = null;
+      app.skillInstalled = null;
     }
     setRepoDirty(id, false);
     await refreshRepos();
@@ -1030,12 +1105,16 @@ export const actions = {
     if (app.contextTab === tab) return;
     applyContextTab(tab);
     if (tab === "sessions") {
-      // No sessions yet — clear the file list and skip the IPC roundtrip.
+      // Show the sessions list: clear the file list and load the manifests.
+      // Selecting a session (openSession) is what populates the diff view.
+      app.activeSessionId = null;
+      app.activeSessionDetail = null;
       app.changedFiles = [];
       app.selectedFile = null;
       app.seenFiles = new Set();
       app.collapsedFiles = new Set();
       app.diffContext = { kind: "workingTree" };
+      void actions.loadSessions();
       return;
     }
     app.diffContext = contextForTab(tab);
@@ -1065,6 +1144,98 @@ export const actions = {
     await refreshFiles();
   },
 
+  // Load the active repo's documented sessions into `app.sessions`. Called on
+  // entering the Sessions tab and on refresh, so an agent's CLI update is
+  // picked up. If a session is open, re-open it so its diff reflects the latest
+  // re-capture; if it has since been removed, fall back to the list.
+  async loadSessions(): Promise<void> {
+    if (!app.activeRepo) {
+      app.sessions = [];
+      return;
+    }
+    const repoId = app.activeRepo.id;
+    const sessions = await window.api.sessions.list(repoId);
+    if (!app.activeRepo || app.activeRepo.id !== repoId) return;
+    app.sessions = sessions;
+    if (app.activeSessionId) {
+      if (sessions.some((s) => s.id === app.activeSessionId)) {
+        await actions.openSession(app.activeSessionId);
+      } else {
+        actions.closeSession();
+      }
+    }
+  },
+
+  // Open a session's frozen diff: drives the file list + diff view through the
+  // existing context machinery via a `session` DiffContext. Also loads the full
+  // session detail (incl. tour steps) so the tour can render.
+  async openSession(id: string): Promise<void> {
+    app.activeSessionId = id;
+    app.diffContext = { kind: "session", sessionId: id };
+    app.activePR = null;
+    app.prComments = {};
+    app.pendingComposers = {};
+    app.activeSessionDetail = null;
+    // Land on the tour; the file search query carries no meaning into a fresh
+    // session, so clear it (the Changes tab re-enables search).
+    app.sessionView = "tour";
+    app.fileSearchQuery = "";
+    if (app.activeRepo) {
+      const repoId = app.activeRepo.id;
+      void window.api.sessions.get(repoId, id).then((detail) => {
+        // Guard against a slow fetch landing after the user moved on.
+        if (app.activeSessionId === id && app.activeRepo?.id === repoId) {
+          app.activeSessionDetail = detail;
+        }
+      });
+    }
+    await refreshFiles();
+  },
+
+  // Switch an open session between its tour and the plain changes view. Moving
+  // to the tour drops any file-search filter (the tour has no search box).
+  setSessionView(view: "tour" | "changes"): void {
+    if (app.sessionView === view) return;
+    app.sessionView = view;
+    if (view === "tour") app.fileSearchQuery = "";
+  },
+
+  // Leave an open session and return to the sessions list.
+  closeSession(): void {
+    app.activeSessionId = null;
+    app.activeSessionDetail = null;
+    app.changedFiles = [];
+    app.selectedFile = null;
+    app.seenFiles = new Set();
+    app.collapsedFiles = new Set();
+    app.diffContext = { kind: "workingTree" };
+  },
+
+  async deleteSession(id: string): Promise<void> {
+    if (!app.activeRepo) return;
+    await window.api.sessions.remove(app.activeRepo.id, id);
+    if (app.activeSessionId === id) actions.closeSession();
+    await actions.loadSessions();
+  },
+
+  // Re-check whether the document-session skill is installed in the active repo
+  // (e.g. after the repo's `.claude` dir may have changed on disk).
+  async refreshSkillInstalled(): Promise<void> {
+    await refreshSkillInstalled();
+  },
+
+  // Install the document-session skill into the active repo, then re-check so
+  // the "Install skill" prompts clear once it's in place.
+  async installSkill(): Promise<void> {
+    if (!app.activeRepo) return;
+    try {
+      await window.api.skill.install(app.activeRepo.id);
+      await refreshSkillInstalled();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  },
+
   async selectFile(path: string): Promise<void> {
     app.selectedFile = path;
   },
@@ -1072,6 +1243,23 @@ export const actions = {
   scrollToFile(path: string): void {
     app.selectedFile = path;
     app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
+  },
+
+  // Scroll the diff view to a tour step's header (Sessions tab).
+  scrollToStep(stepId: string): void {
+    app.scrollRequest = { stepId, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
+  },
+
+  // Scroll the diff to a specific callout. The owning file section brings
+  // itself into view and aligns to the callout's note once it has rendered.
+  // `selectedFile` is set so the sidebar highlights the right file too.
+  scrollToCallout(filePath: string, calloutId: string): void {
+    app.selectedFile = filePath;
+    app.scrollRequest = {
+      path: filePath,
+      calloutId,
+      nonce: (app.scrollRequest?.nonce ?? 0) + 1,
+    };
   },
 
   // Collapse the sidebar multi-selection to a single file and open its diff.
@@ -1515,6 +1703,9 @@ export const actions = {
   // top-bar refresh button and the window-focus listener.
   async refresh(): Promise<void> {
     if (!app.activeRepo) return;
+    // On the Sessions tab, reload the manifests so an agent's CLI update lands
+    // (loadSessions re-opens the active session if one is showing).
+    if (app.contextTab === "sessions") await actions.loadSessions();
     await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
     await refreshBranchPR();
   },
