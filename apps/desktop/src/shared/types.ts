@@ -308,6 +308,32 @@ export type BranchContextMenuAction = 'copy' | 'delete';
 // means the menu was dismissed without a choice.
 export type RepoContextMenuAction = 'copyPath' | 'reveal' | 'remove';
 
+// Items in the native application menu's "Branch" submenu. The main process
+// sends the chosen action to the focused renderer, which runs the matching
+// store flow (some open a confirm dialog first).
+export type BranchMenuAction =
+	| 'newBranch'
+	| 'updateFromDefault'
+	| 'deleteBranch'
+	| 'discardAll'
+	| 'previewPR'
+	| 'createPR';
+
+// Renderer-computed state that decides which "Branch" menu items are enabled
+// and what their dynamic labels read. Pushed to the main process whenever it
+// changes so the native menu greys out inapplicable items (e.g. "Delete
+// Branch" on the default branch), like GitHub Desktop.
+export interface BranchMenuState {
+	hasRepo: boolean;
+	// The repo's default branch name, woven into the "Update from <x>" label.
+	defaultBranch: string;
+	onDefaultBranch: boolean;
+	hasChanges: boolean;
+	hasGithub: boolean;
+	// The open PR for the current branch, if any — flips "Create" to "View".
+	branchPRNumber: number | null;
+}
+
 // What the renderer hands the main process to build a repo row's native menu.
 export interface RepoContextMenuParams {
 	// The repo's display name — used in the "Remove" item's label.
@@ -374,6 +400,11 @@ export interface PushStatus {
 	// decide whether a PR would have any content. 0 when on the default branch
 	// or when the branch hasn't diverged.
 	aheadOfDefault: number;
+	// Commits the default branch has that this branch doesn't — how far behind the
+	// default the branch is, and what "update from <default>" would merge in.
+	// Compared against origin/<default> when a remote exists, else the local
+	// default branch. 0 on the default branch itself.
+	behindDefault: number;
 	// Name of the remote the branch's upstream lives on (`branch.<x>.remote`).
 	// Usually "origin", but a checked-out PR branch tracks the PR's head repo
 	// remote. Undefined when there's no upstream. Drives accurate push labels.
@@ -422,6 +453,32 @@ export interface CloneResult {
 	ok: boolean;
 	path?: string;
 	error?: string;
+}
+
+// Options for the GitHub-Desktop-style "Create new repository" flow. The repo
+// is created at `<path>/<name>` and optionally scaffolded with a README, a
+// .gitignore (from a bundled template), and a LICENSE.
+export interface CreateRepoOptions {
+	/** Parent directory the new repo folder is created inside. */
+	path: string;
+	/** Repo folder name (also used as the project title in the README). */
+	name: string;
+	/** Optional one-line description, written to the README and .git/description. */
+	description?: string;
+	/** Seed the repo with a README.md. */
+	initReadme?: boolean;
+	/** .gitignore template label (see repos.getCreateDefaults), or null for none. */
+	gitignore?: string | null;
+	/** License template label (see repos.getCreateDefaults), or null for none. */
+	license?: string | null;
+}
+
+// Defaults the create-repo form loads up front: a suggested parent directory
+// and the available template labels for the two dropdowns.
+export interface CreateRepoDefaults {
+	defaultPath: string;
+	gitignores: string[];
+	licenses: string[];
 }
 
 export interface UserPrefs {
@@ -488,11 +545,26 @@ export interface PreloadAPI {
 	repos: {
 		list(): Promise<RepoInfo[]>;
 		openPicker(): Promise<RepoInfo | null>;
+		// Register an existing git repo at a known path (no picker). Backs the
+		// create-repo form's "this is already a repo — add it instead" shortcut.
+		addByPath(path: string): Promise<RepoInfo | null>;
 		// Pick a parent folder; scan it for git repos, add them all, and return the
 		// ones that were found (empty if the picker was cancelled).
 		openFolder(): Promise<RepoInfo[]>;
-		createPicker(): Promise<RepoInfo | null>;
-		remove(id: string): Promise<void>;
+		// Open a folder picker and return the chosen parent directory (null if
+		// cancelled). Used by the create-repo form's "Choose…" button.
+		chooseDirectory(): Promise<string | null>;
+		// Whether `path` is already a git repository — drives the form's "this is
+		// already a repo, add it instead?" hint.
+		isGitRepo(path: string): Promise<boolean>;
+		// Suggested parent directory + template labels for the create-repo form.
+		getCreateDefaults(): Promise<CreateRepoDefaults>;
+		// Scaffold a new repository (folder, git init, README/.gitignore/LICENSE).
+		// Returns the registered repo, or null if the picker/flow was cancelled.
+		createRepo(options: CreateRepoOptions): Promise<RepoInfo | null>;
+		// De-register a repo. When `moveToTrash` is set, the repo's folder is also
+		// moved to the OS trash (mirrors GitHub Desktop's remove dialog).
+		remove(id: string, moveToTrash?: boolean): Promise<void>;
 		setActive(id: string): Promise<RepoInfo | null>;
 		getActive(): Promise<RepoInfo | null>;
 	};
@@ -518,7 +590,13 @@ export interface PreloadAPI {
 		getPushStatus(repoId: string): Promise<PushStatus>;
 		pull(repoId: string): Promise<PullPushResult>;
 		push(repoId: string): Promise<PullPushResult>;
+		// Merge `ref` (e.g. "origin/main") into the current branch. Conflicts come
+		// back the same way pull does, driving the shared conflict dialog.
+		mergeIntoCurrent(repoId: string, ref: string): Promise<PullPushResult>;
 		getConflicts(repoId: string): Promise<string[]>;
+		// Re-scan the given conflict files: stage any whose conflict markers are
+		// gone, and return the paths still unresolved (markers remaining).
+		recheckConflicts(repoId: string, files: string[]): Promise<string[]>;
 		stageFile(repoId: string, filePath: string): Promise<void>;
 		// Discard a file's working-tree + staged changes. `oldPath` is the
 		// pre-rename path, so discarding a rename also restores the original.
@@ -646,6 +724,9 @@ export interface PreloadAPI {
 		// Pop up a native OS context menu for a repo row in the picker. Resolves to
 		// the chosen action, or null when the menu is dismissed without a selection.
 		showRepoContextMenu(params: RepoContextMenuParams): Promise<RepoContextMenuAction | null>;
+		// Push the latest Branch-menu enablement/labels to the main process so it
+		// can rebuild the native application menu. Fire-and-forget.
+		setBranchState(state: BranchMenuState): void;
 	};
 	windowControls: {
 		// Re-center the macOS traffic lights for the renderer's current zoom factor.
@@ -653,6 +734,11 @@ export interface PreloadAPI {
 	};
 	events: {
 		onRepoChanged(handler: (repo: RepoInfo | null) => void): () => void;
+		// A native "Branch" menu item was chosen. Returns an unsubscribe fn.
+		onBranchMenuAction(handler: (action: BranchMenuAction) => void): () => void;
+		// A background "move to Trash" (after removing a repo) failed; the payload
+		// is the repo's name. Returns an unsubscribe fn.
+		onRepoTrashFailed(handler: (name: string) => void): () => void;
 	};
 }
 

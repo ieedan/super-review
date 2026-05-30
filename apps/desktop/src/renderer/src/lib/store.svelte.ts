@@ -3,6 +3,7 @@ import type {
 	BranchInfo,
 	ChangedFile,
 	ContextTab,
+	CreateRepoOptions,
 	DiffContext,
 	DiffData,
 	EditorKind,
@@ -185,7 +186,16 @@ interface AppState {
 		intent: 'push' | 'pull';
 		error: string | null;
 	};
+	// Every file involved in the current merge conflict. Persists through
+	// resolution so the dialog can keep showing each file (with a check once
+	// it's resolved). `conflictUnresolved` is the subset still carrying markers.
 	conflictFiles: string[];
+	conflictUnresolved: string[];
+	// Bumped whenever an operation rewrites working-tree files in place (merge,
+	// pull, push, update, abort). Diff sections watch it to drop their cached
+	// content and re-fetch, since the file can stay in the list while its
+	// contents change out from under the cached diff.
+	diffReloadToken: number;
 	loading: {
 		files: boolean;
 		branches: boolean;
@@ -306,6 +316,8 @@ const initial: AppState = {
 	createBranchDialogOpen: false,
 	push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
 	conflictFiles: [],
+	conflictUnresolved: [],
+	diffReloadToken: 0,
 	loading: { files: false, branches: false, prs: false, repos: false },
 	error: null
 };
@@ -375,6 +387,27 @@ export function setCachedDiff(
 
 export function setError(msg: string | null): void {
 	app.error = msg;
+}
+
+// Open the conflict dialog on `files`. Both the full list (shown per-row) and
+// the unresolved subset start equal; recheckConflicts narrows the latter as the
+// user resolves markers.
+function setConflicts(files: string[]): void {
+	app.conflictFiles = files;
+	app.conflictUnresolved = files;
+}
+
+function clearConflicts(): void {
+	app.conflictFiles = [];
+	app.conflictUnresolved = [];
+}
+
+// Force open diff sections to re-fetch: drop the cross-tab diff cache (so a
+// re-fetch isn't short-circuited by stale content) and bump the token the
+// sections watch. Call after any op that rewrites working-tree files in place.
+function bumpDiffReload(): void {
+	diffCache.clear();
+	app.diffReloadToken++;
 }
 
 function applyTheme(theme: 'light' | 'dark'): void {
@@ -489,6 +522,27 @@ async function refreshRepos(): Promise<void> {
 	} finally {
 		app.loading.repos = false;
 	}
+}
+
+// Make `repo` the active repo and load everything its view needs. Shared by the
+// open/create flows so they land the user in an identical, fully-refreshed state.
+async function activateRepo(repo: RepoInfo): Promise<void> {
+	app.activeRepo = repo;
+	repoFrecency.use(repo.id);
+	applyContextTab('unstaged');
+	app.diffContext = { kind: 'workingTree' };
+	// Drop the previous repo's view immediately so its file list / diff don't
+	// linger on screen while the new repo's data loads in.
+	app.changedFiles = [];
+	app.selectedFile = null;
+	app.selectedFiles = new SvelteSet();
+	app.excludedFromCommit = new SvelteSet();
+	app.activeSessionId = null;
+	app.activeSessionDetail = null;
+	app.branchPR = null;
+	await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
+	await refreshBranchPR();
+	void refreshSkillInstalled();
 }
 
 async function refreshBranches(): Promise<void> {
@@ -902,15 +956,7 @@ export const actions = {
 	async openRepo(): Promise<void> {
 		try {
 			const repo = await window.api.repos.openPicker();
-			if (repo) {
-				app.activeRepo = repo;
-				repoFrecency.use(repo.id);
-				applyContextTab('unstaged');
-				app.diffContext = { kind: 'workingTree' };
-				await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
-				await refreshBranchPR();
-				void refreshSkillInstalled();
-			}
+			if (repo) await activateRepo(repo);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
@@ -982,6 +1028,11 @@ export const actions = {
 			repoFrecency.use(repo.id);
 			applyContextTab('unstaged');
 			app.diffContext = { kind: 'workingTree' };
+			// Clear the outgoing repo's file list / diff so it doesn't linger while
+			// the new repo loads.
+			app.changedFiles = [];
+			app.selectedFile = null;
+			app.selectedFiles = new SvelteSet();
 			app.activeSessionId = null;
 			app.activeSessionDetail = null;
 			app.sessions = [];
@@ -998,9 +1049,19 @@ export const actions = {
 		}
 	},
 
-	async removeRepo(id: string): Promise<void> {
-		await window.api.repos.remove(id);
-		if (app.activeRepo?.id === id) {
+	async removeRepo(id: string, moveToTrash = false): Promise<void> {
+		const wasActive = app.activeRepo?.id === id;
+		await window.api.repos.remove(id, moveToTrash);
+		setRepoDirty(id, false);
+		await refreshRepos();
+		if (!wasActive) return;
+		// Land on the most-recently-opened remaining repo (the one at the top of the
+		// picker's "Recent" list) rather than dropping to the empty state.
+		const next = [...app.repos].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)[0];
+		if (next) {
+			await actions.switchRepo(next.id);
+		} else {
+			// No repos left — fall back to the empty view.
 			app.activeRepo = null;
 			app.changedFiles = [];
 			app.unstagedFileCount = 0;
@@ -1008,8 +1069,6 @@ export const actions = {
 			app.selectedFile = null;
 			app.skillInstalled = null;
 		}
-		setRepoDirty(id, false);
-		await refreshRepos();
 	},
 
 	// Recompute the "uncommitted changes" dot for every repo. Called when the
@@ -1599,6 +1658,9 @@ export const actions = {
 				// Don't show as user-facing error — surface only on explicit failures
 				console.warn('fetchOrigin failed:', result.error);
 			}
+			// Mirror refresh(): on the Sessions tab, reload the manifests so an
+			// agent's CLI update lands (loadSessions re-opens the active session).
+			if (app.contextTab === 'sessions') await actions.loadSessions();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
 		} finally {
@@ -1672,19 +1734,40 @@ export const actions = {
 		}
 	},
 
-	async createRepo(): Promise<void> {
+	// Delete the branch currently checked out. Git refuses to delete the
+	// checked-out branch, so we switch to the default branch first, then delete.
+	// No-op when already on the default branch (there's nothing safe to switch
+	// to). If the checkout fails (e.g. a dirty tree that would be overwritten),
+	// checkoutBranch surfaces the error and we leave the branch in place.
+	async deleteCurrentBranch(opts: { deleteRemote: boolean }): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const current = app.currentBranch;
+		const base = app.activeRepo.defaultBranch ?? 'main';
+		if (!current || current === base) return false;
+		const switched = await actions.checkoutBranch(base);
+		if (!switched) return false;
+		return actions.deleteBranch(current, opts);
+	},
+
+	async createRepo(options: CreateRepoOptions): Promise<boolean> {
 		try {
-			const repo = await window.api.repos.createPicker();
-			if (repo) {
-				app.activeRepo = repo;
-				repoFrecency.use(repo.id);
-				applyContextTab('unstaged');
-				app.diffContext = { kind: 'workingTree' };
-				await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
-				await refreshBranchPR();
-			}
+			const repo = await window.api.repos.createRepo(options);
+			if (repo) await activateRepo(repo);
+			return repo != null;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	async addExistingRepo(path: string): Promise<boolean> {
+		try {
+			const repo = await window.api.repos.addByPath(path);
+			if (repo) await activateRepo(repo);
+			return repo != null;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
 		}
 	},
 
@@ -1718,6 +1801,7 @@ export const actions = {
 			const commit = await window.api.git.commit(repoId, message, paths);
 			if (!commit.ok) throw new Error(commit.error ?? 'Commit failed.');
 			app.push.stage = 'done';
+			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
 			return true;
@@ -1745,6 +1829,7 @@ export const actions = {
 			const result = await window.api.git.undoLastCommit(repoId);
 			if (!result.ok) throw new Error(result.error ?? 'Undo failed.');
 			app.push.stage = 'done';
+			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
 			return true;
@@ -1786,20 +1871,67 @@ export const actions = {
 			intent: 'pull',
 			error: null
 		};
-		app.conflictFiles = [];
+		clearConflicts();
 		try {
 			await window.api.git.fetchOrigin(repoId);
 			app.push.stage = 'pulling';
 			const pullResult = await window.api.git.pull(repoId);
 			if (!pullResult.ok) {
 				if (pullResult.conflicts.length > 0) {
-					app.conflictFiles = pullResult.conflicts;
+					setConflicts(pullResult.conflicts);
 					app.push.stage = 'conflicts';
 					return;
 				}
 				throw new Error(pullResult.error ?? 'Pull failed.');
 			}
 			app.push.stage = 'done';
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+			await refreshBranchPR();
+		} catch (err) {
+			app.push.error = err instanceof Error ? err.message : String(err);
+			setError(app.push.error);
+		} finally {
+			if (app.push.stage !== 'conflicts') {
+				app.push.inProgress = false;
+			}
+		}
+	},
+
+	// GitHub Desktop's "Update from <default>": fetch origin, then merge the
+	// repo's default branch into the current one. Reuses the pull conflict path
+	// (intent "pull") so any conflicts open the shared conflict dialog and
+	// continueMerge finishes the merge without pushing. No-op on the default
+	// branch itself.
+	async updateFromDefault(): Promise<void> {
+		if (!app.activeRepo || app.push.inProgress) return;
+		const repoId = app.activeRepo.id;
+		const base = app.activeRepo.defaultBranch ?? 'main';
+		if (app.currentBranch === base) return;
+		app.push = {
+			inProgress: true,
+			stage: 'fetching',
+			intent: 'pull',
+			error: null
+		};
+		clearConflicts();
+		try {
+			const fetched = await window.api.git.fetchOrigin(repoId);
+			app.push.stage = 'pulling';
+			// Merge the freshly fetched remote tip when there's a remote; fall back
+			// to the local default branch for repos without one.
+			const ref = fetched.ok && app.pushStatus?.hasRemote ? `origin/${base}` : base;
+			const result = await window.api.git.mergeIntoCurrent(repoId, ref);
+			if (!result.ok) {
+				if (result.conflicts.length > 0) {
+					setConflicts(result.conflicts);
+					app.push.stage = 'conflicts';
+					return;
+				}
+				throw new Error(result.error ?? `Could not update from ${base}.`);
+			}
+			app.push.stage = 'done';
+			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
 		} catch (err) {
@@ -1823,7 +1955,7 @@ export const actions = {
 			intent: 'push',
 			error: null
 		};
-		app.conflictFiles = [];
+		clearConflicts();
 		try {
 			await window.api.git.fetchOrigin(repoId);
 			await refreshPushStatus();
@@ -1832,7 +1964,7 @@ export const actions = {
 				const pullResult = await window.api.git.pull(repoId);
 				if (!pullResult.ok) {
 					if (pullResult.conflicts.length > 0) {
-						app.conflictFiles = pullResult.conflicts;
+						setConflicts(pullResult.conflicts);
 						app.push.stage = 'conflicts';
 						// Don't clear inProgress — UI shows the conflict dialog until
 						// the user resolves or aborts.
@@ -1845,6 +1977,7 @@ export const actions = {
 			const pushResult = await window.api.git.push(repoId);
 			if (!pushResult.ok) throw new Error(pushResult.error ?? 'Push failed.');
 			app.push.stage = 'done';
+			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
 		} catch (err) {
@@ -1858,12 +1991,18 @@ export const actions = {
 		}
 	},
 
-	async resolveConflict(filePath: string): Promise<void> {
-		if (!app.activeRepo) return;
+	// Re-scan the conflict files for leftover markers (the conflict dialog polls
+	// this while open). Files whose markers are gone get staged automatically, so
+	// editing a file to resolution in your editor is all it takes — no explicit
+	// "mark resolved" step. Updates the unresolved subset that drives each row's
+	// alert/check icon and gates "Continue merge".
+	async recheckConflicts(): Promise<void> {
+		if (!app.activeRepo || app.conflictFiles.length === 0) return;
 		try {
-			await window.api.git.stageFile(app.activeRepo.id, filePath);
-			const remaining = await window.api.git.getConflicts(app.activeRepo.id);
-			app.conflictFiles = remaining;
+			// Pass a plain array — a $state proxy can't be structured-cloned over IPC.
+			app.conflictUnresolved = await window.api.git.recheckConflicts(app.activeRepo.id, [
+				...app.conflictFiles
+			]);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
@@ -1878,15 +2017,16 @@ export const actions = {
 			const merge = await window.api.git.continueMerge(repoId);
 			if (!merge.ok) {
 				if (merge.conflicts.length > 0) {
-					app.conflictFiles = merge.conflicts;
+					setConflicts(merge.conflicts);
 					return;
 				}
 				throw new Error(merge.error ?? 'Could not continue merge.');
 			}
-			app.conflictFiles = [];
+			clearConflicts();
 			// For a pull-only flow, the merge commit is all we needed — skip push.
 			if (app.push.intent === 'pull') {
 				app.push.stage = 'done';
+				bumpDiffReload();
 				await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 				await refreshBranchPR();
 				return;
@@ -1896,6 +2036,7 @@ export const actions = {
 			const pushResult = await window.api.git.push(repoId);
 			if (!pushResult.ok) throw new Error(pushResult.error ?? 'Push failed.');
 			app.push.stage = 'done';
+			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 		} catch (err) {
 			app.push.error = err instanceof Error ? err.message : String(err);
@@ -1909,13 +2050,14 @@ export const actions = {
 		if (!app.activeRepo) return;
 		try {
 			await window.api.git.abortMerge(app.activeRepo.id);
-			app.conflictFiles = [];
+			clearConflicts();
 			app.push = {
 				inProgress: false,
 				stage: 'idle',
 				intent: 'push',
 				error: null
 			};
+			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -2060,6 +2202,31 @@ export const actions = {
 		// Push status can shift (e.g. discarding leaves the tree clean); refresh it
 		// in the background since it only feeds the header, not the diff/sidebar.
 		void refreshPushStatus();
+	},
+
+	// Discard every uncommitted working-tree change (GitHub Desktop's "Discard
+	// all changes"). Always operates on the working tree regardless of the active
+	// tab, so a branch/PR diff that happens to be showing isn't mistaken for the
+	// discard target. Tracked files revert to HEAD; untracked files go to the OS
+	// trash. The caller confirms first — this just executes. Refreshes once at
+	// the end rather than surgically, since the whole list is going away.
+	async discardAllChanges(): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const repoId = app.activeRepo.id;
+		try {
+			const targets = await window.api.git.listChangedFiles(repoId, {
+				kind: 'workingTree'
+			});
+			for (const f of targets) {
+				await window.api.git.discardChanges(repoId, f.path, f.oldPath);
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		} finally {
+			await Promise.all([refreshFiles(), refreshPushStatus()]);
+		}
+		return true;
 	},
 
 	// Resolve a repo-relative path to an absolute one for the shell helpers.

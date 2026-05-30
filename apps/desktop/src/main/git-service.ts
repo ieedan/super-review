@@ -6,12 +6,14 @@ import path from 'node:path';
 import type {
 	BranchInfo,
 	ChangedFile,
+	CreateRepoOptions,
 	DiffContext,
 	DiffData,
 	FileStatus,
 	GitIdentity,
 	RepoInfo
 } from '@shared/types.js';
+import { getGitignore, getLicense } from './repo-templates.js';
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -589,6 +591,18 @@ async function refsForContext(
 	void git;
 }
 
+// Whether `ref` resolves to a commit. A freshly-created repo (or any branch
+// with no commits yet) has no resolvable refs, so a base...head diff against it
+// throws "unknown revision"; callers use this to treat that as "no changes".
+async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
+	try {
+		await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export async function listChangedFiles(repoPath: string, ctx: DiffContext): Promise<ChangedFile[]> {
 	const git = simpleGit(repoPath);
 	const refs = await refsForContext(git, ctx);
@@ -660,6 +674,11 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 	}
 
 	if (refs.base && refs.head) {
+		// Bail out cleanly when either side doesn't exist yet (e.g. a repo with no
+		// commits, where `main...main` would throw) — there are simply no changes.
+		if (!(await revExists(git, refs.base)) || !(await revExists(git, refs.head))) {
+			return files;
+		}
 		const raw = await git.raw([
 			'diff',
 			'--name-status',
@@ -857,6 +876,7 @@ export interface PushStatus {
 	hasUpstream: boolean;
 	hasRemote: boolean;
 	aheadOfDefault: number;
+	behindDefault: number;
 	pushRemote?: string;
 }
 
@@ -874,6 +894,47 @@ async function countAheadOfDefault(
 	}
 }
 
+// Pick the ref that "update from default" would merge in: the remote-tracking
+// default (origin/main) when a remote exists, falling back to the local default
+// branch. Returns null when neither ref resolves to a commit.
+async function resolveDefaultRef(
+	git: SimpleGit,
+	defaultBranch: string,
+	hasRemote: boolean
+): Promise<string | null> {
+	const candidates = hasRemote ? [`origin/${defaultBranch}`, defaultBranch] : [defaultBranch];
+	for (const ref of candidates) {
+		try {
+			await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+			return ref;
+		} catch {
+			// Try the next candidate.
+		}
+	}
+	return null;
+}
+
+// Commits the default branch has that the current branch doesn't — i.e. how far
+// behind the default the branch is, and what "update from <default>" would pull
+// in. 0 on the default branch itself. Compared against the same ref the update
+// merges (origin/<default> when available) so the count matches the action.
+async function countBehindDefault(
+	git: SimpleGit,
+	branch: string,
+	defaultBranch: string | undefined,
+	hasRemote: boolean
+): Promise<number> {
+	if (!defaultBranch || branch === defaultBranch) return 0;
+	const ref = await resolveDefaultRef(git, defaultBranch, hasRemote);
+	if (!ref) return 0;
+	try {
+		const out = (await git.raw(['rev-list', '--count', `HEAD..${ref}`])).trim();
+		return Number(out) || 0;
+	} catch {
+		return 0;
+	}
+}
+
 export async function getPushStatus(repoPath: string, defaultBranch?: string): Promise<PushStatus> {
 	const git = simpleGit(repoPath);
 	let branch: string | null;
@@ -885,6 +946,9 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 	const remotes = await git.getRemotes(true).catch(() => []);
 	const hasRemote = remotes.some((r) => r.name === 'origin');
 	const aheadOfDefault = branch ? await countAheadOfDefault(git, branch, defaultBranch) : 0;
+	const behindDefault = branch
+		? await countBehindDefault(git, branch, defaultBranch, hasRemote)
+		: 0;
 	if (!branch || !hasRemote) {
 		return {
 			branch,
@@ -892,7 +956,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 			behind: 0,
 			hasUpstream: false,
 			hasRemote,
-			aheadOfDefault
+			aheadOfDefault,
+			behindDefault
 		};
 	}
 	let upstream: string | null;
@@ -910,7 +975,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 			behind: 0,
 			hasUpstream: false,
 			hasRemote,
-			aheadOfDefault
+			aheadOfDefault,
+			behindDefault
 		};
 	}
 	let ahead = 0;
@@ -939,6 +1005,7 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 		hasUpstream: true,
 		hasRemote,
 		aheadOfDefault,
+		behindDefault,
 		pushRemote
 	};
 }
@@ -977,6 +1044,58 @@ export async function pull(repoPath: string): Promise<PullPushResult> {
 	}
 }
 
+// True when a merge is in progress (MERGE_HEAD exists). Distinguishes a real
+// merge conflict (finish with a commit) from conflicts left by re-applying
+// autostashed work after a fast-forward (no commit to make).
+async function hasMergeHead(git: SimpleGit): Promise<boolean> {
+	try {
+		// simple-git resolves a missing ref as an empty string (exit code swallowed),
+		// so key off the output: a SHA when a merge is in progress, '' otherwise.
+		const out = await git.raw(['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+		return out.trim().length > 0;
+	} catch {
+		return false;
+	}
+}
+
+// When `git merge --autostash` re-applies the stash with conflicts (e.g. after
+// a fast-forward), it keeps the work as a backup stash entry labelled
+// "autostash". Drop that top entry once the conflicts are resolved. Guarded so
+// we never drop a stash the user created themselves.
+async function dropAutostashBackup(git: SimpleGit): Promise<void> {
+	const list = await git.raw(['stash', 'list']).catch(() => '');
+	if (/^stash@\{0\}:.*autostash/m.test(list)) {
+		await git.raw(['stash', 'drop']).catch(() => {});
+	}
+}
+
+// Merge another ref into the current branch — GitHub Desktop's "Update from
+// <default>". `--autostash` tucks away uncommitted work so the merge (or a
+// fast-forward) isn't blocked by "local changes would be overwritten", then
+// re-applies it: git restores the stash automatically when the merge is
+// committed or aborted, while a fast-forward re-applies it right away.
+// Conflicts (from the merge itself, or from re-applying the stash) surface the
+// same way pull() does, so the existing conflict dialog drives the resolution.
+export async function mergeIntoCurrent(repoPath: string, ref: string): Promise<PullPushResult> {
+	const git = simpleGit(repoPath);
+	try {
+		await git.raw(['merge', '--no-edit', '--autostash', ref]);
+	} catch (err) {
+		const conflicts = await listUnmergedPaths(git);
+		if (conflicts.length > 0) return { ok: false, conflicts };
+		return {
+			ok: false,
+			conflicts: [],
+			error: err instanceof Error ? err.message : String(err)
+		};
+	}
+	// A "successful" (fast-forward) merge can still leave conflicts when the
+	// autostash re-apply collides with the freshly merged content — surface them.
+	const conflicts = await listUnmergedPaths(git);
+	if (conflicts.length > 0) return { ok: false, conflicts };
+	return { ok: true, conflicts: [] };
+}
+
 export async function push(repoPath: string): Promise<PullPushResult> {
 	const git = simpleGit(repoPath);
 	try {
@@ -998,6 +1117,25 @@ export async function push(repoPath: string): Promise<PullPushResult> {
 
 export async function getConflicts(repoPath: string): Promise<string[]> {
 	return listUnmergedPaths(simpleGit(repoPath));
+}
+
+// Re-scan the given conflict files for leftover conflict markers. Any file that
+// no longer has markers is staged (marking it resolved for the merge), so the
+// caller doesn't need an explicit "mark resolved" step — editing the file away
+// from its markers is enough. Returns the paths that are still unresolved (so
+// the UI can show an alert vs. a check per file). We key off `<<<<<<<`/`>>>>>>>`
+// rather than `=======` since a row of equals is legitimate Markdown.
+export async function recheckConflicts(repoPath: string, files: string[]): Promise<string[]> {
+	const git = simpleGit(repoPath);
+	const hasMarkers = (content: string): boolean => /^<{7}|^>{7}/m.test(content);
+	for (const f of files) {
+		const content = await fs.readFile(path.join(repoPath, f), 'utf8').catch(() => ' ');
+		// On a read error we leave the file unstaged (treated as unresolved).
+		if (content !== ' ' && !hasMarkers(content)) {
+			await git.add([f]).catch(() => {});
+		}
+	}
+	return listUnmergedPaths(git);
 }
 
 export async function stageFile(repoPath: string, filePath: string): Promise<void> {
@@ -1044,15 +1182,23 @@ export async function discardChanges(
 	if (oldPath && oldPath !== filePath) await restoreOrTrash(oldPath);
 }
 
-// Try to wrap up an in-progress merge. If unmerged paths remain we surface
-// them; otherwise we create the merge commit.
+// Try to wrap up an in-progress merge once the user has resolved conflicts. If
+// unmerged paths remain we surface them again. When a merge is in progress we
+// create the merge commit (which also re-applies any `--autostash` work, and
+// that re-apply can itself conflict — so we re-check). When there's no merge in
+// progress, the conflicts came from re-applying autostashed changes after a
+// fast-forward: nothing to commit — the resolved work stays uncommitted and we
+// just clear the backup stash git kept.
 export async function continueMerge(repoPath: string): Promise<PullPushResult> {
 	const git = simpleGit(repoPath);
-	const remaining = await listUnmergedPaths(git);
+	let remaining = await listUnmergedPaths(git);
 	if (remaining.length > 0) return { ok: false, conflicts: remaining };
+	if (!(await hasMergeHead(git))) {
+		await dropAutostashBackup(git);
+		return { ok: true, conflicts: [] };
+	}
 	try {
 		await git.raw(['commit', '--no-edit']);
-		return { ok: true, conflicts: [] };
 	} catch (err) {
 		return {
 			ok: false,
@@ -1060,12 +1206,28 @@ export async function continueMerge(repoPath: string): Promise<PullPushResult> {
 			error: err instanceof Error ? err.message : String(err)
 		};
 	}
+	// Committing the merge re-applies the autostash, which may conflict in turn.
+	remaining = await listUnmergedPaths(git);
+	if (remaining.length > 0) return { ok: false, conflicts: remaining };
+	return { ok: true, conflicts: [] };
 }
 
 export async function abortMerge(repoPath: string): Promise<void> {
-	await simpleGit(repoPath)
-		.raw(['merge', '--abort'])
-		.catch(() => {});
+	const git = simpleGit(repoPath);
+	if (await hasMergeHead(git)) {
+		// `merge --abort` also restores any `--autostash` work automatically.
+		await git.raw(['merge', '--abort']).catch(() => {});
+		return;
+	}
+	// No merge in progress: the conflicts are from re-applying autostashed work
+	// after a fast-forward. Recover the pre-update state by undoing the
+	// fast-forward (ORIG_HEAD) and popping the backup stash — but only when that
+	// backup exists, so we never destroy work we can't restore.
+	const list = await git.raw(['stash', 'list']).catch(() => '');
+	if (/^stash@\{0\}:.*autostash/m.test(list)) {
+		await git.raw(['reset', '--hard', 'ORIG_HEAD']).catch(() => {});
+		await git.raw(['stash', 'pop']).catch(() => {});
+	}
 }
 
 export interface CommitResult {
@@ -1199,25 +1361,88 @@ export async function cloneRepo(url: string, parentDir: string): Promise<CloneRe
 	}
 }
 
-// Initialize a fresh git repository at `targetDir`. If the directory is
-// already a git repo we leave it alone and return success — picking an
-// existing repo via "Create new" should still register it instead of erroring.
-export async function initRepo(targetDir: string): Promise<{ ok: boolean; error?: string }> {
+// Create a new repository at `<path>/<name>`, GitHub-Desktop style: make the
+// folder, run `git init`, then scaffold the requested README / .gitignore /
+// LICENSE. The seed files are left uncommitted on purpose — they show up as the
+// repo's first set of changes, ready for the user to make the initial commit.
+export async function createRepo(opts: CreateRepoOptions): Promise<CloneResult> {
+	const name = opts.name.trim();
+	if (!name) return { ok: false, error: 'Repository name is required.' };
+	// Disallow path separators so `name` can't escape the chosen parent folder.
+	if (/[/\\]/.test(name) || name === '.' || name === '..') {
+		return { ok: false, error: `Invalid repository name: ${name}` };
+	}
+	const parent = opts.path.trim();
+	if (!parent) return { ok: false, error: 'Local path is required.' };
+
+	const target = path.join(parent, name);
 	try {
-		const stat = await fs.stat(targetDir).catch(() => null);
-		if (!stat) {
-			await fs.mkdir(targetDir, { recursive: true });
-		} else if (!stat.isDirectory()) {
-			return { ok: false, error: `Not a directory: ${targetDir}` };
+		const existing = await fs.stat(target).catch(() => null);
+		if (existing) {
+			if (!existing.isDirectory()) {
+				return { ok: false, error: `Not a directory: ${target}` };
+			}
+			if (await isGitRepo(target)) {
+				return {
+					ok: false,
+					error: `A repository already exists at: ${target}`
+				};
+			}
+			// A non-empty, non-repo directory: refuse rather than scribble into it.
+			const entries = await fs.readdir(target);
+			if (entries.length > 0) {
+				return { ok: false, error: `Directory is not empty: ${target}` };
+			}
+		} else {
+			await fs.mkdir(target, { recursive: true });
 		}
-		if (await isGitRepo(targetDir)) return { ok: true };
-		await simpleGit(targetDir).init();
-		return { ok: true };
+
+		const git = simpleGit(target);
+		await git.init();
+
+		const description = opts.description?.trim() ?? '';
+		if (description) {
+			// .git/description is plumbing GitHub Desktop also populates; harmless if
+			// it can't be written (e.g. a bare-ish layout).
+			await fs
+				.writeFile(path.join(target, '.git', 'description'), `${description}\n`)
+				.catch(() => {});
+		}
+
+		if (opts.initReadme) {
+			const body = description ? `# ${name}\n\n${description}\n` : `# ${name}\n`;
+			await fs.writeFile(path.join(target, 'README.md'), body);
+		}
+
+		if (opts.gitignore) {
+			const content = getGitignore(opts.gitignore);
+			if (content) await fs.writeFile(path.join(target, '.gitignore'), content);
+		}
+
+		if (opts.license) {
+			const author = (await readGitUserName(git)) || name;
+			const content = getLicense(opts.license, {
+				year: new Date().getFullYear(),
+				author
+			});
+			if (content) await fs.writeFile(path.join(target, 'LICENSE'), content);
+		}
+
+		return { ok: true, path: target };
 	} catch (err) {
 		return {
 			ok: false,
 			error: err instanceof Error ? err.message : String(err)
 		};
+	}
+}
+
+// Best-effort read of the configured git author name for license attribution.
+async function readGitUserName(git: SimpleGit): Promise<string> {
+	try {
+		return (await git.raw(['config', 'user.name'])).trim();
+	} catch {
+		return '';
 	}
 }
 

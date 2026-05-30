@@ -1,11 +1,14 @@
-import { BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
+import path from 'node:path';
 import type {
 	BranchContextMenuAction,
 	BranchContextMenuParams,
 	BranchInfo,
 	ChangedFile,
 	CloneResult,
+	CreateRepoDefaults,
+	CreateRepoOptions,
 	CommitDraft,
 	CommitResult,
 	DeviceFlowStart,
@@ -41,20 +44,22 @@ import {
 	commit,
 	continueMerge,
 	createBranch,
+	createRepo,
 	deleteBranch,
 	discardChanges,
 	fetchOrigin,
 	fetchPRRef,
 	getConflicts,
+	recheckConflicts,
 	getCurrentBranch,
 	getDiff,
 	getLastCommit,
 	getPushStatus,
-	initRepo,
 	isGitRepo,
 	isWorkingTreeDirty,
 	listBranches,
 	listChangedFiles,
+	mergeIntoCurrent,
 	pinPRBaseRef,
 	pull,
 	push,
@@ -66,6 +71,7 @@ import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './
 import * as gh from './github-service.js';
 import { deleteSession, getSession, listSessions } from './session-store.js';
 import { installSkill, isSkillInstalled } from './skill-service.js';
+import { listTemplates } from './repo-templates.js';
 import {
 	clearCollapsedFiles,
 	clearSeen,
@@ -114,6 +120,17 @@ function broadcast(channel: string, payload: unknown): void {
 	}
 }
 
+// Broadcast to every window except the one that made the request. The
+// initiating renderer's store action already handles activation from the
+// returned value, so echoing `active-changed` back to it would trigger a
+// redundant switchRepo that races with that activation.
+function broadcastToOthers(senderId: number, channel: string, payload: unknown): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (win.webContents.id === senderId) continue;
+		win.webContents.send(channel, payload);
+	}
+}
+
 // Re-run buildRepoInfo off the critical path. If anything moved (favicon
 // added, remote URL changed, default branch updated) we persist and re-emit
 // active-changed so the UI picks it up. No-op when nothing changed.
@@ -154,7 +171,7 @@ export function registerIpc(): void {
 	// ─── Repos ─────────────────────────────────────────────────────────────
 	ipcMain.handle('repos:list', async (): Promise<RepoInfo[]> => listRepos());
 
-	ipcMain.handle('repos:openPicker', async (): Promise<RepoInfo | null> => {
+	ipcMain.handle('repos:openPicker', async (e): Promise<RepoInfo | null> => {
 		const result = await dialog.showOpenDialog({
 			title: 'Open repository',
 			properties: ['openDirectory']
@@ -167,11 +184,11 @@ export function registerIpc(): void {
 		const info = preservePinnedAccount(await buildRepoInfo(repoPath));
 		upsertRepo(info);
 		setPrefs({ activeRepoId: info.id });
-		broadcast('repos:active-changed', info);
+		broadcastToOthers(e.sender.id, 'repos:active-changed', info);
 		return info;
 	});
 
-	ipcMain.handle('repos:openFolder', async (): Promise<RepoInfo[]> => {
+	ipcMain.handle('repos:openFolder', async (e): Promise<RepoInfo[]> => {
 		const result = await dialog.showOpenDialog({
 			title: 'Open folder',
 			buttonLabel: 'Scan folder',
@@ -192,29 +209,70 @@ export function registerIpc(): void {
 		infos.sort((a, b) => a.name.localeCompare(b.name));
 		const active = infos[0];
 		setPrefs({ activeRepoId: active.id });
-		broadcast('repos:active-changed', active);
+		broadcastToOthers(e.sender.id, 'repos:active-changed', active);
 		return infos;
 	});
 
-	ipcMain.handle('repos:createPicker', async (): Promise<RepoInfo | null> => {
-		const result = await dialog.showOpenDialog({
-			title: 'Create new repository',
-			buttonLabel: 'Initialize here',
-			properties: ['openDirectory', 'createDirectory']
-		});
-		if (result.canceled || result.filePaths.length === 0) return null;
-		const target = result.filePaths[0];
-		const init = await initRepo(target);
-		if (!init.ok) throw new Error(init.error ?? 'Failed to initialize repository.');
-		const info = preservePinnedAccount(await buildRepoInfo(target));
+	ipcMain.handle('repos:addByPath', async (e, repoPath: string): Promise<RepoInfo | null> => {
+		if (!(await isGitRepo(repoPath))) {
+			throw new Error(`Not a git repository: ${repoPath}`);
+		}
+		const info = preservePinnedAccount(await buildRepoInfo(repoPath));
 		upsertRepo(info);
 		setPrefs({ activeRepoId: info.id });
-		broadcast('repos:active-changed', info);
+		broadcastToOthers(e.sender.id, 'repos:active-changed', info);
 		return info;
 	});
 
-	ipcMain.handle('repos:remove', async (_e, id: string) => {
+	ipcMain.handle('repos:chooseDirectory', async (): Promise<string | null> => {
+		const result = await dialog.showOpenDialog({
+			title: 'Choose a folder',
+			buttonLabel: 'Select',
+			properties: ['openDirectory', 'createDirectory']
+		});
+		if (result.canceled || result.filePaths.length === 0) return null;
+		return result.filePaths[0];
+	});
+
+	ipcMain.handle('repos:isGitRepo', async (_e, dirPath: string): Promise<boolean> => {
+		if (!dirPath?.trim()) return false;
+		return isGitRepo(dirPath);
+	});
+
+	ipcMain.handle('repos:getCreateDefaults', async (): Promise<CreateRepoDefaults> => {
+		const { gitignores, licenses } = listTemplates();
+		// Mirror GitHub Desktop's default home for new repos.
+		const defaultPath = path.join(app.getPath('documents'), 'GitHub');
+		return { defaultPath, gitignores, licenses };
+	});
+
+	ipcMain.handle(
+		'repos:createRepo',
+		async (e, options: CreateRepoOptions): Promise<RepoInfo | null> => {
+			const result = await createRepo(options);
+			if (!result.ok || !result.path) {
+				throw new Error(result.error ?? 'Failed to create repository.');
+			}
+			const info = preservePinnedAccount(await buildRepoInfo(result.path));
+			upsertRepo(info);
+			setPrefs({ activeRepoId: info.id });
+			broadcastToOthers(e.sender.id, 'repos:active-changed', info);
+			return info;
+		}
+	);
+
+	ipcMain.handle('repos:remove', async (e, id: string, moveToTrash?: boolean) => {
+		// Grab the path before de-registering so we can trash the folder after.
+		const repo = getRepo(id);
 		removeRepo(id);
+		if (moveToTrash && repo) {
+			// Trashing a large working tree can take seconds. De-registration is
+			// already done, so don't make the renderer wait — trash in the
+			// background and report a failure back so the UI can surface it.
+			void shell.trashItem(repo.path).catch(() => {
+				e.sender.send('repos:trash-failed', repo.name);
+			});
+		}
 	});
 
 	ipcMain.handle('repos:setActive', async (_e, id: string): Promise<RepoInfo | null> => {
@@ -360,8 +418,20 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle(
+		'git:mergeIntoCurrent',
+		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
+			mergeIntoCurrent(repoOrThrow(repoId).path, ref)
+	);
+
+	ipcMain.handle(
 		'git:getConflicts',
 		async (_e, repoId: string): Promise<string[]> => getConflicts(repoOrThrow(repoId).path)
+	);
+
+	ipcMain.handle(
+		'git:recheckConflicts',
+		async (_e, repoId: string, files: string[]): Promise<string[]> =>
+			recheckConflicts(repoOrThrow(repoId).path, files)
 	);
 
 	ipcMain.handle(

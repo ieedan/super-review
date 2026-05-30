@@ -7,6 +7,7 @@
 	import DiffView from '$lib/components/DiffView.svelte';
 	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
+	import BranchMenu from '$lib/components/BranchMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
@@ -73,6 +74,12 @@
 			// (favicon, remote URL, etc). Merge the new info in-place so the UI
 			// updates without re-running the whole switch pipeline.
 			actions.updateActiveRepoMetadata(repo);
+		});
+
+		// Removing a repo trashes its folder in the background; surface the rare
+		// failure (the repo is already gone from the app, but its files remain).
+		const offTrashFailed = window.api.events.onRepoTrashFailed((name) => {
+			setError(`Couldn't move "${name}" to the trash. Its files are still on disk.`);
 		});
 
 		// Refresh the working tree whenever the window regains focus so file
@@ -149,6 +156,7 @@
 
 		return () => {
 			offRepoChanged();
+			offTrashFailed();
 			window.removeEventListener('focus', onFocus);
 			window.removeEventListener('resize', syncWindowControls);
 			window.removeEventListener('keydown', onSidebarHotkey);
@@ -268,6 +276,7 @@
 </Sidebar.Provider>
 
 <ConflictDialog />
+<BranchMenu />
 <AddRepoDialog />
 <CreateBranchDialog />
 <SettingsDialog />
