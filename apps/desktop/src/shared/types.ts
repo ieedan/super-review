@@ -63,6 +63,14 @@ export interface DiffData {
 	oldContents: string;
 	newContents: string;
 	truncated: boolean;
+	// For image files (raster or SVG): `data:` URLs of the old/new bytes, used to
+	// render the two versions side by side. Undefined when the file isn't an
+	// image, the side doesn't exist (added has no old, deleted has no new), or
+	// the bytes exceeded the image size cap. Raster images carry these *instead*
+	// of `oldContents`/`newContents` (which would be useless binary); SVGs carry
+	// both so they can also show a source diff.
+	oldImage?: string;
+	newImage?: string;
 }
 
 export interface PRSummary {
@@ -153,6 +161,11 @@ export interface SessionFile {
 	oldContents: string;
 	newContents: string;
 	truncated: boolean;
+	// Frozen `data:` URLs for image files, mirroring DiffData. Undefined for
+	// non-image files or sides that don't exist. Captured so a session's image
+	// diffs render without touching git.
+	oldImage?: string;
+	newImage?: string;
 }
 
 // Listing-level view of a session — everything but the (potentially large)

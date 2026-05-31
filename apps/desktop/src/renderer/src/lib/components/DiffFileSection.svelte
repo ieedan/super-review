@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { mount, unmount, onDestroy } from 'svelte';
-	import { Check, ChevronDown, ChevronRight, Code, Code2, Eye, FileText } from 'lucide-svelte';
+	import {
+		Check,
+		ChevronDown,
+		ChevronRight,
+		Code,
+		Code2,
+		Eye,
+		FileText,
+		Image as ImageIcon
+	} from 'lucide-svelte';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import CursorIcon from './icons/CursorIcon.svelte';
 	import VSCodeIcon from './icons/VSCodeIcon.svelte';
@@ -9,6 +18,8 @@
 	import VisualStudioIcon from './icons/VisualStudioIcon.svelte';
 	import { languageIconForPath } from '$lib/file-icons';
 	import { isMarkdownPath, renderMarkdown } from '$lib/markdown';
+	import { isImagePath, isSvgPath } from '@shared/media';
+	import ImageDiff from './ImageDiff.svelte';
 	import '$lib/markdown.css';
 	import {
 		DIFFS_TAG_NAME,
@@ -118,9 +129,20 @@
 			file.deletions === 0
 	);
 	const isDeleted = $derived(file.status === 'deleted');
+	// Image files are rendered side by side (raster) or get a code/image toggle
+	// (SVG), so the usual "renamed"/"deleted" one-liners don't apply — we still
+	// want to show the old image of a deleted image, etc.
+	const isImage = $derived(isImagePath(file.path));
+	const isSvg = $derived(isSvgPath(file.path));
 	// Files where the diff body is pointless to render — show a one-liner.
 	const placeholderMessage = $derived(
-		renamedNoChanges ? 'File renamed without changes.' : isDeleted ? 'This file was deleted.' : null
+		isImage
+			? null
+			: renamedNoChanges
+				? 'File renamed without changes.'
+				: isDeleted
+					? 'This file was deleted.'
+					: null
 	);
 	// Handle for the most recently queued render so we can cancel it if a newer
 	// target supersedes it before the scheduler gets to it.
@@ -660,7 +682,9 @@
 					cached &&
 					cached.oldContents === d.oldContents &&
 					cached.newContents === d.newContents &&
-					cached.patch === d.patch
+					cached.patch === d.patch &&
+					cached.oldImage === d.oldImage &&
+					cached.newImage === d.newImage
 				) {
 					return;
 				}
@@ -777,9 +801,10 @@
 		disposeDiff();
 	});
 
-	// Markdown preview toggle. `showPreview` swaps the rendered diff for a
-	// GitHub-flavored render of the file's new contents. Reset whenever the
-	// section is reused for a different file (the {#each} recycles components).
+	// Code/preview toggle. `showPreview` swaps the rendered diff for a rendered
+	// view of the file: GitHub-flavored Markdown for `.md`, or the side-by-side
+	// image for an SVG. Reset whenever the section is reused for a different file
+	// (the {#each} recycles components).
 	let showPreview = $state(false);
 	const pathDir = $derived(
 		file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/') + 1) : ''
@@ -788,7 +813,17 @@
 		file.path.includes('/') ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path
 	);
 	const isMarkdown = $derived(isMarkdownPath(file.path));
-	const canPreview = $derived(isMarkdown && !deferred && !placeholderMessage && !file.isBinary);
+	// Readable formats with a rendered view get a toggle button. Raster images
+	// have no source to toggle to, so they're excluded (they always show the
+	// image). SVGs qualify — they're text with a rendered form.
+	const canPreview = $derived(
+		(isMarkdown || isSvg) && !deferred && !placeholderMessage && !file.isBinary
+	);
+	// When to render the side-by-side ImageDiff instead of the source diff:
+	// always for a raster image, and for an SVG while previewing.
+	const showImageView = $derived(isImage && (file.isBinary || showPreview));
+	// When to render the Markdown HTML instead of the source diff.
+	const showMarkdownView = $derived(showPreview && isMarkdown);
 	// Rendered preview HTML. Shiki highlighting is async, so we compute it in an
 	// effect and stash the result instead of deriving synchronously. We keep the
 	// previous HTML on screen while a re-render is in flight (e.g. theme change)
@@ -962,7 +997,9 @@
 					onclick={() => (showPreview = !showPreview)}
 				>
 					{#if showPreview}
-						<Code class="size-3.5" /> Markdown
+						<Code class="size-3.5" /> Code
+					{:else if isSvg}
+						<ImageIcon class="size-3.5" /> Image
 					{:else}
 						<FileText class="size-3.5" /> Preview
 					{/if}
@@ -979,7 +1016,7 @@
 	</header>
 
 	<div class="bg-card/20" hidden={!expanded}>
-		{#if showPreview && isMarkdown}
+		{#if showMarkdownView}
 			{#if previewHtml}
 				<!-- previewHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -987,10 +1024,17 @@
 			{:else if !diffData || previewRendering}
 				<div class="p-4 text-xs text-muted-foreground">Loading preview…</div>
 			{/if}
+		{:else if showImageView}
+			<ImageDiff
+				name={file.path}
+				oldSrc={diffData?.oldImage}
+				newSrc={diffData?.newImage}
+				loading={!diffData}
+			/>
 		{/if}
 		<!-- Keep the diff host mounted (hidden) while previewing so the Pierre
          render machinery isn't torn down and rebuilt on every toggle. -->
-		<div hidden={showPreview && isMarkdown}>
+		<div hidden={showMarkdownView || showImageView}>
 			{#if placeholderMessage}
 				<div class="p-4 text-sm text-muted-foreground">{placeholderMessage}</div>
 			{:else if loadError}

@@ -391,7 +391,9 @@ export function registerIpc(): void {
 					patch: f.patch,
 					oldContents: f.oldContents,
 					newContents: f.newContents,
-					truncated: f.truncated
+					truncated: f.truncated,
+					oldImage: f.oldImage,
+					newImage: f.newImage
 				};
 			}
 			return getDiff(repoOrThrow(repoId).path, filePath, ctx);

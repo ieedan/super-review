@@ -1,6 +1,8 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
 import { createHash } from 'node:crypto';
 import { promises as fs, type Dirent } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
 import type {
@@ -13,9 +15,17 @@ import type {
 	GitIdentity,
 	RepoInfo
 } from '@shared/types.js';
+import { imageMimeForPath } from '@shared/media.js';
 import { getGitignore, getLicense } from './repo-templates.js';
 
+const execFileAsync = promisify(execFile);
+
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+// Images are embedded as base64 `data:` URLs and shipped whole over IPC, so the
+// cap is higher than the text cap (images are routinely a few MB) but still
+// bounded — past this we leave the side unrendered rather than balloon memory.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export function repoIdFromPath(p: string): string {
 	return createHash('sha1').update(path.resolve(p)).digest('hex').slice(0, 12);
@@ -810,6 +820,62 @@ async function readWorkingFile(repoPath: string, filePath: string): Promise<stri
 	}
 }
 
+// Raw bytes of `ref:filePath` straight from git's object store, preserving the
+// binary content (simple-git's `.show()` decodes to a lossy UTF-8 string, which
+// mangles images). Returns null when the path doesn't exist at that ref or the
+// blob exceeds the image cap.
+async function showFileBuffer(
+	repoPath: string,
+	ref: string,
+	filePath: string
+): Promise<Buffer | null> {
+	try {
+		const { stdout } = await execFileAsync('git', ['show', `${ref}:${filePath}`], {
+			cwd: repoPath,
+			encoding: 'buffer',
+			maxBuffer: MAX_IMAGE_BYTES
+		});
+		return stdout;
+	} catch {
+		return null;
+	}
+}
+
+// Raw bytes of a working-copy file, or null when it's missing or over the cap.
+async function readWorkingBuffer(repoPath: string, filePath: string): Promise<Buffer | null> {
+	try {
+		const buf = await fs.readFile(path.join(repoPath, filePath));
+		if (buf.byteLength > MAX_IMAGE_BYTES) return null;
+		return buf;
+	} catch {
+		return null;
+	}
+}
+
+function bufferToDataUrl(buf: Buffer, mime: string): string {
+	return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
+// Build the old/new `data:` URLs for an image file from whichever sides exist.
+// `oldRef` is the base/HEAD commit; the new side comes from the working tree in
+// the unstaged context (no head ref) and from `headRef` otherwise.
+async function imageDataUrls(
+	repoPath: string,
+	filePath: string,
+	mime: string,
+	oldRef: string | undefined,
+	headRef: string | undefined
+): Promise<{ oldImage?: string; newImage?: string }> {
+	const oldBuf = oldRef ? await showFileBuffer(repoPath, oldRef, filePath) : null;
+	const newBuf = headRef
+		? await showFileBuffer(repoPath, headRef, filePath)
+		: await readWorkingBuffer(repoPath, filePath);
+	return {
+		oldImage: oldBuf ? bufferToDataUrl(oldBuf, mime) : undefined,
+		newImage: newBuf ? bufferToDataUrl(newBuf, mime) : undefined
+	};
+}
+
 export async function getDiff(
 	repoPath: string,
 	filePath: string,
@@ -847,11 +913,32 @@ export async function getDiff(
 		isBinary = ns.binary;
 	}
 
-	if (newContents && !oldContents) status = 'added';
-	else if (oldContents && !newContents) status = 'deleted';
+	// Images get rendered side by side, so fetch the raw bytes of each side as a
+	// `data:` URL. The new side comes from the working tree in the unstaged
+	// context (no head ref) and from the head ref otherwise.
+	const imageMime = imageMimeForPath(filePath);
+	let oldImage: string | undefined;
+	let newImage: string | undefined;
+	if (imageMime) {
+		const oldRef = refs.workingTree ? 'HEAD' : refs.base;
+		const headRef = refs.workingTree ? undefined : refs.head;
+		({ oldImage, newImage } = await imageDataUrls(repoPath, filePath, imageMime, oldRef, headRef));
+	}
+
+	// Recompute status from whichever side actually has content. For a binary
+	// image the text sides are empty, so fall back to the image sides.
+	const hasOld = oldContents.length > 0 || oldImage !== undefined;
+	const hasNew = newContents.length > 0 || newImage !== undefined;
+	if (hasNew && !hasOld) status = 'added';
+	else if (hasOld && !hasNew) status = 'deleted';
 	else status = 'modified';
 
 	const truncated = oldContents.length > MAX_FILE_BYTES || newContents.length > MAX_FILE_BYTES;
+
+	// A raster image's "contents" are lossy binary noise — drop them so we don't
+	// ship garbage; the side-by-side `data:` URLs are what gets rendered. SVGs
+	// are text, so keep their contents for the source diff.
+	const dropTextContents = isBinary && imageMime !== null;
 
 	return {
 		file: {
@@ -863,9 +950,11 @@ export async function getDiff(
 			isBinary
 		},
 		patch,
-		oldContents: truncated ? '' : oldContents,
-		newContents: truncated ? '' : newContents,
-		truncated
+		oldContents: truncated || dropTextContents ? '' : oldContents,
+		newContents: truncated || dropTextContents ? '' : newContents,
+		truncated,
+		oldImage,
+		newImage
 	};
 }
 
