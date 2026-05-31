@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { simpleGit } from 'simple-git';
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { captureSession, type SessionMeta, type TourStepInput } from '../main/session-capture.js';
 import { findSessionByKey, getSession, writeSession } from '../main/session-store.js';
@@ -19,26 +18,14 @@ interface TourFile {
 	steps?: TourStepInput[];
 }
 
-// Read a `--tour` document from a file path, or from stdin when the value is
-// "-". Validates the shape just enough to give a clear error before capture.
-async function loadTour(source: string): Promise<TourFile> {
-	let raw: string;
-	if (source === '-') {
-		const chunks: Buffer[] = [];
-		for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-		raw = Buffer.concat(chunks).toString('utf8');
-	} else {
-		try {
-			raw = await fs.readFile(path.resolve(source), 'utf8');
-		} catch {
-			fail(`could not read --tour file: ${source}`);
-		}
-	}
+// Parse a `--tour` document from the inline JSON string passed on the command
+// line. Validates the shape just enough to give a clear error before capture.
+function loadTour(raw: string): TourFile {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
 	} catch {
-		fail(`--tour is not valid JSON (${source})`);
+		fail('--tour is not valid JSON');
 	}
 	if (typeof parsed !== 'object' || parsed === null) {
 		fail('--tour must be a JSON object');
@@ -95,10 +82,10 @@ Options:
   --harness <kind>     One of: ${HARNESSES.join(', ')} (default: other).
   --harness-label <t>  Freeform harness name (used when --harness other).
   --harness-url <url>  Deep link back to this run (resume/permalink).
-  --tour <file|->      JSON file (or "-" for stdin) describing a guided tour:
-                       ordered steps that group related files with commentary,
-                       so the reviewer reads the change as a narrative. Flags
-                       override the file's top-level name/description/harness.
+  --tour <json>        Inline JSON describing a guided tour: ordered steps that
+                       group related files with commentary, so the reviewer
+                       reads the change as a narrative. Flags override the
+                       document's top-level name/description/harness.
   --cwd <path>         Repo path (default: current directory).
   -h, --help           Show this help.
 
@@ -166,7 +153,7 @@ async function run(): Promise<void> {
 
 		// A --tour document can supply metadata + the steps; explicit flags win
 		// over its top-level fields.
-		const tour = args.tour ? await loadTour(args.tour) : null;
+		const tour = args.tour ? loadTour(args.tour) : null;
 
 		const harnessRaw = args.harness ?? tour?.harness;
 		if (harnessRaw && !HARNESSES.includes(harnessRaw as HarnessKind)) {
