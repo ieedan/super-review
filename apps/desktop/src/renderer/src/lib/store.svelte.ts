@@ -125,6 +125,7 @@ interface AppState {
 	animationsEnabled: boolean;
 	hotkeys: Hotkeys;
 	theme: 'light' | 'dark';
+	accent: 'super' | 'mono';
 	codeFont: string;
 	uiFont: string;
 	// Font families installed on the user's machine, queried lazily on launch.
@@ -272,6 +273,7 @@ const initial: AppState = {
 	animationsEnabled: false,
 	hotkeys: DEFAULT_HOTKEYS,
 	theme: 'dark',
+	accent: 'super',
 	codeFont: 'system',
 	uiFont: 'system',
 	systemFonts: [],
@@ -414,6 +416,13 @@ function applyTheme(theme: 'light' | 'dark'): void {
 	const root = document.documentElement;
 	root.classList.toggle('dark', theme === 'dark');
 	root.classList.toggle('light', theme === 'light');
+}
+
+// Accent palette. 'super' (default) is the brand flame; 'mono' restores the
+// neutral monochrome primary and flat default buttons. Applied as a class so
+// app.css can override the relevant theme variables (see `.accent-mono` there).
+function applyAccent(accent: 'super' | 'mono'): void {
+	document.documentElement.classList.toggle('accent-mono', accent === 'mono');
 }
 
 // Built-in fallback stacks — kept in sync with the defaults in app.css. A
@@ -909,6 +918,8 @@ export const actions = {
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
+		app.accent = app.prefs.accent ?? 'super';
+		applyAccent(app.accent);
 		app.codeFont = app.prefs.codeFont;
 		app.uiFont = app.prefs.uiFont;
 		applyFonts();
@@ -2352,6 +2363,12 @@ export const actions = {
 		app.theme = theme;
 		applyTheme(theme);
 		app.prefs = await window.api.state.setPrefs({ theme });
+	},
+
+	async setAccent(accent: 'super' | 'mono'): Promise<void> {
+		app.accent = accent;
+		applyAccent(accent);
+		app.prefs = await window.api.state.setPrefs({ accent });
 	},
 
 	async setCodeFont(font: string): Promise<void> {

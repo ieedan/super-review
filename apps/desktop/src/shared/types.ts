@@ -484,6 +484,8 @@ export interface CreateRepoDefaults {
 export interface UserPrefs {
 	viewMode: ViewMode;
 	theme: 'light' | 'dark';
+	// Accent palette: 'super' = brand flame, 'mono' = neutral monochrome primary.
+	accent: 'super' | 'mono';
 	activeRepoId?: string;
 	contextTab?: ContextTab;
 	externalEditor?: EditorKind | null;

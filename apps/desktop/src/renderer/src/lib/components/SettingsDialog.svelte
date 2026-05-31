@@ -210,6 +210,9 @@
 		if (draftTheme !== app.theme) {
 			promises.push(actions.setTheme(draftTheme));
 		}
+		if (draftAccent !== app.accent) {
+			promises.push(actions.setAccent(draftAccent));
+		}
 		if (draftCodeFont !== app.codeFont) {
 			promises.push(actions.setCodeFont(draftCodeFont));
 		}

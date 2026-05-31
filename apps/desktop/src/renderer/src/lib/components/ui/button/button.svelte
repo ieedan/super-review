@@ -8,7 +8,7 @@
 		variants: {
 			variant: {
 				default:
-					'bg-[image:var(--flame-gradient)] text-primary-foreground shadow-[0_2px_8px_-3px_hsl(11_100%_55%/0.5)] hover:brightness-105 active:brightness-95',
+					'bg-[image:var(--flame-gradient)] text-primary-foreground shadow-[var(--btn-primary-shadow)] hover:brightness-105 active:brightness-95',
 				outline:
 					'border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50',
 				secondary:
