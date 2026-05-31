@@ -1,10 +1,12 @@
 # Publishing the desktop app
 
 The desktop app ships as a GitHub Release built by CI for **Windows (x64)** and
-**macOS (Apple silicon / arm64)**. Releases are produced by
-[`.github/workflows/release.yml`](.github/workflows/release.yml) using
-[electron-builder](https://www.electron.build/), and the app auto-updates from
-those releases via [electron-updater](https://www.electron.build/auto-update).
+**macOS (Apple silicon / arm64)**. Versioning, changelogs and releases are
+driven by [changesets](https://github.com/changesets/changesets) and the
+[`Release`](.github/workflows/release.yml) workflow; the builds themselves are
+produced by [electron-builder](https://www.electron.build/), and the app
+auto-updates from those releases via
+[electron-updater](https://www.electron.build/auto-update).
 
 ## Artifacts
 
@@ -18,28 +20,55 @@ Each release contains:
 | Windows x64 | `Super-Review-Setup-<version>.exe`     | NSIS installer            |
 | Windows x64 | `latest.yml`                           | Auto-update feed          |
 
-## Cutting a release
+## Workflow: how a release happens
 
-1. Bump the version in `apps/desktop/package.json` (the Git tag must match it):
-
-   ```bash
-   cd apps/desktop
-   npm version patch --no-git-tag-version   # or minor / major
-   ```
-
-2. Commit the bump and tag it `v<version>` (e.g. `v0.1.0`):
+1. **Describe your change.** In any PR that should affect the released app, add a
+   changeset:
 
    ```bash
-   git commit -am "release: v0.1.0"
-   git tag v0.1.0
-   git push origin main --tags
+   pnpm changeset
    ```
 
-3. Pushing the tag triggers **Release Desktop**, which builds on a macOS arm64
-   runner and a Windows runner and uploads everything to a GitHub Release named
-   for the tag.
+   Pick the bump (`patch` / `minor` / `major`) and write a one-line summary. This
+   creates a markdown file under `.changeset/` — commit it with your PR. PRs
+   without a changeset don't trigger a release.
 
-You can also re-run the workflow manually from the Actions tab (`workflow_dispatch`).
+2. **Merge to `main`.** The [`Release`](.github/workflows/release.yml) workflow
+   collects all pending changesets and opens (or updates) a
+   **`chore(release): version desktop app`** PR. That PR bumps
+   `apps/desktop/package.json` and regenerates `apps/desktop/CHANGELOG.md`.
+
+3. **Merge the Version PR.** Merging it bumps the version on `main`, and the same
+   workflow then:
+   - builds on a macOS arm64 runner and a Windows runner via electron-builder,
+     uploading all artifacts to a **draft** GitHub Release;
+   - pushes the `v<version>` tag at the built commit and publishes the release.
+
+   The published release is what electron-updater serves to existing installs.
+
+You can re-run the workflow manually from the Actions tab
+(`workflow_dispatch`) against the current `main` commit.
+
+> **Note:** the release gate keys off the `v<version>` git tag. A push to `main`
+> only triggers a build when `apps/desktop/package.json`'s version has no
+> matching tag yet (i.e. right after a Version PR merge). Routine pushes are
+> no-ops for the build/publish jobs.
+
+## One-time setup (already done / for reference)
+
+When this workflow was first adopted, two things were needed:
+
+1. **Enable** Settings → Actions → General → "Allow GitHub Actions to create and
+   approve pull requests" — so changesets can open the Version PR.
+
+2. **Seed a baseline `v0.0.1` tag** so the gate doesn't treat the already-shipped
+   `0.0.1` as un-released and rebuild it. Push this **only after the changesets
+   workflow is on `main`** (the previous tag-triggered workflow would otherwise
+   fire on the tag):
+
+   ```bash
+   git tag v0.0.1 <commit that shipped 0.0.1> && git push origin v0.0.1
+   ```
 
 ## Code signing & notarization (optional)
 
@@ -67,6 +96,10 @@ these repository secrets (Settings → Secrets and variables → Actions):
 
 Notarization runs automatically once the macOS build is signed and the `APPLE_*`
 secrets are present.
+
+> The workflow also needs **Settings → Actions → General → "Allow GitHub Actions
+> to create and approve pull requests"** enabled so changesets can open the
+> Version PR.
 
 ## Building locally
 
