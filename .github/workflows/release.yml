@@ -165,10 +165,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          V="v${{ needs.version.outputs.version }}"
+          VERSION="${{ needs.version.outputs.version }}"
+          V="v$VERSION"
           # Tag the exact commit that was built (the run's triggering SHA).
           git tag "$V" "${{ github.sha }}"
           git push origin "$V"
-          # electron-builder uploads to a *draft* release; flip it live so
-          # electron-updater can resolve it.
-          gh release edit "$V" --draft=false --latest
+          # Pull this version's section out of the changesets-generated
+          # changelog (everything between "## <version>" and the next "## ")
+          # so the release body shows the notes + PR links instead of being
+          # blank. electron-builder leaves the draft body empty.
+          awk -v ver="## $VERSION" '
+            $0 == ver {flag=1; next}
+            /^## / && flag {exit}
+            flag {print}
+          ' apps/desktop/CHANGELOG.md > release-notes.md
+          # electron-builder uploads to a *draft* release; add the notes and
+          # flip it live so electron-updater can resolve it.
+          if [ -s release-notes.md ]; then
+            gh release edit "$V" --notes-file release-notes.md --draft=false --latest
+          else
+            echo "No changelog section found for $VERSION — publishing without notes"
+            gh release edit "$V" --draft=false --latest
+          fi
