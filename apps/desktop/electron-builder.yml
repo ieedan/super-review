@@ -41,6 +41,10 @@ mac:
       arch: arm64
 dmg:
   writeUpdateInfo: false
+  # Stable, version-less filename so the docs site can link directly to
+  # github.com/.../releases/latest/download/Super-Review-mac-arm64.dmg and always
+  # get the newest build. (The updater consumes the zip above, not this dmg.)
+  artifactName: Super-Review-mac-arm64.${ext}
 
 # --- Windows (x64) ---------------------------------------------------------
 # Code signing runs only when CSC_LINK / CSC_KEY_PASSWORD are set.
@@ -52,3 +56,7 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # Stable, version-less filename so the docs site can link directly to
+  # github.com/.../releases/latest/download/Super-Review-win-x64.exe. electron
+  # -updater resolves the installer via latest.yml, so a fixed name is fine.
+  artifactName: Super-Review-win-x64.${ext}
