@@ -10,6 +10,12 @@ extraMetadata:
   main: out/main/index.js
 asar: true
 
+# electron-builder otherwise computes this by scanning node_modules, which is
+# unreliable under pnpm's symlinked layout on a clean CI runner and fails with
+# "Cannot compute electron version from installed node modules". Pin it — keep
+# in sync with the `electron` devDependency in package.json.
+electronVersion: 33.4.11
+
 # Where `--publish` uploads artifacts and where electron-updater looks for
 # updates. The GitHub release tag must be `v${version}` (see PUBLISHING.md).
 publish:

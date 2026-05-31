@@ -2,6 +2,11 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
-allowBuilds:
-  electron: true
-  esbuild: true
+# pnpm 10 blocks dependency build scripts unless they're listed here. `electron`
+# downloads its binary in a postinstall, and `esbuild` fetches its native binary
+# — both are skipped on a clean CI runner without this, producing a broken/empty
+# build. (The key is `onlyBuiltDependencies`, a list; `allowBuilds` is not a real
+# pnpm field and was silently ignored.)
+onlyBuiltDependencies:
+  - electron
+  - esbuild
