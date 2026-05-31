@@ -1,5 +1,11 @@
 # @super-review/desktop
 
+## 0.0.4
+
+### Patch Changes
+
+- Populate GitHub Release notes from the changelog. The `publish-release` job now extracts the current version's section from `CHANGELOG.md` (notes + PR links) and sets it as the release body when flipping the draft live, instead of leaving it blank. ([#12](https://github.com/ieedan/super-review/pull/12))
+
 ## 0.0.3
 
 ### Patch Changes
