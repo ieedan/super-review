@@ -112,23 +112,43 @@ jobs:
 
       - name: Build & publish
         working-directory: apps/desktop
-        run: pnpm run release
+        # bash on every runner (Git Bash on Windows) so the signing guard below
+        # is portable.
+        shell: bash
         env:
           # Token electron-builder uses to create/upload the GitHub Release.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # Code signing is optional. With no secrets set these resolve to empty
-          # and electron-builder produces an unsigned build. Per-OS expressions
-          # keep the macOS certificate off the Windows runner and vice versa.
-          # electron-builder reads CSC_LINK / CSC_KEY_PASSWORD generically on
-          # both platforms.
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || (runner.os == 'Windows' && secrets.WIN_CSC_LINK || '') }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || (runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '') }}
+          # Raw per-OS signing secrets. Promoted to the generic CSC_LINK /
+          # CSC_KEY_PASSWORD in the run script below — but only when present.
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
           # macOS notarization (used only when the build above is signed).
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # Code signing is optional. electron-builder treats a defined-but-EMPTY
+        # CSC_LINK as "a certificate was provided" and then dies resolving it
+        # ("<projectDir> not a file"), so we must never export an empty CSC_LINK.
+        # Promote the per-OS secret only when it's actually set; otherwise disable
+        # signing so the runner produces a clean unsigned build.
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            CERT="$MAC_CSC_LINK"; CERT_PW="$MAC_CSC_KEY_PASSWORD"
+          else
+            CERT="$WIN_CSC_LINK"; CERT_PW="$WIN_CSC_KEY_PASSWORD"
+          fi
+          if [ -n "$CERT" ]; then
+            echo "Code signing enabled for $RUNNER_OS"
+            export CSC_LINK="$CERT" CSC_KEY_PASSWORD="$CERT_PW"
+          else
+            echo "No certificate for $RUNNER_OS — building unsigned"
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          pnpm run release
 
   publish-release:
     name: Publish release
