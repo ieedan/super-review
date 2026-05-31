@@ -35,16 +35,10 @@ with your latest changes (and tour) rather than creating a duplicate.
 
 1. Make sure your edits are saved (they don't need to be committed) — the diff
    is captured from the current working tree.
-2. Write a tour JSON file describing the steps, then pass it with \`--tour\`:
+2. Pass the tour as inline JSON to \`--tour\`:
 
 \`\`\`bash
-super-review session save --key "<your conversation/run id>" --tour tour.json
-\`\`\`
-
-\`tour.json\`:
-
-\`\`\`json
-{
+super-review session save --key "<your conversation/run id>" --tour '{
   "name": "Short title for the whole change",
   "description": "One or two sentences of overview.",
   "harness": "claude-code",
@@ -70,10 +64,11 @@ super-review session save --key "<your conversation/run id>" --tour tour.json
       "files": ["src/components/Thing.svelte"]
     }
   ]
-}
+}'
 \`\`\`
 
-You can also pipe the JSON in via \`--tour -\` (read from stdin).
+The JSON is passed directly on the command line — wrap it in single quotes so
+the shell keeps it as one argument.
 
 ### Callouts: point at specific lines
 
@@ -107,9 +102,9 @@ the overview. Don't annotate every line — callouts are for what's easy to miss
 - \`--key\` — **Always pass the same stable id for the same conversation** (your
   harness's conversation/run id). This is what makes re-runs update the same
   session instead of piling up duplicates.
-- \`--tour <file|->\` — the tour JSON (a path, or \`-\` to read from stdin).
+- \`--tour <json>\` — the tour as inline JSON, passed directly as the argument.
 - \`--name\`, \`--description\` — the overview. Required on first save unless the
-  tour file supplies them. Flags override the tour file's values.
+  tour supplies them. Flags override the tour's values.
 - \`--harness\` — one of: \`claude-code\`, \`cursor\`, \`codex\`, \`opencode\`,
   \`copilot\`, \`other\`. Drives the logo on the session card. Use
   \`--harness-label "<name>"\` with \`--harness other\` to label an unlisted tool.
@@ -118,6 +113,10 @@ the overview. Don't annotate every line — callouts are for what's easy to miss
 
 A quick flat session (no tour) still works: pass \`--name\`/\`--description\`
 without \`--tour\`, and every changed file is listed ungrouped.
+
+For a large tour, write the JSON to a temp file and expand it inline with your
+shell (e.g. \`--tour "$(cat tour.json)"\`) — the CLI itself only accepts the
+JSON, not a path.
 
 ## Notes
 
