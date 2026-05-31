@@ -219,7 +219,7 @@
 	{:else if checksState === 'failure'}
 		<X class="size-3.5 text-red-500" aria-label={checksTitle} />
 	{:else if checksState === 'pending'}
-		<GithubSpinner class="text-muted-foreground" aria-label={checksTitle} />
+		<GithubSpinner class="text-[#d29922]" aria-label={checksTitle} />
 	{:else}
 		<GitPullRequestArrow class="size-3 text-muted-foreground" />
 	{/if}
@@ -234,7 +234,7 @@
 			{:else if check.state === 'failure'}
 				<X class="size-3.5 shrink-0 text-red-500" />
 			{:else}
-				<GithubSpinner class="size-3.5 shrink-0 text-muted-foreground" />
+				<GithubSpinner class="size-3.5 shrink-0 text-[#d29922]" />
 			{/if}
 			{#if check.avatarUrl}
 				<img src={check.avatarUrl} alt="" class="size-3.5 shrink-0 rounded-full" />
