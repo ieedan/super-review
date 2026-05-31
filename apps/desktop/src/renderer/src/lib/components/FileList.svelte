@@ -688,7 +688,7 @@
 		<!-- Combined header — context tabs on the left, then seen/total + adds/dels
          totals, and the collapse trigger pinned right. Matches the diff sticky
          header height so their bottom borders line up across panes. -->
-		<div class="flex h-11 items-center gap-2 border-b border-border pr-2 pl-1">
+		<div class="flex h-11 items-center gap-2 border-b border-border px-2">
 			{#if app.activeSessionId}
 				<!-- A session's diff is open: the tab strip is replaced with a back
              button and a muted "Sessions" label naming where it returns to.
@@ -751,7 +751,8 @@
 			{/if}
 			<Button
 				variant="ghost"
-				size="icon"
+				size="icon-sm"
+				class="shrink-0"
 				title={`Collapse sidebar (${toggleShortcut})`}
 				onclick={() => sidebar.toggle()}
 			>
@@ -813,7 +814,7 @@
 		{/if}
 
 		{#if showFileControls}
-			<div class="flex items-center gap-1.5 border-b border-border py-1.5 pr-2 pl-1">
+			<div class="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
 				<div
 					class="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input bg-background px-2"
 				>

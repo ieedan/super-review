@@ -26,10 +26,9 @@
 	const secondary = $derived(os === 'windows' ? DOWNLOADS.mac : DOWNLOADS.windows);
 
 	// ── App preview ────────────────────────────────────────────────────────
-	// To use a real screenshot later: drop the image in `static/` (e.g.
-	// static/app-preview.png) and set this to its path, e.g. `${base}/app-preview.png`.
-	// While it's null we render the mini mockup below in the same frame.
-	const screenshot: string | null = null;
+	// Real product screenshot in static/. Set to null to fall back to the mini
+	// mockup snippet below. Swap the file (or this path) to update the image.
+	const screenshot: string | null = `${base}/app-preview.webp`;
 
 	const files = [
 		{ name: 'src/auth/session.ts', add: 3, del: 2, active: true },
@@ -123,13 +122,13 @@
 				<a
 					href={secondary.url}
 					download={secondary.filename}
-					class="hover:text-flame transition-colors"
+					class="transition-colors hover:text-flame"
 				>
 					Also for {secondary.label}
 				</a>
 				<span aria-hidden="true">·</span>
 				{#if version}
-					<a href={LATEST_RELEASE_URL} class="hover:text-flame transition-colors">v{version}</a>
+					<a href={LATEST_RELEASE_URL} class="transition-colors hover:text-flame">v{version}</a>
 					<span aria-hidden="true">·</span>
 				{/if}
 				<span>Free &amp; open source</span>
@@ -144,8 +143,8 @@
 			></div>
 
 			<div
-				class="border-line-bright bg-elevated/85 overflow-hidden rounded-2xl border text-left shadow-2xl backdrop-blur-sm"
-				style="box-shadow: 0 50px 120px -40px hsl(6 88% 40% / 0.5), 0 0 0 1px hsl(28 9% 12%);"
+				class="bg-elevated/85 overflow-hidden rounded-2xl text-left shadow-2xl backdrop-blur-sm"
+				style="box-shadow: 0 50px 120px -40px hsl(6 88% 40% / 0.5);"
 			>
 				{#if screenshot}
 					<img src={screenshot} alt="Super Review app preview" class="block w-full" />

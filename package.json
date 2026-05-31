@@ -6,7 +6,9 @@
 	"private": true,
 	"license": "MIT",
 	"scripts": {
-		"dev": "pnpm --filter @super-review/desktop dev",
+		"dev": "pnpm run \"/^dev:(desktop|docs)$/\"",
+		"dev:desktop": "pnpm --filter @super-review/desktop dev",
+		"dev:docs": "pnpm --filter @super-review/docs dev",
 		"build": "pnpm --filter @super-review/desktop build",
 		"preview": "pnpm --filter @super-review/desktop preview",
 		"start": "pnpm --filter @super-review/desktop start",
