@@ -57,9 +57,14 @@
 		// container so the last file can scroll its top to the viewport top
 		// without exposing scrollable area past its own bottom.
 		isLast?: boolean;
+		// When true, the section treats itself as in view immediately and skips the
+		// IntersectionObserver. Used by the single-file diff layout, where the only
+		// rendered section is always on screen and should fetch/render right away
+		// rather than flashing a "Scroll to load" placeholder.
+		eager?: boolean;
 	}
 
-	let { file, observer, isLast = false }: Props = $props();
+	let { file, observer, isLast = false, eager = false }: Props = $props();
 
 	let section = $state<HTMLElement | null>(null);
 	let host = $state<HTMLElement | null>(null);
@@ -249,7 +254,13 @@
 	// Register the section with the parent's IntersectionObserver. The observer
 	// flips `data-in-view` on the section element when it (or its margin region)
 	// intersects the scroll container — see DiffView.svelte for the callback.
+	// Eager sections (single-file layout) are always on screen, so they force
+	// `inView` and skip the observer entirely.
 	$effect(() => {
+		if (eager) {
+			inView = true;
+			return;
+		}
 		if (!section || !observer) return;
 		const node = section;
 		const obs = observer;

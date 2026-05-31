@@ -267,6 +267,11 @@ export interface NewReviewCommentInput {
 
 export type ViewMode = 'split' | 'unified';
 
+// How the diff view lays out a context's files. 'scroll' renders every file's
+// diff in one long scrollable list; 'single' shows one file's diff at a time
+// (GitHub Desktop-style), switching as the user picks files in the sidebar.
+export type DiffLayout = 'scroll' | 'single';
+
 // How the sidebar file list is laid out. 'tree' groups files into nested
 // folders (VSCode-style); 'list' flattens to one file per row.
 export type FileListLayout = 'tree' | 'list';
@@ -483,6 +488,9 @@ export interface CreateRepoDefaults {
 
 export interface UserPrefs {
 	viewMode: ViewMode;
+	// Whether the diff view scrolls through all files at once ('scroll') or shows
+	// one file's diff at a time ('single'). Defaults to 'scroll'.
+	diffLayout: DiffLayout;
 	theme: 'light' | 'dark';
 	activeRepoId?: string;
 	contextTab?: ContextTab;

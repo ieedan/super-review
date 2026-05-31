@@ -50,10 +50,37 @@
 		return out;
 	});
 
+	// What the diff view actually renders. In the default 'scroll' layout that's
+	// the whole plan (every file, one long scroll). In 'single' layout we render
+	// just the selected file's section — plus its preceding step header for tour
+	// context — so the user reviews one diff at a time, GitHub Desktop-style,
+	// switching files from the sidebar.
+	const displayPlan = $derived.by<PlanItem[]>(() => {
+		if (app.diffLayout !== 'single') return renderPlan;
+		const firstFile = renderPlan.find((it) => it.kind === 'file');
+		const sel = app.selectedFile;
+		const idx = sel ? renderPlan.findIndex((it) => it.kind === 'file' && it.file.path === sel) : -1;
+		// No (or stale) selection — fall back to the first file so the view is
+		// never blank while there are files to show.
+		if (idx === -1) return firstFile ? [firstFile] : [];
+		const out: PlanItem[] = [];
+		// Include the step header immediately preceding this file (tour view only),
+		// for context; stop at the previous file so unrelated steps aren't pulled in.
+		for (let i = idx - 1; i >= 0; i--) {
+			if (renderPlan[i].kind === 'file') break;
+			if (renderPlan[i].kind === 'step') {
+				out.push(renderPlan[i]);
+				break;
+			}
+		}
+		out.push(renderPlan[idx]);
+		return out;
+	});
+
 	// Index of the last file item, so it gets the min-height treatment that lets
 	// its top scroll to the viewport top.
 	const lastFileIndex = $derived(
-		renderPlan.reduce((acc, it, i) => (it.kind === 'file' ? i : acc), -1)
+		displayPlan.reduce((acc, it, i) => (it.kind === 'file' ? i : acc), -1)
 	);
 
 	let scrollContainer = $state<HTMLElement | null>(null);
@@ -275,7 +302,7 @@
 			</div>
 		{/if}
 
-		{#each renderPlan as item, i (item.kind === 'step' ? `step:${item.id}` : `file:${item.file.path}`)}
+		{#each displayPlan as item, i (item.kind === 'step' ? `step:${item.id}` : `file:${item.file.path}`)}
 			{#if item.kind === 'step'}
 				<SessionStepHeader
 					id={item.id}
@@ -285,7 +312,12 @@
 					total={item.total}
 				/>
 			{:else}
-				<DiffFileSection file={item.file} {observer} isLast={i === lastFileIndex} />
+				<DiffFileSection
+					file={item.file}
+					{observer}
+					isLast={i === lastFileIndex}
+					eager={app.diffLayout === 'single'}
+				/>
 			{/if}
 		{/each}
 	</div>

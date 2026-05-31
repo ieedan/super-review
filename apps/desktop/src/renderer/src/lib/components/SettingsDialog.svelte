@@ -52,7 +52,7 @@
 	} from '@shared/hotkeys';
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM } from '@shared/types';
 	import { cn } from '$lib/utils';
-	import type { EditorKind, TerminalKind, ViewMode } from '@shared/types';
+	import type { DiffLayout, EditorKind, TerminalKind, ViewMode } from '@shared/types';
 
 	type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'editor' | 'hotkeys';
 	let activeTab = $state<SettingsTab>('accounts');
@@ -99,6 +99,7 @@
 
 	// Draft state — snapshot when the dialog opens, applied on Save.
 	let draftViewMode = $state<ViewMode>('split');
+	let draftDiffLayout = $state<DiffLayout>('scroll');
 	let draftShowFileIcons = $state<boolean>(true);
 	let draftAnimationsEnabled = $state<boolean>(false);
 	let draftOpenFileOnArrowNav = $state<boolean>(true);
@@ -115,6 +116,7 @@
 	$effect(() => {
 		if (dialogOpen) {
 			draftViewMode = app.viewMode;
+			draftDiffLayout = app.diffLayout;
 			draftShowFileIcons = app.showFileIcons;
 			draftAnimationsEnabled = app.animationsEnabled;
 			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
@@ -186,6 +188,9 @@
 		const promises: Promise<unknown>[] = [];
 		if (draftViewMode !== app.viewMode) {
 			promises.push(actions.setViewMode(draftViewMode));
+		}
+		if (draftDiffLayout !== app.diffLayout) {
+			promises.push(actions.setDiffLayout(draftDiffLayout));
 		}
 		if (draftShowFileIcons !== app.showFileIcons) {
 			promises.push(actions.setShowFileIcons(draftShowFileIcons));
@@ -487,6 +492,47 @@
 										</div>
 										<div class="w-full bg-background p-1.5">
 											<DiffStylePreview mode={opt.mode} />
+										</div>
+									</button>
+								{/each}
+							</div>
+						</div>
+
+						<div>
+							<h3 class="text-base font-semibold">Diff layout</h3>
+							<p class="mt-1 text-xs text-muted-foreground">
+								Choose whether all changed files render in one scrollable list or one file's diff
+								shows at a time, switching as you pick files in the sidebar.
+							</p>
+
+							<div class="mt-4 grid grid-cols-2 gap-3">
+								{#each [{ value: 'scroll' as DiffLayout, label: 'Scrollable', hint: 'All file diffs stack in one continuous scroll.' }, { value: 'single' as DiffLayout, label: 'One at a time', hint: 'Shows the selected file only, like GitHub Desktop.' }] as opt (opt.value)}
+									{@const active = draftDiffLayout === opt.value}
+									<button
+										type="button"
+										onclick={() => (draftDiffLayout = opt.value)}
+										class={cn(
+											'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+											active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
+										)}
+									>
+										<div
+											class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+										>
+											<span
+												class={cn(
+													'grid size-3.5 place-items-center rounded-full border',
+													active
+														? 'border-primary bg-primary text-primary-foreground'
+														: 'border-border'
+												)}
+											>
+												{#if active}<Check class="size-2.5" />{/if}
+											</span>
+											{opt.label}
+										</div>
+										<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
+											{opt.hint}
 										</div>
 									</button>
 								{/each}

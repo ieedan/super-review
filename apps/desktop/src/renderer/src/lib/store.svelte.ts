@@ -6,6 +6,7 @@ import type {
 	CreateRepoOptions,
 	DiffContext,
 	DiffData,
+	DiffLayout,
 	EditorKind,
 	FileListLayout,
 	GithubAccount,
@@ -114,6 +115,9 @@ interface AppState {
 	excludedFromCommit: SvelteSet<string>;
 	collapsedFiles: SvelteSet<string>;
 	viewMode: ViewMode;
+	// Whether the diff view scrolls through every file at once ('scroll') or
+	// shows one file's diff at a time ('single'), switching with the sidebar.
+	diffLayout: DiffLayout;
 	// File list layout per sidebar tab. The active tab decides which one the
 	// sidebar's tree/list toggle reads and writes.
 	unstagedFileListLayout: FileListLayout;
@@ -263,6 +267,7 @@ const initial: AppState = {
 	excludedFromCommit: new SvelteSet(),
 	collapsedFiles: new SvelteSet(),
 	viewMode: 'split',
+	diffLayout: 'scroll',
 	unstagedFileListLayout: 'tree',
 	branchFileListLayout: 'tree',
 	showFileIcons: true,
@@ -899,6 +904,7 @@ export const actions = {
 	async init(): Promise<void> {
 		app.prefs = await window.api.state.getPrefs();
 		app.viewMode = app.prefs.viewMode;
+		app.diffLayout = app.prefs.diffLayout ?? 'scroll';
 		app.unstagedFileListLayout = app.prefs.unstagedFileListLayout;
 		app.branchFileListLayout = app.prefs.branchFileListLayout;
 		app.showFileIcons = app.prefs.showFileIcons;
@@ -2296,6 +2302,11 @@ export const actions = {
 	async setViewMode(mode: ViewMode): Promise<void> {
 		app.viewMode = mode;
 		app.prefs = await window.api.state.setPrefs({ viewMode: mode });
+	},
+
+	async setDiffLayout(layout: DiffLayout): Promise<void> {
+		app.diffLayout = layout;
+		app.prefs = await window.api.state.setPrefs({ diffLayout: layout });
 	},
 
 	// Set the file list layout for the active sidebar tab. Unstaged and branch
