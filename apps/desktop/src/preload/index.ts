@@ -8,6 +8,7 @@ import type {
 	CloneResult,
 	CreateRepoDefaults,
 	CommitDraft,
+	CommitFileSelection,
 	CommitResult,
 	CreateBranchResult,
 	DeleteBranchResult,
@@ -92,8 +93,8 @@ const api: PreloadAPI = {
 		continueMerge: (repoId) =>
 			ipcRenderer.invoke('git:continueMerge', repoId) as Promise<PullPushResult>,
 		abortMerge: (repoId) => ipcRenderer.invoke('git:abortMerge', repoId) as Promise<void>,
-		commit: (repoId, message, paths) =>
-			ipcRenderer.invoke('git:commit', repoId, message, paths) as Promise<CommitResult>,
+		commit: (repoId, message, files: CommitFileSelection[]) =>
+			ipcRenderer.invoke('git:commit', repoId, message, files) as Promise<CommitResult>,
 		getLastCommit: (repoId) =>
 			ipcRenderer.invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
 		undoLastCommit: (repoId) =>

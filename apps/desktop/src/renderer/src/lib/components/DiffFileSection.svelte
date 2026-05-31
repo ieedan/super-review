@@ -31,6 +31,7 @@
 	import { diffDeferReason } from '@shared/diff-defer';
 	import { scheduleRender } from '$lib/render-scheduler';
 	import { diffContextKey } from '@shared/diff-context';
+	import { parseFilePatch, stagingLineKey, type DiffSide } from '@shared/diff-staging';
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
@@ -122,6 +123,30 @@
 	const placeholderMessage = $derived(
 		renamedNoChanges ? 'File renamed without changes.' : isDeleted ? 'This file was deleted.' : null
 	);
+
+	// Partial (line/hunk) staging is offered only in the Unstaged working-tree
+	// tab, and only for files with a real git patch to carve up — modified
+	// tracked files. Added/untracked (no HEAD patch), deletions, renames-with-no-
+	// changes and binaries fall back to the whole-file checkbox in the sidebar.
+	const stagingEnabled = $derived(
+		app.contextTab === 'unstaged' &&
+			app.diffContext.kind === 'workingTree' &&
+			!file.isBinary &&
+			file.status !== 'deleted'
+	);
+	// Staging model for the loaded diff: changed-line keys grouped by hunk, plus
+	// a key -> hunk-index lookup, derived from the raw git patch. Null when
+	// staging isn't offered or there's no filterable patch. Plain (non-reactive):
+	// rebuilt by renderDiff and read by the imperative gutter-control code.
+	interface StagingModel {
+		hunkKeys: string[][];
+		keyToHunk: Map<string, number>;
+		allKeys: string[];
+	}
+	let staging: StagingModel | null = null;
+	// The shadow root the staging click listener is currently bound to. Pierre
+	// recreates the diff (and its shadow root) on every render, so we rebind.
+	let stagingClickRoot: ShadowRoot | null = null;
 	// Handle for the most recently queued render so we can cancel it if a newer
 	// target supersedes it before the scheduler gets to it.
 	let cancelPendingRender: (() => void) | null = null;
@@ -374,6 +399,13 @@
 			}
 			instance = null;
 		}
+		// The staging click listener lives on the shadow root that's about to be
+		// destroyed with the container; drop our reference (and detach defensively).
+		if (stagingClickRoot) {
+			stagingClickRoot.removeEventListener('click', onStagingClick);
+			stagingClickRoot = null;
+		}
+		staging = null;
 		if (diffContainer) {
 			diffContainer.remove();
 			diffContainer = null;
@@ -468,10 +500,223 @@
 		actions.openComposer(file.path, side, range.start);
 	}
 
+	// ----------------------------------------------------------------------
+	// Partial (line/hunk) staging — checkbox-per-line in the diff gutter.
+	//
+	// Pierre renders the diff into an open shadow root and tags each gutter cell
+	// with `data-line-type` + `data-column-number` (the line number). We inject a
+	// checkbox into each changed cell, keyed by line number — the stable identity
+	// shared with the git patch and the store's exclusion set. CSS custom
+	// properties inherit across the shadow boundary, so an injected style element
+	// in the shadow root themes the controls. Selection state lives in the store;
+	// committing turns it into a reduced patch (see store.buildCommitSelections).
+	// ----------------------------------------------------------------------
+
+	// Scoped styles for the injected controls. Lives inside Pierre's shadow root
+	// (app.css can't reach in), but `--color-*` vars inherit across the boundary.
+	const STAGING_STYLE_ID = 'sr-staging-style';
+	const STAGING_CSS = `
+		[data-column-number] { position: relative; }
+		.sr-stage-spacer { display: inline-block; width: 18px; vertical-align: middle; }
+		.sr-stage-box {
+			display: inline-grid; place-items: center; box-sizing: border-box;
+			width: 13px; height: 13px; margin-right: 5px; padding: 0;
+			vertical-align: middle; position: relative; z-index: 2; cursor: pointer;
+			border: 1px solid var(--color-border, #888); border-radius: 3px;
+			background: transparent;
+		}
+		.sr-stage-box:hover { border-color: var(--color-primary, #333); }
+		.sr-stage-box.is-checked {
+			background: var(--color-primary, #333); border-color: var(--color-primary, #333);
+		}
+		.sr-stage-box.is-checked::after {
+			content: ''; width: 3px; height: 6px; margin-top: -1px;
+			border: solid var(--color-primary-foreground, #fff);
+			border-width: 0 2px 2px 0; transform: rotate(45deg);
+		}
+		.sr-excluded [data-line-number-content] { opacity: 0.4; }
+		.sr-stage-hunk {
+			position: absolute; left: -3px; top: 50%; transform: translateY(-50%);
+			width: 3px; height: 15px; padding: 0; border: 0; border-radius: 2px;
+			background: var(--color-muted-foreground, #999); opacity: 0;
+			cursor: pointer; z-index: 3;
+		}
+		[data-column-number]:hover .sr-stage-hunk { opacity: 0.55; }
+		.sr-stage-hunk:hover { opacity: 1; }
+		.sr-stage-hunk.is-checked { background: var(--color-primary, #333); }
+	`;
+
+	// Parse the git patch into per-hunk changed-line keys + a key -> hunk lookup.
+	function buildStagingModel(patch: string): StagingModel | null {
+		const parsed = parseFilePatch(patch);
+		if (!parsed) return null;
+		const hunkKeys: string[][] = [];
+		// Plain Map — derived lookup rebuilt per render, not reactive state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const keyToHunk = new Map<string, number>();
+		parsed.hunks.forEach((hunk, hi) => {
+			const keys: string[] = [];
+			for (const line of hunk.lines) {
+				let key: string | null = null;
+				if (line.kind === 'add' && line.newLine != null) {
+					key = stagingLineKey(file.path, 'addition', line.newLine);
+				} else if (line.kind === 'del' && line.oldLine != null) {
+					key = stagingLineKey(file.path, 'deletion', line.oldLine);
+				}
+				if (key) {
+					keys.push(key);
+					keyToHunk.set(key, hi);
+				}
+			}
+			hunkKeys.push(keys);
+		});
+		const allKeys = hunkKeys.flat();
+		if (allKeys.length === 0) return null;
+		return { hunkKeys, keyToHunk, allKeys };
+	}
+
+	// Pierre's shadow root for the current diff (where the gutter cells live).
+	function stagingRoot(): ShadowRoot | null {
+		return diffContainer?.shadowRoot ?? null;
+	}
+
+	// Called after each Pierre render/rerender: (re)inject the controls, ensure
+	// the scoped stylesheet, and (re)bind the click listener to the shadow root.
+	function applyStagingControls(): void {
+		if (!staging) return;
+		const root = stagingRoot();
+		if (!root) return;
+		if (!root.getElementById(STAGING_STYLE_ID)) {
+			const style = document.createElement('style');
+			style.id = STAGING_STYLE_ID;
+			style.textContent = STAGING_CSS;
+			root.appendChild(style);
+		}
+		if (stagingClickRoot !== root) {
+			stagingClickRoot?.removeEventListener('click', onStagingClick);
+			root.addEventListener('click', onStagingClick);
+			stagingClickRoot = root;
+		}
+		syncStagingControls(root);
+	}
+
+	// Walk the gutter cells and reconcile each one's checkbox (and the per-hunk
+	// handle on each hunk's first changed cell) with the store's selection. Used
+	// both on (re)render and whenever the staging sets change.
+	function syncStagingControls(root: ShadowRoot): void {
+		if (!staging) return;
+		const fileExcluded = app.excludedFromCommit.has(file.path);
+		// Plain Set — per-call scratch tracking which hunks got their handle, not state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const seenHunk = new Set<number>();
+		for (const cell of root.querySelectorAll<HTMLElement>('[data-column-number]')) {
+			const type = cell.getAttribute('data-line-type') ?? '';
+			const isAdd = type === 'additions' || type === 'change-addition';
+			const isDel = type === 'deletions' || type === 'change-deletion';
+			if (!isAdd && !isDel) {
+				// Context line: add a one-time spacer so its number stays aligned with
+				// the checked lines above/below it.
+				if (!cell.querySelector(':scope > [data-sr-spacer]')) {
+					const spacer = document.createElement('span');
+					spacer.setAttribute('data-sr-spacer', '');
+					spacer.className = 'sr-stage-spacer';
+					cell.insertBefore(spacer, cell.firstChild);
+				}
+				continue;
+			}
+			const num = Number(cell.getAttribute('data-column-number'));
+			if (Number.isNaN(num)) continue;
+			const side: DiffSide = isAdd ? 'addition' : 'deletion';
+			const key = stagingLineKey(file.path, side, num);
+			const included = !fileExcluded && !app.stagingLineExclusions.has(key);
+
+			let box = cell.querySelector<HTMLButtonElement>(':scope > [data-sr-stage-line]');
+			if (!box) {
+				box = document.createElement('button');
+				box.type = 'button';
+				box.setAttribute('data-sr-stage-line', '');
+				box.setAttribute('role', 'checkbox');
+				box.className = 'sr-stage-box';
+				cell.insertBefore(box, cell.firstChild);
+			}
+			box.dataset.srSide = side;
+			box.dataset.srLine = String(num);
+			box.setAttribute('aria-checked', String(included));
+			box.setAttribute(
+				'aria-label',
+				included ? 'Exclude line from commit' : 'Include line in commit'
+			);
+			box.classList.toggle('is-checked', included);
+			cell.classList.toggle('sr-excluded', !included);
+
+			const hi = staging.keyToHunk.get(key);
+			if (hi != null && !seenHunk.has(hi)) {
+				seenHunk.add(hi);
+				let hunkBtn = cell.querySelector<HTMLButtonElement>(':scope > [data-sr-stage-hunk]');
+				if (!hunkBtn) {
+					hunkBtn = document.createElement('button');
+					hunkBtn.type = 'button';
+					hunkBtn.setAttribute('data-sr-stage-hunk', '');
+					hunkBtn.title = 'Stage / unstage this hunk';
+					hunkBtn.className = 'sr-stage-hunk';
+					cell.appendChild(hunkBtn);
+				}
+				hunkBtn.dataset.srHunk = String(hi);
+				const hunkIncluded =
+					!fileExcluded && staging.hunkKeys[hi].every((k) => !app.stagingLineExclusions.has(k));
+				hunkBtn.classList.toggle('is-checked', hunkIncluded);
+			}
+		}
+	}
+
+	function onStagingClick(e: Event): void {
+		if (!staging) return;
+		const target = e.target as HTMLElement;
+		const hunkBtn = target.closest<HTMLElement>('[data-sr-stage-hunk]');
+		if (hunkBtn) {
+			e.preventDefault();
+			e.stopPropagation();
+			const hi = Number(hunkBtn.dataset.srHunk);
+			const keys = staging.hunkKeys[hi] ?? [];
+			if (keys.length === 0) return;
+			const allIncluded =
+				!app.excludedFromCommit.has(file.path) &&
+				keys.every((k) => !app.stagingLineExclusions.has(k));
+			actions.setLinesIncludedForCommit(file.path, keys, !allIncluded, staging.allKeys);
+			return;
+		}
+		const lineBtn = target.closest<HTMLElement>('[data-sr-stage-line]');
+		if (lineBtn) {
+			e.preventDefault();
+			e.stopPropagation();
+			const side = lineBtn.dataset.srSide as DiffSide;
+			const lineNum = Number(lineBtn.dataset.srLine);
+			const key = stagingLineKey(file.path, side, lineNum);
+			const included =
+				!app.excludedFromCommit.has(file.path) && !app.stagingLineExclusions.has(key);
+			actions.setLinesIncludedForCommit(file.path, [key], !included, staging.allKeys);
+		}
+	}
+
+	// Repaint the checkboxes in place whenever the staging selection changes —
+	// e.g. a toggle here, a hunk toggle, or the file's sidebar checkbox. Reading
+	// both sets' sizes registers the reactive dependency; any add/delete repaints.
+	$effect(() => {
+		void app.stagingLineExclusions.size;
+		void app.excludedFromCommit.size;
+		if (!staging || renderedKey == null) return;
+		const root = stagingRoot();
+		if (root) syncStagingControls(root);
+	});
+
 	function renderDiff(diff: DiffData): void {
 		if (!host) return;
 		disposeDiff();
 		if (diff.file.isBinary) return;
+
+		// Build the per-hunk staging model from the raw git patch up front so the
+		// gutter checkboxes can be injected as soon as Pierre finishes rendering.
+		staging = stagingEnabled && diff.patch ? buildStagingModel(diff.patch) : null;
 
 		diffContainer = document.createElement(DIFFS_TAG_NAME);
 		// `host` is ours and Svelte doesn't manage its children — Pierre renders
@@ -488,7 +733,10 @@
 			// Only enable it where commenting is meaningful — toggled live below
 			// via setOptions + flushManagers when `isPRContext` changes.
 			enableGutterUtility: isPRContext,
-			onGutterUtilityClick: onGutterClick
+			onGutterUtilityClick: onGutterClick,
+			// Inject the staging checkboxes after every (re)render. Pierre rebuilds
+			// its shadow DOM on render/rerender, so we re-apply each time.
+			onPostRender: applyStagingControls
 		});
 
 		const namePair = {

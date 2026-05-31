@@ -6,6 +6,7 @@ import path from 'node:path';
 import type {
 	BranchInfo,
 	ChangedFile,
+	CommitFileSelection,
 	CreateRepoOptions,
 	DiffContext,
 	DiffData,
@@ -1235,36 +1236,136 @@ export interface CommitResult {
 	error?: string;
 }
 
-// Stages and commits exactly the given pathspecs. The renderer decides which
-// changed files are checked for inclusion; `paths` is that selection (with the
-// old path included for renames so both sides of the rename are staged).
+// Stages and commits the selected files. Whole-file selections stage the file's
+// full working-tree version; partial selections carry a unified diff (HEAD ->
+// the kept subset) for line/hunk staging. When nothing is partial we take the
+// original fast path (`git add` + a pathspec-pinned `git commit`); otherwise we
+// build the commit through a scratch index so only the selected lines land.
 export async function commit(
 	repoPath: string,
 	message: string,
-	paths: string[],
+	files: CommitFileSelection[],
 	identity?: GitIdentity | null
 ): Promise<CommitResult> {
 	const git = simpleGit(repoPath);
 	try {
 		const trimmed = message.trim();
 		if (!trimmed) throw new Error('Commit message is required.');
-		if (paths.length === 0) throw new Error('No files selected to commit.');
-		// Stage only the selected paths (handles adds, edits, and deletions).
-		await git.raw(['add', '-A', '--', ...paths]);
-		// `-c` sets config for this invocation only, overriding both author and
-		// committer without touching the repo's git config.
-		const identityArgs = identity
-			? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`]
-			: [];
-		// Pin the commit to the selected pathspecs so anything else that may be
-		// staged in the index is left out — only the checked files are committed.
-		await git.raw([...identityArgs, 'commit', '-m', trimmed, '--', ...paths]);
+		if (files.length === 0) throw new Error('No files selected to commit.');
+
+		const hasPartial = files.some((f) => f.patch != null && f.patch.trim() !== '');
+		if (!hasPartial) {
+			// Whole-file fast path. For renames we stage both sides so git records
+			// the move rather than an add + orphaned delete.
+			const paths: string[] = [];
+			for (const f of files) {
+				paths.push(f.path);
+				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
+			}
+			await git.raw(['add', '-A', '--', ...paths]);
+			// `-c` sets config for this invocation only, overriding both author and
+			// committer without touching the repo's git config.
+			const identityArgs = identity
+				? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`]
+				: [];
+			// Pin the commit to the selected pathspecs so anything else that may be
+			// staged in the index is left out — only the checked files are committed.
+			await git.raw([...identityArgs, 'commit', '-m', trimmed, '--', ...paths]);
+			return { ok: true };
+		}
+
+		await commitPartial(repoPath, trimmed, files, identity);
 		return { ok: true };
 	} catch (err) {
 		return {
 			ok: false,
 			error: err instanceof Error ? err.message : String(err)
 		};
+	}
+}
+
+// Build a commit from a partial (line/hunk) selection without disturbing the
+// user's real index. We assemble the desired tree in a scratch index seeded
+// from HEAD: whole-file entries are `git add`ed, partial entries have their
+// reduced patch applied with `git apply --cached`. We then write that tree,
+// create the commit with `git commit-tree`, advance the branch, and finally
+// reset the real index for the touched paths to the new HEAD so `git status`
+// shows the committed changes gone and any unselected leftovers as unstaged.
+async function commitPartial(
+	repoPath: string,
+	message: string,
+	files: CommitFileSelection[],
+	identity?: GitIdentity | null
+): Promise<void> {
+	const baseGit = simpleGit(repoPath);
+	const gitDir = (await baseGit.raw(['rev-parse', '--absolute-git-dir'])).trim();
+	const headExists = await revExists(baseGit, 'HEAD');
+	const unique = `${process.pid}-${Date.now()}`;
+	const tmpIndex = path.join(gitDir, `super-review-index-${unique}`);
+	const tmpPatchFiles: string[] = [];
+
+	// All index-mutating commands run against the scratch index via GIT_INDEX_FILE.
+	// simple-git refuses to spawn with editor vars in a custom env (its
+	// allowUnsafeEditor guard); none of our commands open an editor (commit-tree
+	// takes `-m`), so drop them rather than weaken the guard. Cast through unknown
+	// because process.env's values are `string | undefined`.
+	const baseEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+	delete baseEnv.GIT_EDITOR;
+	delete baseEnv.GIT_SEQUENCE_EDITOR;
+	const indexEnv: Record<string, string> = { ...baseEnv, GIT_INDEX_FILE: tmpIndex };
+	const idxGit = simpleGit(repoPath).env(indexEnv);
+
+	try {
+		// Seed the scratch index from HEAD (empty for an unborn branch).
+		await idxGit.raw(headExists ? ['read-tree', 'HEAD'] : ['read-tree', '--empty']);
+
+		for (const f of files) {
+			if (f.patch != null && f.patch.trim() !== '') {
+				const patchPath = path.join(
+					gitDir,
+					`super-review-patch-${unique}-${tmpPatchFiles.length}.patch`
+				);
+				const text = f.patch.endsWith('\n') ? f.patch : `${f.patch}\n`;
+				await fs.writeFile(patchPath, text, 'utf8');
+				tmpPatchFiles.push(patchPath);
+				// Apply against the scratch index only (which mirrors HEAD, the patch's
+				// base). `--whitespace=nowarn` keeps benign whitespace from aborting.
+				await idxGit.raw(['apply', '--cached', '--whitespace=nowarn', patchPath]);
+			} else {
+				const paths = [f.path];
+				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
+				await idxGit.raw(['add', '-A', '--', ...paths]);
+			}
+		}
+
+		const tree = (await idxGit.raw(['write-tree'])).trim();
+		const commitEnv: Record<string, string> = { ...indexEnv };
+		if (identity) {
+			commitEnv.GIT_AUTHOR_NAME = identity.name;
+			commitEnv.GIT_AUTHOR_EMAIL = identity.email;
+			commitEnv.GIT_COMMITTER_NAME = identity.name;
+			commitEnv.GIT_COMMITTER_EMAIL = identity.email;
+		}
+		const commitArgs = ['commit-tree', tree, '-m', message];
+		if (headExists) commitArgs.push('-p', 'HEAD');
+		const newSha = (await simpleGit(repoPath).env(commitEnv).raw(commitArgs)).trim();
+
+		// Advance the current branch (or detached HEAD) to the new commit.
+		await baseGit.raw(['update-ref', 'HEAD', newSha]);
+
+		// Reconcile the real index for the touched paths against the new HEAD so the
+		// committed parts disappear from `git status` and partial leftovers show as
+		// unstaged. Untouched paths (anything the user may have staged manually) are
+		// left alone.
+		const touched: string[] = [];
+		for (const f of files) {
+			touched.push(f.path);
+			if (f.oldPath && f.oldPath !== f.path) touched.push(f.oldPath);
+		}
+		await baseGit.raw(['reset', '-q', 'HEAD', '--', ...touched]).catch(() => {});
+	} finally {
+		await fs.rm(tmpIndex, { force: true }).catch(() => {});
+		for (const p of tmpPatchFiles) await fs.rm(p, { force: true }).catch(() => {});
 	}
 }
 

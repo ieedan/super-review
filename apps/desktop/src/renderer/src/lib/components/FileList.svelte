@@ -511,7 +511,10 @@
 
 	function toggleInclude(e: MouseEvent, f: ChangedFile): void {
 		e.stopPropagation();
-		actions.toggleFileIncludedForCommit(f.path);
+		// Master toggle: a fully-included file unchecks; an unchecked OR partially-
+		// staged file checks every line (clearing any partial selection).
+		const include = actions.fileStagingState(f.path) !== 'all';
+		actions.toggleFileIncludedForCommit(f.path, include);
 	}
 
 	// Folder checkbox: if every descendant is already included, unchecking it
@@ -1000,7 +1003,9 @@
                    state isn't surfaced here. `seenVisual` gates the strikethrough
                    so unstaged filenames never read as "seen". -->
 						{@const isUnstaged = app.contextTab === 'unstaged'}
-						{@const isIncluded = !app.excludedFromCommit.has(node.file.path)}
+						{@const stagingState = actions.fileStagingState(node.file.path)}
+						{@const isIncluded = stagingState !== 'none'}
+						{@const isPartial = stagingState === 'partial'}
 						{@const seenVisual = isSeen && !isUnstaged}
 						<div
 							role="treeitem"
@@ -1030,10 +1035,12 @@
 									onclick={(e) => toggleInclude(e, node.file)}
 									aria-label={isIncluded ? 'Exclude from commit' : 'Include in commit'}
 									role="checkbox"
-									aria-checked={isIncluded}
+									aria-checked={isPartial ? 'mixed' : isIncluded}
 									type="button"
 								>
-									{#if isIncluded}
+									{#if isPartial}
+										<Minus class="size-2.5" />
+									{:else if isIncluded}
 										<Check class="size-2.5" />
 									{/if}
 								</button>
