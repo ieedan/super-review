@@ -877,6 +877,27 @@ async function imageDataUrls(
 	};
 }
 
+// Build the unified diff git would produce for a brand-new file: a single
+// `@@ -0,0 +1,N @@` hunk of all-addition lines, with the `/dev/null` → file
+// header `git apply --cached` needs to create it. Lets untracked files flow
+// through the same parse/filter/commit path as tracked ones.
+function synthesizeAddedFilePatch(filePath: string, contents: string): string {
+	const hasFinalNewline = contents.endsWith('\n');
+	const body = hasFinalNewline ? contents.slice(0, -1) : contents;
+	const lines = body.length === 0 ? [] : body.split('\n');
+	if (lines.length === 0) return '';
+	const out = [
+		`diff --git a/${filePath} b/${filePath}`,
+		'new file mode 100644',
+		'--- /dev/null',
+		`+++ b/${filePath}`,
+		`@@ -0,0 +1,${lines.length} @@`,
+		...lines.map((l) => `+${l}`)
+	];
+	if (!hasFinalNewline) out.push('\\ No newline at end of file');
+	return out.join('\n') + '\n';
+}
+
 export async function getDiff(
 	repoPath: string,
 	filePath: string,
@@ -955,6 +976,22 @@ export async function getDiff(
 	// ship garbage; the side-by-side `data:` URLs are what gets rendered. SVGs
 	// are text, so keep their contents for the source diff.
 	const dropTextContents = isBinary && imageMime !== null;
+
+	// Untracked/new files aren't in HEAD or the index, so `git diff` yields no
+	// patch and per-line staging would be unavailable. Synthesize an added-file
+	// patch from the working-tree contents so the staging gutters and the
+	// partial-commit path (git apply --cached) work the same as for tracked files.
+	if (
+		refs.workingTree &&
+		!patch &&
+		status === 'added' &&
+		!isBinary &&
+		imageMime === null &&
+		!truncated &&
+		newContents
+	) {
+		patch = synthesizeAddedFilePatch(filePath, newContents);
+	}
 
 	return {
 		file: {
