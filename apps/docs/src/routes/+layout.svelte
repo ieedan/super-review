@@ -6,7 +6,7 @@
 	let { children } = $props();
 
 	// Absolute path to this SvelteKit project so Agentation's source links resolve
-	// to the real files on disk. Dev-only — never bundled into production.
+	// to the real files on disk. Dev-only, never bundled into production.
 	const annotationProps: AnnotationProps = {
 		workspaceRoot: '/Users/ieedan/Documents/github/super-local-review/apps/docs'
 	};
