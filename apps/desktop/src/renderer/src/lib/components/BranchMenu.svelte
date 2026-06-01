@@ -22,6 +22,7 @@
 			onDefaultBranch: !!repo && app.currentBranch === defaultBranch,
 			hasChanges: app.unstagedFileCount > 0,
 			hasGithub: !!repo?.githubOwner && !!repo?.githubRepo,
+			hasUpstream: !!repo?.upstreamOwner && !!repo?.upstreamRepo,
 			branchPRNumber: app.branchPR?.number ?? null
 		};
 		const serialized = JSON.stringify(state);
@@ -79,6 +80,9 @@
 				return;
 			case 'updateFromDefault':
 				void actions.updateFromDefault();
+				return;
+			case 'updateFromUpstream':
+				void actions.updateFromUpstream();
 				return;
 			case 'deleteBranch':
 				requestDeleteCurrent();

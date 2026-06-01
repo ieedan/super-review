@@ -1,4 +1,5 @@
 import type {
+	Accent,
 	AppPlatform,
 	BranchInfo,
 	ChangedFile,
@@ -139,6 +140,7 @@ interface AppState {
 	animationsEnabled: boolean;
 	hotkeys: Hotkeys;
 	theme: 'light' | 'dark';
+	accent: Accent;
 	codeFont: string;
 	uiFont: string;
 	// Font families installed on the user's machine, queried lazily on launch.
@@ -287,6 +289,7 @@ const initial: AppState = {
 	animationsEnabled: false,
 	hotkeys: DEFAULT_HOTKEYS,
 	theme: 'dark',
+	accent: 'super',
 	codeFont: 'system',
 	uiFont: 'system',
 	systemFonts: [],
@@ -494,6 +497,17 @@ function applyTheme(theme: 'light' | 'dark'): void {
 	const root = document.documentElement;
 	root.classList.toggle('dark', theme === 'dark');
 	root.classList.toggle('light', theme === 'light');
+}
+
+// Accent palette. Each accent maps to an `.accent-*` class that overrides the
+// primary/ring/sidebar theme variables (see app.css). 'super' (the default
+// flame) needs no class — its values are the app.css defaults — but we still
+// add `accent-super` so swapping accents is a simple add/remove.
+const ACCENT_CLASSES = ['accent-super', 'accent-mono'];
+function applyAccent(accent: Accent): void {
+	const root = document.documentElement;
+	root.classList.remove(...ACCENT_CLASSES);
+	root.classList.add(`accent-${accent}`);
 }
 
 // Built-in fallback stacks — kept in sync with the defaults in app.css. A
@@ -1002,6 +1016,8 @@ export const actions = {
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
+		app.accent = app.prefs.accent ?? 'super';
+		applyAccent(app.accent);
 		app.codeFont = app.prefs.codeFont;
 		app.uiFont = app.prefs.uiFont;
 		applyFonts();
@@ -1323,6 +1339,9 @@ export const actions = {
 
 	scrollToFile(path: string): void {
 		app.selectedFile = path;
+		// Opening a file should reveal its diff — expand the section if it was
+		// collapsed so the user isn't taken to a hidden body.
+		if (app.collapsedFiles.has(path)) void actions.toggleFileCollapsed(path, false);
 		app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
 	},
 
@@ -1587,10 +1606,14 @@ export const actions = {
 	async reviewPR(prNumber: number): Promise<void> {
 		if (!app.activeRepo) return;
 		try {
-			await window.api.github.fetchPR(app.activeRepo.id, prNumber);
-			// Cache the PR summary so we have headSha for comment posting.
+			// Cache the PR summary so we have headSha for comment posting — and its
+			// host (base) repo, so an upstream PR's head/base are fetched from the
+			// parent rather than the fork.
 			const summary = app.prs.find((p) => p.number === prNumber) ?? null;
-			app.activePR = summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber));
+			const host = prHostArgs(summary);
+			await window.api.github.fetchPR(app.activeRepo.id, prNumber, ...host);
+			app.activePR =
+				summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber, ...host));
 			app.prComments = {};
 			app.pendingComposers = {};
 			await actions.setDiffContext({ kind: 'pr', prNumber });
@@ -2097,6 +2120,47 @@ export const actions = {
 		}
 	},
 
+	// GitHub Desktop's "Update from upstream/<default>": for a fork, fetch the
+	// parent repo's default branch and merge it into the current one (typically
+	// the fork's own default). Reuses the pull conflict path (intent "pull") so
+	// conflicts open the shared dialog and continueMerge finishes the merge.
+	// No-op when the repo has no known upstream.
+	async updateFromUpstream(): Promise<void> {
+		const repo = app.activeRepo;
+		if (!repo || app.push.inProgress) return;
+		if (!repo.upstreamOwner || !repo.upstreamRepo) return;
+		const branch = repo.defaultBranch ?? 'main';
+		app.push = {
+			inProgress: true,
+			stage: 'pulling',
+			intent: 'pull',
+			error: null
+		};
+		clearConflicts();
+		try {
+			const result = await window.api.git.updateFromUpstream(repo.id, branch);
+			if (!result.ok) {
+				if (result.conflicts.length > 0) {
+					setConflicts(result.conflicts);
+					app.push.stage = 'conflicts';
+					return;
+				}
+				throw new Error(result.error ?? `Could not update from upstream/${branch}.`);
+			}
+			app.push.stage = 'done';
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+			await refreshBranchPR();
+		} catch (err) {
+			app.push.error = err instanceof Error ? err.message : String(err);
+			setError(app.push.error);
+		} finally {
+			if (app.push.stage !== 'conflicts') {
+				app.push.inProgress = false;
+			}
+		}
+	},
+
 	// GitHub Desktop-style push: fetch, pull if behind (surfacing any merge
 	// conflicts for the user to reconcile), then push.
 	async push(): Promise<void> {
@@ -2505,6 +2569,12 @@ export const actions = {
 		app.theme = theme;
 		applyTheme(theme);
 		app.prefs = await window.api.state.setPrefs({ theme });
+	},
+
+	async setAccent(accent: Accent): Promise<void> {
+		app.accent = accent;
+		applyAccent(accent);
+		app.prefs = await window.api.state.setPrefs({ accent });
 	},
 
 	async setCodeFont(font: string): Promise<void> {

@@ -107,7 +107,9 @@ export async function captureSession(
 			patch: diff.patch,
 			oldContents: diff.oldContents,
 			newContents: diff.newContents,
-			truncated: diff.truncated
+			truncated: diff.truncated,
+			oldImage: diff.oldImage,
+			newImage: diff.newImage
 		});
 		additions += diff.file.additions;
 		deletions += diff.file.deletions;

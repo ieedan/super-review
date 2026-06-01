@@ -63,6 +63,14 @@ export interface DiffData {
 	oldContents: string;
 	newContents: string;
 	truncated: boolean;
+	// For image files (raster or SVG): `data:` URLs of the old/new bytes, used to
+	// render the two versions side by side. Undefined when the file isn't an
+	// image, the side doesn't exist (added has no old, deleted has no new), or
+	// the bytes exceeded the image size cap. Raster images carry these *instead*
+	// of `oldContents`/`newContents` (which would be useless binary); SVGs carry
+	// both so they can also show a source diff.
+	oldImage?: string;
+	newImage?: string;
 }
 
 export interface PRSummary {
@@ -153,6 +161,11 @@ export interface SessionFile {
 	oldContents: string;
 	newContents: string;
 	truncated: boolean;
+	// Frozen `data:` URLs for image files, mirroring DiffData. Undefined for
+	// non-image files or sides that don't exist. Captured so a session's image
+	// diffs render without touching git.
+	oldImage?: string;
+	newImage?: string;
 }
 
 // Listing-level view of a session — everything but the (potentially large)
@@ -314,6 +327,7 @@ export type RepoContextMenuAction = 'copyPath' | 'reveal' | 'remove';
 export type BranchMenuAction =
 	| 'newBranch'
 	| 'updateFromDefault'
+	| 'updateFromUpstream'
 	| 'deleteBranch'
 	| 'discardAll'
 	| 'previewPR'
@@ -330,6 +344,9 @@ export interface BranchMenuState {
 	onDefaultBranch: boolean;
 	hasChanges: boolean;
 	hasGithub: boolean;
+	// True when the repo is a fork with a known parent — enables "Update from
+	// upstream/<default>".
+	hasUpstream: boolean;
 	// The open PR for the current branch, if any — flips "Create" to "View".
 	branchPRNumber: number | null;
 }
@@ -492,9 +509,14 @@ export interface CreateRepoDefaults {
 	licenses: string[];
 }
 
+// Accent palette: 'super' is the brand flame, 'mono' the neutral monochrome
+// primary. Each maps to an `.accent-*` class in app.css.
+export type Accent = 'super' | 'mono';
+
 export interface UserPrefs {
 	viewMode: ViewMode;
 	theme: 'light' | 'dark';
+	accent: Accent;
 	activeRepoId?: string;
 	contextTab?: ContextTab;
 	externalEditor?: EditorKind | null;
@@ -604,6 +626,9 @@ export interface PreloadAPI {
 		// Merge `ref` (e.g. "origin/main") into the current branch. Conflicts come
 		// back the same way pull does, driving the shared conflict dialog.
 		mergeIntoCurrent(repoId: string, ref: string): Promise<PullPushResult>;
+		// For a fork: fetch the parent repo's `branch` and merge it into the current
+		// branch ("Update from upstream/<branch>"). Conflicts surface like pull.
+		updateFromUpstream(repoId: string, branch: string): Promise<PullPushResult>;
 		getConflicts(repoId: string): Promise<string[]>;
 		// Re-scan the given conflict files: stage any whose conflict markers are
 		// gone, and return the paths still unresolved (markers remaining).
@@ -643,7 +668,15 @@ export interface PreloadAPI {
 		// Resolve (and persist) the repo's upstream/parent if it's a fork. Returns
 		// the updated RepoInfo (with upstreamOwner/upstreamRepo set or cleared).
 		detectUpstream(repoId: string): Promise<RepoInfo | null>;
-		fetchPR(repoId: string, prNumber: number): Promise<{ headRef: string; baseRef: string }>;
+		// `owner`/`repo` name the PR's host (base) repo — the parent for an upstream
+		// PR on a fork — so the head and base refs are fetched from the right repo.
+		// Omitted, they fall back to the active repo's own coordinates.
+		fetchPR(
+			repoId: string,
+			prNumber: number,
+			owner?: string,
+			repo?: string
+		): Promise<{ headRef: string; baseRef: string }>;
 		findPRForBranch(repoId: string, branch: string): Promise<PRSummary | null>;
 		// PR operations accept the PR's host repo (owner/repo) so they target the
 		// right repository — an upstream PR lives on the parent, not the fork.

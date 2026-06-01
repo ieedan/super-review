@@ -98,6 +98,52 @@ marked.use({
 	}
 });
 
+// GitHub renders leading YAML frontmatter — a `---` fenced block at the very
+// top of the file — as a borderless key/value table above the document body,
+// instead of letting the closing `---` parse as a setext heading. We mirror
+// that: pull the frontmatter off, render its `key: value` lines as a table, and
+// hand the rest to `marked`.
+const FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+
+function stripQuotes(s: string): string {
+	const t = s.trim();
+	if (
+		t.length >= 2 &&
+		((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))
+	) {
+		return t.slice(1, -1);
+	}
+	return t;
+}
+
+// Pull leading frontmatter into flat key/value rows and return the remaining
+// Markdown body. Only handles the simple `key: value` lines that frontmatter
+// (e.g. changesets) uses; returns null when there's no frontmatter or no
+// parseable rows, in which case the source is rendered as plain Markdown.
+function extractFrontmatter(
+	src: string
+): { rows: { key: string; value: string }[]; body: string } | null {
+	const m = FRONTMATTER_RE.exec(src);
+	if (!m) return null;
+	const rows: { key: string; value: string }[] = [];
+	for (const rawLine of m[1].split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith('#')) continue;
+		const idx = line.indexOf(':');
+		if (idx === -1) continue;
+		rows.push({ key: stripQuotes(line.slice(0, idx)), value: stripQuotes(line.slice(idx + 1)) });
+	}
+	if (rows.length === 0) return null;
+	return { rows, body: src.slice(m[0].length) };
+}
+
+function frontmatterTableHtml(rows: { key: string; value: string }[]): string {
+	const body = rows
+		.map((r) => `<tr><th>${escapeHtml(r.key)}</th><td>${escapeHtml(r.value)}</td></tr>`)
+		.join('');
+	return `<table class="markdown-frontmatter"><tbody>${body}</tbody></table>\n`;
+}
+
 const FILE_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd', 'mkdn']);
 
 /** True when the path's extension is a Markdown one we can preview. */
@@ -113,6 +159,8 @@ export function isMarkdownPath(path: string): boolean {
  */
 export async function renderMarkdown(src: string, theme: 'light' | 'dark'): Promise<string> {
 	currentShikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
-	const html = (await marked.parse(src, { async: true })) as string;
-	return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+	const fm = extractFrontmatter(src);
+	const html = (await marked.parse(fm ? fm.body : src, { async: true })) as string;
+	const combined = (fm ? frontmatterTableHtml(fm.rows) : '') + html;
+	return DOMPurify.sanitize(combined, { USE_PROFILES: { html: true } });
 }

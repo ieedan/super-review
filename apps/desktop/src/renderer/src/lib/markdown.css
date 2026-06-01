@@ -156,6 +156,42 @@
 	background: color-mix(in srgb, var(--color-muted) 45%, transparent);
 }
 
+/* Leading YAML frontmatter rendered as a key/value table, GitHub-style: a
+   rounded bordered box where the first column (keys) reads as a header. */
+.markdown-body table.markdown-frontmatter {
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	border-spacing: 0;
+	overflow: hidden;
+}
+/* Borders only — drop the muted header fill and the zebra striping the base
+   table styles add, so the frontmatter reads as a plain key/value grid. */
+.markdown-body table.markdown-frontmatter th,
+.markdown-body table.markdown-frontmatter tr:nth-child(2n) td {
+	background: transparent;
+}
+.markdown-body table.markdown-frontmatter th {
+	text-align: left;
+	white-space: nowrap;
+}
+.markdown-body table.markdown-frontmatter tr:first-child th,
+.markdown-body table.markdown-frontmatter tr:first-child td {
+	border-top: 0;
+}
+/* The table's own border draws the bottom edge — drop the last row's cell
+   border so they don't stack into a double line. */
+.markdown-body table.markdown-frontmatter tr:last-child th,
+.markdown-body table.markdown-frontmatter tr:last-child td {
+	border-bottom: 0;
+}
+.markdown-body table.markdown-frontmatter tr td:last-child,
+.markdown-body table.markdown-frontmatter tr th:last-child {
+	border-right: 0;
+}
+.markdown-body table.markdown-frontmatter th:first-child {
+	border-left: 0;
+}
+
 .markdown-body img {
 	max-width: 100%;
 	box-sizing: border-box;

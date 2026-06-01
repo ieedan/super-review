@@ -11,8 +11,8 @@
 	--color-card-foreground: hsl(0 0% 3.9%);
 	--color-popover: hsl(0 0% 100%);
 	--color-popover-foreground: hsl(0 0% 3.9%);
-	--color-primary: hsl(0 0% 9%);
-	--color-primary-foreground: hsl(0 0% 98%);
+	--color-primary: hsl(11 100% 60%);
+	--color-primary-foreground: hsl(20 14% 9%);
 	--color-secondary: hsl(0 0% 96.1%);
 	--color-secondary-foreground: hsl(0 0% 9%);
 	--color-muted: hsl(0 0% 96.1%);
@@ -23,7 +23,7 @@
 	--color-destructive-foreground: hsl(0 0% 98%);
 	--color-border: hsl(0 0% 89.8%);
 	--color-input: hsl(0 0% 89.8%);
-	--color-ring: hsl(0 0% 3.9%);
+	--color-ring: hsl(11 100% 60%);
 	--color-success: hsl(142 76% 36%);
 	--color-warning: hsl(38 92% 50%);
 	--color-merged: hsl(265 60% 52%);
@@ -32,22 +32,27 @@
 	--color-sidebar-border: hsl(0 0% 89.8%);
 	--color-sidebar-accent: hsl(0 0% 96.1%);
 	--color-sidebar-accent-foreground: hsl(0 0% 9%);
-	--color-sidebar-primary: hsl(0 0% 9%);
-	--color-sidebar-primary-foreground: hsl(0 0% 98%);
-	--color-sidebar-ring: hsl(0 0% 3.9%);
+	--color-sidebar-primary: hsl(11 100% 60%);
+	--color-sidebar-primary-foreground: hsl(20 14% 9%);
+	--color-sidebar-ring: hsl(11 100% 60%);
+
+	/* Brand "flame" — shared with the docs site. The default button uses the
+	   gradient (see --flame-gradient in :root and button.svelte). */
+	--color-flame: hsl(11 100% 60%);
+	--color-flame-soft: hsl(16 100% 70%);
+	--color-flame-deep: hsl(6 88% 56%);
 	--radius: 0.5rem;
 }
 
 .dark {
-	color-scheme: dark;
 	--color-background: hsl(0 0% 6%);
 	--color-foreground: hsl(0 0% 98%);
 	--color-card: hsl(0 0% 8%);
 	--color-card-foreground: hsl(0 0% 98%);
 	--color-popover: hsl(0 0% 8%);
 	--color-popover-foreground: hsl(0 0% 98%);
-	--color-primary: hsl(0 0% 98%);
-	--color-primary-foreground: hsl(0 0% 9%);
+	--color-primary: hsl(11 100% 60%);
+	--color-primary-foreground: hsl(20 14% 9%);
 	--color-secondary: hsl(0 0% 14.9%);
 	--color-secondary-foreground: hsl(0 0% 98%);
 	--color-muted: hsl(0 0% 14.9%);
@@ -58,7 +63,7 @@
 	--color-destructive-foreground: hsl(0 0% 98%);
 	--color-border: hsl(0 0% 14.9%);
 	--color-input: hsl(0 0% 14.9%);
-	--color-ring: hsl(0 0% 83.1%);
+	--color-ring: hsl(11 100% 60%);
 	--color-success: hsl(142 70% 45%);
 	--color-warning: hsl(38 92% 60%);
 	--color-merged: hsl(265 70% 65%);
@@ -67,9 +72,9 @@
 	--color-sidebar-border: hsl(0 0% 14.9%);
 	--color-sidebar-accent: hsl(0 0% 14.9%);
 	--color-sidebar-accent-foreground: hsl(0 0% 98%);
-	--color-sidebar-primary: hsl(0 0% 98%);
-	--color-sidebar-primary-foreground: hsl(0 0% 9%);
-	--color-sidebar-ring: hsl(0 0% 83.1%);
+	--color-sidebar-primary: hsl(11 100% 60%);
+	--color-sidebar-primary-foreground: hsl(20 14% 9%);
+	--color-sidebar-ring: hsl(11 100% 60%);
 }
 
 :root {
@@ -77,6 +82,42 @@
 	--ui-font:
 		ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 	--code-font: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+	/* Default-button gradient — matches the docs site's download button. */
+	--flame-gradient: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep));
+	/* Default-button shadow — soft flame glow; neutralized by .accent-mono. */
+	--btn-primary-shadow: 0 2px 8px -3px hsl(11 100% 55% / 0.5);
+}
+
+/* color-scheme drives native UI (scrollbars, form controls). `:root` and `.dark`
+   both target <html> with equal specificity, so the later `:root` rule would win
+   the cascade and force light scrollbars even in dark mode. Scope the dark value
+   to `:root.dark` so it outranks the base `:root` declaration. */
+:root.dark {
+	color-scheme: dark;
+}
+
+/* Monochrome accent — opt out of the brand flame. Reverts primary, ring, and
+   sidebar accents to the neutral palette and flattens the default button so it
+   matches the classic look. Default (no class) stays on the flame "Super"
+   palette defined above. */
+.accent-mono {
+	--color-primary: hsl(0 0% 9%);
+	--color-primary-foreground: hsl(0 0% 98%);
+	--color-ring: hsl(0 0% 3.9%);
+	--color-sidebar-primary: hsl(0 0% 9%);
+	--color-sidebar-primary-foreground: hsl(0 0% 98%);
+	--color-sidebar-ring: hsl(0 0% 3.9%);
+	/* Flatten the gradient to a solid primary fill and drop the coral glow. */
+	--flame-gradient: linear-gradient(var(--color-primary), var(--color-primary));
+	--btn-primary-shadow: 0 1px 2px 0 hsl(0 0% 0% / 0.12);
+}
+.accent-mono.dark {
+	--color-primary: hsl(0 0% 98%);
+	--color-primary-foreground: hsl(0 0% 9%);
+	--color-ring: hsl(0 0% 83.1%);
+	--color-sidebar-primary: hsl(0 0% 98%);
+	--color-sidebar-primary-foreground: hsl(0 0% 9%);
+	--color-sidebar-ring: hsl(0 0% 83.1%);
 }
 
 html,
