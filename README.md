@@ -123,10 +123,8 @@ finish a task.
 
 ## Known limitations (v1)
 
-- Files >2 MB are skipped from rendering.
-- GitHub PR base ref is pinned at the moment you open the PR — re-open to refresh.
-- Browser/mobile build comes in a later iteration (architecture supports it).
-
+test
+test
 test
 test
 test
