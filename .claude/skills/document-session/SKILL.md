@@ -104,6 +104,24 @@ For a large tour, write the JSON to a temp file and expand it inline with your
 shell (e.g. `--tour "$(cat tour.json)"`) — the CLI itself only accepts the
 JSON, not a path.
 
+## Where sessions live & cleaning up
+
+Sessions are stored **in the repo** under `.super-review/sessions/<id>.json`, so
+they can be committed and travel with a branch/PR — a reviewer can pull the
+branch and walk the tour without having authored it locally. If you commit your
+changes, include the `.super-review/` manifests so they reach the reviewer.
+
+Before a PR is merged, the sessions are usually no longer needed. Clear them all
+with:
+
+```bash
+super-review session clear
+```
+
+This removes `.super-review/sessions/` from the working tree; if the manifests
+were committed, git then shows them as deleted, ready to commit off the branch.
+The desktop app also has a **"Clear all"** button in the Sessions tab.
+
 ## Notes
 
 - The session is a frozen snapshot: it keeps the diff as it was at save time,

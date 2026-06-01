@@ -14,6 +14,10 @@ export interface RepoInfo {
 	upstreamOwner?: string;
 	upstreamRepo?: string;
 	defaultBranch?: string;
+	// One-line repo description from `.git/description` (the create-repo form
+	// seeds it). Used to pre-fill the Publish Repository dialog. Unset when it's
+	// empty or still git's default placeholder.
+	description?: string;
 	lastOpenedAt: number;
 	// GitHub account this project is pinned to. When unset, the app-wide default
 	// (activeGithubAccountId) is used instead.
@@ -289,6 +293,11 @@ export type DiffLayout = 'scroll' | 'single';
 // folders (VSCode-style); 'list' flattens to one file per row.
 export type FileListLayout = 'tree' | 'list';
 
+// What to do when a checked-out branch's PR is observed merging. 'prompt' asks
+// via a dialog (default); 'switch' switches back to the default branch
+// automatically; 'nothing' leaves the working tree where it is and never asks.
+export type PrMergedBehavior = 'prompt' | 'switch' | 'nothing';
+
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
 export type ContextTab = 'unstaged' | 'branch' | 'sessions';
@@ -514,6 +523,26 @@ export interface CreateRepoDefaults {
 	licenses: string[];
 }
 
+// A GitHub organization the signed-in account can create repositories under,
+// surfaced in the Publish Repository dialog's "Organization" dropdown.
+export interface GithubOrg {
+	login: string;
+	avatarUrl?: string;
+}
+
+// Options for the GitHub-Desktop-style "Publish Repository" flow: create the
+// repo on GitHub, wire it up as `origin`, and push the current branch.
+export interface PublishRepoOptions {
+	/** Repo name on GitHub (defaults to the local folder name). */
+	name: string;
+	/** Optional one-line description set on the GitHub repo. */
+	description?: string;
+	/** Create as a private repository ("Keep this code private"). */
+	private: boolean;
+	/** Org login to create the repo under, or null for the personal account. */
+	org?: string | null;
+}
+
 // Accent palette: 'super' is the brand flame, 'mono' the neutral monochrome
 // primary. Each maps to an `.accent-*` class in app.css.
 export type Accent = 'super' | 'mono';
@@ -556,6 +585,14 @@ export interface UserPrefs {
 	// animation classes. Off by default — components render without motion unless
 	// the user opts in. Consumed via the useAnimations() context hook.
 	animationsEnabled: boolean;
+	// What to do when a checked-out branch's PR is detected going from unmerged →
+	// merged: ask via a dialog ('prompt', the default), switch back to the default
+	// branch automatically ('switch'), or do nothing ('nothing').
+	prMergedBehavior: PrMergedBehavior;
+	// After switching back to the default branch because a branch's PR merged,
+	// delete the now-merged local branch automatically instead of prompting. Off
+	// by default — the user is asked each time via a dialog.
+	autoRemoveMergedBranch: boolean;
 	// User-configurable keyboard shortcuts, keyed by action. See DEFAULT_HOTKEYS
 	// in @shared/hotkeys for the defaults and matching semantics.
 	hotkeys: Hotkeys;
@@ -603,6 +640,9 @@ export interface PreloadAPI {
 		// Scaffold a new repository (folder, git init, README/.gitignore/LICENSE).
 		// Returns the registered repo, or null if the picker/flow was cancelled.
 		createRepo(options: CreateRepoOptions): Promise<RepoInfo | null>;
+		// Publish a local repo to GitHub: create the remote, wire it as `origin`,
+		// and push the current branch. Returns the refreshed RepoInfo.
+		publish(repoId: string, options: PublishRepoOptions): Promise<RepoInfo>;
 		// De-register a repo. When `moveToTrash` is set, the repo's folder is also
 		// moved to the OS trash (mirrors GitHub Desktop's remove dialog).
 		remove(id: string, moveToTrash?: boolean): Promise<void>;
@@ -665,6 +705,8 @@ export interface PreloadAPI {
 	};
 	github: {
 		listAccounts(): Promise<GithubAccount[]>;
+		// Orgs the repo's account can create repos under (for the publish dialog).
+		listOrganizations(repoId?: string): Promise<GithubOrg[]>;
 		getActiveAccount(): Promise<GithubAccount | null>;
 		setActiveAccount(id: string): Promise<GithubAccount | null>;
 		removeAccount(id: string): Promise<void>;
@@ -754,6 +796,15 @@ export interface PreloadAPI {
 		list(repoId: string): Promise<SessionSummary[]>;
 		get(repoId: string, id: string): Promise<Session | null>;
 		remove(repoId: string, id: string): Promise<void>;
+		// Delete every session for the repo (the pre-merge purge).
+		clear(repoId: string): Promise<void>;
+		// Cheap count of the repo's sessions (drives the tab badge).
+		count(repoId: string): Promise<number>;
+		// Start/stop live updates for this window's active repo. The main process
+		// fs-watches the repo's .super-review/sessions dir and emits
+		// `onSessionsChanged`; pass null (or call unwatch) to stop.
+		watch(repoId: string | null): Promise<void>;
+		unwatch(): Promise<void>;
 	};
 	skill: {
 		// Whether the document-session skill is installed in the repo
@@ -794,6 +845,9 @@ export interface PreloadAPI {
 		// A background "move to Trash" (after removing a repo) failed; the payload
 		// is the repo's name. Returns an unsubscribe fn.
 		onRepoTrashFailed(handler: (name: string) => void): () => void;
+		// A repo's sessions changed on disk (manifest written/removed by the CLI or
+		// another window). Payload is the repo id. Returns an unsubscribe fn.
+		onSessionsChanged(handler: (repoId: string) => void): () => void;
 	};
 }
 

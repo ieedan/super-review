@@ -7,8 +7,11 @@
 	import DiffView from '$lib/components/DiffView.svelte';
 	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
+	import MergedSwitchDialog from '$lib/components/MergedSwitchDialog.svelte';
+	import MergedRemoveDialog from '$lib/components/MergedRemoveDialog.svelte';
 	import BranchMenu from '$lib/components/BranchMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
+	import PublishRepoDialog from '$lib/components/PublishRepoDialog.svelte';
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
 	import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
@@ -76,6 +79,16 @@
 		return () => ro.disconnect();
 	});
 
+	// Point the main-process fs watcher at the active repo so session changes
+	// (an agent's CLI save, a purge, another window) push live updates, and
+	// re-seed the badge count whenever the repo changes. watch() replaces any
+	// prior subscription for this window, so no explicit teardown is needed.
+	$effect(() => {
+		const repoId = app.activeRepo?.id ?? null;
+		void window.api.sessions.watch(repoId);
+		void actions.refreshSessionCount();
+	});
+
 	onMount(() => {
 		void actions.init();
 
@@ -96,6 +109,12 @@
 		// failure (the repo is already gone from the app, but its files remain).
 		const offTrashFailed = window.api.events.onRepoTrashFailed((name) => {
 			setError(`Couldn't move "${name}" to the trash. Its files are still on disk.`);
+		});
+
+		// An agent's CLI (or another window) changed this repo's sessions on disk —
+		// keep the badge live and reload the list if the Sessions tab is showing.
+		const offSessionsChanged = window.api.events.onSessionsChanged((repoId) => {
+			void actions.onSessionsChanged(repoId);
 		});
 
 		// Refresh the working tree whenever the window regains focus so file
@@ -173,6 +192,7 @@
 		return () => {
 			offRepoChanged();
 			offTrashFailed();
+			offSessionsChanged();
 			window.removeEventListener('focus', onFocus);
 			window.removeEventListener('resize', syncWindowControls);
 			window.removeEventListener('keydown', onSidebarHotkey);
@@ -292,8 +312,11 @@
 </Sidebar.Provider>
 
 <ConflictDialog />
+<MergedSwitchDialog />
+<MergedRemoveDialog />
 <BranchMenu />
 <AddRepoDialog />
+<PublishRepoDialog />
 <CreateBranchDialog />
 <SettingsDialog />
 <GithubSignInDialog />

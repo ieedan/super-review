@@ -385,7 +385,6 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 	let remoteUrl: string | undefined;
 	let githubOwner: string | undefined;
 	let githubRepo: string | undefined;
-	let defaultBranch: string | undefined;
 	try {
 		const remotes = await git.getRemotes(true);
 		const origin = remotes.find((r) => r.name === 'origin') ?? remotes[0];
@@ -409,13 +408,9 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 	} catch (err) {
 		console.error(`[repo] buildRepoInfo "${name}" failed to read remotes:`, err);
 	}
-	try {
-		const head = await git.raw(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
-		defaultBranch = head.trim().replace(/^origin\//, '');
-	} catch {
-		// ignore
-	}
+	const defaultBranch = await detectDefaultBranch(git);
 	const iconDataUrl = await findRepoIcon(repoPath);
+	const description = await readRepoDescription(repoPath);
 	return {
 		id,
 		path: path.resolve(repoPath),
@@ -425,8 +420,22 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 		githubOwner,
 		githubRepo,
 		defaultBranch,
+		description,
 		lastOpenedAt: Date.now()
 	};
+}
+
+// Read `.git/description` (which the create-repo form seeds), ignoring git's
+// default placeholder and any empty value. Returns undefined when there's no
+// meaningful description (or `.git` isn't a plain directory, e.g. a worktree).
+async function readRepoDescription(repoPath: string): Promise<string | undefined> {
+	try {
+		const raw = (await fs.readFile(path.join(repoPath, '.git', 'description'), 'utf8')).trim();
+		if (!raw || raw.startsWith('Unnamed repository')) return undefined;
+		return raw;
+	} catch {
+		return undefined;
+	}
 }
 
 export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
@@ -1022,14 +1031,50 @@ export interface PushStatus {
 	pushRemote?: string;
 }
 
+// Detect the repo's default branch from local refs. origin/HEAD is only set at
+// clone time, so it's commonly absent for locally-created repos; fall back to
+// the first conventional default that actually exists (remote-tracking first,
+// then local). Returns the bare branch name (no `origin/` prefix).
+export async function detectDefaultBranch(git: SimpleGit): Promise<string | undefined> {
+	try {
+		const head = (await git.raw(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])).trim();
+		if (head) return head.replace(/^origin\//, '');
+	} catch {
+		// origin/HEAD not set — fall through to the conventional candidates.
+	}
+	const candidates = ['origin/main', 'origin/master', 'origin/trunk', 'main', 'master', 'trunk'];
+	for (const ref of candidates) {
+		try {
+			await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+			return ref.replace(/^origin\//, '');
+		} catch {
+			// Try the next candidate.
+		}
+	}
+	return undefined;
+}
+
+// Path-based wrapper for callers (the IPC layer) that only hold a repo path.
+export async function getDefaultBranch(repoPath: string): Promise<string | undefined> {
+	return detectDefaultBranch(simpleGit(repoPath));
+}
+
 async function countAheadOfDefault(
 	git: SimpleGit,
 	branch: string,
-	defaultBranch: string | undefined
+	defaultBranch: string | undefined,
+	hasRemote: boolean
 ): Promise<number> {
 	if (!defaultBranch || branch === defaultBranch) return 0;
+	// Resolve against the same ref the "behind" count uses (origin/<default> when
+	// available, falling back to the local branch). A freshly cloned repo often
+	// has no local <default> branch — only origin/<default> — so a bare
+	// `<default>..HEAD` would fail and silently report 0, hiding the Create PR
+	// button even though the branch has diverged.
+	const ref = await resolveDefaultRef(git, defaultBranch, hasRemote);
+	if (!ref) return 0;
 	try {
-		const out = (await git.raw(['rev-list', '--count', `${defaultBranch}..HEAD`])).trim();
+		const out = (await git.raw(['rev-list', '--count', `${ref}..HEAD`])).trim();
 		return Number(out) || 0;
 	} catch {
 		return 0;
@@ -1087,9 +1132,17 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 	}
 	const remotes = await git.getRemotes(true).catch(() => []);
 	const hasRemote = remotes.some((r) => r.name === 'origin');
-	const aheadOfDefault = branch ? await countAheadOfDefault(git, branch, defaultBranch) : 0;
+	// The caller passes the repo's cached default branch, but that's computed once
+	// at repo-add time and persisted — it can be undefined for repos added before
+	// detection improved, or stale. Resolve live when it's missing so the ahead/
+	// behind-of-default counts (and the Create PR affordance they gate) recover on
+	// the next refresh without needing the repo to be re-added.
+	const effectiveDefault = defaultBranch ?? (await detectDefaultBranch(git));
+	const aheadOfDefault = branch
+		? await countAheadOfDefault(git, branch, effectiveDefault, hasRemote)
+		: 0;
 	const behindDefault = branch
-		? await countBehindDefault(git, branch, defaultBranch, hasRemote)
+		? await countBehindDefault(git, branch, effectiveDefault, hasRemote)
 		: 0;
 	if (!branch || !hasRemote) {
 		return {
@@ -1306,9 +1359,9 @@ export async function recheckConflicts(repoPath: string, files: string[]): Promi
 	const git = simpleGit(repoPath);
 	const hasMarkers = (content: string): boolean => /^<{7}|^>{7}/m.test(content);
 	for (const f of files) {
-		const content = await fs.readFile(path.join(repoPath, f), 'utf8').catch(() => ' ');
+		const content = await fs.readFile(path.join(repoPath, f), 'utf8').catch(() => '');
 		// On a read error we leave the file unstaged (treated as unresolved).
-		if (content !== ' ' && !hasMarkers(content)) {
+		if (content !== '' && !hasMarkers(content)) {
 			await git.add([f]).catch(() => {});
 		}
 	}
@@ -1720,6 +1773,80 @@ async function readGitUserName(git: SimpleGit): Promise<string> {
 		return (await git.raw(['config', 'user.name'])).trim();
 	} catch {
 		return '';
+	}
+}
+
+// Whether the repo has at least one commit (HEAD resolves to a commit). Note:
+// we deliberately do NOT pass `--quiet` — on an unborn branch git would then
+// exit 1 with no stderr, which simple-git resolves as success (empty string),
+// making this always report true. Without `--quiet` it exits 128 with a fatal
+// message, which simple-git surfaces as a rejection we can catch.
+async function headExists(git: SimpleGit): Promise<boolean> {
+	try {
+		await git.raw(['rev-parse', '--verify', 'HEAD']);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// Ensure the repo has an initial commit before we try to push it. On a brand-new
+// repo the seeded README/.gitignore/LICENSE are left uncommitted, so the branch
+// is unborn and `git push` would fail with "src refspec … does not match any".
+// When there are no commits yet we stage everything and make the first commit
+// (using the GitHub account identity so it's attributed correctly), mirroring
+// GitHub Desktop. `--allow-empty` covers the edge case of a repo with no files.
+// No-op (returns false) when commits already exist. Throws on real git errors.
+export async function ensureInitialCommit(
+	repoPath: string,
+	message: string,
+	identity?: GitIdentity | null
+): Promise<boolean> {
+	const git = simpleGit(repoPath);
+	if (await headExists(git)) return false;
+	await git.raw(['add', '-A']);
+	// Strip the editor vars: simple-git rejects commands when GIT_EDITOR /
+	// GIT_SEQUENCE_EDITOR are set (its allowUnsafeEditor guard), and `commit -m`
+	// needs no editor anyway. Mirrors the commit() helper above.
+	const env: Record<string, string> = { ...process.env } as Record<string, string>;
+	delete env.GIT_EDITOR;
+	delete env.GIT_SEQUENCE_EDITOR;
+	if (identity) {
+		env.GIT_AUTHOR_NAME = identity.name;
+		env.GIT_AUTHOR_EMAIL = identity.email;
+		env.GIT_COMMITTER_NAME = identity.name;
+		env.GIT_COMMITTER_EMAIL = identity.email;
+	}
+	await simpleGit(repoPath).env(env).raw(['commit', '--allow-empty', '-m', message]);
+	return true;
+}
+
+// Point 'origin' at `remoteUrl` and push the current branch, setting it as the
+// upstream. Used by the "Publish to GitHub" flow after the remote repo has been
+// created via the API. Auth follows the same path as cloneRepo/push: the user's
+// system git credential helper — we never write a token into the repo config.
+export async function setOriginAndPush(
+	repoPath: string,
+	remoteUrl: string
+): Promise<PullPushResult> {
+	const git = simpleGit(repoPath);
+	try {
+		const branch = await getCurrentBranch(repoPath);
+		if (!branch) throw new Error('Not on a branch (detached HEAD).');
+		const remotes = await git.getRemotes().catch(() => []);
+		if (remotes.some((r) => r.name === 'origin')) {
+			await git.raw(['remote', 'set-url', 'origin', remoteUrl]);
+		} else {
+			await git.raw(['remote', 'add', 'origin', remoteUrl]);
+		}
+		await git.raw(['push', '--set-upstream', 'origin', branch]);
+		return { ok: true, conflicts: [] };
+	} catch (err) {
+		return {
+			ok: false,
+			conflicts: [],
+			error: err instanceof Error ? err.message : String(err)
+		};
 	}
 }
 

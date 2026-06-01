@@ -115,7 +115,10 @@ super-review session save \
 Re-running with the same `--key` **updates** the existing session with the
 latest working-tree changes rather than creating a duplicate. The snapshot is
 taken from the current working tree (changes need not be committed). Manifests
-are stored under `~/.super-review/sessions/<repoId>/`.
+are stored in the repo under `.super-review/sessions/<sessionId>.json`, so they
+can be committed and travel with a branch/PR — a reviewer can pull the branch
+and open the documented tour without having authored it locally. Clear them all
+from the Sessions tab ("Clear all") to tidy up before merging.
 
 A ready-to-use Claude Code skill lives at
 `.claude/skills/document-session/SKILL.md`; agents can invoke it when they

@@ -22,7 +22,7 @@
 	// dialog, not actively working — don't spin (this isn't even a push).
 	const busy = $derived(app.push.inProgress && stage !== 'conflicts');
 
-	type Mode = 'push' | 'go-pr' | 'create-pr' | 'none';
+	type Mode = 'publish' | 'push' | 'go-pr' | 'create-pr' | 'none';
 
 	// Branch has commits the default branch doesn't — i.e. there's content to
 	// open a PR for. 0 when on the default branch or when the branch hasn't
@@ -30,6 +30,9 @@
 	const branchHasChanges = $derived((status?.aheadOfDefault ?? 0) > 0);
 
 	const mode = $derived.by<Mode>(() => {
+		// No remote yet → offer to publish to GitHub (GitHub-Desktop style). This
+		// also resolves the "I committed but there's no push button" dead end.
+		if (status && !status.hasRemote) return 'publish';
 		if (status?.hasRemote && (status.ahead > 0 || !status.hasUpstream)) return 'push';
 		if (app.branchPR) return 'go-pr';
 		if (branchHasChanges) return 'create-pr';
@@ -50,6 +53,8 @@
 			}
 		}
 		switch (mode) {
+			case 'publish':
+				return 'Publish';
 			case 'push':
 				return status && status.ahead > 0 ? `Push ${status.ahead}` : 'Publish';
 			case 'go-pr':
@@ -64,6 +69,8 @@
 	const Icon = $derived.by(() => {
 		if (busy) return Loader2;
 		switch (mode) {
+			case 'publish':
+				return ArrowUpFromLine;
 			case 'push':
 				return status?.hasUpstream ? ArrowUp : ArrowUpFromLine;
 			case 'go-pr':
@@ -77,6 +84,7 @@
 
 	const disabled = $derived.by(() => {
 		if (busy) return true;
+		if (mode === 'publish') return false; // dialog handles the not-signed-in case
 		if (mode === 'push') return !status?.hasRemote;
 		// PR actions require a GitHub-linked repo.
 		return !app.activeRepo?.githubOwner || !app.activeRepo?.githubRepo;
@@ -84,6 +92,9 @@
 
 	function click(): void {
 		switch (mode) {
+			case 'publish':
+				actions.openPublishDialog();
+				return;
 			case 'push':
 				void actions.push();
 				return;
@@ -151,6 +162,8 @@
 
 	const title = $derived.by(() => {
 		switch (mode) {
+			case 'publish':
+				return 'Publish this repository to GitHub';
 			case 'push': {
 				const remote = status?.pushRemote ?? 'origin';
 				if (!status?.hasUpstream) return 'Publish branch to origin';

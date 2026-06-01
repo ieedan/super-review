@@ -17,6 +17,8 @@ import type {
 	PRReviewComment,
 	PRSource,
 	PRSummary,
+	PrMergedBehavior,
+	PublishRepoOptions,
 	PushStatus,
 	RepoInfo,
 	Session,
@@ -81,6 +83,9 @@ interface AppState {
 	// Agent-documented sessions for the active repo, newest-updated first. Shown
 	// as a list on the Sessions tab; loaded on entering the tab / refresh.
 	sessions: SessionSummary[];
+	// Count of the active repo's sessions, kept in sync regardless of the active
+	// tab (via the fs watcher) so the Sessions tab can always show a badge.
+	sessionCount: number;
 	// The session whose frozen diff is currently open, or null when the Sessions
 	// tab is showing the list. Ephemeral — not persisted across launches.
 	activeSessionId: string | null;
@@ -142,6 +147,8 @@ interface AppState {
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
 	animationsEnabled: boolean;
+	prMergedBehavior: PrMergedBehavior;
+	autoRemoveMergedBranch: boolean;
 	hotkeys: Hotkeys;
 	theme: 'light' | 'dark';
 	accent: Accent;
@@ -190,6 +197,14 @@ interface AppState {
 	// null while unknown / not applicable; drives the commit-box warning so it
 	// only fires when a push would actually be rejected.
 	branchPRPushAccess: boolean | null;
+	// Set when a checked-out branch's PR is observed transitioning unmerged →
+	// merged, driving the "switch back to the default branch?" dialog. Cleared
+	// when the user confirms or dismisses. Never set by merely navigating to an
+	// already-merged PR — only by a live transition we observed.
+	mergedSwitchPrompt: { branch: string; defaultBranch: string; prNumber: number } | null;
+	// Set after switching off a merged branch (via dialog or auto-switch) to drive
+	// the "remove this branch locally?" dialog. Holds the branch to delete.
+	mergedRemovePrompt: { branch: string } | null;
 	// PR currently being reviewed (when diffContext.kind === 'pr').
 	activePR: PRSummary | null;
 	// Review comments for the active PR, indexed by file path.
@@ -199,6 +214,7 @@ interface AppState {
 	// by the same string the renderer uses to scope the annotation.
 	pendingComposers: Record<string, PendingComposer>;
 	addRepoDialogOpen: boolean;
+	publishDialogOpen: boolean;
 	createBranchDialogOpen: boolean;
 	push: {
 		inProgress: boolean;
@@ -269,6 +285,7 @@ const initial: AppState = {
 	diffContext: { kind: 'workingTree' },
 	contextTab: 'unstaged',
 	sessions: [],
+	sessionCount: 0,
 	activeSessionId: null,
 	activeSessionDetail: null,
 	sessionView: 'tour',
@@ -292,6 +309,8 @@ const initial: AppState = {
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 	animationsEnabled: false,
+	prMergedBehavior: 'prompt',
+	autoRemoveMergedBranch: false,
 	hotkeys: DEFAULT_HOTKEYS,
 	theme: 'dark',
 	accent: 'super',
@@ -331,11 +350,14 @@ const initial: AppState = {
 	branchPR: null,
 	branchPRChecks: null,
 	branchPRPushAccess: null,
+	mergedSwitchPrompt: null,
+	mergedRemovePrompt: null,
 	activePR: null,
 	prComments: {},
 	loadingComments: false,
 	pendingComposers: {},
 	addRepoDialogOpen: false,
+	publishDialogOpen: false,
 	createBranchDialogOpen: false,
 	push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
 	conflictFiles: [],
@@ -639,6 +661,8 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.stagingLineExclusions = new SvelteSet();
 	app.activeSessionId = null;
 	app.activeSessionDetail = null;
+	app.sessions = [];
+	app.sessionCount = 0;
 	app.branchPR = null;
 	await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
 	await refreshBranchPR();
@@ -675,6 +699,90 @@ async function refreshPushStatus(): Promise<void> {
 	} catch {
 		app.pushStatus = null;
 		app.lastCommit = null;
+	}
+}
+
+// The open (unmerged) PR we last observed for a branch in a repo. Used to detect
+// a live unmerged → merged transition: we only ever prompt the user to switch
+// back to the default branch when a PR we *watched open* becomes merged — never
+// when an already-merged PR is simply navigated to. Session-scoped on purpose.
+let watchedOpenPR: { repoId: string; branch: string; number: number } | null = null;
+
+// Compare the freshly-resolved `app.branchPR` against the PR we were watching for
+// this branch and fire the merged-branch flow on an unmerged → merged transition.
+// `findPRForBranch` only returns *open* PRs, so a merge usually surfaces as the PR
+// disappearing (null) — we confirm via a direct lookup before acting.
+async function detectBranchPRMerge(
+	repoId: string,
+	branch: string,
+	defaultBranch: string
+): Promise<void> {
+	const pr = app.branchPR;
+	const watching =
+		watchedOpenPR && watchedOpenPR.repoId === repoId && watchedOpenPR.branch === branch
+			? watchedOpenPR
+			: null;
+
+	// Still an open, unmerged PR — (re)arm the watcher and we're done.
+	if (pr && !pr.merged) {
+		watchedOpenPR = { repoId, branch, number: pr.number };
+		return;
+	}
+
+	// We never saw this branch's PR open in this session, so any merged state is
+	// pre-existing (navigated-to), not a transition we should react to.
+	if (!watching) return;
+
+	// The watched PR is gone or now reports merged. Confirm the merge before
+	// disarming so a transient lookup miss doesn't silently drop the watch.
+	let merged = pr?.merged === true && pr.number === watching.number;
+	if (!pr) {
+		try {
+			const full = await window.api.github.getPR(repoId, watching.number);
+			merged = full?.merged === true;
+		} catch {
+			// Couldn't confirm — keep watching and retry on the next refresh.
+			return;
+		}
+	}
+	if (!merged) {
+		// PR closed without merging (or replaced by a different one) — stop
+		// watching, but don't prompt. Only merges trigger the switch-back flow.
+		watchedOpenPR = null;
+		return;
+	}
+	watchedOpenPR = null;
+	await onBranchPRMerged(branch, watching.number, defaultBranch);
+}
+
+// A watched branch's PR just merged. Either switch back to the default branch
+// automatically (when the user opted in) or open the confirmation dialog.
+async function onBranchPRMerged(
+	branch: string,
+	prNumber: number,
+	defaultBranch: string
+): Promise<void> {
+	// Only relevant while we're actually sitting on the merged branch and there's
+	// a different default branch to return to.
+	if (!app.currentBranch || app.currentBranch !== branch || branch === defaultBranch) return;
+	if (app.prMergedBehavior === 'nothing') return;
+	if (app.prMergedBehavior === 'switch') {
+		await performSwitchBackAfterMerge(branch, defaultBranch);
+	} else {
+		app.mergedSwitchPrompt = { branch, defaultBranch, prNumber };
+	}
+}
+
+// Switch the working tree off the merged branch back to the default branch, then
+// hand off to the remove-branch step (auto-delete or prompt). Shared by the
+// auto-switch path and the switch-back dialog's confirm.
+async function performSwitchBackAfterMerge(branch: string, defaultBranch: string): Promise<void> {
+	const switched = await actions.checkoutBranch(defaultBranch);
+	if (!switched) return;
+	if (app.autoRemoveMergedBranch) {
+		await actions.deleteBranch(branch, { deleteRemote: false });
+	} else {
+		app.mergedRemovePrompt = { branch };
 	}
 }
 
@@ -717,6 +825,13 @@ async function refreshBranchPR(): Promise<void> {
 		console.error('[branchPR] lookup threw:', err);
 		app.branchPR = null;
 	}
+	// Detect an unmerged → merged transition for this branch and, if so, offer to
+	// switch back to the default branch. Runs off the just-resolved `app.branchPR`.
+	await detectBranchPRMerge(
+		app.activeRepo.id,
+		app.currentBranch,
+		app.activeRepo.defaultBranch ?? 'main'
+	);
 	// Keep PR-comment state in sync with the branch tab's PR. Only refetch when
 	// we're not in `kind: 'pr'` mode (that flow drives its own fetch already).
 	if (app.diffContext.kind !== 'pr') {
@@ -831,6 +946,24 @@ async function refreshUnstagedCount(): Promise<void> {
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 		app.unstagedFileCount = files.length;
 		setRepoDirty(repoId, files.length > 0);
+	} catch {
+		// keep previous count
+	}
+}
+
+// Fetch the active repo's session count and store it on `app.sessionCount` so
+// the Sessions tab badge stays accurate regardless of the active tab. Cheap
+// (counts manifest files without parsing) and failure-silent like the count
+// above.
+async function refreshSessionCount(): Promise<void> {
+	if (!app.activeRepo) {
+		app.sessionCount = 0;
+		return;
+	}
+	const repoId = app.activeRepo.id;
+	try {
+		const count = await window.api.sessions.count(repoId);
+		if (app.activeRepo?.id === repoId) app.sessionCount = count;
 	} catch {
 		// keep previous count
 	}
@@ -1019,6 +1152,8 @@ export const actions = {
 		app.maxDiffLines = app.prefs.maxDiffLines;
 		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
 		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
+		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
+		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
@@ -1151,6 +1286,7 @@ export const actions = {
 			app.activeSessionId = null;
 			app.activeSessionDetail = null;
 			app.sessions = [];
+			app.sessionCount = 0;
 			app.skillInstalled = null;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
@@ -1254,12 +1390,15 @@ export const actions = {
 	async loadSessions(): Promise<void> {
 		if (!app.activeRepo) {
 			app.sessions = [];
+			app.sessionCount = 0;
 			return;
 		}
 		const repoId = app.activeRepo.id;
 		const sessions = await window.api.sessions.list(repoId);
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 		app.sessions = sessions;
+		// Keep the badge in step with the freshly loaded list.
+		app.sessionCount = sessions.length;
 		if (app.activeSessionId) {
 			if (sessions.some((s) => s.id === app.activeSessionId)) {
 				await actions.openSession(app.activeSessionId);
@@ -1319,6 +1458,30 @@ export const actions = {
 		await window.api.sessions.remove(app.activeRepo.id, id);
 		if (app.activeSessionId === id) actions.closeSession();
 		await actions.loadSessions();
+	},
+
+	// Remove every session for the active repo — the "clear before merging" purge.
+	// Sessions now live in the repo's .super-review/ folder, so this also clears
+	// them from the working tree (git sees the committed manifests as deleted).
+	async clearSessions(): Promise<void> {
+		if (!app.activeRepo) return;
+		await window.api.sessions.clear(app.activeRepo.id);
+		actions.closeSession();
+		await actions.loadSessions();
+	},
+
+	// Refresh the active repo's session-count badge (cheap, tab-independent).
+	async refreshSessionCount(): Promise<void> {
+		await refreshSessionCount();
+	},
+
+	// Fired by the fs watcher when a repo's sessions change on disk (an agent's
+	// CLI save, a purge, or another window). Keeps the badge live always, and
+	// reloads the full list when the Sessions tab is the one on screen.
+	async onSessionsChanged(repoId: string): Promise<void> {
+		if (app.activeRepo?.id !== repoId) return;
+		await refreshSessionCount();
+		if (app.contextTab === 'sessions') await actions.loadSessions();
 	},
 
 	// Re-check whether the document-session skill is installed in the active repo
@@ -1856,6 +2019,13 @@ export const actions = {
 		app.addRepoDialogOpen = false;
 	},
 
+	openPublishDialog(): void {
+		app.publishDialogOpen = true;
+	},
+	closePublishDialog(): void {
+		app.publishDialogOpen = false;
+	},
+
 	openCreateBranchDialog(): void {
 		app.createBranchDialogOpen = true;
 	},
@@ -1935,6 +2105,21 @@ export const actions = {
 			const repo = await window.api.repos.createRepo(options);
 			if (repo) await activateRepo(repo);
 			return repo != null;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	// Publish the active repo to GitHub: creates the remote, sets `origin`, and
+	// pushes the current branch. Re-activates the refreshed repo so the UI picks
+	// up the new remote (the Publish button gives way to push/PR actions).
+	async publishRepo(options: PublishRepoOptions): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		try {
+			const repo = await window.api.repos.publish(app.activeRepo.id, options);
+			await activateRepo(repo);
+			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			return false;
@@ -2569,6 +2754,52 @@ export const actions = {
 	async setAnimationsEnabled(enabled: boolean): Promise<void> {
 		app.animationsEnabled = enabled;
 		app.prefs = await window.api.state.setPrefs({ animationsEnabled: enabled });
+	},
+
+	async setPrMergedBehavior(value: PrMergedBehavior): Promise<void> {
+		app.prMergedBehavior = value;
+		app.prefs = await window.api.state.setPrefs({ prMergedBehavior: value });
+	},
+
+	async setAutoRemoveMergedBranch(value: boolean): Promise<void> {
+		app.autoRemoveMergedBranch = value;
+		app.prefs = await window.api.state.setPrefs({ autoRemoveMergedBranch: value });
+	},
+
+	// Resolve the "switch back to the default branch?" dialog. `action` is the
+	// button the user chose; `always` persists that choice as the default so
+	// future merges skip the prompt (either auto-switching or doing nothing).
+	async resolveMergedSwitchPrompt(opts: {
+		action: 'switch' | 'nothing';
+		always: boolean;
+	}): Promise<void> {
+		const prompt = app.mergedSwitchPrompt;
+		if (!prompt) return;
+		app.mergedSwitchPrompt = null;
+		if (opts.always) await actions.setPrMergedBehavior(opts.action);
+		if (opts.action === 'switch') {
+			await performSwitchBackAfterMerge(prompt.branch, prompt.defaultBranch);
+		}
+	},
+
+	// Dismiss without choosing (escape / outside click / close button) — leaves
+	// the working tree as-is for now and asks again on the next merge.
+	dismissMergedSwitchPrompt(): void {
+		app.mergedSwitchPrompt = null;
+	},
+
+	// Confirm the "remove this branch locally?" dialog. `always` persists the
+	// choice so future merged branches are removed automatically.
+	async confirmRemoveMergedBranch(opts: { always: boolean }): Promise<void> {
+		const prompt = app.mergedRemovePrompt;
+		if (!prompt) return;
+		app.mergedRemovePrompt = null;
+		if (opts.always) await actions.setAutoRemoveMergedBranch(true);
+		await actions.deleteBranch(prompt.branch, { deleteRemote: false });
+	},
+
+	dismissMergedRemovePrompt(): void {
+		app.mergedRemovePrompt = null;
 	},
 
 	async setHotkeys(hotkeys: Hotkeys): Promise<void> {

@@ -20,12 +20,14 @@ import type {
 	FileContextMenuAction,
 	FileContextMenuParams,
 	GithubAccount,
+	GithubOrg,
 	LastCommit,
 	NewReviewCommentInput,
 	PRChecksSummary,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
+	PublishRepoOptions,
 	PullPushResult,
 	PushStatus,
 	RepoContextMenuAction,
@@ -48,9 +50,11 @@ import {
 	createRepo,
 	deleteBranch,
 	discardChanges,
+	ensureInitialCommit,
 	fetchOrigin,
 	fetchPRRef,
 	getConflicts,
+	getDefaultBranch,
 	recheckConflicts,
 	getCurrentBranch,
 	getDiff,
@@ -66,12 +70,20 @@ import {
 	pull,
 	push,
 	scanForRepos,
+	setOriginAndPush,
 	stageFile,
 	undoLastCommit
 } from './git-service.js';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import * as gh from './github-service.js';
-import { deleteSession, getSession, listSessions } from './session-store.js';
+import {
+	clearSessions,
+	countSessions,
+	deleteSession,
+	getSession,
+	listSessions,
+	watchSessionsDir
+} from './session-store.js';
 import { installSkill, isSkillInstalled } from './skill-service.js';
 import { listTemplates } from './repo-templates.js';
 import {
@@ -136,6 +148,57 @@ function broadcastToOthers(senderId: number, channel: string, payload: unknown):
 	}
 }
 
+// ─── Sessions file watcher ──────────────────────────────────────────────────
+// Each renderer subscribes to live updates for its active repo; the main
+// process keeps one fs.watch per distinct repo path (shared when multiple
+// windows watch the same repo) and broadcasts `sessions:changed` on any change.
+// Renderers filter the event by their own active repo. Watchers are reference
+// counted so a repo's watch is torn down once the last interested window drops
+// it (or is destroyed).
+const sessionWatchers = new Map<string, { close: () => void; refs: number }>();
+const sessionWatchByContents = new Map<number, string>();
+const sessionWatchHooked = new Set<number>();
+
+function releaseSessionWatch(repoPath: string): void {
+	const entry = sessionWatchers.get(repoPath);
+	if (!entry) return;
+	entry.refs -= 1;
+	if (entry.refs <= 0) {
+		entry.close();
+		sessionWatchers.delete(repoPath);
+	}
+}
+
+function setSessionWatch(sender: Electron.WebContents, repoId: string): void {
+	const repo = getRepo(repoId);
+	if (!repo) return;
+	const prev = sessionWatchByContents.get(sender.id);
+	if (prev === repo.path) return; // Already watching this repo for this window.
+	if (prev) releaseSessionWatch(prev);
+	sessionWatchByContents.set(sender.id, repo.path);
+
+	const entry = sessionWatchers.get(repo.path);
+	if (entry) {
+		entry.refs += 1;
+	} else {
+		const close = watchSessionsDir(repo.path, () => broadcast('sessions:changed', repoId));
+		sessionWatchers.set(repo.path, { close, refs: 1 });
+	}
+
+	// Drop this window's watch when it goes away (registered once per window).
+	if (!sessionWatchHooked.has(sender.id)) {
+		sessionWatchHooked.add(sender.id);
+		sender.once('destroyed', () => clearSessionWatch(sender.id));
+	}
+}
+
+function clearSessionWatch(senderId: number): void {
+	const prev = sessionWatchByContents.get(senderId);
+	if (prev) releaseSessionWatch(prev);
+	sessionWatchByContents.delete(senderId);
+	sessionWatchHooked.delete(senderId);
+}
+
 // Re-run buildRepoInfo off the critical path. If anything moved (favicon
 // added, remote URL changed, default branch updated) we persist and re-emit
 // active-changed so the UI picks it up. No-op when nothing changed.
@@ -163,6 +226,7 @@ async function refreshRepoInfoInBackground(repoPath: string, previous: RepoInfo)
 			merged.defaultBranch !== previous.defaultBranch ||
 			merged.githubOwner !== previous.githubOwner ||
 			merged.githubRepo !== previous.githubRepo ||
+			merged.description !== previous.description ||
 			merged.name !== previous.name;
 		if (!changed) return;
 		upsertRepo(merged);
@@ -266,6 +330,46 @@ export function registerIpc(): void {
 		}
 	);
 
+	// Orgs the repo's account (its pin, else the app default) can publish under.
+	ipcMain.handle('github:listOrganizations', async (_e, repoId?: string): Promise<GithubOrg[]> => {
+		const accountId = repoId ? getRepo(repoId)?.githubAccountId : null;
+		return gh.listOrganizations(accountId).catch(() => []);
+	});
+
+	// Publish a local repo to GitHub: create the remote (under the chosen org or
+	// the account), set it as `origin`, and push the current branch. Returns the
+	// refreshed RepoInfo so the renderer picks up the new owner/remote.
+	ipcMain.handle(
+		'repos:publish',
+		async (e, repoId: string, options: PublishRepoOptions): Promise<RepoInfo> => {
+			const repo = repoOrThrow(repoId);
+			const accountId = repo.githubAccountId ?? null;
+			// A freshly-created repo leaves its seeded files uncommitted (unborn
+			// branch), which has nothing to push. Make the initial commit first so
+			// "create → publish" works without a manual commit step.
+			await ensureInitialCommit(repo.path, 'Initial commit', gh.resolveCommitIdentity(accountId));
+			const remote = await gh.createRemoteRepo({
+				name: options.name,
+				description: options.description,
+				private: options.private,
+				org: options.org,
+				accountId
+			});
+			const result = await setOriginAndPush(repo.path, remote.cloneUrl);
+			if (!result.ok) {
+				throw new Error(
+					result.error
+						? `Repository created at ${remote.htmlUrl}, but the push failed: ${result.error}`
+						: 'Failed to push to the new remote.'
+				);
+			}
+			const info = preservePinnedAccount(await buildRepoInfo(repo.path));
+			upsertRepo(info);
+			broadcastToOthers(e.sender.id, 'repos:active-changed', info);
+			return info;
+		}
+	);
+
 	ipcMain.handle('repos:remove', async (e, id: string, moveToTrash?: boolean) => {
 		// Grab the path before de-registering so we can trash the folder after.
 		const repo = getRepo(id);
@@ -360,7 +464,7 @@ export function registerIpc(): void {
 			// Sessions are frozen snapshots on disk, not live git state — serve their
 			// file list straight from the manifest.
 			if (ctx.kind === 'session') {
-				const session = await getSession(repoId, ctx.sessionId);
+				const session = await getSession(repoOrThrow(repoId).path, ctx.sessionId);
 				return (session?.files ?? []).map((f) => ({
 					path: f.path,
 					oldPath: f.oldPath,
@@ -379,7 +483,7 @@ export function registerIpc(): void {
 		async (_e, repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData> => {
 			// Session diffs come from the manifest, not git.
 			if (ctx.kind === 'session') {
-				const session = await getSession(repoId, ctx.sessionId);
+				const session = await getSession(repoOrThrow(repoId).path, ctx.sessionId);
 				const f = session?.files.find((x) => x.path === filePath);
 				if (!f) {
 					throw new Error(`File not in session ${ctx.sessionId}: ${filePath}`);
@@ -411,7 +515,22 @@ export function registerIpc(): void {
 
 	ipcMain.handle('git:getPushStatus', async (_e, repoId: string): Promise<PushStatus> => {
 		const repo = repoOrThrow(repoId);
-		return getPushStatus(repo.path, repo.defaultBranch);
+		let defaultBranch = repo.defaultBranch;
+		if (!defaultBranch) {
+			// Backfill the cached default branch for repos persisted before it could
+			// be resolved (e.g. added when origin/HEAD wasn't set). Without it the
+			// ahead/behind-of-default counts — and the Create PR button they gate —
+			// stay broken until the repo is re-added. getPushStatus already resolves
+			// live, but persisting here means it's a one-time cost, not every poll.
+			const detected = await getDefaultBranch(repo.path);
+			if (detected) {
+				defaultBranch = detected;
+				const merged: RepoInfo = { ...repo, defaultBranch: detected };
+				upsertRepo(merged);
+				broadcast('repos:active-changed', merged);
+			}
+		}
+		return getPushStatus(repo.path, defaultBranch);
 	});
 
 	ipcMain.handle(
@@ -1032,18 +1151,39 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'sessions:list',
-		async (_e, repoId: string): Promise<SessionSummary[]> => listSessions(repoId)
+		async (_e, repoId: string): Promise<SessionSummary[]> => listSessions(repoOrThrow(repoId).path)
 	);
 
 	ipcMain.handle(
 		'sessions:get',
-		async (_e, repoId: string, id: string): Promise<Session | null> => getSession(repoId, id)
+		async (_e, repoId: string, id: string): Promise<Session | null> =>
+			getSession(repoOrThrow(repoId).path, id)
 	);
 
 	ipcMain.handle(
 		'sessions:remove',
-		async (_e, repoId: string, id: string): Promise<void> => deleteSession(repoId, id)
+		async (_e, repoId: string, id: string): Promise<void> =>
+			deleteSession(repoOrThrow(repoId).path, id)
 	);
+
+	ipcMain.handle(
+		'sessions:clear',
+		async (_e, repoId: string): Promise<void> => clearSessions(repoOrThrow(repoId).path)
+	);
+
+	ipcMain.handle(
+		'sessions:count',
+		async (_e, repoId: string): Promise<number> => countSessions(repoOrThrow(repoId).path)
+	);
+
+	// Start/stop live session updates for the calling window's active repo. A null
+	// repoId (or unwatch) tears down this window's watch.
+	ipcMain.handle('sessions:watch', (e, repoId: string | null): void => {
+		if (repoId) setSessionWatch(e.sender, repoId);
+		else clearSessionWatch(e.sender.id);
+	});
+
+	ipcMain.handle('sessions:unwatch', (e): void => clearSessionWatch(e.sender.id));
 
 	// ─── Skill ─────────────────────────────────────────────────────────────
 	// The document-session skill teaches an agent how/when to record a session.

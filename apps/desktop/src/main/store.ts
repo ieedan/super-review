@@ -49,6 +49,8 @@ const defaults: Schema = {
 		maxDiffLines: 1500,
 		hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 		animationsEnabled: false,
+		prMergedBehavior: 'prompt',
+		autoRemoveMergedBranch: false,
 		hotkeys: DEFAULT_HOTKEYS
 	},
 	seen: {},
