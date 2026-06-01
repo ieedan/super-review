@@ -19,6 +19,7 @@
 	import type { PaneAPI } from 'paneforge';
 	import { actions, setError, app } from '$lib/store.svelte';
 	import { initDiffHighlighter } from '$lib/diff-highlighter';
+	import { initDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { setAnimations } from '$lib/hooks/use-animations.svelte';
 	import { matchesHotkey } from '@shared/hotkeys';
 
@@ -32,8 +33,13 @@
 	const CHECKS_POLL_MS = 20 * 1000;
 
 	// Kick off the shiki highlighter preload early so the very first diff —
-	// including the settings preview — has a warm singleton.
+	// including the settings preview — has a warm singleton. This also serves as
+	// the main-thread fallback if the worker pool can't start.
 	initDiffHighlighter();
+
+	// Spin up the diff render worker pool so highlighting/diff-AST work happens
+	// off the main thread, keeping the UI responsive while diffs paint.
+	initDiffWorkerPool();
 
 	// Imperative handle on the sidebar pane, used by Cmd+B and the
 	// SidebarTrigger button to collapse/expand without dragging.

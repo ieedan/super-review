@@ -2,6 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { DIFFS_TAG_NAME, FileDiff as FileDiffClass, parseDiffFromFile } from '@pierre/diffs';
 	import { ensureDiffHighlighter } from '$lib/diff-highlighter';
+	import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { app } from '$lib/store.svelte';
 	import type { ViewMode } from '@shared/types';
 
@@ -75,11 +76,16 @@
 		// into this element, so the manual append is intentional.
 		// eslint-disable-next-line svelte/no-dom-manipulating
 		host.appendChild(container);
-		instance = new FileDiffClass({
-			diffStyle: mode,
-			themeType: app.theme,
-			disableFileHeader: true
-		});
+		instance = new FileDiffClass(
+			{
+				diffStyle: mode,
+				themeType: app.theme,
+				disableFileHeader: true
+			},
+			// Share the app-wide worker pool so even this small settings preview
+			// highlights off the main thread (and stays consistent with real diffs).
+			getDiffWorkerPool()
+		);
 		// First paint — fires synchronously. If shiki isn't loaded yet, the diff
 		// renders without highlighting and the library schedules its own rerender
 		// when shiki resolves.
