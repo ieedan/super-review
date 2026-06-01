@@ -1,6 +1,8 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
 import { createHash } from 'node:crypto';
 import { promises as fs, type Dirent } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
 import type {
@@ -13,9 +15,17 @@ import type {
 	GitIdentity,
 	RepoInfo
 } from '@shared/types.js';
+import { imageMimeForPath } from '@shared/media.js';
 import { getGitignore, getLicense } from './repo-templates.js';
 
+const execFileAsync = promisify(execFile);
+
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+// Images are embedded as base64 `data:` URLs and shipped whole over IPC, so the
+// cap is higher than the text cap (images are routinely a few MB) but still
+// bounded — past this we leave the side unrendered rather than balloon memory.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export function repoIdFromPath(p: string): string {
 	return createHash('sha1').update(path.resolve(p)).digest('hex').slice(0, 12);
@@ -810,6 +820,62 @@ async function readWorkingFile(repoPath: string, filePath: string): Promise<stri
 	}
 }
 
+// Raw bytes of `ref:filePath` straight from git's object store, preserving the
+// binary content (simple-git's `.show()` decodes to a lossy UTF-8 string, which
+// mangles images). Returns null when the path doesn't exist at that ref or the
+// blob exceeds the image cap.
+async function showFileBuffer(
+	repoPath: string,
+	ref: string,
+	filePath: string
+): Promise<Buffer | null> {
+	try {
+		const { stdout } = await execFileAsync('git', ['show', `${ref}:${filePath}`], {
+			cwd: repoPath,
+			encoding: 'buffer',
+			maxBuffer: MAX_IMAGE_BYTES
+		});
+		return stdout;
+	} catch {
+		return null;
+	}
+}
+
+// Raw bytes of a working-copy file, or null when it's missing or over the cap.
+async function readWorkingBuffer(repoPath: string, filePath: string): Promise<Buffer | null> {
+	try {
+		const buf = await fs.readFile(path.join(repoPath, filePath));
+		if (buf.byteLength > MAX_IMAGE_BYTES) return null;
+		return buf;
+	} catch {
+		return null;
+	}
+}
+
+function bufferToDataUrl(buf: Buffer, mime: string): string {
+	return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
+// Build the old/new `data:` URLs for an image file from whichever sides exist.
+// `oldRef` is the base/HEAD commit; the new side comes from the working tree in
+// the unstaged context (no head ref) and from `headRef` otherwise.
+async function imageDataUrls(
+	repoPath: string,
+	filePath: string,
+	mime: string,
+	oldRef: string | undefined,
+	headRef: string | undefined
+): Promise<{ oldImage?: string; newImage?: string }> {
+	const oldBuf = oldRef ? await showFileBuffer(repoPath, oldRef, filePath) : null;
+	const newBuf = headRef
+		? await showFileBuffer(repoPath, headRef, filePath)
+		: await readWorkingBuffer(repoPath, filePath);
+	return {
+		oldImage: oldBuf ? bufferToDataUrl(oldBuf, mime) : undefined,
+		newImage: newBuf ? bufferToDataUrl(newBuf, mime) : undefined
+	};
+}
+
 export async function getDiff(
 	repoPath: string,
 	filePath: string,
@@ -826,6 +892,21 @@ export async function getDiff(
 	let deletions = 0;
 	let status: FileStatus;
 
+	// The "old" side ref for a base/head comparison. The patch and numstat are
+	// three-dot (`base...head`) — they diff against the merge-base, matching how
+	// GitHub presents a branch/PR. Read the old side from that same merge-base so
+	// the contents Pierre diffs line up with the patch. Reading from the base
+	// *tip* instead breaks any file that's identical on the base tip but new
+	// since the merge-base (e.g. a changeset that landed on main after this
+	// branch diverged): old === new, so Pierre computes an empty diff and renders
+	// a blank body even though the patch shows a real addition. Falls back to the
+	// base tip when there's no common ancestor.
+	let oldSideRef = refs.base;
+	if (refs.base && refs.head) {
+		const mergeBase = (await git.raw(['merge-base', refs.base, refs.head]).catch(() => '')).trim();
+		if (mergeBase) oldSideRef = mergeBase;
+	}
+
 	if (refs.workingTree) {
 		patch = await git.diff(['HEAD', '--', filePath]).catch(() => '');
 		if (!patch) {
@@ -839,7 +920,7 @@ export async function getDiff(
 		isBinary = ns.binary;
 	} else if (refs.base && refs.head) {
 		patch = await git.raw(['diff', `${refs.base}...${refs.head}`, '--', filePath]).catch(() => '');
-		oldContents = await showFile(git, refs.base, filePath);
+		oldContents = await showFile(git, oldSideRef!, filePath);
 		newContents = await showFile(git, refs.head, filePath);
 		const ns = await safeNumstat(git, refs.base, refs.head, filePath);
 		additions = ns.additions;
@@ -847,11 +928,32 @@ export async function getDiff(
 		isBinary = ns.binary;
 	}
 
-	if (newContents && !oldContents) status = 'added';
-	else if (oldContents && !newContents) status = 'deleted';
+	// Images get rendered side by side, so fetch the raw bytes of each side as a
+	// `data:` URL. The new side comes from the working tree in the unstaged
+	// context (no head ref) and from the head ref otherwise.
+	const imageMime = imageMimeForPath(filePath);
+	let oldImage: string | undefined;
+	let newImage: string | undefined;
+	if (imageMime) {
+		const oldRef = refs.workingTree ? 'HEAD' : oldSideRef;
+		const headRef = refs.workingTree ? undefined : refs.head;
+		({ oldImage, newImage } = await imageDataUrls(repoPath, filePath, imageMime, oldRef, headRef));
+	}
+
+	// Recompute status from whichever side actually has content. For a binary
+	// image the text sides are empty, so fall back to the image sides.
+	const hasOld = oldContents.length > 0 || oldImage !== undefined;
+	const hasNew = newContents.length > 0 || newImage !== undefined;
+	if (hasNew && !hasOld) status = 'added';
+	else if (hasOld && !hasNew) status = 'deleted';
 	else status = 'modified';
 
 	const truncated = oldContents.length > MAX_FILE_BYTES || newContents.length > MAX_FILE_BYTES;
+
+	// A raster image's "contents" are lossy binary noise — drop them so we don't
+	// ship garbage; the side-by-side `data:` URLs are what gets rendered. SVGs
+	// are text, so keep their contents for the source diff.
+	const dropTextContents = isBinary && imageMime !== null;
 
 	return {
 		file: {
@@ -863,9 +965,11 @@ export async function getDiff(
 			isBinary
 		},
 		patch,
-		oldContents: truncated ? '' : oldContents,
-		newContents: truncated ? '' : newContents,
-		truncated
+		oldContents: truncated || dropTextContents ? '' : oldContents,
+		newContents: truncated || dropTextContents ? '' : newContents,
+		truncated,
+		oldImage,
+		newImage
 	};
 }
 
@@ -1094,6 +1198,41 @@ export async function mergeIntoCurrent(repoPath: string, ref: string): Promise<P
 	const conflicts = await listUnmergedPaths(git);
 	if (conflicts.length > 0) return { ok: false, conflicts };
 	return { ok: true, conflicts: [] };
+}
+
+// Point an "upstream" remote at `url`, creating it (or repointing an existing
+// one) so a fork can fetch from its parent. We use the conventional name so the
+// merge ref is stable (`upstream/<branch>`) and repeat fetches are incremental.
+async function ensureUpstreamRemote(git: SimpleGit, url: string): Promise<void> {
+	const remotes = await git.getRemotes(true).catch(() => []);
+	const existing = remotes.find((r) => r.name === 'upstream');
+	if (!existing) {
+		await git.addRemote('upstream', url);
+	} else if (existing.refs.fetch !== url) {
+		await git.remote(['set-url', 'upstream', url]);
+	}
+}
+
+// GitHub Desktop's "Update from upstream/<branch>": for a fork, fetch the parent
+// repo's <branch> and merge it into the current branch. Reuses mergeIntoCurrent
+// so any conflicts flow through the same dialog as updateFromDefault.
+export async function updateFromUpstream(
+	repoPath: string,
+	upstreamUrl: string,
+	branch: string
+): Promise<PullPushResult> {
+	const git = simpleGit(repoPath);
+	try {
+		await ensureUpstreamRemote(git, upstreamUrl);
+		await git.fetch(['upstream', branch]);
+	} catch (err) {
+		return {
+			ok: false,
+			conflicts: [],
+			error: err instanceof Error ? err.message : String(err)
+		};
+	}
+	return mergeIntoCurrent(repoPath, `upstream/${branch}`);
 }
 
 export async function push(repoPath: string): Promise<PullPushResult> {
@@ -1461,10 +1600,14 @@ export async function fetchOrigin(repoPath: string): Promise<{ ok: boolean; erro
 
 export async function fetchPRRef(
 	repoPath: string,
-	prNumber: number
+	prNumber: number,
+	// Remote to read the PR's `pull/<n>/head` ref from — a name ("origin") or a
+	// bare URL. For an upstream PR on a fork the PR lives in the parent repo, not
+	// origin, so the caller passes the parent's URL.
+	remote = 'origin'
 ): Promise<{ headRef: string; baseRef: string }> {
 	const git = simpleGit(repoPath);
-	await git.fetch(['origin', `pull/${prNumber}/head:refs/pr/${prNumber}/head`]).catch(() => {});
+	await git.fetch([remote, `pull/${prNumber}/head:refs/pr/${prNumber}/head`]).catch(() => {});
 	// base ref is whatever the PR base branch's tip is — we fetch and pin locally
 	// The actual base branch name comes from the GitHub API and is resolved by the caller.
 	return {
@@ -1574,13 +1717,16 @@ async function ensureRemoteForUrl(
 export async function pinPRBaseRef(
 	repoPath: string,
 	prNumber: number,
-	baseBranch: string
+	baseBranch: string,
+	// Remote the base branch lives on — origin for a same-repo PR, or the parent
+	// repo's URL for an upstream PR on a fork. See fetchPRRef.
+	remote = 'origin'
 ): Promise<void> {
 	const git = simpleGit(repoPath);
-	await git.fetch(['origin', baseBranch]).catch(() => {});
-	// Create or update a ref that points at origin/<baseBranch>'s current tip
-	const sha = await git.revparse([`origin/${baseBranch}`]).catch(() => '');
-	if (sha) {
-		await git.raw(['update-ref', `refs/pr/${prNumber}/base`, sha.trim()]).catch(() => {});
-	}
+	// Fetch the base branch's current tip straight into the pinned ref. Writing
+	// the refspec directly (rather than fetching a tracking ref then resolving
+	// it) means this works whether `remote` is a named remote ("origin") or a
+	// bare URL — the latter being what we pass for an upstream PR, whose base
+	// repo we don't keep a permanent remote for.
+	await git.fetch([remote, `+refs/heads/${baseBranch}:refs/pr/${prNumber}/base`]).catch(() => {});
 }
