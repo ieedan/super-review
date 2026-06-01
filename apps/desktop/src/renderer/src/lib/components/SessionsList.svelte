@@ -50,7 +50,7 @@
 	<div class="px-3 py-8 text-center text-xs text-muted-foreground">No sessions yet</div>
 {:else}
 	<div
-		class="flex items-center justify-between px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+		class="flex items-center justify-between px-3 py-2 text-[10px] font-medium tracking-wide text-muted-foreground uppercase"
 	>
 		<span>{sessions.length} session{sessions.length === 1 ? '' : 's'}</span>
 		<button
