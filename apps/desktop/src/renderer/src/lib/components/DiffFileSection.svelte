@@ -642,14 +642,20 @@
 	// (after a merge/pull/etc. rewrites files in place) this section re-fetches
 	// even though its context is unchanged.
 	let appliedReloadToken = -1;
+	// Same idea for the revalidate token (bumped on focus/poll refresh), but the
+	// re-fetch here is silent: the current diff stays on screen and is swapped
+	// only if disk came back different — so external edits land without flicker.
+	let appliedRevalidateToken = -1;
 
 	// Fetch the diff the first time the section enters view (and stays expanded).
 	// Hydrates from the cross-tab diff cache when available so switching back
 	// to a context renders instantly, then refreshes in the background. The
 	// actual DOM render is kicked off by the render effect below.
 	$effect(() => {
-		// Read first so the effect re-runs when an op forces a reload.
+		// Read both tokens first so the effect re-runs when an op forces a reload
+		// or a focus/poll refresh asks open sections to re-validate against disk.
 		const reloadToken = app.diffReloadToken;
+		const revalidateToken = app.diffRevalidateToken;
 		if (!inView || !expanded || !app.activeRepo) return;
 		// Don't fetch hidden diffs — wait until the user clicks "Load diff". When
 		// they do, `deferred` flips false and this effect re-runs to fetch.
@@ -659,26 +665,42 @@
 		const repo = app.activeRepo;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
 		const ctxKey = diffContextKey(ctx);
-		// A bumped token means this file was rewritten in place — re-fetch even
-		// though the context matches what's already loaded.
+		// A bumped reload token means this file was rewritten in place — re-fetch
+		// even though the context matches what's already loaded.
 		const forced = reloadToken !== appliedReloadToken;
-		// Already up to date for this context, or a fetch is in flight.
-		if (diffData && loadedCtxKey === ctxKey && !forced) return;
+		// A bumped revalidate token means files may have changed on disk outside
+		// the app; re-fetch in the background but keep the current diff on screen.
+		const revalidate = revalidateToken !== appliedRevalidateToken;
+		// Already up to date for this context with nothing asking us to refresh,
+		// or a (non-forced) fetch is already in flight.
+		if (diffData && loadedCtxKey === ctxKey && !forced && !revalidate) return;
 		if (loading && !forced) return;
 		appliedReloadToken = reloadToken;
+		appliedRevalidateToken = revalidateToken;
+
+		// True when the right diff for this context is already rendered. A pure
+		// revalidation leaves it in place and refreshes silently underneath.
+		const showing = diffData !== null && loadedCtxKey === ctxKey;
 
 		const cached = getCachedDiff(repo.id, ctx, file.path);
 		// Drop stale DOM/render state when the context changed or a reload was
 		// forced — the cached hit (if any) no longer reflects the file on disk.
 		if (forced || (loadedCtxKey && loadedCtxKey !== ctxKey)) clearLoadedDiff();
 
-		if (cached) {
-			setLoadedDiff(cached, ctxKey);
-			loadError = null;
-		} else {
-			loading = true;
-			loadError = null;
+		if (!showing) {
+			if (cached) {
+				setLoadedDiff(cached, ctxKey);
+				loadError = null;
+			} else {
+				loading = true;
+				loadError = null;
+			}
 		}
+
+		// What's on screen right now, used to decide whether the re-fetch changed
+		// anything. On a revalidation it's the (possibly stale) rendered diff;
+		// otherwise it's the cache hit we just hydrated from.
+		const shownBefore = showing ? diffData : cached;
 
 		void window.api.git
 			.getDiff(repo.id, file.path, ctx)
@@ -688,21 +710,23 @@
 				if (!app.activeRepo || app.activeRepo.id !== repo.id) return;
 				const currentKey = diffContextKey($state.snapshot(app.diffContext) as DiffContext);
 				if (currentKey !== ctxKey) return;
-				// Skip the re-render when cached content matched what came back.
+				// Skip the re-render when what's shown already matched what came back.
 				if (
-					cached &&
-					cached.oldContents === d.oldContents &&
-					cached.newContents === d.newContents &&
-					cached.patch === d.patch &&
-					cached.oldImage === d.oldImage &&
-					cached.newImage === d.newImage
+					shownBefore &&
+					shownBefore.oldContents === d.oldContents &&
+					shownBefore.newContents === d.newContents &&
+					shownBefore.patch === d.patch &&
+					shownBefore.oldImage === d.oldImage &&
+					shownBefore.newImage === d.newImage
 				) {
 					return;
 				}
 				setLoadedDiff(d, ctxKey);
 			})
 			.catch((err) => {
-				if (!cached) loadError = err instanceof Error ? err.message : String(err);
+				// Keep a rendered diff in place if a background revalidation fails;
+				// only surface the error when there was nothing to show.
+				if (!shownBefore) loadError = err instanceof Error ? err.message : String(err);
 			})
 			.finally(() => {
 				loading = false;
