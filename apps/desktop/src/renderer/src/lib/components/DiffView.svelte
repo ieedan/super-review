@@ -25,7 +25,9 @@
 	// "Other changes" group carries no step number (index 0).
 	type PlanItem =
 		| { kind: 'step'; id: string; title: string; body: string; index: number; total: number }
-		| { kind: 'file'; file: ChangedFile };
+		// `prerender` marks a file we render off-screen ahead of time (single
+		// layout) so navigating to it is instant — see displayPlan below.
+		| { kind: 'file'; file: ChangedFile; prerender?: boolean };
 	const renderPlan = $derived.by<PlanItem[]>(() => {
 		// Step grouping only in a session's Tour view; the Changes view (and every
 		// non-session context) renders the files flat.
@@ -55,25 +57,40 @@
 	// just the selected file's section — plus its preceding step header for tour
 	// context — so the user reviews one diff at a time, GitHub Desktop-style,
 	// switching files from the sidebar.
+	//
+	// We also keep the previous and next file rendered off-screen (`prerender`)
+	// so stepping to either is instant instead of waiting on a fetch + Pierre
+	// render. The {#each} below is keyed by path, so when a neighbour becomes the
+	// selected file its already-rendered section is reused in place rather than
+	// rebuilt.
 	const displayPlan = $derived.by<PlanItem[]>(() => {
 		if (app.diffLayout !== 'single') return renderPlan;
-		const firstFile = renderPlan.find((it) => it.kind === 'file');
+		const fileItems = renderPlan.filter((it) => it.kind === 'file');
+		if (fileItems.length === 0) return [];
 		const sel = app.selectedFile;
-		const idx = sel ? renderPlan.findIndex((it) => it.kind === 'file' && it.file.path === sel) : -1;
 		// No (or stale) selection — fall back to the first file so the view is
 		// never blank while there are files to show.
-		if (idx === -1) return firstFile ? [firstFile] : [];
+		let fi = sel ? fileItems.findIndex((it) => it.file.path === sel) : -1;
+		if (fi === -1) fi = 0;
+		const active = fileItems[fi];
+		const activeIdx = renderPlan.indexOf(active);
 		const out: PlanItem[] = [];
 		// Include the step header immediately preceding this file (tour view only),
 		// for context; stop at the previous file so unrelated steps aren't pulled in.
-		for (let i = idx - 1; i >= 0; i--) {
+		for (let i = activeIdx - 1; i >= 0; i--) {
 			if (renderPlan[i].kind === 'file') break;
 			if (renderPlan[i].kind === 'step') {
 				out.push(renderPlan[i]);
 				break;
 			}
 		}
-		out.push(renderPlan[idx]);
+		out.push(active);
+		// Off-screen neighbours, primed and waiting. Order doesn't matter visually
+		// (they're hidden); they trail the active file in the DOM.
+		const prev = fileItems[fi - 1];
+		const next = fileItems[fi + 1];
+		if (prev) out.push({ ...prev, prerender: true });
+		if (next) out.push({ ...next, prerender: true });
 		return out;
 	});
 
@@ -204,7 +221,11 @@
 		function updateActiveFile(): void {
 			ticking = false;
 			const containerTop = el.getBoundingClientRect().top;
-			const sections = el.querySelectorAll<HTMLElement>('section[data-file-path]');
+			// Skip the off-screen pre-rendered neighbours (single layout) — they sit
+			// in the DOM but must never become the "active" file.
+			const sections = Array.from(
+				el.querySelectorAll<HTMLElement>('section[data-file-path]')
+			).filter((s) => !s.closest('.diff-wrap--prerender'));
 			if (sections.length === 0) return;
 			let active: string | null = null;
 			let activeRelTop = -Infinity;
@@ -312,13 +333,43 @@
 					total={item.total}
 				/>
 			{:else}
-				<DiffFileSection
-					file={item.file}
-					{observer}
-					isLast={i === lastFileIndex}
-					eager={app.diffLayout === 'single'}
-				/>
+				<!-- Keyed reuse means a pre-rendered neighbour keeps its rendered diff
+				     when it becomes the selected file: only this wrapper's class flips
+				     from off-screen back to display:contents. -->
+				<div
+					class={['diff-wrap', item.prerender && 'diff-wrap--prerender']}
+					aria-hidden={item.prerender}
+				>
+					<DiffFileSection
+						file={item.file}
+						{observer}
+						isLast={!item.prerender && (app.diffLayout === 'single' ? true : i === lastFileIndex)}
+						eager={app.diffLayout === 'single'}
+					/>
+				</div>
 			{/if}
 		{/each}
 	</div>
 </section>
+
+<style>
+	/* The wrapper is layout-transparent by default so a file section behaves as a
+	   direct child of the scroll container (sticky headers, the last file's
+	   min-height all resolve against it, exactly as before). */
+	.diff-wrap {
+		display: contents;
+	}
+	/* Off-screen pre-render: keep the section laid out at full width so Pierre
+	   measures the diff correctly, but collapse it to zero height and hide it so
+	   it neither shows nor adds to the scroll height. (visibility:hidden — not
+	   display:none — because Pierre measures 0×0 inside a display:none subtree and
+	   renders a blank diff.) Navigating here flips the class off and the
+	   already-rendered diff appears instantly. */
+	.diff-wrap--prerender {
+		display: block;
+		height: 0;
+		overflow: hidden;
+		visibility: hidden;
+		pointer-events: none;
+	}
+</style>
