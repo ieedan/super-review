@@ -9,3 +9,7 @@ dist
 # electron-builder output
 release
 build/icon.*
+
+# SvelteKit (apps/docs)
+.svelte-kit
+apps/docs/build
