@@ -6,6 +6,7 @@ import type {
 	DeviceFlowStatus,
 	GitIdentity,
 	GithubAccount,
+	GithubOrg,
 	NewReviewCommentInput,
 	PRCheck,
 	PRChecksState,
@@ -191,6 +192,60 @@ export function resolveCommitIdentity(accountId?: string | null): GitIdentity | 
 		name: account.name ?? account.login,
 		email: `${account.id}+${account.login}@users.noreply.github.com`
 	};
+}
+
+// Organizations the account can create repositories under, for the Publish
+// Repository dialog's org dropdown. Best-effort: returns [] if the call fails.
+export async function listOrganizations(accountId?: string | null): Promise<GithubOrg[]> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.orgs.listForAuthenticatedUser({ per_page: 100 });
+	return res.data.map((org) => ({ login: org.login, avatarUrl: org.avatar_url ?? undefined }));
+}
+
+// Create a new repository on GitHub — under an organization when `org` is set,
+// otherwise the authenticated user's personal account. `auto_init: false` keeps
+// the remote empty so we can push the existing local history into it.
+export async function createRemoteRepo(opts: {
+	name: string;
+	description?: string;
+	private: boolean;
+	org?: string | null;
+	accountId?: string | null;
+}): Promise<{ cloneUrl: string; sshUrl: string; htmlUrl: string; owner: string }> {
+	const account = resolveAccount(opts.accountId);
+	const o = octokit(account);
+	const params = {
+		name: opts.name,
+		description: opts.description,
+		private: opts.private,
+		auto_init: false
+	};
+	const shape = (d: {
+		clone_url: string;
+		ssh_url: string;
+		html_url: string;
+		owner: { login: string } | null;
+	}) => ({
+		cloneUrl: d.clone_url,
+		sshUrl: d.ssh_url,
+		htmlUrl: d.html_url,
+		owner: d.owner?.login ?? ''
+	});
+	try {
+		const res = opts.org
+			? await o.repos.createInOrg({ org: opts.org, ...params })
+			: await o.repos.createForAuthenticatedUser(params);
+		return shape(res.data);
+	} catch (err) {
+		// Make publish retryable: if the repo already exists on the account/org
+		// (e.g. a previous attempt created it but the push failed), reuse it
+		// instead of erroring out. Any other failure propagates.
+		const status = (err as { status?: number }).status;
+		if (status !== 422) throw err;
+		const owner = opts.org ?? account.login;
+		const got = await o.repos.get({ owner, repo: opts.name });
+		return shape(got.data);
+	}
 }
 
 // Number of PRs fetched per page. The renderer pages through these as the

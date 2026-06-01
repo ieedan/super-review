@@ -11,6 +11,7 @@
 	import MergedRemoveDialog from '$lib/components/MergedRemoveDialog.svelte';
 	import BranchMenu from '$lib/components/BranchMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
+	import PublishRepoDialog from '$lib/components/PublishRepoDialog.svelte';
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
 	import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
@@ -315,6 +316,7 @@
 <MergedRemoveDialog />
 <BranchMenu />
 <AddRepoDialog />
+<PublishRepoDialog />
 <CreateBranchDialog />
 <SettingsDialog />
 <GithubSignInDialog />

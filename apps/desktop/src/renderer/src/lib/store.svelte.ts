@@ -18,6 +18,7 @@ import type {
 	PRSource,
 	PRSummary,
 	PrMergedBehavior,
+	PublishRepoOptions,
 	PushStatus,
 	RepoInfo,
 	Session,
@@ -213,6 +214,7 @@ interface AppState {
 	// by the same string the renderer uses to scope the annotation.
 	pendingComposers: Record<string, PendingComposer>;
 	addRepoDialogOpen: boolean;
+	publishDialogOpen: boolean;
 	createBranchDialogOpen: boolean;
 	push: {
 		inProgress: boolean;
@@ -355,6 +357,7 @@ const initial: AppState = {
 	loadingComments: false,
 	pendingComposers: {},
 	addRepoDialogOpen: false,
+	publishDialogOpen: false,
 	createBranchDialogOpen: false,
 	push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
 	conflictFiles: [],
@@ -2016,6 +2019,13 @@ export const actions = {
 		app.addRepoDialogOpen = false;
 	},
 
+	openPublishDialog(): void {
+		app.publishDialogOpen = true;
+	},
+	closePublishDialog(): void {
+		app.publishDialogOpen = false;
+	},
+
 	openCreateBranchDialog(): void {
 		app.createBranchDialogOpen = true;
 	},
@@ -2095,6 +2105,21 @@ export const actions = {
 			const repo = await window.api.repos.createRepo(options);
 			if (repo) await activateRepo(repo);
 			return repo != null;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	// Publish the active repo to GitHub: creates the remote, sets `origin`, and
+	// pushes the current branch. Re-activates the refreshed repo so the UI picks
+	// up the new remote (the Publish button gives way to push/PR actions).
+	async publishRepo(options: PublishRepoOptions): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		try {
+			const repo = await window.api.repos.publish(app.activeRepo.id, options);
+			await activateRepo(repo);
+			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			return false;

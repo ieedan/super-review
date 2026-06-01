@@ -19,6 +19,7 @@ import type {
 	EditorKind,
 	FileContextMenuAction,
 	GithubAccount,
+	GithubOrg,
 	LastCommit,
 	NewReviewCommentInput,
 	PRChecksSummary,
@@ -49,6 +50,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('repos:getCreateDefaults') as Promise<CreateRepoDefaults>,
 		createRepo: (options) =>
 			ipcRenderer.invoke('repos:createRepo', options) as Promise<RepoInfo | null>,
+		publish: (repoId, options) =>
+			ipcRenderer.invoke('repos:publish', repoId, options) as Promise<RepoInfo>,
 		remove: (id, moveToTrash) =>
 			ipcRenderer.invoke('repos:remove', id, moveToTrash) as Promise<void>,
 		setActive: (id) => ipcRenderer.invoke('repos:setActive', id) as Promise<RepoInfo | null>,
@@ -121,6 +124,8 @@ const api: PreloadAPI = {
 	},
 	github: {
 		listAccounts: () => ipcRenderer.invoke('github:listAccounts') as Promise<GithubAccount[]>,
+		listOrganizations: (repoId) =>
+			ipcRenderer.invoke('github:listOrganizations', repoId) as Promise<GithubOrg[]>,
 		getActiveAccount: () =>
 			ipcRenderer.invoke('github:getActiveAccount') as Promise<GithubAccount | null>,
 		setActiveAccount: (id) =>

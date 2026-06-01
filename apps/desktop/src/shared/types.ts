@@ -14,6 +14,10 @@ export interface RepoInfo {
 	upstreamOwner?: string;
 	upstreamRepo?: string;
 	defaultBranch?: string;
+	// One-line repo description from `.git/description` (the create-repo form
+	// seeds it). Used to pre-fill the Publish Repository dialog. Unset when it's
+	// empty or still git's default placeholder.
+	description?: string;
 	lastOpenedAt: number;
 	// GitHub account this project is pinned to. When unset, the app-wide default
 	// (activeGithubAccountId) is used instead.
@@ -519,6 +523,26 @@ export interface CreateRepoDefaults {
 	licenses: string[];
 }
 
+// A GitHub organization the signed-in account can create repositories under,
+// surfaced in the Publish Repository dialog's "Organization" dropdown.
+export interface GithubOrg {
+	login: string;
+	avatarUrl?: string;
+}
+
+// Options for the GitHub-Desktop-style "Publish Repository" flow: create the
+// repo on GitHub, wire it up as `origin`, and push the current branch.
+export interface PublishRepoOptions {
+	/** Repo name on GitHub (defaults to the local folder name). */
+	name: string;
+	/** Optional one-line description set on the GitHub repo. */
+	description?: string;
+	/** Create as a private repository ("Keep this code private"). */
+	private: boolean;
+	/** Org login to create the repo under, or null for the personal account. */
+	org?: string | null;
+}
+
 // Accent palette: 'super' is the brand flame, 'mono' the neutral monochrome
 // primary. Each maps to an `.accent-*` class in app.css.
 export type Accent = 'super' | 'mono';
@@ -616,6 +640,9 @@ export interface PreloadAPI {
 		// Scaffold a new repository (folder, git init, README/.gitignore/LICENSE).
 		// Returns the registered repo, or null if the picker/flow was cancelled.
 		createRepo(options: CreateRepoOptions): Promise<RepoInfo | null>;
+		// Publish a local repo to GitHub: create the remote, wire it as `origin`,
+		// and push the current branch. Returns the refreshed RepoInfo.
+		publish(repoId: string, options: PublishRepoOptions): Promise<RepoInfo>;
 		// De-register a repo. When `moveToTrash` is set, the repo's folder is also
 		// moved to the OS trash (mirrors GitHub Desktop's remove dialog).
 		remove(id: string, moveToTrash?: boolean): Promise<void>;
@@ -678,6 +705,8 @@ export interface PreloadAPI {
 	};
 	github: {
 		listAccounts(): Promise<GithubAccount[]>;
+		// Orgs the repo's account can create repos under (for the publish dialog).
+		listOrganizations(repoId?: string): Promise<GithubOrg[]>;
 		getActiveAccount(): Promise<GithubAccount | null>;
 		setActiveAccount(id: string): Promise<GithubAccount | null>;
 		removeAccount(id: string): Promise<void>;

@@ -20,12 +20,14 @@ import type {
 	FileContextMenuAction,
 	FileContextMenuParams,
 	GithubAccount,
+	GithubOrg,
 	LastCommit,
 	NewReviewCommentInput,
 	PRChecksSummary,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
+	PublishRepoOptions,
 	PullPushResult,
 	PushStatus,
 	RepoContextMenuAction,
@@ -48,6 +50,7 @@ import {
 	createRepo,
 	deleteBranch,
 	discardChanges,
+	ensureInitialCommit,
 	fetchOrigin,
 	fetchPRRef,
 	getConflicts,
@@ -66,6 +69,7 @@ import {
 	pull,
 	push,
 	scanForRepos,
+	setOriginAndPush,
 	stageFile,
 	undoLastCommit
 } from './git-service.js';
@@ -221,6 +225,7 @@ async function refreshRepoInfoInBackground(repoPath: string, previous: RepoInfo)
 			merged.defaultBranch !== previous.defaultBranch ||
 			merged.githubOwner !== previous.githubOwner ||
 			merged.githubRepo !== previous.githubRepo ||
+			merged.description !== previous.description ||
 			merged.name !== previous.name;
 		if (!changed) return;
 		upsertRepo(merged);
@@ -319,6 +324,46 @@ export function registerIpc(): void {
 			const info = preservePinnedAccount(await buildRepoInfo(result.path));
 			upsertRepo(info);
 			setPrefs({ activeRepoId: info.id });
+			broadcastToOthers(e.sender.id, 'repos:active-changed', info);
+			return info;
+		}
+	);
+
+	// Orgs the repo's account (its pin, else the app default) can publish under.
+	ipcMain.handle('github:listOrganizations', async (_e, repoId?: string): Promise<GithubOrg[]> => {
+		const accountId = repoId ? getRepo(repoId)?.githubAccountId : null;
+		return gh.listOrganizations(accountId).catch(() => []);
+	});
+
+	// Publish a local repo to GitHub: create the remote (under the chosen org or
+	// the account), set it as `origin`, and push the current branch. Returns the
+	// refreshed RepoInfo so the renderer picks up the new owner/remote.
+	ipcMain.handle(
+		'repos:publish',
+		async (e, repoId: string, options: PublishRepoOptions): Promise<RepoInfo> => {
+			const repo = repoOrThrow(repoId);
+			const accountId = repo.githubAccountId ?? null;
+			// A freshly-created repo leaves its seeded files uncommitted (unborn
+			// branch), which has nothing to push. Make the initial commit first so
+			// "create → publish" works without a manual commit step.
+			await ensureInitialCommit(repo.path, 'Initial commit', gh.resolveCommitIdentity(accountId));
+			const remote = await gh.createRemoteRepo({
+				name: options.name,
+				description: options.description,
+				private: options.private,
+				org: options.org,
+				accountId
+			});
+			const result = await setOriginAndPush(repo.path, remote.cloneUrl);
+			if (!result.ok) {
+				throw new Error(
+					result.error
+						? `Repository created at ${remote.htmlUrl}, but the push failed: ${result.error}`
+						: 'Failed to push to the new remote.'
+				);
+			}
+			const info = preservePinnedAccount(await buildRepoInfo(repo.path));
+			upsertRepo(info);
 			broadcastToOthers(e.sender.id, 'repos:active-changed', info);
 			return info;
 		}
