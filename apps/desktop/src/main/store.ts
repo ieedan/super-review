@@ -37,6 +37,7 @@ const defaults: Schema = {
 	repos: {},
 	prefs: {
 		viewMode: 'split',
+		diffLayout: 'scroll',
 		theme: 'dark',
 		accent: 'super',
 		unstagedFileListLayout: 'tree',
