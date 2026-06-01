@@ -65,7 +65,8 @@
 			<span class="row" style:background={p.muted}></span>
 			<span class="row short" style:background={p.muted}></span>
 			<span class="row" style:background={p.muted}></span>
-			<span class="button" style:background={p.primary}></span>
+			<!-- Uses the live accent (primary) so the preview reflects the chosen accent. -->
+			<span class="button" style:background="var(--color-primary)"></span>
 		</div>
 	</div>
 </div>

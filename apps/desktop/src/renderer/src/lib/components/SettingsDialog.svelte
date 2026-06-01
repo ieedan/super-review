@@ -52,7 +52,8 @@
 	} from '@shared/hotkeys';
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM } from '@shared/types';
 	import { cn } from '$lib/utils';
-	import type { DiffLayout, EditorKind, TerminalKind, ViewMode } from '@shared/types';
+	import { ACCENTS } from '$lib/accents';
+	import type { Accent, DiffLayout, EditorKind, TerminalKind, ViewMode } from '@shared/types';
 
 	type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'editor' | 'hotkeys';
 	let activeTab = $state<SettingsTab>('accounts');
@@ -107,6 +108,7 @@
 	let draftHiddenDiffPatterns = $state<string[]>([]);
 	let newPattern = $state<string>('');
 	let draftTheme = $state<'light' | 'dark'>('dark');
+	let draftAccent = $state<Accent>('super');
 	let draftCodeFont = $state<string>('system');
 	let draftUiFont = $state<string>('system');
 	let draftEditor = $state<EditorKind | null>(null);
@@ -124,6 +126,7 @@
 			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
 			newPattern = '';
 			draftTheme = app.theme;
+			draftAccent = app.accent;
 			draftCodeFont = app.codeFont;
 			draftUiFont = app.uiFont;
 			draftEditor = effectiveEditor();
@@ -214,6 +217,9 @@
 		}
 		if (draftTheme !== app.theme) {
 			promises.push(actions.setTheme(draftTheme));
+		}
+		if (draftAccent !== app.accent) {
+			promises.push(actions.setAccent(draftAccent));
 		}
 		if (draftCodeFont !== app.codeFont) {
 			promises.push(actions.setCodeFont(draftCodeFont));
@@ -422,6 +428,51 @@
 										</div>
 										<div class="w-full p-2">
 											<ThemePreview theme={opt.value} />
+										</div>
+									</button>
+								{/each}
+							</div>
+						</div>
+
+						<div>
+							<h3 class="text-base font-semibold">Accent</h3>
+							<p class="mt-1 text-xs text-muted-foreground">
+								Color for primary buttons, highlights, links, and focus rings.
+							</p>
+
+							<div class="mt-4 grid grid-cols-2 gap-3">
+								{#each ACCENTS as opt (opt.id)}
+									{@const active = draftAccent === opt.id}
+									<button
+										type="button"
+										onclick={() => (draftAccent = opt.id)}
+										class={cn(
+											'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+											active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
+										)}
+									>
+										<div
+											class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+										>
+											<span
+												class={cn(
+													'grid size-3.5 place-items-center rounded-full border',
+													active
+														? 'border-primary bg-primary text-primary-foreground'
+														: 'border-border'
+												)}
+											>
+												{#if active}<Check class="size-2.5" />{/if}
+											</span>
+											{opt.label}
+										</div>
+										<div class="flex w-full items-center justify-center p-3">
+											<span
+												class="inline-flex h-7 items-center rounded-md px-4 text-xs font-semibold"
+												style="background: {opt.primary}; color: {opt.fg};"
+											>
+												Publish
+											</span>
 										</div>
 									</button>
 								{/each}

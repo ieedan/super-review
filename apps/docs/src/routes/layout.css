@@ -1,0 +1,149 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+@theme {
+	/* Near-black canvas with a warm off-white ink — the desktop app's monochrome
+	   palette, inverted to a confident dark marketing surface. */
+	--color-base: hsl(20 8% 4%);
+	--color-elevated: hsl(20 7% 7%);
+	--color-fg: hsl(30 14% 96%);
+	--color-muted: hsl(28 8% 64%);
+	--color-faint: hsl(24 6% 42%);
+	--color-line: hsl(28 9% 15%);
+	--color-line-bright: hsl(28 10% 22%);
+
+	/* Brand flame — pulled from the app icon's coral→red-orange gradient. */
+	--color-flame: hsl(11 100% 64%);
+	--color-flame-deep: hsl(6 88% 56%);
+	--color-flame-soft: hsl(16 100% 70%);
+
+	/* Diff signature — additions / deletions, fitting a code-review tool. */
+	--color-add: hsl(142 58% 52%);
+	--color-del: hsl(2 78% 63%);
+
+	--font-display: 'Red Hat Display', ui-sans-serif, system-ui, sans-serif;
+	--font-body: 'Red Hat Text', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'Red Hat Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+html {
+	scroll-behavior: smooth;
+	background: var(--color-base);
+}
+
+body {
+	font-family: var(--font-body);
+	color: var(--color-fg);
+	background: var(--color-base);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+	overflow-x: hidden;
+}
+
+::selection {
+	background: var(--color-flame);
+	color: hsl(20 8% 6%);
+}
+
+::-webkit-scrollbar {
+	width: 11px;
+	height: 11px;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--color-line-bright);
+	border-radius: 99px;
+	border: 3px solid var(--color-base);
+}
+
+/* Atmosphere: a fixed flame glow bleeding from the top, a faint grid, and a
+   film-grain overlay for texture. Layered behind all content. */
+.atmosphere {
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	overflow: hidden;
+}
+.atmosphere::before {
+	content: '';
+	position: absolute;
+	top: -28vh;
+	left: 50%;
+	width: 90vw;
+	height: 70vh;
+	transform: translateX(-50%);
+	background: radial-gradient(
+		50% 50% at 50% 50%,
+		hsl(11 100% 60% / 0.22),
+		hsl(6 88% 50% / 0.07) 45%,
+		transparent 72%
+	);
+	filter: blur(8px);
+}
+.grid-bg {
+	position: absolute;
+	inset: 0;
+	background-image:
+		linear-gradient(to right, hsl(28 9% 18% / 0.5) 1px, transparent 1px),
+		linear-gradient(to bottom, hsl(28 9% 18% / 0.5) 1px, transparent 1px);
+	background-size: 64px 64px;
+	mask-image: radial-gradient(120% 80% at 50% 0%, black, transparent 70%);
+	-webkit-mask-image: radial-gradient(120% 80% at 50% 0%, black, transparent 70%);
+}
+.grain {
+	position: fixed;
+	inset: 0;
+	z-index: 1;
+	pointer-events: none;
+	opacity: 0.035;
+	mix-blend-mode: screen;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Brand flame gradient — used on the wordmark and key accents. */
+.flame-text {
+	background: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep));
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+}
+
+/* Staggered page-load reveal. */
+@keyframes rise {
+	from {
+		opacity: 0;
+		transform: translateY(14px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+.reveal {
+	opacity: 0;
+	animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes float-window {
+	0%,
+	100% {
+		transform: translateY(0) rotate(0.4deg);
+	}
+	50% {
+		transform: translateY(-10px) rotate(0.4deg);
+	}
+}
+.float-window {
+	animation: float-window 7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+	.reveal,
+	.float-window {
+		animation: none;
+		opacity: 1;
+	}
+}

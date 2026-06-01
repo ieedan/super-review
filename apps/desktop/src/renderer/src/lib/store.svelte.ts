@@ -1,4 +1,5 @@
 import type {
+	Accent,
 	AppPlatform,
 	BranchInfo,
 	ChangedFile,
@@ -129,6 +130,7 @@ interface AppState {
 	animationsEnabled: boolean;
 	hotkeys: Hotkeys;
 	theme: 'light' | 'dark';
+	accent: Accent;
 	codeFont: string;
 	uiFont: string;
 	// Font families installed on the user's machine, queried lazily on launch.
@@ -277,6 +279,7 @@ const initial: AppState = {
 	animationsEnabled: false,
 	hotkeys: DEFAULT_HOTKEYS,
 	theme: 'dark',
+	accent: 'super',
 	codeFont: 'system',
 	uiFont: 'system',
 	systemFonts: [],
@@ -419,6 +422,17 @@ function applyTheme(theme: 'light' | 'dark'): void {
 	const root = document.documentElement;
 	root.classList.toggle('dark', theme === 'dark');
 	root.classList.toggle('light', theme === 'light');
+}
+
+// Accent palette. Each accent maps to an `.accent-*` class that overrides the
+// primary/ring/sidebar theme variables (see app.css). 'super' (the default
+// flame) needs no class — its values are the app.css defaults — but we still
+// add `accent-super` so swapping accents is a simple add/remove.
+const ACCENT_CLASSES = ['accent-super', 'accent-mono'];
+function applyAccent(accent: Accent): void {
+	const root = document.documentElement;
+	root.classList.remove(...ACCENT_CLASSES);
+	root.classList.add(`accent-${accent}`);
 }
 
 // Built-in fallback stacks — kept in sync with the defaults in app.css. A
@@ -915,6 +929,8 @@ export const actions = {
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
+		app.accent = app.prefs.accent ?? 'super';
+		applyAccent(app.accent);
 		app.codeFont = app.prefs.codeFont;
 		app.uiFont = app.prefs.uiFont;
 		applyFonts();
@@ -2363,6 +2379,12 @@ export const actions = {
 		app.theme = theme;
 		applyTheme(theme);
 		app.prefs = await window.api.state.setPrefs({ theme });
+	},
+
+	async setAccent(accent: Accent): Promise<void> {
+		app.accent = accent;
+		applyAccent(accent);
+		app.prefs = await window.api.state.setPrefs({ accent });
 	},
 
 	async setCodeFont(font: string): Promise<void> {

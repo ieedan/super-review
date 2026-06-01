@@ -39,6 +39,7 @@ const defaults: Schema = {
 		viewMode: 'split',
 		diffLayout: 'scroll',
 		theme: 'dark',
+		accent: 'super',
 		unstagedFileListLayout: 'tree',
 		branchFileListLayout: 'tree',
 		showFileIcons: true,

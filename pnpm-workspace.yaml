@@ -10,3 +10,4 @@ packages:
 onlyBuiltDependencies:
   - electron
   - esbuild
+  - '@tailwindcss/oxide'
