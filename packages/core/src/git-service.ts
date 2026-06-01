@@ -1010,9 +1010,9 @@ async function getStashDiff(repoPath: string, filePath: string, ref: string): Pr
 	};
 	const isBinary = ns.binary;
 
-	if (isUntracked) {
-		patch = ''; // synthesized below for text files
-	} else {
+	// Tracked files diff against the stash's HEAD parent; untracked files have no
+	// parent to diff, so `patch` stays empty here and is synthesized below.
+	if (!isUntracked) {
 		patch = await git.raw(['diff', `${ref}^1`, ref, '--', filePath]).catch(() => '');
 	}
 
