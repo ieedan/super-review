@@ -10,6 +10,7 @@ let branchState: BranchMenuState = {
 	onDefaultBranch: false,
 	hasChanges: false,
 	hasGithub: false,
+	hasUpstream: false,
 	branchPRNumber: null
 };
 
@@ -43,6 +44,11 @@ function buildBranchSubmenu(): MenuItemConstructorOptions[] {
 			s.hasRepo && !s.onDefaultBranch,
 			'Shift+CmdOrCtrl+U'
 		),
+		// Only forks have an upstream — hide the item entirely otherwise so the
+		// menu matches the repo, like GitHub Desktop.
+		...(s.hasUpstream
+			? [branchAction(`Update from upstream/${s.defaultBranch}`, 'updateFromUpstream', s.hasRepo)]
+			: []),
 		branchAction(
 			'Delete Branch…',
 			'deleteBranch',
