@@ -60,6 +60,7 @@ import {
 	listBranches,
 	listChangedFiles,
 	mergeIntoCurrent,
+	updateFromUpstream,
 	pinPRBaseRef,
 	pull,
 	push,
@@ -99,19 +100,22 @@ function repoOrThrow(id: string): RepoInfo {
 	return repo;
 }
 
-// A git-fetchable URL for the fork's upstream repo. Derived by swapping the
-// owner/repo segment of the fork's own remote URL so the auth method (SSH vs
-// HTTPS) and host are preserved; falls back to a public github.com HTTPS URL.
-function upstreamFetchUrl(repo: RepoInfo): string {
-	const { remoteUrl, githubOwner, githubRepo, upstreamOwner, upstreamRepo } = repo;
+// A git-fetchable URL for this fork's `owner/name` counterpart. Derived by
+// swapping the owner/repo segment of the fork's own remote URL so the auth
+// method (SSH vs HTTPS) and host are preserved; falls back to a public
+// github.com HTTPS URL.
+function repoFetchUrl(repo: RepoInfo, owner: string, name: string): string {
+	const { remoteUrl, githubOwner, githubRepo } = repo;
 	if (remoteUrl && githubOwner && githubRepo) {
-		const swapped = remoteUrl.replace(
-			`${githubOwner}/${githubRepo}`,
-			`${upstreamOwner}/${upstreamRepo}`
-		);
+		const swapped = remoteUrl.replace(`${githubOwner}/${githubRepo}`, `${owner}/${name}`);
 		if (swapped !== remoteUrl) return swapped;
 	}
-	return `https://github.com/${upstreamOwner}/${upstreamRepo}.git`;
+	return `https://github.com/${owner}/${name}.git`;
+}
+
+// A git-fetchable URL for the fork's upstream (parent) repo.
+function upstreamFetchUrl(repo: RepoInfo): string {
+	return repoFetchUrl(repo, repo.upstreamOwner ?? '', repo.upstreamRepo ?? '');
 }
 
 function broadcast(channel: string, payload: unknown): void {
@@ -426,6 +430,21 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle(
+		'git:updateFromUpstream',
+		async (_e, repoId: string, branch: string): Promise<PullPushResult> => {
+			const repo = repoOrThrow(repoId);
+			if (!repo.upstreamOwner || !repo.upstreamRepo) {
+				return {
+					ok: false,
+					conflicts: [],
+					error: 'This repository does not have an upstream.'
+				};
+			}
+			return updateFromUpstream(repo.path, upstreamFetchUrl(repo), branch);
+		}
+	);
+
+	ipcMain.handle(
 		'git:getConflicts',
 		async (_e, repoId: string): Promise<string[]> => getConflicts(repoOrThrow(repoId).path)
 	);
@@ -567,19 +586,31 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'github:fetchPR',
-		async (_e, repoId: string, prNumber: number): Promise<{ headRef: string; baseRef: string }> => {
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<{ headRef: string; baseRef: string }> => {
 			const repo = repoOrThrow(repoId);
-			if (!repo.githubOwner || !repo.githubRepo) {
+			// The PR's host (base) repo — the parent for an upstream PR on a fork,
+			// otherwise our own. Falls back to the active repo's coordinates.
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
 				throw new Error('This repository does not have a GitHub remote.');
 			}
-			const { baseRef } = await gh.getPRBase(
-				repo.githubOwner,
-				repo.githubRepo,
-				prNumber,
-				repo.githubAccountId
-			);
-			const refs = await fetchPRRef(repo.path, prNumber);
-			await pinPRBaseRef(repo.path, prNumber, baseRef);
+			const { baseRef } = await gh.getPRBase(owner, name, prNumber, repo.githubAccountId);
+			// When the PR's base repo isn't our origin (an upstream PR on a fork), its
+			// head and base refs live in that repo — fetch them from its URL so the
+			// diff compares against the upstream branch, not the fork's stale copy.
+			const isOrigin =
+				owner.toLowerCase() === (repo.githubOwner ?? '').toLowerCase() &&
+				name.toLowerCase() === (repo.githubRepo ?? '').toLowerCase();
+			const remote = isOrigin ? 'origin' : repoFetchUrl(repo, owner, name);
+			const refs = await fetchPRRef(repo.path, prNumber, remote);
+			await pinPRBaseRef(repo.path, prNumber, baseRef, remote);
 			return refs;
 		}
 	);

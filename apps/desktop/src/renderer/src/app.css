@@ -45,7 +45,6 @@
 }
 
 .dark {
-	color-scheme: dark;
 	--color-background: hsl(0 0% 6%);
 	--color-foreground: hsl(0 0% 98%);
 	--color-card: hsl(0 0% 8%);
@@ -87,6 +86,14 @@
 	--flame-gradient: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep));
 	/* Default-button shadow — soft flame glow; neutralized by .accent-mono. */
 	--btn-primary-shadow: 0 2px 8px -3px hsl(11 100% 55% / 0.5);
+}
+
+/* color-scheme drives native UI (scrollbars, form controls). `:root` and `.dark`
+   both target <html> with equal specificity, so the later `:root` rule would win
+   the cascade and force light scrollbars even in dark mode. Scope the dark value
+   to `:root.dark` so it outranks the base `:root` declaration. */
+:root.dark {
+	color-scheme: dark;
 }
 
 /* Monochrome accent — opt out of the brand flame. Reverts primary, ring, and

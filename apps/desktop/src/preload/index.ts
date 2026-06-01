@@ -82,6 +82,8 @@ const api: PreloadAPI = {
 		push: (repoId) => ipcRenderer.invoke('git:push', repoId) as Promise<PullPushResult>,
 		mergeIntoCurrent: (repoId, ref) =>
 			ipcRenderer.invoke('git:mergeIntoCurrent', repoId, ref) as Promise<PullPushResult>,
+		updateFromUpstream: (repoId, branch) =>
+			ipcRenderer.invoke('git:updateFromUpstream', repoId, branch) as Promise<PullPushResult>,
 		getConflicts: (repoId) => ipcRenderer.invoke('git:getConflicts', repoId) as Promise<string[]>,
 		recheckConflicts: (repoId, files) =>
 			ipcRenderer.invoke('git:recheckConflicts', repoId, files) as Promise<string[]>,
@@ -132,8 +134,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('github:listPRs', repoId, page, source) as Promise<PRSummary[]>,
 		detectUpstream: (repoId) =>
 			ipcRenderer.invoke('github:detectUpstream', repoId) as Promise<RepoInfo | null>,
-		fetchPR: (repoId, prNumber) =>
-			ipcRenderer.invoke('github:fetchPR', repoId, prNumber) as Promise<{
+		fetchPR: (repoId, prNumber, owner, repo) =>
+			ipcRenderer.invoke('github:fetchPR', repoId, prNumber, owner, repo) as Promise<{
 				headRef: string;
 				baseRef: string;
 			}>,

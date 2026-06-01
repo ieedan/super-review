@@ -128,6 +128,17 @@
 			file.additions === 0 &&
 			file.deletions === 0
 	);
+	// The pre-rename path, when this is a rename/copy that actually moved. Git
+	// occasionally reports a rename whose old and new paths match (e.g. a
+	// case-only change on a case-insensitive FS round-tripped) — guard against
+	// it so we don't render a pointless `foo → foo`.
+	const renameFrom = $derived(
+		(file.status === 'renamed' || file.status === 'copied') &&
+			file.oldPath &&
+			file.oldPath !== file.path
+			? file.oldPath
+			: null
+	);
 	const isDeleted = $derived(file.status === 'deleted');
 	// Image files are rendered side by side (raster) or get a code/image toggle
 	// (SVG), so the usual "renamed"/"deleted" one-liners don't apply — we still
@@ -716,6 +727,13 @@
 			}
 			return;
 		}
+		// Don't render into a hidden host. Pierre measures the container while it
+		// renders, and inside a `display:none` subtree (the code host is hidden
+		// whenever the Markdown/image preview is shown) it measures 0×0 and stays
+		// collapsed even after the host is revealed — so toggling back to Code
+		// would show a blank diff. Defer until the code view is actually visible;
+		// flipping the preview off re-runs this effect (hostVisible is reactive).
+		if (!hostVisible) return;
 		queueRender(diffData!, target);
 	});
 
@@ -824,6 +842,9 @@
 	const showImageView = $derived(isImage && (file.isBinary || showPreview));
 	// When to render the Markdown HTML instead of the source diff.
 	const showMarkdownView = $derived(showPreview && isMarkdown);
+	// Whether the source-diff host is on screen (not replaced by a preview). The
+	// render effect gates on this so Pierre never paints into a hidden host.
+	const hostVisible = $derived(!showMarkdownView && !showImageView);
 	// Rendered preview HTML. Shiki highlighting is async, so we compute it in an
 	// effect and stash the result instead of deriving synchronously. We keep the
 	// previous HTML on screen while a re-render is in flight (e.g. theme change)
@@ -1022,6 +1043,17 @@
 	</header>
 
 	<div class="bg-card/20" hidden={!expanded}>
+		{#if renameFrom}
+			<!-- The header only has room for the new path, so surface where the file
+			     moved from here in the body where long paths can wrap. -->
+			<div
+				class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 py-2 font-mono text-xs"
+			>
+				<span class="break-all text-muted-foreground">{renameFrom}</span>
+				<span class="shrink-0 text-muted-foreground">→</span>
+				<span class="break-all">{file.path}</span>
+			</div>
+		{/if}
 		{#if showMarkdownView}
 			{#if previewHtml}
 				<!-- previewHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
