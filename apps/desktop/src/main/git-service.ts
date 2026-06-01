@@ -385,7 +385,6 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 	let remoteUrl: string | undefined;
 	let githubOwner: string | undefined;
 	let githubRepo: string | undefined;
-	let defaultBranch: string | undefined;
 	try {
 		const remotes = await git.getRemotes(true);
 		const origin = remotes.find((r) => r.name === 'origin') ?? remotes[0];
@@ -409,7 +408,7 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 	} catch (err) {
 		console.error(`[repo] buildRepoInfo "${name}" failed to read remotes:`, err);
 	}
-	defaultBranch = await detectDefaultBranch(git);
+	const defaultBranch = await detectDefaultBranch(git);
 	const iconDataUrl = await findRepoIcon(repoPath);
 	const description = await readRepoDescription(repoPath);
 	return {
