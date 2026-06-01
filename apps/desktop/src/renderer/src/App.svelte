@@ -19,8 +19,19 @@
 	import type { PaneAPI } from 'paneforge';
 	import { actions, setError, app } from '$lib/store.svelte';
 	import { initDiffHighlighter } from '$lib/diff-highlighter';
+	import { initDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { setAnimations } from '$lib/hooks/use-animations.svelte';
 	import { matchesHotkey } from '@shared/hotkeys';
+	import { Agentation, type AnnotationProps } from 'sv-agentation';
+
+	// Dev-only in-app inspector for annotating elements to hand back as feedback.
+	// `import.meta.env.DEV` is Vite's compile-time flag, so the component and its
+	// import are tree-shaken out of production builds. The renderer has no SSR, so
+	// no browser guard is needed. Absolute path to the desktop app so Agentation's
+	// source links resolve to the real files on disk.
+	const annotationProps: AnnotationProps = {
+		workspaceRoot: '/Users/ieedan/Documents/github/super-local-review/apps/desktop'
+	};
 
 	// Share the user's animation preference with the whole component tree so
 	// shadcn-svelte primitives can opt in/out of their motion classes via
@@ -32,8 +43,13 @@
 	const CHECKS_POLL_MS = 20 * 1000;
 
 	// Kick off the shiki highlighter preload early so the very first diff —
-	// including the settings preview — has a warm singleton.
+	// including the settings preview — has a warm singleton. This also serves as
+	// the main-thread fallback if the worker pool can't start.
 	initDiffHighlighter();
+
+	// Spin up the diff render worker pool so highlighting/diff-AST work happens
+	// off the main thread, keeping the UI responsive while diffs paint.
+	initDiffWorkerPool();
 
 	// Imperative handle on the sidebar pane, used by Cmd+B and the
 	// SidebarTrigger button to collapse/expand without dragging.
@@ -283,3 +299,7 @@
 <GithubSignInDialog />
 <CommandPalette />
 <ConfirmDeleteDialog />
+
+{#if import.meta.env.DEV}
+	<Agentation {...annotationProps} />
+{/if}

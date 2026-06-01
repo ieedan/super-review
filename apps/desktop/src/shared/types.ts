@@ -444,6 +444,17 @@ export interface CommitResult {
 	error?: string;
 }
 
+// One file's contribution to a commit. For whole-file staging only `path`
+// (and `oldPath` for renames) is set and the file's full working-tree version
+// is committed. For partial (line/hunk) staging `patch` carries a ready-to-
+// apply unified diff (HEAD -> the desired subset of changes); the backend
+// applies it to a scratch index so only the selected lines land in the commit.
+export interface CommitFileSelection {
+	path: string;
+	oldPath?: string;
+	patch?: string;
+}
+
 export interface LastCommit {
 	hash: string;
 	subject: string;
@@ -636,7 +647,10 @@ export interface PreloadAPI {
 		discardChanges(repoId: string, filePath: string, oldPath?: string): Promise<void>;
 		continueMerge(repoId: string): Promise<PullPushResult>;
 		abortMerge(repoId: string): Promise<void>;
-		commit(repoId: string, message: string, paths: string[]): Promise<CommitResult>;
+		// Stage and commit the given files. Each entry is either a whole-file
+		// selection or a partial one carrying a unified diff to apply (line/hunk
+		// staging) — see CommitFileSelection.
+		commit(repoId: string, message: string, files: CommitFileSelection[]): Promise<CommitResult>;
 		getLastCommit(repoId: string): Promise<LastCommit | null>;
 		undoLastCommit(repoId: string): Promise<CommitResult>;
 		cloneRepo(url: string): Promise<CloneResult>;
