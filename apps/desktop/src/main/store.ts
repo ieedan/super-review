@@ -134,6 +134,37 @@ export function setRepoUpstream(
 	return next;
 }
 
+// Record that a project was converted to a fork: `origin` now points at the
+// user's fork (so `githubOwner/githubRepo/remoteUrl` describe the fork). When
+// `upstream` is given (contributing to the parent), it's kept as the upstream so
+// the PR list / "Create PR" / "Update from upstream" target the parent; null
+// (working on the fork "for my own purposes") clears any upstream.
+export function setRepoFork(
+	repoId: string,
+	fork: { owner: string; repo: string; url: string },
+	upstream: { owner: string; repo: string } | null
+): RepoInfo | null {
+	const repos = store.get('repos');
+	const repo = repos[repoId];
+	if (!repo) return null;
+	const next: RepoInfo = {
+		...repo,
+		githubOwner: fork.owner,
+		githubRepo: fork.repo,
+		remoteUrl: fork.url
+	};
+	if (upstream) {
+		next.upstreamOwner = upstream.owner;
+		next.upstreamRepo = upstream.repo;
+	} else {
+		delete next.upstreamOwner;
+		delete next.upstreamRepo;
+	}
+	repos[repoId] = next;
+	store.set('repos', repos);
+	return next;
+}
+
 // Remember (or, when link is null, forget) which PR a checked-out branch maps
 // to so the UI can resolve it later regardless of head-based API lookups.
 export function setPRBranch(repoId: string, branch: string, link: PRBranchLink | null): void {

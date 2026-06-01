@@ -44,7 +44,8 @@ import {
 	prsSourceByRepo,
 	filesCache,
 	diffCache,
-	prPushAccess
+	prPushAccess,
+	repoPushAccessChecked
 } from '$lib/store-cache';
 
 // Re-export so existing component imports (`from '$lib/store.svelte'`) keep
@@ -179,6 +180,8 @@ interface AppState {
 	editors: Record<EditorKind, boolean>;
 	terminals: Record<TerminalKind, boolean>;
 	settingsDialogOpen: boolean;
+	// Whether the per-repo Repository Settings dialog is open (Fork Behavior, …).
+	repoSettingsDialogOpen: boolean;
 	// Cmd/Ctrl+K fuzzy file-search palette. Opened from the header search box or
 	// the global shortcut; selecting a file scrolls the diff to it.
 	commandMenuOpen: boolean;
@@ -197,6 +200,21 @@ interface AppState {
 	// null while unknown / not applicable; drives the commit-box warning so it
 	// only fires when a push would actually be rejected.
 	branchPRPushAccess: boolean | null;
+	// Whether the active account can push to the repo's `origin` (the original
+	// repo). null while unknown / not applicable (no GitHub remote, no account).
+	// false drives the "create a fork" banner and gates commit/push through the
+	// fork dialog.
+	repoPushAccess: boolean | null;
+	// Set when the user is asked to fork (no write access + tried to commit/push,
+	// or clicked the banner link). `intent` is the action to resume after the fork
+	// is created; `commit` carries the pending commit message when intent ===
+	// 'commit'. Drives ForkDialog. Cleared on cancel/confirm.
+	forkPrompt: {
+		owner: string;
+		repo: string;
+		intent: 'commit' | 'push';
+		commit?: { summary: string; description: string };
+	} | null;
 	// Set when a checked-out branch's PR is observed transitioning unmerged →
 	// merged, driving the "switch back to the default branch?" dialog. Cleared
 	// when the user confirms or dismisses. Never set by merely navigating to an
@@ -218,7 +236,15 @@ interface AppState {
 	createBranchDialogOpen: boolean;
 	push: {
 		inProgress: boolean;
-		stage: 'idle' | 'fetching' | 'committing' | 'pulling' | 'pushing' | 'conflicts' | 'done';
+		stage:
+			| 'idle'
+			| 'fetching'
+			| 'committing'
+			| 'pulling'
+			| 'pushing'
+			| 'forking'
+			| 'conflicts'
+			| 'done';
 		intent: 'push' | 'pull';
 		error: string | null;
 	};
@@ -348,6 +374,7 @@ const initial: AppState = {
 		powershell: false
 	},
 	settingsDialogOpen: false,
+	repoSettingsDialogOpen: false,
 	commandMenuOpen: false,
 	githubSignInOpen: false,
 	pushStatus: null,
@@ -355,6 +382,8 @@ const initial: AppState = {
 	branchPR: null,
 	branchPRChecks: null,
 	branchPRPushAccess: null,
+	repoPushAccess: null,
+	forkPrompt: null,
 	mergedSwitchPrompt: null,
 	mergedRemovePrompt: null,
 	activePR: null,
@@ -385,6 +414,20 @@ let prsPage = 0;
 // otherwise the repo's own remote.
 function defaultPRSource(repo: RepoInfo | null): PRSource {
 	return repo?.upstreamOwner && repo.upstreamRepo ? 'upstream' : 'fork';
+}
+
+// The GitHub repo that "View on GitHub" / "Create Issue" should target: the
+// upstream parent for a fork contributing to it, otherwise the repo's own remote.
+// null when there's no GitHub remote.
+function githubHostRepo(): { owner: string; repo: string } | null {
+	const repo = app.activeRepo;
+	if (repo?.upstreamOwner && repo.upstreamRepo) {
+		return { owner: repo.upstreamOwner, repo: repo.upstreamRepo };
+	}
+	if (repo?.githubOwner && repo.githubRepo) {
+		return { owner: repo.githubOwner, repo: repo.githubRepo };
+	}
+	return null;
 }
 
 // Resolve (once per repo) whether the active repo is a fork and, if so, its
@@ -602,6 +645,16 @@ export const EDITOR_LABELS: Record<EditorKind, string> = {
 	visualstudio: 'Visual Studio'
 };
 
+// Human-readable names for each terminal, shown in menus ("Open in <terminal>").
+export const TERMINAL_LABELS: Record<TerminalKind, string> = {
+	terminal: 'Terminal',
+	iterm: 'iTerm',
+	warp: 'Warp',
+	ghostty: 'Ghostty',
+	cmd: 'Command Prompt',
+	powershell: 'PowerShell'
+};
+
 // Editor the user has configured, falling back to whichever is detected.
 // Returns null when nothing is available.
 export function effectiveEditor(): EditorKind | null {
@@ -805,6 +858,9 @@ async function performSwitchBackAfterMerge(branch: string, defaultBranch: string
 // the repo has a GitHub remote and the user is signed in. Failures are silent
 // — the primary action button just falls back to "Create PR".
 async function refreshBranchPR(): Promise<void> {
+	// Resolve write-access to the repo's origin (drives the fork banner/dialog).
+	// Independent of the branch-PR prerequisites below, so kick it off first.
+	void refreshRepoPushAccess();
 	if (
 		!app.activeRepo ||
 		!app.activeRepo.githubOwner ||
@@ -913,6 +969,30 @@ async function refreshBranchPRPushAccess(): Promise<void> {
 		if (app.branchPR?.number === pr.number) app.branchPRPushAccess = can;
 	} catch {
 		// Leave unknown — better no warning than a wrong one.
+	}
+}
+
+// Whether the active account can push to the repo's `origin`. Cached per repo
+// for the session, so we hit the GitHub API at most once per repo. Leaves the
+// answer unknown (null) when there's no GitHub remote / account, or on error —
+// the fork banner only shows on a definitive `false`.
+async function refreshRepoPushAccess(): Promise<void> {
+	const repo = app.activeRepo;
+	if (!repo || !repo.githubOwner || !repo.githubRepo || !app.activeGithubAccount) {
+		app.repoPushAccess = null;
+		return;
+	}
+	const cached = repoPushAccessChecked.get(repo.id);
+	if (cached !== undefined) {
+		app.repoPushAccess = cached;
+		return;
+	}
+	try {
+		const can = await window.api.github.getRepoPushAccess(repo.id);
+		repoPushAccessChecked.set(repo.id, can);
+		if (app.activeRepo?.id === repo.id) app.repoPushAccess = can;
+	} catch {
+		// Leave unknown — better no banner than a wrong one.
 	}
 }
 
@@ -1310,6 +1390,10 @@ export const actions = {
 			prsPage = 0;
 			app.prsSource = prsSourceByRepo.get(repo.id) ?? defaultPRSource(repo);
 			app.branchPR = null;
+			// Don't carry the previous repo's fork prompt / push-access answer over;
+			// they're re-resolved for the new repo by refreshBranchPR below.
+			app.forkPrompt = null;
+			app.repoPushAccess = null;
 			await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
 			await refreshBranchPR();
 			void refreshSkillInstalled();
@@ -2238,12 +2322,21 @@ export const actions = {
 			await window.api.shell.openExternal(app.branchPR.url);
 			return;
 		}
-		const base = repo.defaultBranch ?? 'main';
 		const head = app.currentBranch ?? '';
 		if (!head) return;
-		const url = `https://github.com/${repo.githubOwner}/${repo.githubRepo}/compare/${encodeURIComponent(
-			base
-		)}...${encodeURIComponent(head)}?expand=1`;
+		// For a fork contributing to its parent, the PR is opened against the
+		// upstream repo and the head branch must be qualified with the fork owner
+		// (`owner:branch`) since it lives in a different repo. Otherwise compare
+		// within the repo's own remote.
+		const base = repo.defaultBranch ?? 'main';
+		const url =
+			repo.upstreamOwner && repo.upstreamRepo
+				? `https://github.com/${repo.upstreamOwner}/${repo.upstreamRepo}/compare/${encodeURIComponent(
+						base
+					)}...${encodeURIComponent(`${repo.githubOwner}:${head}`)}?expand=1`
+				: `https://github.com/${repo.githubOwner}/${repo.githubRepo}/compare/${encodeURIComponent(
+						base
+					)}...${encodeURIComponent(head)}?expand=1`;
 		await window.api.shell.openExternal(url);
 	},
 
@@ -2416,6 +2509,70 @@ export const actions = {
 			if (app.push.stage !== 'conflicts') {
 				app.push.inProgress = false;
 			}
+		}
+	},
+
+	// Open the "fork this repository?" dialog. `intent` is the action to resume
+	// once the fork exists; for 'commit' the pending message rides along so the
+	// commit runs after forking. No-op without a GitHub remote.
+	promptFork(intent: 'commit' | 'push', commit?: { summary: string; description: string }): void {
+		const repo = app.activeRepo;
+		if (!repo || !repo.githubOwner || !repo.githubRepo) return;
+		app.forkPrompt = { owner: repo.githubOwner, repo: repo.githubRepo, intent, commit };
+	},
+
+	// Dismiss the fork dialog without forking (Cancel = abort the action). Ignored
+	// mid-fork so the dialog can't be torn out from under an in-flight request.
+	cancelFork(): void {
+		if (app.push.inProgress && app.push.stage === 'forking') return;
+		app.forkPrompt = null;
+	},
+
+	// Create the fork, repoint the local remotes at it (origin → fork; upstream →
+	// parent when contributing to it), then resume the action that triggered the
+	// prompt. Pushes land on the fork from here on. `contributeToParent` mirrors
+	// GitHub Desktop's fork-use choice — it decides whether PRs/sync target the
+	// parent or the fork itself.
+	async confirmFork(contributeToParent: boolean): Promise<void> {
+		const prompt = app.forkPrompt;
+		if (!prompt || !app.activeRepo || app.push.inProgress) return;
+		const repoId = app.activeRepo.id;
+		app.push = { inProgress: true, stage: 'forking', intent: 'push', error: null };
+		try {
+			const fork = await window.api.github.createFork(repoId);
+			const updated = await window.api.git.convertToFork(
+				repoId,
+				fork.owner,
+				fork.repo,
+				contributeToParent
+			);
+			if (app.activeRepo?.id === updated.id) {
+				app.activeRepo = updated;
+				const idx = app.repos.findIndex((r) => r.id === updated.id);
+				if (idx !== -1) app.repos[idx] = updated;
+			}
+			// Origin is now the user's fork — they can push. Update the cached answer
+			// so the banner doesn't reappear, and let the upstream/PR-source resolve
+			// against the new parent on the next PR load.
+			repoPushAccessChecked.set(repoId, true);
+			app.repoPushAccess = true;
+			upstreamChecked.delete(repoId);
+			app.forkPrompt = null;
+			// Hand off to commit()/push(), which run their own app.push lifecycle.
+			app.push.inProgress = false;
+			app.push.stage = 'idle';
+			if (prompt.intent === 'commit' && prompt.commit) {
+				const ok = await actions.commit(prompt.commit.summary, prompt.commit.description);
+				if (ok) await actions.push();
+			} else {
+				await actions.push();
+			}
+		} catch (err) {
+			app.push.error = err instanceof Error ? err.message : String(err);
+			setError(app.push.error);
+			app.forkPrompt = null;
+			app.push.inProgress = false;
+			app.push.stage = 'idle';
 		}
 	},
 
@@ -2677,14 +2834,22 @@ export const actions = {
 		if (!result.ok && result.error) setError(result.error);
 	},
 
-	// Open the repository's page on GitHub in the default browser. No-op when
-	// there's no GitHub remote.
+	// Open the repository's page on GitHub in the default browser. For a fork
+	// contributing to its parent, opens the parent (matching GitHub Desktop). No-op
+	// when there's no GitHub remote.
 	async openRepoOnGithub(): Promise<void> {
-		const repo = app.activeRepo;
-		if (!repo?.githubOwner || !repo.githubRepo) return;
-		await window.api.shell.openExternal(
-			`https://github.com/${repo.githubOwner}/${repo.githubRepo}`
-		);
+		const host = githubHostRepo();
+		if (!host) return;
+		await window.api.shell.openExternal(`https://github.com/${host.owner}/${host.repo}`);
+	},
+
+	// Open GitHub's "new issue" page in the browser. Targets the upstream parent
+	// for a fork contributing to it (matching GitHub Desktop). No-op without a
+	// GitHub remote.
+	async createIssueOnGithub(): Promise<void> {
+		const host = githubHostRepo();
+		if (!host) return;
+		await window.api.shell.openExternal(`https://github.com/${host.owner}/${host.repo}/issues/new`);
 	},
 
 	// Open a file with the OS default program for its type.
@@ -2856,6 +3021,38 @@ export const actions = {
 	},
 	closeSettingsDialog(): void {
 		app.settingsDialogOpen = false;
+	},
+
+	openRepoSettingsDialog(): void {
+		if (!app.activeRepo) return;
+		app.repoSettingsDialogOpen = true;
+	},
+	closeRepoSettingsDialog(): void {
+		app.repoSettingsDialogOpen = false;
+	},
+
+	// Change an existing fork's contribution target (Fork Behavior settings).
+	// Wires up or tears down the upstream parent, then refreshes the repo so the
+	// PR list / "Create PR" / "View on GitHub" follow the new target.
+	async setForkBehavior(contributeToParent: boolean): Promise<void> {
+		const repo = app.activeRepo;
+		if (!repo) return;
+		try {
+			const updated = await window.api.git.setForkContribution(repo.id, contributeToParent);
+			if (app.activeRepo?.id === updated.id) {
+				app.activeRepo = updated;
+				const idx = app.repos.findIndex((r) => r.id === updated.id);
+				if (idx !== -1) app.repos[idx] = updated;
+			}
+			// The upstream changed — let the PR source resolve against it again.
+			upstreamChecked.delete(repo.id);
+			prsSourceByRepo.delete(repo.id);
+			if (app.activeRepo?.id === repo.id) {
+				app.prsSource = defaultPRSource(app.activeRepo);
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
 	},
 
 	openCommandMenu(): void {

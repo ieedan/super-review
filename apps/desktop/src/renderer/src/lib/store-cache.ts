@@ -28,3 +28,7 @@ export const diffCache = new Map<string, DiffData>();
 // Push-access answers are stable for a session, so cache per repo+PR to avoid
 // re-hitting the API on every branch-PR refresh.
 export const prPushAccess = new Map<string, boolean>();
+
+// Whether the account can push to each repo's `origin`, cached per repo so the
+// fork banner/detection only hits the GitHub API once per repo per session.
+export const repoPushAccessChecked = new Map<string, boolean>();

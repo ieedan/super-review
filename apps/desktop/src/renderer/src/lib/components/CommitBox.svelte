@@ -60,9 +60,19 @@
 	const branch = $derived(app.currentBranch ?? 'detached HEAD');
 	const canCommit = $derived(!busy && fileCount > 0 && summary.trim().length > 0);
 
+	// No write access to origin — committing/pushing has to go through a fork
+	// first (GitHub Desktop parity). false only on a definitive "no" from the API.
+	const needsFork = $derived(app.repoPushAccess === false);
+
 	async function submit(e?: Event): Promise<void> {
 		e?.preventDefault();
 		if (!canCommit) return;
+		// Can't push to this repo — ask to fork first; the message rides along and
+		// the commit runs once the fork exists (see actions.confirmFork).
+		if (needsFork) {
+			actions.promptFork('commit', { summary, description });
+			return;
+		}
 		const repoId = app.activeRepo?.id;
 		const ok = await actions.commit(summary, description);
 		if (ok) {
@@ -71,6 +81,21 @@
 			if (repoId) clearDraft(repoId);
 		}
 	}
+
+	// Clear the box once a commit-intent fork resolves successfully (the commit
+	// ran inside confirmFork, so submit() never got to clear it here). A cancel
+	// leaves repoPushAccess false, so the text is preserved.
+	let prevForkIntent: 'commit' | 'push' | null = null;
+	$effect(() => {
+		const intent = app.forkPrompt?.intent ?? null;
+		if (prevForkIntent === 'commit' && app.forkPrompt === null && app.repoPushAccess === true) {
+			const repoId = app.activeRepo?.id;
+			summary = '';
+			description = '';
+			if (repoId) clearDraft(repoId);
+		}
+		prevForkIntent = intent;
+	});
 
 	function onKeydown(e: KeyboardEvent): void {
 		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -159,6 +184,24 @@
 		disabled={busy}
 		class="min-h-0 resize-none px-2 py-1.5 text-xs"
 	/>
+
+	{#if needsFork}
+		<div
+			class="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] text-muted-foreground"
+		>
+			<TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-warning" />
+			<span>
+				You don't have write access to <span class="font-medium text-foreground"
+					>{app.activeRepo?.githubOwner}/{app.activeRepo?.githubRepo}</span
+				>. Want to
+				<button
+					type="button"
+					class="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+					onclick={() => actions.promptFork('push')}>create a fork</button
+				>?
+			</span>
+		</div>
+	{/if}
 
 	{#if foreignPR && pushAccess === false}
 		<div

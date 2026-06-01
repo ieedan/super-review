@@ -333,7 +333,7 @@ export type BranchContextMenuAction = 'copy' | 'delete';
 
 // Actions a repo row's native context menu can return. `null` (from the IPC)
 // means the menu was dismissed without a choice.
-export type RepoContextMenuAction = 'copyPath' | 'reveal' | 'remove';
+export type RepoContextMenuAction = 'copyPath' | 'reveal' | 'remove' | 'settings';
 
 // Items in the native application menu's "Branch" submenu. The main process
 // sends the chosen action to the focused renderer, which runs the matching
@@ -363,6 +363,37 @@ export interface BranchMenuState {
 	hasUpstream: boolean;
 	// The open PR for the current branch, if any — flips "Create" to "View".
 	branchPRNumber: number | null;
+}
+
+// Items in the native application menu's "Repository" submenu. Mirrors GitHub
+// Desktop's Repository menu; the main process sends the chosen action to the
+// focused renderer, which runs the matching store flow.
+export type RepositoryMenuAction =
+	| 'push'
+	| 'pull'
+	| 'fetch'
+	| 'remove'
+	| 'viewOnGithub'
+	| 'openInTerminal'
+	| 'showInFinder'
+	| 'openInEditor'
+	| 'createIssue'
+	| 'settings';
+
+// Renderer-computed state deciding which "Repository" menu items are enabled and
+// their dynamic labels. Items whose label is null are hidden (no editor/terminal
+// detected), matching the rest of the menu's "show what applies" behavior.
+export interface RepositoryMenuState {
+	hasRepo: boolean;
+	// Whether `origin` exists — gates Push/Pull/Fetch.
+	hasRemote: boolean;
+	// Whether the repo has a GitHub remote — gates View on GitHub / Create Issue.
+	hasGithub: boolean;
+	// "Open in <editor>" / "Open in <terminal>" labels (null → item hidden).
+	editorLabel: string | null;
+	terminalLabel: string | null;
+	// Platform-specific file-manager label, e.g. "Show in Finder".
+	revealLabel: string;
 }
 
 // What the renderer hands the main process to build a repo row's native menu.
@@ -694,6 +725,22 @@ export interface PreloadAPI {
 		getLastCommit(repoId: string): Promise<LastCommit | null>;
 		undoLastCommit(repoId: string): Promise<CommitResult>;
 		cloneRepo(url: string): Promise<CloneResult>;
+		// Repoint `origin` at the user's fork (GitHub Desktop's fork layout). When
+		// `contributeToParent` is true the original is kept as `upstream` so the PR
+		// list / "Create PR" target the parent; false works the fork standalone.
+		// Returns the refreshed RepoInfo describing the fork; the caller then
+		// commits/pushes through the normal path.
+		convertToFork(
+			repoId: string,
+			forkOwner: string,
+			forkRepo: string,
+			contributeToParent: boolean
+		): Promise<RepoInfo>;
+		// Change an existing fork's contribution target: when `contributeToParent`
+		// is true, wire up the parent as `upstream` (so PRs/sync target it); false
+		// clears the upstream and works the fork standalone. Returns the refreshed
+		// RepoInfo. Backs the Fork Behavior settings pane.
+		setForkContribution(repoId: string, contributeToParent: boolean): Promise<RepoInfo>;
 	};
 	editor: {
 		detect(): Promise<Record<EditorKind, boolean>>;
@@ -718,6 +765,16 @@ export interface PreloadAPI {
 		// Resolve (and persist) the repo's upstream/parent if it's a fork. Returns
 		// the updated RepoInfo (with upstreamOwner/upstreamRepo set or cleared).
 		detectUpstream(repoId: string): Promise<RepoInfo | null>;
+		// Whether the project's account can push to `origin`'s repo. False when
+		// there's no GitHub remote (or the lookup fails) — drives the "fork this
+		// repo" banner/dialog when the user lacks write access.
+		getRepoPushAccess(repoId: string): Promise<boolean>;
+		// Fork the project's `origin` repo under the account; returns the fork's
+		// owner/name. Pair with git.convertToFork to rewire the local remotes.
+		createFork(repoId: string): Promise<{ owner: string; repo: string }>;
+		// The parent of the repo's `origin` if it's a GitHub fork, else null. A
+		// pure read (no persistence) — drives the Fork Behavior settings pane.
+		getRepoParent(repoId: string): Promise<{ owner: string; repo: string } | null>;
 		// `owner`/`repo` name the PR's host (base) repo — the parent for an upstream
 		// PR on a fork — so the head and base refs are fetched from the right repo.
 		// Omitted, they fall back to the active repo's own coordinates.
@@ -833,6 +890,8 @@ export interface PreloadAPI {
 		// Push the latest Branch-menu enablement/labels to the main process so it
 		// can rebuild the native application menu. Fire-and-forget.
 		setBranchState(state: BranchMenuState): void;
+		// Push the latest Repository-menu enablement/labels to the main process.
+		setRepositoryState(state: RepositoryMenuState): void;
 	};
 	windowControls: {
 		// Re-center the macOS traffic lights for the renderer's current zoom factor.
@@ -842,6 +901,8 @@ export interface PreloadAPI {
 		onRepoChanged(handler: (repo: RepoInfo | null) => void): () => void;
 		// A native "Branch" menu item was chosen. Returns an unsubscribe fn.
 		onBranchMenuAction(handler: (action: BranchMenuAction) => void): () => void;
+		// A native "Repository" menu item was chosen. Returns an unsubscribe fn.
+		onRepositoryMenuAction(handler: (action: RepositoryMenuAction) => void): () => void;
 		// A background "move to Trash" (after removing a repo) failed; the payload
 		// is the repo's name. Returns an unsubscribe fn.
 		onRepoTrashFailed(handler: (name: string) => void): () => void;

@@ -4,6 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    sv-agentation:
+      specifier: ^0.3.1
+      version: 0.3.1
+
 importers:
 
   .:
@@ -99,7 +105,7 @@ importers:
         specifier: ^3.27.0
         version: 3.36.0
       sv-agentation:
-        specifier: ^0.3.1
+        specifier: 'catalog:'
         version: 0.3.1(react@19.2.6)(svelte@5.55.9(@typescript-eslint/types@8.60.0))
       svelte-tiny-virtual-list:
         specifier: ^3.0.1
@@ -187,7 +193,7 @@ importers:
   apps/docs:
     dependencies:
       sv-agentation:
-        specifier: ^0.3.1
+        specifier: 'catalog:'
         version: 0.3.1(react@19.2.6)(svelte@5.55.9(@typescript-eslint/types@8.60.0))
     devDependencies:
       '@sveltejs/adapter-static':

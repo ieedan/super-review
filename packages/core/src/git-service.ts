@@ -1304,6 +1304,22 @@ async function ensureUpstreamRemote(git: SimpleGit, url: string): Promise<void> 
 	}
 }
 
+// Point the `upstream` remote at `url` (creating or repointing it). Used when
+// switching an existing fork to "contribute to the parent".
+export async function addUpstreamRemote(repoPath: string, url: string): Promise<void> {
+	await ensureUpstreamRemote(simpleGit(repoPath), url);
+}
+
+// Drop the `upstream` remote if present — when a fork is switched to "for my own
+// purposes" it no longer tracks a parent. No-op when there's no upstream remote.
+export async function removeUpstreamRemote(repoPath: string): Promise<void> {
+	const git = simpleGit(repoPath);
+	const remotes = await git.getRemotes().catch(() => []);
+	if (remotes.some((r) => r.name === 'upstream')) {
+		await git.removeRemote('upstream');
+	}
+}
+
 // GitHub Desktop's "Update from upstream/<branch>": for a fork, fetch the parent
 // repo's <branch> and merge it into the current branch. Reuses mergeIntoCurrent
 // so any conflicts flow through the same dialog as updateFromDefault.
@@ -1857,6 +1873,26 @@ export async function setOriginAndPush(
 			error: err instanceof Error ? err.message : String(err)
 		};
 	}
+}
+
+// Repoint `origin` at the user's fork — GitHub Desktop's fork layout (push to
+// your fork). When `upstreamUrl` is given (contributing to the parent), the
+// original repo is kept as `upstream` for syncing/PRs; omit it for a fork worked
+// on "for my own purposes". No push: the caller commits/pushes through the
+// normal path afterward, where `push()` sets the branch's upstream to `origin`.
+export async function convertToForkRemotes(
+	repoPath: string,
+	forkUrl: string,
+	upstreamUrl?: string | null
+): Promise<void> {
+	const git = simpleGit(repoPath);
+	const remotes = await git.getRemotes().catch(() => []);
+	if (remotes.some((r) => r.name === 'origin')) {
+		await git.raw(['remote', 'set-url', 'origin', forkUrl]);
+	} else {
+		await git.raw(['remote', 'add', 'origin', forkUrl]);
+	}
+	if (upstreamUrl) await ensureUpstreamRemote(git, upstreamUrl);
 }
 
 export async function fetchOrigin(repoPath: string): Promise<{ ok: boolean; error?: string }> {
