@@ -101,8 +101,8 @@ return to the list.
 ### Documenting a session (CLI)
 
 Agents record a session with the standalone `super-review` CLI (the
-`@super-review/cli` package; once published, `npx super-review`, or build it
-locally with `pnpm --filter @super-review/cli build`):
+`super-review` package; once published, `npx super-review`, or build it
+locally with `pnpm --filter super-review build`):
 
 ```bash
 super-review session save \
