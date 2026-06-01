@@ -1728,7 +1728,5 @@ export async function pinPRBaseRef(
 	// it) means this works whether `remote` is a named remote ("origin") or a
 	// bare URL — the latter being what we pass for an upstream PR, whose base
 	// repo we don't keep a permanent remote for.
-	await git
-		.fetch([remote, `+refs/heads/${baseBranch}:refs/pr/${prNumber}/base`])
-		.catch(() => {});
+	await git.fetch([remote, `+refs/heads/${baseBranch}:refs/pr/${prNumber}/base`]).catch(() => {});
 }

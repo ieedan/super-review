@@ -47,13 +47,7 @@ function buildBranchSubmenu(): MenuItemConstructorOptions[] {
 		// Only forks have an upstream — hide the item entirely otherwise so the
 		// menu matches the repo, like GitHub Desktop.
 		...(s.hasUpstream
-			? [
-					branchAction(
-						`Update from upstream/${s.defaultBranch}`,
-						'updateFromUpstream',
-						s.hasRepo
-					)
-				]
+			? [branchAction(`Update from upstream/${s.defaultBranch}`, 'updateFromUpstream', s.hasRepo)]
 			: []),
 		branchAction(
 			'Delete Branch…',

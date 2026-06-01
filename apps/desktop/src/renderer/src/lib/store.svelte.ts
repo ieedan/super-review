@@ -1460,7 +1460,8 @@ export const actions = {
 			const summary = app.prs.find((p) => p.number === prNumber) ?? null;
 			const host = prHostArgs(summary);
 			await window.api.github.fetchPR(app.activeRepo.id, prNumber, ...host);
-			app.activePR = summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber, ...host));
+			app.activePR =
+				summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber, ...host));
 			app.prComments = {};
 			app.pendingComposers = {};
 			await actions.setDiffContext({ kind: 'pr', prNumber });
