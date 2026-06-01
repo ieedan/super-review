@@ -7,6 +7,8 @@
 	import DiffView from '$lib/components/DiffView.svelte';
 	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
+	import MergedSwitchDialog from '$lib/components/MergedSwitchDialog.svelte';
+	import MergedRemoveDialog from '$lib/components/MergedRemoveDialog.svelte';
 	import BranchMenu from '$lib/components/BranchMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
@@ -292,6 +294,8 @@
 </Sidebar.Provider>
 
 <ConflictDialog />
+<MergedSwitchDialog />
+<MergedRemoveDialog />
 <BranchMenu />
 <AddRepoDialog />
 <CreateBranchDialog />

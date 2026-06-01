@@ -556,6 +556,14 @@ export interface UserPrefs {
 	// animation classes. Off by default — components render without motion unless
 	// the user opts in. Consumed via the useAnimations() context hook.
 	animationsEnabled: boolean;
+	// When a checked-out branch's PR is detected going from unmerged → merged,
+	// switch the working tree back to the default branch automatically instead of
+	// prompting. Off by default — the user is asked each time via a dialog.
+	autoSwitchToDefaultOnMerge: boolean;
+	// After switching back to the default branch because a branch's PR merged,
+	// delete the now-merged local branch automatically instead of prompting. Off
+	// by default — the user is asked each time via a dialog.
+	autoRemoveMergedBranch: boolean;
 	// User-configurable keyboard shortcuts, keyed by action. See DEFAULT_HOTKEYS
 	// in @shared/hotkeys for the defaults and matching semantics.
 	hotkeys: Hotkeys;

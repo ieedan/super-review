@@ -142,6 +142,8 @@ interface AppState {
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
 	animationsEnabled: boolean;
+	autoSwitchToDefaultOnMerge: boolean;
+	autoRemoveMergedBranch: boolean;
 	hotkeys: Hotkeys;
 	theme: 'light' | 'dark';
 	accent: Accent;
@@ -190,6 +192,14 @@ interface AppState {
 	// null while unknown / not applicable; drives the commit-box warning so it
 	// only fires when a push would actually be rejected.
 	branchPRPushAccess: boolean | null;
+	// Set when a checked-out branch's PR is observed transitioning unmerged →
+	// merged, driving the "switch back to the default branch?" dialog. Cleared
+	// when the user confirms or dismisses. Never set by merely navigating to an
+	// already-merged PR — only by a live transition we observed.
+	mergedSwitchPrompt: { branch: string; defaultBranch: string; prNumber: number } | null;
+	// Set after switching off a merged branch (via dialog or auto-switch) to drive
+	// the "remove this branch locally?" dialog. Holds the branch to delete.
+	mergedRemovePrompt: { branch: string } | null;
 	// PR currently being reviewed (when diffContext.kind === 'pr').
 	activePR: PRSummary | null;
 	// Review comments for the active PR, indexed by file path.
@@ -292,6 +302,8 @@ const initial: AppState = {
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 	animationsEnabled: false,
+	autoSwitchToDefaultOnMerge: false,
+	autoRemoveMergedBranch: false,
 	hotkeys: DEFAULT_HOTKEYS,
 	theme: 'dark',
 	accent: 'super',
@@ -331,6 +343,8 @@ const initial: AppState = {
 	branchPR: null,
 	branchPRChecks: null,
 	branchPRPushAccess: null,
+	mergedSwitchPrompt: null,
+	mergedRemovePrompt: null,
 	activePR: null,
 	prComments: {},
 	loadingComments: false,
@@ -678,6 +692,89 @@ async function refreshPushStatus(): Promise<void> {
 	}
 }
 
+// The open (unmerged) PR we last observed for a branch in a repo. Used to detect
+// a live unmerged → merged transition: we only ever prompt the user to switch
+// back to the default branch when a PR we *watched open* becomes merged — never
+// when an already-merged PR is simply navigated to. Session-scoped on purpose.
+let watchedOpenPR: { repoId: string; branch: string; number: number } | null = null;
+
+// Compare the freshly-resolved `app.branchPR` against the PR we were watching for
+// this branch and fire the merged-branch flow on an unmerged → merged transition.
+// `findPRForBranch` only returns *open* PRs, so a merge usually surfaces as the PR
+// disappearing (null) — we confirm via a direct lookup before acting.
+async function detectBranchPRMerge(
+	repoId: string,
+	branch: string,
+	defaultBranch: string
+): Promise<void> {
+	const pr = app.branchPR;
+	const watching =
+		watchedOpenPR && watchedOpenPR.repoId === repoId && watchedOpenPR.branch === branch
+			? watchedOpenPR
+			: null;
+
+	// Still an open, unmerged PR — (re)arm the watcher and we're done.
+	if (pr && !pr.merged) {
+		watchedOpenPR = { repoId, branch, number: pr.number };
+		return;
+	}
+
+	// We never saw this branch's PR open in this session, so any merged state is
+	// pre-existing (navigated-to), not a transition we should react to.
+	if (!watching) return;
+
+	// The watched PR is gone or now reports merged. Confirm the merge before
+	// disarming so a transient lookup miss doesn't silently drop the watch.
+	let merged = pr?.merged === true && pr.number === watching.number;
+	if (!pr) {
+		try {
+			const full = await window.api.github.getPR(repoId, watching.number);
+			merged = full?.merged === true;
+		} catch {
+			// Couldn't confirm — keep watching and retry on the next refresh.
+			return;
+		}
+	}
+	if (!merged) {
+		// PR closed without merging (or replaced by a different one) — stop
+		// watching, but don't prompt. Only merges trigger the switch-back flow.
+		watchedOpenPR = null;
+		return;
+	}
+	watchedOpenPR = null;
+	await onBranchPRMerged(branch, watching.number, defaultBranch);
+}
+
+// A watched branch's PR just merged. Either switch back to the default branch
+// automatically (when the user opted in) or open the confirmation dialog.
+async function onBranchPRMerged(
+	branch: string,
+	prNumber: number,
+	defaultBranch: string
+): Promise<void> {
+	// Only relevant while we're actually sitting on the merged branch and there's
+	// a different default branch to return to.
+	if (!app.currentBranch || app.currentBranch !== branch || branch === defaultBranch) return;
+	if (app.autoSwitchToDefaultOnMerge) {
+		await performSwitchBackAfterMerge(branch, defaultBranch);
+	} else {
+		app.mergedSwitchPrompt = { branch, defaultBranch, prNumber };
+	}
+}
+
+// Switch the working tree off the merged branch back to the default branch, then
+// hand off to the remove-branch step (auto-delete or prompt). Shared by the
+// auto-switch path and the switch-back dialog's confirm.
+async function performSwitchBackAfterMerge(branch: string, defaultBranch: string): Promise<void> {
+	const switched = await actions.checkoutBranch(defaultBranch);
+	if (!switched) return;
+	if (app.autoRemoveMergedBranch) {
+		await actions.deleteBranch(branch, { deleteRemote: false });
+	} else {
+		app.mergedRemovePrompt = { branch };
+	}
+}
+
 // Look up the open PR (if any) for the current branch. Only meaningful when
 // the repo has a GitHub remote and the user is signed in. Failures are silent
 // — the primary action button just falls back to "Create PR".
@@ -717,6 +814,13 @@ async function refreshBranchPR(): Promise<void> {
 		console.error('[branchPR] lookup threw:', err);
 		app.branchPR = null;
 	}
+	// Detect an unmerged → merged transition for this branch and, if so, offer to
+	// switch back to the default branch. Runs off the just-resolved `app.branchPR`.
+	await detectBranchPRMerge(
+		app.activeRepo.id,
+		app.currentBranch,
+		app.activeRepo.defaultBranch ?? 'main'
+	);
 	// Keep PR-comment state in sync with the branch tab's PR. Only refetch when
 	// we're not in `kind: 'pr'` mode (that flow drives its own fetch already).
 	if (app.diffContext.kind !== 'pr') {
@@ -1019,6 +1123,8 @@ export const actions = {
 		app.maxDiffLines = app.prefs.maxDiffLines;
 		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
 		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
+		app.autoSwitchToDefaultOnMerge = app.prefs.autoSwitchToDefaultOnMerge ?? false;
+		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
@@ -2569,6 +2675,44 @@ export const actions = {
 	async setAnimationsEnabled(enabled: boolean): Promise<void> {
 		app.animationsEnabled = enabled;
 		app.prefs = await window.api.state.setPrefs({ animationsEnabled: enabled });
+	},
+
+	async setAutoSwitchToDefaultOnMerge(value: boolean): Promise<void> {
+		app.autoSwitchToDefaultOnMerge = value;
+		app.prefs = await window.api.state.setPrefs({ autoSwitchToDefaultOnMerge: value });
+	},
+
+	async setAutoRemoveMergedBranch(value: boolean): Promise<void> {
+		app.autoRemoveMergedBranch = value;
+		app.prefs = await window.api.state.setPrefs({ autoRemoveMergedBranch: value });
+	},
+
+	// Confirm the "switch back to the default branch?" dialog. `always` persists
+	// the choice so future merges switch automatically without prompting.
+	async confirmSwitchToDefaultAfterMerge(opts: { always: boolean }): Promise<void> {
+		const prompt = app.mergedSwitchPrompt;
+		if (!prompt) return;
+		app.mergedSwitchPrompt = null;
+		if (opts.always) await actions.setAutoSwitchToDefaultOnMerge(true);
+		await performSwitchBackAfterMerge(prompt.branch, prompt.defaultBranch);
+	},
+
+	dismissMergedSwitchPrompt(): void {
+		app.mergedSwitchPrompt = null;
+	},
+
+	// Confirm the "remove this branch locally?" dialog. `always` persists the
+	// choice so future merged branches are removed automatically.
+	async confirmRemoveMergedBranch(opts: { always: boolean }): Promise<void> {
+		const prompt = app.mergedRemovePrompt;
+		if (!prompt) return;
+		app.mergedRemovePrompt = null;
+		if (opts.always) await actions.setAutoRemoveMergedBranch(true);
+		await actions.deleteBranch(prompt.branch, { deleteRemote: false });
+	},
+
+	dismissMergedRemovePrompt(): void {
+		app.mergedRemovePrompt = null;
 	},
 
 	async setHotkeys(hotkeys: Hotkeys): Promise<void> {

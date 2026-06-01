@@ -14,6 +14,7 @@
 	import * as Dialog from './ui/dialog';
 	import * as Avatar from './ui/avatar';
 	import { Button } from './ui/button';
+	import { Checkbox } from './ui/checkbox';
 	import { Input } from './ui/input';
 	import * as Table from './ui/table';
 	import CursorIcon from './icons/CursorIcon.svelte';
@@ -104,6 +105,8 @@
 	let draftShowFileIcons = $state<boolean>(true);
 	let draftAnimationsEnabled = $state<boolean>(false);
 	let draftOpenFileOnArrowNav = $state<boolean>(true);
+	let draftAutoSwitchToDefaultOnMerge = $state<boolean>(false);
+	let draftAutoRemoveMergedBranch = $state<boolean>(false);
 	let draftMaxDiffLines = $state<number>(1500);
 	let draftHiddenDiffPatterns = $state<string[]>([]);
 	let newPattern = $state<string>('');
@@ -122,6 +125,8 @@
 			draftShowFileIcons = app.showFileIcons;
 			draftAnimationsEnabled = app.animationsEnabled;
 			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
+			draftAutoSwitchToDefaultOnMerge = app.autoSwitchToDefaultOnMerge;
+			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
 			draftMaxDiffLines = app.maxDiffLines;
 			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
 			newPattern = '';
@@ -203,6 +208,12 @@
 		}
 		if (draftOpenFileOnArrowNav !== app.openFileOnArrowNav) {
 			promises.push(actions.setOpenFileOnArrowNav(draftOpenFileOnArrowNav));
+		}
+		if (draftAutoSwitchToDefaultOnMerge !== app.autoSwitchToDefaultOnMerge) {
+			promises.push(actions.setAutoSwitchToDefaultOnMerge(draftAutoSwitchToDefaultOnMerge));
+		}
+		if (draftAutoRemoveMergedBranch !== app.autoRemoveMergedBranch) {
+			promises.push(actions.setAutoRemoveMergedBranch(draftAutoRemoveMergedBranch));
 		}
 		const parsedMaxDiffLines = Number(draftMaxDiffLines);
 		const clampedMaxDiffLines =
@@ -711,6 +722,53 @@
 										</div>
 									</button>
 								{/each}
+							</div>
+						</div>
+
+						<div>
+							<h3 class="text-base font-semibold">Merged branches</h3>
+							<p class="mt-1 text-xs text-muted-foreground">
+								What to do when a checked-out branch's PR is merged. By default you're asked each
+								time; enable these to skip the prompts.
+							</p>
+
+							<div class="mt-4 space-y-3">
+								<div class="flex items-start gap-2.5">
+									<Checkbox
+										id="auto-switch-on-merge"
+										bind:checked={draftAutoSwitchToDefaultOnMerge}
+										class="mt-0.5"
+									/>
+									<label
+										for="auto-switch-on-merge"
+										class="grid cursor-pointer gap-0.5 leading-snug"
+									>
+										<span class="text-sm font-medium"
+											>Automatically switch back to the default branch</span
+										>
+										<span class="text-xs text-muted-foreground">
+											When a PR merges, switch the working tree back to the default branch without
+											asking.
+										</span>
+									</label>
+								</div>
+
+								<div class="flex items-start gap-2.5">
+									<Checkbox
+										id="auto-remove-merged"
+										bind:checked={draftAutoRemoveMergedBranch}
+										class="mt-0.5"
+									/>
+									<label for="auto-remove-merged" class="grid cursor-pointer gap-0.5 leading-snug">
+										<span class="text-sm font-medium"
+											>Automatically remove merged branches locally</span
+										>
+										<span class="text-xs text-muted-foreground">
+											After switching back, delete the merged branch from your machine without
+											asking. The remote is never touched.
+										</span>
+									</label>
+								</div>
 							</div>
 						</div>
 
