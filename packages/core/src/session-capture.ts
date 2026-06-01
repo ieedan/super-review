@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { simpleGit } from 'simple-git';
 import { getCurrentBranch, getDiff, listChangedFiles, repoIdFromPath } from './git-service.js';
-import type { Session, SessionCallout, SessionFile, SessionStep } from '@shared/types.js';
+import type { Session, SessionCallout, SessionFile, SessionStep } from './types.js';
 
 // A line-range callout as authored by the caller, before validation.
 export interface TourCalloutInput {

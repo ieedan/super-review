@@ -15,8 +15,8 @@ import type {
 	FileStatus,
 	GitIdentity,
 	RepoInfo
-} from '@shared/types.js';
-import { imageMimeForPath } from '@shared/media.js';
+} from './types.js';
+import { imageMimeForPath } from './media.js';
 import { getGitignore, getLicense } from './repo-templates.js';
 
 const execFileAsync = promisify(execFile);
@@ -1304,6 +1304,22 @@ async function ensureUpstreamRemote(git: SimpleGit, url: string): Promise<void> 
 	}
 }
 
+// Point the `upstream` remote at `url` (creating or repointing it). Used when
+// switching an existing fork to "contribute to the parent".
+export async function addUpstreamRemote(repoPath: string, url: string): Promise<void> {
+	await ensureUpstreamRemote(simpleGit(repoPath), url);
+}
+
+// Drop the `upstream` remote if present — when a fork is switched to "for my own
+// purposes" it no longer tracks a parent. No-op when there's no upstream remote.
+export async function removeUpstreamRemote(repoPath: string): Promise<void> {
+	const git = simpleGit(repoPath);
+	const remotes = await git.getRemotes().catch(() => []);
+	if (remotes.some((r) => r.name === 'upstream')) {
+		await git.removeRemote('upstream');
+	}
+}
+
 // GitHub Desktop's "Update from upstream/<branch>": for a fork, fetch the parent
 // repo's <branch> and merge it into the current branch. Reuses mergeIntoCurrent
 // so any conflicts flow through the same dialog as updateFromDefault.
@@ -1386,13 +1402,20 @@ async function pathExistsInHead(git: SimpleGit, relPath: string): Promise<boolea
 // Discard a file's working-tree (and staged) changes, mirroring GitHub
 // Desktop's "Discard Changes". Tracked files are reset to their HEAD state
 // (recoverable from history); files with no HEAD version — new or untracked —
-// are moved to the OS trash so the discard stays recoverable. `oldPath` is the
-// pre-rename path: a rename also leaves the original deleted from the worktree,
-// so we restore it too.
+// are removed via the injected `trash` callback so the discard can stay
+// recoverable (the desktop app passes a move-to-OS-trash implementation; with
+// no callback we hard-remove the file). `oldPath` is the pre-rename path: a
+// rename also leaves the original deleted from the worktree, so we restore it
+// too.
+//
+// `trash` is dependency-injected rather than reaching for `electron` directly,
+// so this module stays Electron-free and importable from the plain-node CLI
+// (which captures sessions but never discards files).
 export async function discardChanges(
 	repoPath: string,
 	filePath: string,
-	oldPath?: string
+	oldPath?: string,
+	trash?: (absPath: string) => Promise<void>
 ): Promise<void> {
 	const git = simpleGit(repoPath);
 	const restoreOrTrash = async (relPath: string): Promise<void> => {
@@ -1402,10 +1425,12 @@ export async function discardChanges(
 		if (inHead) {
 			await git.raw(['checkout', 'HEAD', '--', relPath]);
 		} else {
-			// Lazy-import electron so this module stays importable from the plain-node
-			// CLI (which captures sessions but never discards files).
-			const { shell } = await import('electron');
-			await shell.trashItem(path.join(repoPath, relPath)).catch(() => {});
+			const absPath = path.join(repoPath, relPath);
+			if (trash) {
+				await trash(absPath).catch(() => {});
+			} else {
+				await fs.rm(absPath, { force: true }).catch(() => {});
+			}
 		}
 	};
 	await restoreOrTrash(filePath);
@@ -1848,6 +1873,26 @@ export async function setOriginAndPush(
 			error: err instanceof Error ? err.message : String(err)
 		};
 	}
+}
+
+// Repoint `origin` at the user's fork — GitHub Desktop's fork layout (push to
+// your fork). When `upstreamUrl` is given (contributing to the parent), the
+// original repo is kept as `upstream` for syncing/PRs; omit it for a fork worked
+// on "for my own purposes". No push: the caller commits/pushes through the
+// normal path afterward, where `push()` sets the branch's upstream to `origin`.
+export async function convertToForkRemotes(
+	repoPath: string,
+	forkUrl: string,
+	upstreamUrl?: string | null
+): Promise<void> {
+	const git = simpleGit(repoPath);
+	const remotes = await git.getRemotes().catch(() => []);
+	if (remotes.some((r) => r.name === 'origin')) {
+		await git.raw(['remote', 'set-url', 'origin', forkUrl]);
+	} else {
+		await git.raw(['remote', 'add', 'origin', forkUrl]);
+	}
+	if (upstreamUrl) await ensureUpstreamRemote(git, upstreamUrl);
 }
 
 export async function fetchOrigin(repoPath: string): Promise<{ ok: boolean; error?: string }> {

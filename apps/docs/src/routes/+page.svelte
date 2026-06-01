@@ -1,5 +1,4 @@
 <script lang="ts">
-
 	// Downloads aren't live yet, so the CTAs are disabled "Coming soon" placeholders
 	// until the first public release. Re-enable by restoring the download <a>'s
 	// (OS detection + DOWNLOADS still live in $lib/releases.ts).
@@ -47,7 +46,10 @@
 	<meta property="og:image" content="https://superreview.dev/og.png" />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta property="og:image:alt" content="Super Review: a faster, saner way to review agent-written code" />
+	<meta
+		property="og:image:alt"
+		content="Super Review: a faster, saner way to review agent-written code"
+	/>
 
 	<!-- Twitter / X -->
 	<meta name="twitter:card" content="summary_large_image" />
@@ -70,11 +72,11 @@
 			<span class="font-display text-lg font-bold tracking-tight">Super Review</span>
 		</a>
 		<span
-			class="border-line text-muted inline-flex cursor-default items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold"
+			class="border-line inline-flex cursor-default items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold text-muted"
 			aria-disabled="true"
 			title="Downloads coming soon"
 		>
-			<span class="bg-flame h-1.5 w-1.5 animate-pulse rounded-full"></span>
+			<span class="h-1.5 w-1.5 animate-pulse rounded-full bg-flame"></span>
 			Coming soon
 		</span>
 	</header>
@@ -99,10 +101,10 @@
 		<!-- Download (coming soon; see note in <script>) -->
 		<div class="reveal mt-9 flex flex-col items-center gap-3" style="animation-delay: 260ms">
 			<span
-				class="border-line bg-elevated/60 text-muted inline-flex cursor-default items-center gap-3 rounded-xl border px-7 py-4 font-semibold"
+				class="border-line bg-elevated/60 inline-flex cursor-default items-center gap-3 rounded-xl border px-7 py-4 font-semibold text-muted"
 				aria-disabled="true"
 			>
-				<span class="bg-flame h-2 w-2 animate-pulse rounded-full"></span>
+				<span class="h-2 w-2 animate-pulse rounded-full bg-flame"></span>
 				<span class="flex flex-col items-start leading-tight">
 					<span class="text-fg">Downloads coming soon</span>
 					<span class="text-faint text-xs font-normal">macOS & Windows</span>

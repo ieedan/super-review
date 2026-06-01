@@ -378,6 +378,50 @@ export async function getUpstream(
 	}
 }
 
+// Whether the authenticated account can push to `owner/repo` itself. `repos.get`
+// reports the viewer's own `permissions` on the repo. Returns false when the call
+// fails (no visibility / not found) so the UI can offer to fork.
+export async function canPushToRepo(
+	owner: string,
+	repo: string,
+	accountId?: string | null
+): Promise<boolean> {
+	const o = octokit(resolveAccount(accountId));
+	try {
+		const res = await o.repos.get({ owner, repo });
+		return res.data.permissions?.push === true;
+	} catch {
+		return false;
+	}
+}
+
+// Fork `owner/repo` under the authenticated account and return the fork's
+// owner/name. Fork creation is asynchronous (the API responds 202 before the
+// fork's git data is ready), so we poll `repos.get` on the new fork until it
+// resolves before handing back — otherwise an immediate push would race the
+// repo's creation.
+export async function createFork(
+	owner: string,
+	repo: string,
+	accountId?: string | null
+): Promise<{ owner: string; repo: string }> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.repos.createFork({ owner, repo });
+	const fork = { owner: res.data.owner?.login ?? '', repo: res.data.name };
+	if (!fork.owner) throw new Error('Fork created but its owner could not be resolved.');
+	// Poll until the fork is queryable (≈ exists on disk). Best-effort: give up
+	// after ~10s and let the caller's push surface any not-ready error.
+	for (let i = 0; i < 10; i++) {
+		try {
+			await o.repos.get({ owner: fork.owner, repo: fork.repo });
+			break;
+		} catch {
+			await new Promise((r) => setTimeout(r, 1000));
+		}
+	}
+	return fork;
+}
+
 export async function getPRBase(
 	owner: string,
 	repo: string,
@@ -681,30 +725,34 @@ export async function deleteReviewComment(
 	await o.pulls.deleteReviewComment({ owner, repo, comment_id: commentId });
 }
 
-// Returns the open PR whose head branch matches `branch`, or null.
-// `branch` is expected to be the local branch name — same as headRef.
+// Returns the open PR for `branch`, or null. PRs are listed on `baseOwner/baseRepo`
+// (where the PR lives — the upstream parent for a fork contributing to it) and
+// filtered by the head `${headOwner}:${branch}`, where `headOwner` owns the branch
+// (the fork for a cross-repo PR). For a non-fork these are the same repo/owner.
+// `branch` is the local branch name — same as headRef.
 export async function findPRForBranch(
-	owner: string,
-	repo: string,
+	baseOwner: string,
+	baseRepo: string,
+	headOwner: string,
 	branch: string,
 	accountId?: string | null
 ): Promise<PRSummary | null> {
 	const account = resolveAccount(accountId);
 	console.log(
-		`[github] findPRForBranch owner=${owner} repo=${repo} branch=${branch} ` +
+		`[github] findPRForBranch base=${baseOwner}/${baseRepo} head=${headOwner}:${branch} ` +
 			`requestedAccountId=${accountId ?? '(none → app default)'} ` +
 			`usingAccount=${account.login} (id=${account.id})`
 	);
 	const o = octokit(account);
 	const res = await o.pulls.list({
-		owner,
-		repo,
+		owner: baseOwner,
+		repo: baseRepo,
 		state: 'open',
-		head: `${owner}:${branch}`,
+		head: `${headOwner}:${branch}`,
 		per_page: 1
 	});
 	console.log(
-		`[github] findPRForBranch head=${owner}:${branch} → ${res.data.length} match(es)` +
+		`[github] findPRForBranch head=${headOwner}:${branch} → ${res.data.length} match(es)` +
 			(res.data[0] ? ` (PR #${res.data[0].number})` : '')
 	);
 	const pr = res.data[0];

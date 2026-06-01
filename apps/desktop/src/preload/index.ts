@@ -29,6 +29,8 @@ import type {
 	PullPushResult,
 	PushStatus,
 	RepoContextMenuAction,
+	RepositoryMenuAction,
+	RepositoryMenuState,
 	RepoInfo,
 	Session,
 	SessionSummary,
@@ -104,7 +106,17 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
 		undoLastCommit: (repoId) =>
 			ipcRenderer.invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
-		cloneRepo: (url) => ipcRenderer.invoke('git:cloneRepo', url) as Promise<CloneResult>
+		cloneRepo: (url) => ipcRenderer.invoke('git:cloneRepo', url) as Promise<CloneResult>,
+		convertToFork: (repoId, forkOwner, forkRepo, contributeToParent) =>
+			ipcRenderer.invoke(
+				'git:convertToFork',
+				repoId,
+				forkOwner,
+				forkRepo,
+				contributeToParent
+			) as Promise<RepoInfo>,
+		setForkContribution: (repoId, contributeToParent) =>
+			ipcRenderer.invoke('git:setForkContribution', repoId, contributeToParent) as Promise<RepoInfo>
 	},
 	editor: {
 		detect: () => ipcRenderer.invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,
@@ -140,6 +152,15 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('github:listPRs', repoId, page, source) as Promise<PRSummary[]>,
 		detectUpstream: (repoId) =>
 			ipcRenderer.invoke('github:detectUpstream', repoId) as Promise<RepoInfo | null>,
+		getRepoPushAccess: (repoId) =>
+			ipcRenderer.invoke('github:getRepoPushAccess', repoId) as Promise<boolean>,
+		createFork: (repoId) =>
+			ipcRenderer.invoke('github:createFork', repoId) as Promise<{ owner: string; repo: string }>,
+		getRepoParent: (repoId) =>
+			ipcRenderer.invoke('github:getRepoParent', repoId) as Promise<{
+				owner: string;
+				repo: string;
+			} | null>,
 		fetchPR: (repoId, prNumber, owner, repo) =>
 			ipcRenderer.invoke('github:fetchPR', repoId, prNumber, owner, repo) as Promise<{
 				headRef: string;
@@ -259,7 +280,9 @@ const api: PreloadAPI = {
 				'menu:showRepoContextMenu',
 				params
 			) as Promise<RepoContextMenuAction | null>,
-		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state)
+		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
+		setRepositoryState: (state: RepositoryMenuState) =>
+			ipcRenderer.send('menu:setRepositoryState', state)
 	},
 	windowControls: {
 		// Ask the main process to re-center the macOS traffic lights for the
@@ -278,6 +301,12 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, action: BranchMenuAction) => handler(action);
 			ipcRenderer.on('menu:branch-action', listener);
 			return () => ipcRenderer.off('menu:branch-action', listener);
+		},
+		onRepositoryMenuAction(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, action: RepositoryMenuAction) =>
+				handler(action);
+			ipcRenderer.on('menu:repository-action', listener);
+			return () => ipcRenderer.off('menu:repository-action', listener);
 		},
 		onRepoTrashFailed(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, name: string) => handler(name);

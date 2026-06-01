@@ -8,6 +8,16 @@
 	const busy = $derived(app.push.inProgress);
 	const stage = $derived(app.push.stage);
 
+	// No write access to origin — pushing/publishing has to fork first. Route the
+	// click through the fork dialog instead of a push that would be rejected.
+	function onPushClick(): void {
+		if (app.repoPushAccess === false) {
+			actions.promptFork('push');
+			return;
+		}
+		void actions.push();
+	}
+
 	const label = $derived.by(() => {
 		if (busy) {
 			switch (stage) {
@@ -61,7 +71,7 @@
 		variant={status && (status.ahead > 0 || !status.hasUpstream) ? 'default' : 'ghost'}
 		size="sm"
 		{disabled}
-		onclick={() => actions.push()}
+		onclick={onPushClick}
 		{title}
 	>
 		<Icon class={cn('size-3.5', busy && 'animate-spin')} />

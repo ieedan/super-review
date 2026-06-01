@@ -43,9 +43,12 @@ import {
 	buildRepoInfo,
 	checkout,
 	checkoutPR,
+	addUpstreamRemote,
 	cloneRepo,
 	commit,
 	continueMerge,
+	convertToForkRemotes,
+	removeUpstreamRemote,
 	createBranch,
 	createRepo,
 	deleteBranch,
@@ -73,7 +76,7 @@ import {
 	setOriginAndPush,
 	stageFile,
 	undoLastCommit
-} from './git-service.js';
+} from '@super-review/core';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import * as gh from './github-service.js';
 import {
@@ -83,9 +86,9 @@ import {
 	getSession,
 	listSessions,
 	watchSessionsDir
-} from './session-store.js';
+} from '@super-review/core';
 import { installSkill, isSkillInstalled } from './skill-service.js';
-import { listTemplates } from './repo-templates.js';
+import { listTemplates } from '@super-review/core';
 import {
 	clearCollapsedFiles,
 	clearSeen,
@@ -101,6 +104,7 @@ import {
 	setPrefs,
 	getPRBranch,
 	setPRBranch,
+	setRepoFork,
 	setRepoGithubAccountId,
 	setRepoUpstream,
 	setSeen,
@@ -584,7 +588,12 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:discardChanges',
 		async (_e, repoId: string, filePath: string, oldPath?: string): Promise<void> =>
-			discardChanges(repoOrThrow(repoId).path, filePath, oldPath)
+			// Inject the OS-trash implementation: core stays Electron-free, so the
+			// app supplies `shell.trashItem` to keep discards of new/untracked files
+			// recoverable (move to trash) rather than hard-deleting them.
+			discardChanges(repoOrThrow(repoId).path, filePath, oldPath, (p) =>
+				import('electron').then(({ shell }) => shell.trashItem(p))
+			)
 	);
 
 	ipcMain.handle(
@@ -619,6 +628,75 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:undoLastCommit',
 		async (_e, repoId: string): Promise<CommitResult> => undoLastCommit(repoOrThrow(repoId).path)
+	);
+
+	// Convert the project to a fork: repoint `origin` at the freshly-created fork,
+	// keep the original repo as `upstream`, and persist the new coordinates. The
+	// renderer commits/pushes through the normal path afterward (which now targets
+	// the fork). `repoFetchUrl` swaps owner/repo on the existing origin URL so the
+	// fork inherits the same SSH/HTTPS auth.
+	ipcMain.handle(
+		'git:convertToFork',
+		async (
+			_e,
+			repoId: string,
+			forkOwner: string,
+			forkRepo: string,
+			contributeToParent: boolean
+		): Promise<RepoInfo> => {
+			const repo = repoOrThrow(repoId);
+			if (!repo.githubOwner || !repo.githubRepo) {
+				throw new Error('This repository does not have a GitHub remote to fork.');
+			}
+			// Capture the parent before we overwrite githubOwner/githubRepo with the
+			// fork. Only wired up as `upstream` when contributing to the parent.
+			const parent = { owner: repo.githubOwner, repo: repo.githubRepo };
+			const forkUrl = repoFetchUrl(repo, forkOwner, forkRepo);
+			const upstreamUrl = contributeToParent
+				? (repo.remoteUrl ?? `https://github.com/${parent.owner}/${parent.repo}.git`)
+				: null;
+			await convertToForkRemotes(repo.path, forkUrl, upstreamUrl);
+			const updated = setRepoFork(
+				repoId,
+				{ owner: forkOwner, repo: forkRepo, url: forkUrl },
+				contributeToParent ? parent : null
+			);
+			if (!updated) throw new Error('Failed to update repository after forking.');
+			broadcast('repos:active-changed', updated);
+			return updated;
+		}
+	);
+
+	// Change an existing fork's contribution target. Contributing to the parent
+	// wires it up as `upstream` (remote + metadata) so PRs/sync target it; "own
+	// purposes" tears the upstream back down. The parent is resolved from the
+	// GitHub API since it isn't recorded while in "own purposes" mode.
+	ipcMain.handle(
+		'git:setForkContribution',
+		async (_e, repoId: string, contributeToParent: boolean): Promise<RepoInfo> => {
+			const repo = repoOrThrow(repoId);
+			if (contributeToParent) {
+				if (!repo.githubOwner || !repo.githubRepo) {
+					throw new Error('This repository does not have a GitHub remote.');
+				}
+				const parent = await gh.getUpstream(
+					repo.githubOwner,
+					repo.githubRepo,
+					repo.githubAccountId
+				);
+				if (!parent) throw new Error('This repository is not a fork, so it has no parent.');
+				await addUpstreamRemote(repo.path, repoFetchUrl(repo, parent.owner, parent.repo));
+				const updated = setRepoUpstream(repoId, parent);
+				if (!updated) throw new Error('Failed to update repository.');
+				broadcast('repos:active-changed', updated);
+				return updated;
+			}
+			await removeUpstreamRemote(repo.path);
+			const updated = setRepoUpstream(repoId, null);
+			if (!updated) throw new Error('Failed to update repository.');
+			broadcast('repos:active-changed', updated);
+			return updated;
+		}
 	);
 
 	ipcMain.handle('git:cloneRepo', async (_e, url: string): Promise<CloneResult> => {
@@ -697,6 +775,40 @@ export function registerIpc(): void {
 		}
 	);
 
+	// Whether the project's account can push to `origin`'s repo. False (rather
+	// than throwing) when there's no GitHub remote, so the renderer can simply
+	// treat false as "offer to fork".
+	ipcMain.handle('github:getRepoPushAccess', async (_e, repoId: string): Promise<boolean> => {
+		const repo = repoOrThrow(repoId);
+		if (!repo.githubOwner || !repo.githubRepo) return false;
+		return gh.canPushToRepo(repo.githubOwner, repo.githubRepo, repo.githubAccountId);
+	});
+
+	// Fork the project's `origin` repo under the account; returns the fork's
+	// owner/name (its name usually matches the parent's).
+	ipcMain.handle(
+		'github:createFork',
+		async (_e, repoId: string): Promise<{ owner: string; repo: string }> => {
+			const repo = repoOrThrow(repoId);
+			if (!repo.githubOwner || !repo.githubRepo) {
+				throw new Error('This repository does not have a GitHub remote to fork.');
+			}
+			return gh.createFork(repo.githubOwner, repo.githubRepo, repo.githubAccountId);
+		}
+	);
+
+	// The parent of `origin` if it's a GitHub fork, else null. Pure read — backs
+	// the Fork Behavior settings pane (which must know the parent even when the
+	// repo is currently set to "for my own purposes" and has no upstream metadata).
+	ipcMain.handle(
+		'github:getRepoParent',
+		async (_e, repoId: string): Promise<{ owner: string; repo: string } | null> => {
+			const repo = repoOrThrow(repoId);
+			if (!repo.githubOwner || !repo.githubRepo) return null;
+			return gh.getUpstream(repo.githubOwner, repo.githubRepo, repo.githubAccountId);
+		}
+	);
+
 	ipcMain.handle('github:detectUpstream', async (_e, repoId: string): Promise<RepoInfo | null> => {
 		const repo = repoOrThrow(repoId);
 		if (!repo.githubOwner || !repo.githubRepo) return repo;
@@ -751,20 +863,34 @@ export function registerIpc(): void {
 				);
 				return null;
 			}
-			try {
-				const pr = await gh.findPRForBranch(
-					repo.githubOwner,
-					repo.githubRepo,
-					branch,
-					repo.githubAccountId
-				);
-				if (pr) return pr;
-			} catch (err) {
-				console.error(
-					`[github] findPRForBranch failed for ${repo.githubOwner}/${repo.githubRepo} ` +
-						`branch=${branch} pinnedAccountId=${repo.githubAccountId ?? '(none)'}:`,
-					err instanceof Error ? err.message : err
-				);
+			// Where the branch's PR would live, and who owns the branch. For a fork
+			// contributing to its parent, the PR is opened on the upstream with the
+			// head qualified by the fork owner (`fork:branch`); otherwise it's a PR
+			// within the repo's own remote. Try the host first, then fall back to the
+			// fork's own repo (covers a fork with a self-targeted PR).
+			const headOwner = repo.githubOwner;
+			const bases: { owner: string; repo: string }[] = [];
+			if (repo.upstreamOwner && repo.upstreamRepo) {
+				bases.push({ owner: repo.upstreamOwner, repo: repo.upstreamRepo });
+			}
+			bases.push({ owner: repo.githubOwner, repo: repo.githubRepo });
+			for (const base of bases) {
+				try {
+					const pr = await gh.findPRForBranch(
+						base.owner,
+						base.repo,
+						headOwner,
+						branch,
+						repo.githubAccountId
+					);
+					if (pr) return pr;
+				} catch (err) {
+					console.error(
+						`[github] findPRForBranch failed for base=${base.owner}/${base.repo} ` +
+							`head=${headOwner}:${branch} pinnedAccountId=${repo.githubAccountId ?? '(none)'}:`,
+						err instanceof Error ? err.message : err
+					);
+				}
 			}
 			// A head-based lookup misses cross-repo PRs (the head owner isn't us).
 			// Fall back to the association we recorded when the branch was checked
@@ -1081,6 +1207,7 @@ export function registerIpc(): void {
 				item('Copy Path', 'copyPath'),
 				item(params.revealLabel, 'reveal'),
 				{ type: 'separator' },
+				item('Repository Settings…', 'settings'),
 				item('Remove…', 'remove')
 			];
 

@@ -1,0 +1,52 @@
+{
+	"name": "super-review",
+	"version": "0.0.0",
+	"description": "Document an agent session for review with the super-review desktop app",
+	"type": "module",
+	"license": "MIT",
+	"author": {
+		"name": "Aidan Bleser",
+		"url": "https://github.com/ieedan"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ieedan/super-review",
+		"directory": "packages/cli"
+	},
+	"bugs": {
+		"url": "https://github.com/ieedan/super-review/issues"
+	},
+	"keywords": [
+		"cli",
+		"code-review",
+		"diff",
+		"git",
+		"super-review"
+	],
+	"bin": {
+		"super-review": "dist/bin.mjs"
+	},
+	"files": [
+		"dist"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"dev": "tsdown --watch",
+		"start": "node dist/bin.mjs",
+		"typecheck": "tsc --noEmit",
+		"prepublishOnly": "pnpm build"
+	},
+	"dependencies": {
+		"commander": "^13.1.0",
+		"simple-git": "^3.27.0"
+	},
+	"devDependencies": {
+		"@super-review/core": "workspace:*",
+		"@types/node": "^24.0.0",
+		"tsdown": "^0.22.1",
+		"typescript": "^5.7.3"
+	}
+}

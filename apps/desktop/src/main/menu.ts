@@ -1,5 +1,10 @@
 import { BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron';
-import type { BranchMenuAction, BranchMenuState } from '../shared/types.js';
+import type {
+	BranchMenuAction,
+	BranchMenuState,
+	RepositoryMenuAction,
+	RepositoryMenuState
+} from '../shared/types.js';
 
 // The most recent Branch-menu state the renderer pushed. Drives which items are
 // enabled and their dynamic labels. Defaults to "no repo" so the menu is built
@@ -14,11 +19,67 @@ let branchState: BranchMenuState = {
 	branchPRNumber: null
 };
 
+// The most recent Repository-menu state the renderer pushed (mirrors branchState
+// for the "Repository" submenu). Defaults to "no repo" so the menu builds greyed
+// out before the renderer reports in.
+let repoState: RepositoryMenuState = {
+	hasRepo: false,
+	hasRemote: false,
+	hasGithub: false,
+	editorLabel: null,
+	terminalLabel: null,
+	revealLabel: 'Show in Finder'
+};
+
 // Send a chosen Branch action to the focused window (falling back to the first
 // window). The renderer maps it to the matching store flow.
 function sendBranchAction(action: BranchMenuAction): void {
 	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
 	win?.webContents.send('menu:branch-action', action);
+}
+
+function sendRepositoryAction(action: RepositoryMenuAction): void {
+	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+	win?.webContents.send('menu:repository-action', action);
+}
+
+// Build the "Repository" submenu from repoState — mirrors GitHub Desktop's
+// Repository menu. Items whose dynamic label is null (no editor/terminal
+// detected) are omitted entirely so the menu matches what's available.
+function buildRepositorySubmenu(): MenuItemConstructorOptions[] {
+	const s = repoState;
+	const item = (
+		label: string,
+		action: RepositoryMenuAction,
+		enabled: boolean,
+		accelerator?: string
+	): MenuItemConstructorOptions => ({
+		label,
+		enabled,
+		accelerator,
+		click: () => sendRepositoryAction(action)
+	});
+
+	return [
+		item('Push', 'push', s.hasRepo && s.hasRemote, 'CmdOrCtrl+P'),
+		item('Pull', 'pull', s.hasRepo && s.hasRemote, 'Shift+CmdOrCtrl+P'),
+		item('Fetch', 'fetch', s.hasRepo && s.hasRemote, 'Shift+CmdOrCtrl+T'),
+		{ type: 'separator' },
+		item('Remove…', 'remove', s.hasRepo, 'CmdOrCtrl+Backspace'),
+		{ type: 'separator' },
+		item('View on GitHub', 'viewOnGithub', s.hasRepo && s.hasGithub, 'Shift+CmdOrCtrl+G'),
+		...(s.terminalLabel
+			? [item(`Open in ${s.terminalLabel}`, 'openInTerminal', s.hasRepo, 'Control+`')]
+			: []),
+		item(s.revealLabel, 'showInFinder', s.hasRepo, 'Shift+CmdOrCtrl+F'),
+		...(s.editorLabel
+			? [item(`Open in ${s.editorLabel}`, 'openInEditor', s.hasRepo, 'Shift+CmdOrCtrl+A')]
+			: []),
+		{ type: 'separator' },
+		item('Create Issue on GitHub', 'createIssue', s.hasRepo && s.hasGithub, 'CmdOrCtrl+I'),
+		{ type: 'separator' },
+		item('Repository Settings…', 'settings', s.hasRepo)
+	];
 }
 
 function buildBranchSubmenu(): MenuItemConstructorOptions[] {
@@ -88,6 +149,7 @@ function buildAppMenu(): void {
 		{ role: 'fileMenu' },
 		{ role: 'editMenu' },
 		{ role: 'viewMenu' },
+		{ label: 'Repository', submenu: buildRepositorySubmenu() },
 		{ label: 'Branch', submenu: buildBranchSubmenu() },
 		{ role: 'windowMenu' }
 	];
@@ -100,6 +162,10 @@ function buildAppMenu(): void {
 export function setupAppMenu(): void {
 	ipcMain.on('menu:setBranchState', (_e, state: BranchMenuState) => {
 		branchState = state;
+		buildAppMenu();
+	});
+	ipcMain.on('menu:setRepositoryState', (_e, state: RepositoryMenuState) => {
+		repoState = state;
 		buildAppMenu();
 	});
 	buildAppMenu();

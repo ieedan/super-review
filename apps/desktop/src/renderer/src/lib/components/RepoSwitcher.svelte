@@ -56,6 +56,10 @@
 			await actions.copyToClipboard(repo.path);
 		} else if (action === 'reveal') {
 			await window.api.shell.showItemInFolder(repo.path);
+		} else if (action === 'settings') {
+			await actions.switchRepo(repo.id);
+			actions.openRepoSettingsDialog();
+			open = false;
 		}
 	}
 

@@ -7,13 +7,16 @@
 	import DiffView from '$lib/components/DiffView.svelte';
 	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
+	import ForkDialog from '$lib/components/ForkDialog.svelte';
 	import MergedSwitchDialog from '$lib/components/MergedSwitchDialog.svelte';
 	import MergedRemoveDialog from '$lib/components/MergedRemoveDialog.svelte';
 	import BranchMenu from '$lib/components/BranchMenu.svelte';
+	import RepositoryMenu from '$lib/components/RepositoryMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
 	import PublishRepoDialog from '$lib/components/PublishRepoDialog.svelte';
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
+	import RepositorySettingsDialog from '$lib/components/RepositorySettingsDialog.svelte';
 	import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
 	import { ConfirmDeleteDialog } from '$lib/components/ui/confirm-delete-dialog';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -312,9 +315,12 @@
 </Sidebar.Provider>
 
 <ConflictDialog />
+<ForkDialog />
+<RepositorySettingsDialog />
 <MergedSwitchDialog />
 <MergedRemoveDialog />
 <BranchMenu />
+<RepositoryMenu />
 <AddRepoDialog />
 <PublishRepoDialog />
 <CreateBranchDialog />

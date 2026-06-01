@@ -5,14 +5,18 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
 	main: {
-		plugins: [externalizeDepsPlugin()],
+		// `@super-review/core` is a workspace package shipped as TS source (its
+		// `exports` point at `./src/*.ts`), so it must be bundled into the main
+		// process rather than left as an external runtime `import` that Node/
+		// Electron can't resolve. Every other dependency stays externalized.
+		plugins: [externalizeDepsPlugin({ exclude: ['@super-review/core'] })],
 		build: {
 			rollupOptions: {
-				// `index` is the Electron main entry; `cli` is a standalone node entry
-				// (the super-review CLI) emitted to out/main/cli.js.
+				// `index` is the Electron main entry. The super-review CLI used to be a
+				// second entry here; it now lives in its own publishable package
+				// (`packages/cli`), so the desktop build only emits the main process.
 				input: {
-					index: resolve(__dirname, 'src/main/index.ts'),
-					cli: resolve(__dirname, 'src/cli/index.ts')
+					index: resolve(__dirname, 'src/main/index.ts')
 				}
 			}
 		},
@@ -23,7 +27,9 @@ export default defineConfig({
 		}
 	},
 	preload: {
-		plugins: [externalizeDepsPlugin()],
+		// Bundle `@super-review/core` (TS-source workspace pkg) here too; the
+		// preload imports shared types from it via the `@shared` shim.
+		plugins: [externalizeDepsPlugin({ exclude: ['@super-review/core'] })],
 		build: {
 			rollupOptions: {
 				input: resolve(__dirname, 'src/preload/index.ts')

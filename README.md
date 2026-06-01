@@ -100,8 +100,9 @@ return to the list.
 
 ### Documenting a session (CLI)
 
-Agents record a session with the bundled CLI (`apps/desktop/out/main/cli.js`,
-exposed as the `super-review` bin after building):
+Agents record a session with the standalone `super-review` CLI (the
+`super-review` package; once published, `npx super-review`, or build it
+locally with `pnpm --filter super-review build`):
 
 ```bash
 super-review session save \

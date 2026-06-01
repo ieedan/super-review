@@ -2,6 +2,12 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+# Shared version for sv-agentation across all apps. To test a local checkout,
+# redirect it with a pnpm.overrides "link:" entry in the root package.json
+# (catalogs don't support the link: protocol yet).
+catalog:
+  sv-agentation: ^0.3.1
+
 # pnpm 10 blocks dependency build scripts unless they're listed here. `electron`
 # downloads its binary in a postinstall, and `esbuild` fetches its native binary
 # — both are skipped on a clean CI runner without this, producing a broken/empty
