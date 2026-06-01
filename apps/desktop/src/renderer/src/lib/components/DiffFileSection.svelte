@@ -40,6 +40,7 @@
 		setCachedDiff
 	} from '$lib/store.svelte';
 	import { diffDeferReason } from '@shared/diff-defer';
+	import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { scheduleRender } from '$lib/render-scheduler';
 	import { diffContextKey } from '@shared/diff-context';
 	import { parseFilePatch, stagingLineKey, type DiffSide } from '@shared/diff-staging';
@@ -756,21 +757,25 @@
 		// into this element, so the manual append is intentional.
 		// eslint-disable-next-line svelte/no-dom-manipulating
 		host.appendChild(diffContainer);
-		instance = new FileDiffClass<AnnotationMeta>({
-			diffStyle: app.viewMode,
-			themeType: app.theme,
-			disableFileHeader: true,
-			renderAnnotation,
-			onLineNumberClick: onDiffLineNumberClick,
-			// Built-in gutter `+` button (the one with `data-utility-button`).
-			// Only enable it where commenting is meaningful — toggled live below
-			// via setOptions + flushManagers when `isPRContext` changes.
-			enableGutterUtility: isPRContext,
-			onGutterUtilityClick: onGutterClick,
-			// Inject the staging checkboxes after every (re)render. Pierre rebuilds
-			// its shadow DOM on render/rerender, so we re-apply each time.
-			onPostRender: applyStagingControls
-		});
+		instance = new FileDiffClass<AnnotationMeta>(
+			{
+				diffStyle: app.viewMode,
+				themeType: app.theme,
+				disableFileHeader: true,
+				renderAnnotation,
+				onLineNumberClick: onDiffLineNumberClick,
+				// Built-in gutter `+` button (the one with `data-utility-button`).
+				// Only enable it where commenting is meaningful — toggled live below
+				// via setOptions + flushManagers when `isPRContext` changes.
+				enableGutterUtility: isPRContext,
+				onGutterUtilityClick: onGutterClick
+			},
+			// Highlight + diff-AST work runs on the shared worker pool so the main
+			// thread stays responsive; FileDiff paints plain text first, then
+			// rerenders when the worker returns the highlighted AST. Falls back to
+			// the main-thread highlighter when the pool is unavailable.
+			getDiffWorkerPool()
+		);
 
 		const namePair = {
 			old: diff.file.oldPath ?? diff.file.path,
