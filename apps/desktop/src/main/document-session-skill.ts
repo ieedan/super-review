@@ -122,9 +122,9 @@ JSON, not a path.
 
 - The session is a frozen snapshot: it keeps the diff as it was at save time,
   even if the working tree changes afterward. Re-run \`save\` to refresh it.
-- If the \`super-review\` command isn't on \`PATH\`, run it with \`npx super-review
-  session save ...\` (once published), or build the CLI locally with \`pnpm
-  --filter @super-review/cli build\` and invoke it directly:
+- If the \`super-review\` command isn't on \`PATH\`, run it with \`npx super-review\` (once
+  published), or build the CLI locally with \`pnpm --filter @super-review/cli build\` and invoke
+  the bundle directly:
   \`node /path/to/super-review/packages/cli/dist/index.js session save ...\`
 - The CLI exits non-zero (with a message) if there are no changes to capture or
   the directory isn't a git repository, and warns if the tour lists a path that
