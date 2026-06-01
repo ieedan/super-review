@@ -733,9 +733,16 @@
 						</Tabs.Trigger>
 						<Tabs.Trigger
 							value="sessions"
-							class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+							class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
 						>
 							Sessions
+							{#if app.sessionCount > 0}
+								<span
+									class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
+								>
+									{app.sessionCount > 99 ? '99+' : app.sessionCount}
+								</span>
+							{/if}
 						</Tabs.Trigger>
 					</Tabs.List>
 				</Tabs.Root>

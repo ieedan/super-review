@@ -5,6 +5,7 @@
 	import { harnessLabel } from '$lib/harness-logos';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
+	import { confirmDelete } from './ui/confirm-delete-dialog';
 
 	// Compact list of the active repo's documented sessions, shown in the sidebar
 	// when the Sessions tab is active and no session is open. Selecting one opens
@@ -20,6 +21,24 @@
 		void actions.deleteSession(id);
 	}
 
+	// Sessions are committed into the repo's .super-review/ folder, so clearing
+	// them is the way to keep a PR tidy before merging. Confirm first since it
+	// removes every documented tour for the repo.
+	function clearAll(): void {
+		const count = sessions.length;
+		confirmDelete({
+			title: `Clear all ${count} session${count === 1 ? '' : 's'}?`,
+			description:
+				'Removes every documented session from this repo’s .super-review folder. ' +
+				'Use this to clean up before merging a PR. This can’t be undone.',
+			icon: 'warning',
+			confirm: { text: 'Clear all' },
+			onConfirm: async () => {
+				await actions.clearSessions();
+			}
+		});
+	}
+
 	// Re-read nowTick so relative timestamps tick with the app's shared interval.
 	function relative(updatedAt: number): string {
 		void app.nowTick;
@@ -30,7 +49,21 @@
 {#if sessions.length === 0}
 	<div class="px-3 py-8 text-center text-xs text-muted-foreground">No sessions yet</div>
 {:else}
-	<div class="flex flex-col gap-1 p-2">
+	<div
+		class="flex items-center justify-between px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+	>
+		<span>{sessions.length} session{sessions.length === 1 ? '' : 's'}</span>
+		<button
+			type="button"
+			class="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
+			title="Remove all sessions from this repo (e.g. before merging a PR)"
+			onclick={clearAll}
+		>
+			<Trash2 class="size-3" />
+			Clear all
+		</button>
+	</div>
+	<div class="flex flex-col gap-1 p-2 pt-0">
 		{#each sessions as session (session.id)}
 			<div
 				role="button"

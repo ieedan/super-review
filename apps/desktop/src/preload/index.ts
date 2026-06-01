@@ -218,7 +218,11 @@ const api: PreloadAPI = {
 	sessions: {
 		list: (repoId) => ipcRenderer.invoke('sessions:list', repoId) as Promise<SessionSummary[]>,
 		get: (repoId, id) => ipcRenderer.invoke('sessions:get', repoId, id) as Promise<Session | null>,
-		remove: (repoId, id) => ipcRenderer.invoke('sessions:remove', repoId, id) as Promise<void>
+		remove: (repoId, id) => ipcRenderer.invoke('sessions:remove', repoId, id) as Promise<void>,
+		clear: (repoId) => ipcRenderer.invoke('sessions:clear', repoId) as Promise<void>,
+		count: (repoId) => ipcRenderer.invoke('sessions:count', repoId) as Promise<number>,
+		watch: (repoId) => ipcRenderer.invoke('sessions:watch', repoId) as Promise<void>,
+		unwatch: () => ipcRenderer.invoke('sessions:unwatch') as Promise<void>
 	},
 	skill: {
 		isInstalled: (repoId) => ipcRenderer.invoke('skill:isInstalled', repoId) as Promise<boolean>,
@@ -274,6 +278,11 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, name: string) => handler(name);
 			ipcRenderer.on('repos:trash-failed', listener);
 			return () => ipcRenderer.off('repos:trash-failed', listener);
+		},
+		onSessionsChanged(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
+			ipcRenderer.on('sessions:changed', listener);
+			return () => ipcRenderer.off('sessions:changed', listener);
 		}
 	}
 };

@@ -17,6 +17,7 @@ import type {
 	PRReviewComment,
 	PRSource,
 	PRSummary,
+	PrMergedBehavior,
 	PushStatus,
 	RepoInfo,
 	Session,
@@ -81,6 +82,9 @@ interface AppState {
 	// Agent-documented sessions for the active repo, newest-updated first. Shown
 	// as a list on the Sessions tab; loaded on entering the tab / refresh.
 	sessions: SessionSummary[];
+	// Count of the active repo's sessions, kept in sync regardless of the active
+	// tab (via the fs watcher) so the Sessions tab can always show a badge.
+	sessionCount: number;
 	// The session whose frozen diff is currently open, or null when the Sessions
 	// tab is showing the list. Ephemeral — not persisted across launches.
 	activeSessionId: string | null;
@@ -142,7 +146,7 @@ interface AppState {
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
 	animationsEnabled: boolean;
-	autoSwitchToDefaultOnMerge: boolean;
+	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
 	hotkeys: Hotkeys;
 	theme: 'light' | 'dark';
@@ -279,6 +283,7 @@ const initial: AppState = {
 	diffContext: { kind: 'workingTree' },
 	contextTab: 'unstaged',
 	sessions: [],
+	sessionCount: 0,
 	activeSessionId: null,
 	activeSessionDetail: null,
 	sessionView: 'tour',
@@ -302,7 +307,7 @@ const initial: AppState = {
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 	animationsEnabled: false,
-	autoSwitchToDefaultOnMerge: false,
+	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
 	hotkeys: DEFAULT_HOTKEYS,
 	theme: 'dark',
@@ -653,6 +658,8 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.stagingLineExclusions = new SvelteSet();
 	app.activeSessionId = null;
 	app.activeSessionDetail = null;
+	app.sessions = [];
+	app.sessionCount = 0;
 	app.branchPR = null;
 	await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
 	await refreshBranchPR();
@@ -755,7 +762,8 @@ async function onBranchPRMerged(
 	// Only relevant while we're actually sitting on the merged branch and there's
 	// a different default branch to return to.
 	if (!app.currentBranch || app.currentBranch !== branch || branch === defaultBranch) return;
-	if (app.autoSwitchToDefaultOnMerge) {
+	if (app.prMergedBehavior === 'nothing') return;
+	if (app.prMergedBehavior === 'switch') {
 		await performSwitchBackAfterMerge(branch, defaultBranch);
 	} else {
 		app.mergedSwitchPrompt = { branch, defaultBranch, prNumber };
@@ -935,6 +943,24 @@ async function refreshUnstagedCount(): Promise<void> {
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 		app.unstagedFileCount = files.length;
 		setRepoDirty(repoId, files.length > 0);
+	} catch {
+		// keep previous count
+	}
+}
+
+// Fetch the active repo's session count and store it on `app.sessionCount` so
+// the Sessions tab badge stays accurate regardless of the active tab. Cheap
+// (counts manifest files without parsing) and failure-silent like the count
+// above.
+async function refreshSessionCount(): Promise<void> {
+	if (!app.activeRepo) {
+		app.sessionCount = 0;
+		return;
+	}
+	const repoId = app.activeRepo.id;
+	try {
+		const count = await window.api.sessions.count(repoId);
+		if (app.activeRepo?.id === repoId) app.sessionCount = count;
 	} catch {
 		// keep previous count
 	}
@@ -1123,7 +1149,7 @@ export const actions = {
 		app.maxDiffLines = app.prefs.maxDiffLines;
 		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
 		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
-		app.autoSwitchToDefaultOnMerge = app.prefs.autoSwitchToDefaultOnMerge ?? false;
+		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
@@ -1257,6 +1283,7 @@ export const actions = {
 			app.activeSessionId = null;
 			app.activeSessionDetail = null;
 			app.sessions = [];
+			app.sessionCount = 0;
 			app.skillInstalled = null;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
@@ -1360,12 +1387,15 @@ export const actions = {
 	async loadSessions(): Promise<void> {
 		if (!app.activeRepo) {
 			app.sessions = [];
+			app.sessionCount = 0;
 			return;
 		}
 		const repoId = app.activeRepo.id;
 		const sessions = await window.api.sessions.list(repoId);
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 		app.sessions = sessions;
+		// Keep the badge in step with the freshly loaded list.
+		app.sessionCount = sessions.length;
 		if (app.activeSessionId) {
 			if (sessions.some((s) => s.id === app.activeSessionId)) {
 				await actions.openSession(app.activeSessionId);
@@ -1425,6 +1455,30 @@ export const actions = {
 		await window.api.sessions.remove(app.activeRepo.id, id);
 		if (app.activeSessionId === id) actions.closeSession();
 		await actions.loadSessions();
+	},
+
+	// Remove every session for the active repo — the "clear before merging" purge.
+	// Sessions now live in the repo's .super-review/ folder, so this also clears
+	// them from the working tree (git sees the committed manifests as deleted).
+	async clearSessions(): Promise<void> {
+		if (!app.activeRepo) return;
+		await window.api.sessions.clear(app.activeRepo.id);
+		actions.closeSession();
+		await actions.loadSessions();
+	},
+
+	// Refresh the active repo's session-count badge (cheap, tab-independent).
+	async refreshSessionCount(): Promise<void> {
+		await refreshSessionCount();
+	},
+
+	// Fired by the fs watcher when a repo's sessions change on disk (an agent's
+	// CLI save, a purge, or another window). Keeps the badge live always, and
+	// reloads the full list when the Sessions tab is the one on screen.
+	async onSessionsChanged(repoId: string): Promise<void> {
+		if (app.activeRepo?.id !== repoId) return;
+		await refreshSessionCount();
+		if (app.contextTab === 'sessions') await actions.loadSessions();
 	},
 
 	// Re-check whether the document-session skill is installed in the active repo
@@ -2677,9 +2731,9 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ animationsEnabled: enabled });
 	},
 
-	async setAutoSwitchToDefaultOnMerge(value: boolean): Promise<void> {
-		app.autoSwitchToDefaultOnMerge = value;
-		app.prefs = await window.api.state.setPrefs({ autoSwitchToDefaultOnMerge: value });
+	async setPrMergedBehavior(value: PrMergedBehavior): Promise<void> {
+		app.prMergedBehavior = value;
+		app.prefs = await window.api.state.setPrefs({ prMergedBehavior: value });
 	},
 
 	async setAutoRemoveMergedBranch(value: boolean): Promise<void> {
@@ -2687,16 +2741,24 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ autoRemoveMergedBranch: value });
 	},
 
-	// Confirm the "switch back to the default branch?" dialog. `always` persists
-	// the choice so future merges switch automatically without prompting.
-	async confirmSwitchToDefaultAfterMerge(opts: { always: boolean }): Promise<void> {
+	// Resolve the "switch back to the default branch?" dialog. `action` is the
+	// button the user chose; `always` persists that choice as the default so
+	// future merges skip the prompt (either auto-switching or doing nothing).
+	async resolveMergedSwitchPrompt(opts: {
+		action: 'switch' | 'nothing';
+		always: boolean;
+	}): Promise<void> {
 		const prompt = app.mergedSwitchPrompt;
 		if (!prompt) return;
 		app.mergedSwitchPrompt = null;
-		if (opts.always) await actions.setAutoSwitchToDefaultOnMerge(true);
-		await performSwitchBackAfterMerge(prompt.branch, prompt.defaultBranch);
+		if (opts.always) await actions.setPrMergedBehavior(opts.action);
+		if (opts.action === 'switch') {
+			await performSwitchBackAfterMerge(prompt.branch, prompt.defaultBranch);
+		}
 	},
 
+	// Dismiss without choosing (escape / outside click / close button) — leaves
+	// the working tree as-is for now and asks again on the next merge.
 	dismissMergedSwitchPrompt(): void {
 		app.mergedSwitchPrompt = null;
 	},

@@ -8,15 +8,19 @@
 	const prompt = $derived(app.mergedSwitchPrompt);
 	const open = $derived(prompt !== null);
 
-	// "Always switch back automatically" — reset each time the dialog opens so a
-	// stale check from a previous prompt can't carry over.
+	// "Always do this automatically" — applies to whichever action the user picks
+	// below. Reset each time the dialog opens so a stale check can't carry over.
 	let always = $state(false);
 	$effect(() => {
 		if (open) always = false;
 	});
 
-	function confirm(): void {
-		void actions.confirmSwitchToDefaultAfterMerge({ always });
+	function switchBack(): void {
+		void actions.resolveMergedSwitchPrompt({ action: 'switch', always });
+	}
+
+	function doNothing(): void {
+		void actions.resolveMergedSwitchPrompt({ action: 'nothing', always });
 	}
 
 	function dismiss(): void {
@@ -40,13 +44,13 @@
 		<div class="flex items-start gap-2.5 pl-7">
 			<Checkbox id="merged-switch-always" bind:checked={always} class="mt-0.5" />
 			<label for="merged-switch-always" class="cursor-pointer text-sm leading-snug">
-				Always automatically switch back to {prompt?.defaultBranch}
+				Always do this automatically
 			</label>
 		</div>
 
 		<Dialog.Footer>
-			<Button variant="secondary" size="sm" onclick={dismiss}>Not now</Button>
-			<Button variant="default" size="sm" onclick={confirm}>
+			<Button variant="secondary" size="sm" onclick={doNothing}>Do nothing</Button>
+			<Button variant="default" size="sm" onclick={switchBack}>
 				Switch to {prompt?.defaultBranch}
 			</Button>
 		</Dialog.Footer>

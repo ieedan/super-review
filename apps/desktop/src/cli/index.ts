@@ -2,8 +2,13 @@
 import { simpleGit } from 'simple-git';
 import path from 'node:path';
 import { captureSession, type SessionMeta, type TourStepInput } from '../main/session-capture.js';
-import { findSessionByKey, getSession, writeSession } from '../main/session-store.js';
-import { repoIdFromPath } from '../main/git-service.js';
+import {
+	clearSessions,
+	findSessionByKey,
+	getSession,
+	listSessions,
+	writeSession
+} from '../main/session-store.js';
 import type { HarnessKind } from '@shared/types.js';
 
 // The JSON document an agent passes via `--tour` to author a guided tour.
@@ -72,6 +77,11 @@ const USAGE = `super-review — document an agent session for review
 
 Usage:
   super-review session save [options]
+  super-review session clear [--cwd <path>]
+
+Sessions are stored in the repo under .super-review/sessions/, so they can be
+committed and travel with a branch/PR. Run "session clear" to remove them all
+(e.g. before merging) — git then sees the committed manifests as deleted.
 
 Options:
   --key <id>           Stable upsert key (your harness conversation/run id).
@@ -162,15 +172,14 @@ async function run(): Promise<void> {
 
 		const cwd = path.resolve(args.cwd ?? process.cwd());
 		const root = await repoRoot(cwd);
-		const repoId = repoIdFromPath(root);
 
 		// Locate any existing session to update: explicit --id wins, else --key.
 		let existing = null;
 		if (args.id) {
-			existing = await getSession(repoId, args.id);
+			existing = await getSession(root, args.id);
 			if (!existing) fail(`no session with id "${args.id}" for this repo`);
 		} else if (args.key) {
-			existing = await findSessionByKey(repoId, args.key);
+			existing = await findSessionByKey(root, args.key);
 		}
 
 		const name = args.name ?? tour?.name;
@@ -214,13 +223,31 @@ async function run(): Promise<void> {
 			}
 		}
 
-		await writeSession(session);
+		await writeSession(root, session);
 
 		const verb = existing ? 'updated' : 'created';
 		const stepNote = session.stepCount > 0 ? `, ${session.stepCount} tour step(s)` : '';
 		console.log(
 			`${verb} session "${session.name}" (${session.id})\n` +
 				`  ${session.fileCount} file(s), +${session.additions} −${session.deletions}${stepNote}`
+		);
+		return;
+	}
+
+	if (command === 'session' && sub === 'clear') {
+		const args = parseArgs(rest);
+		if (args.help) {
+			console.log(USAGE);
+			return;
+		}
+		const cwd = path.resolve(args.cwd ?? process.cwd());
+		const root = await repoRoot(cwd);
+		const count = (await listSessions(root)).length;
+		await clearSessions(root);
+		console.log(
+			count === 0
+				? 'no sessions to clear'
+				: `cleared ${count} session${count === 1 ? '' : 's'} from .super-review/sessions/`
 		);
 		return;
 	}

@@ -289,6 +289,11 @@ export type DiffLayout = 'scroll' | 'single';
 // folders (VSCode-style); 'list' flattens to one file per row.
 export type FileListLayout = 'tree' | 'list';
 
+// What to do when a checked-out branch's PR is observed merging. 'prompt' asks
+// via a dialog (default); 'switch' switches back to the default branch
+// automatically; 'nothing' leaves the working tree where it is and never asks.
+export type PrMergedBehavior = 'prompt' | 'switch' | 'nothing';
+
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
 export type ContextTab = 'unstaged' | 'branch' | 'sessions';
@@ -556,10 +561,10 @@ export interface UserPrefs {
 	// animation classes. Off by default — components render without motion unless
 	// the user opts in. Consumed via the useAnimations() context hook.
 	animationsEnabled: boolean;
-	// When a checked-out branch's PR is detected going from unmerged → merged,
-	// switch the working tree back to the default branch automatically instead of
-	// prompting. Off by default — the user is asked each time via a dialog.
-	autoSwitchToDefaultOnMerge: boolean;
+	// What to do when a checked-out branch's PR is detected going from unmerged →
+	// merged: ask via a dialog ('prompt', the default), switch back to the default
+	// branch automatically ('switch'), or do nothing ('nothing').
+	prMergedBehavior: PrMergedBehavior;
 	// After switching back to the default branch because a branch's PR merged,
 	// delete the now-merged local branch automatically instead of prompting. Off
 	// by default — the user is asked each time via a dialog.
@@ -762,6 +767,15 @@ export interface PreloadAPI {
 		list(repoId: string): Promise<SessionSummary[]>;
 		get(repoId: string, id: string): Promise<Session | null>;
 		remove(repoId: string, id: string): Promise<void>;
+		// Delete every session for the repo (the pre-merge purge).
+		clear(repoId: string): Promise<void>;
+		// Cheap count of the repo's sessions (drives the tab badge).
+		count(repoId: string): Promise<number>;
+		// Start/stop live updates for this window's active repo. The main process
+		// fs-watches the repo's .super-review/sessions dir and emits
+		// `onSessionsChanged`; pass null (or call unwatch) to stop.
+		watch(repoId: string | null): Promise<void>;
+		unwatch(): Promise<void>;
 	};
 	skill: {
 		// Whether the document-session skill is installed in the repo
@@ -802,6 +816,9 @@ export interface PreloadAPI {
 		// A background "move to Trash" (after removing a repo) failed; the payload
 		// is the repo's name. Returns an unsubscribe fn.
 		onRepoTrashFailed(handler: (name: string) => void): () => void;
+		// A repo's sessions changed on disk (manifest written/removed by the CLI or
+		// another window). Payload is the repo id. Returns an unsubscribe fn.
+		onSessionsChanged(handler: (repoId: string) => void): () => void;
 	};
 }
 

@@ -54,7 +54,14 @@
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM } from '@shared/types';
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
-	import type { Accent, DiffLayout, EditorKind, TerminalKind, ViewMode } from '@shared/types';
+	import type {
+		Accent,
+		DiffLayout,
+		EditorKind,
+		PrMergedBehavior,
+		TerminalKind,
+		ViewMode
+	} from '@shared/types';
 
 	type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'editor' | 'hotkeys';
 	let activeTab = $state<SettingsTab>('accounts');
@@ -105,7 +112,7 @@
 	let draftShowFileIcons = $state<boolean>(true);
 	let draftAnimationsEnabled = $state<boolean>(false);
 	let draftOpenFileOnArrowNav = $state<boolean>(true);
-	let draftAutoSwitchToDefaultOnMerge = $state<boolean>(false);
+	let draftPrMergedBehavior = $state<PrMergedBehavior>('prompt');
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
 	let draftMaxDiffLines = $state<number>(1500);
 	let draftHiddenDiffPatterns = $state<string[]>([]);
@@ -125,7 +132,7 @@
 			draftShowFileIcons = app.showFileIcons;
 			draftAnimationsEnabled = app.animationsEnabled;
 			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
-			draftAutoSwitchToDefaultOnMerge = app.autoSwitchToDefaultOnMerge;
+			draftPrMergedBehavior = app.prMergedBehavior;
 			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
 			draftMaxDiffLines = app.maxDiffLines;
 			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
@@ -209,8 +216,8 @@
 		if (draftOpenFileOnArrowNav !== app.openFileOnArrowNav) {
 			promises.push(actions.setOpenFileOnArrowNav(draftOpenFileOnArrowNav));
 		}
-		if (draftAutoSwitchToDefaultOnMerge !== app.autoSwitchToDefaultOnMerge) {
-			promises.push(actions.setAutoSwitchToDefaultOnMerge(draftAutoSwitchToDefaultOnMerge));
+		if (draftPrMergedBehavior !== app.prMergedBehavior) {
+			promises.push(actions.setPrMergedBehavior(draftPrMergedBehavior));
 		}
 		if (draftAutoRemoveMergedBranch !== app.autoRemoveMergedBranch) {
 			promises.push(actions.setAutoRemoveMergedBranch(draftAutoRemoveMergedBranch));
@@ -728,31 +735,43 @@
 						<div>
 							<h3 class="text-base font-semibold">Merged branches</h3>
 							<p class="mt-1 text-xs text-muted-foreground">
-								What to do when a checked-out branch's PR is merged. By default you're asked each
-								time; enable these to skip the prompts.
+								What to do when a checked-out branch's PR is merged.
 							</p>
 
-							<div class="mt-4 space-y-3">
-								<div class="flex items-start gap-2.5">
-									<Checkbox
-										id="auto-switch-on-merge"
-										bind:checked={draftAutoSwitchToDefaultOnMerge}
-										class="mt-0.5"
-									/>
-									<label
-										for="auto-switch-on-merge"
-										class="grid cursor-pointer gap-0.5 leading-snug"
+							<div class="mt-4 grid grid-cols-3 gap-3">
+								{#each [{ value: 'prompt', label: 'Ask each time', hint: 'Show a dialog when a PR merges.' }, { value: 'switch', label: 'Switch back', hint: 'Switch to the default branch automatically.' }, { value: 'nothing', label: 'Do nothing', hint: 'Stay on the branch; never ask.' }] as opt (opt.value)}
+									{@const active = draftPrMergedBehavior === opt.value}
+									<button
+										type="button"
+										onclick={() => (draftPrMergedBehavior = opt.value as PrMergedBehavior)}
+										class={cn(
+											'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+											active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
+										)}
 									>
-										<span class="text-sm font-medium"
-											>Automatically switch back to the default branch</span
+										<div
+											class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
 										>
-										<span class="text-xs text-muted-foreground">
-											When a PR merges, switch the working tree back to the default branch without
-											asking.
-										</span>
-									</label>
-								</div>
+											<span
+												class={cn(
+													'grid size-3.5 shrink-0 place-items-center rounded-full border',
+													active
+														? 'border-primary bg-primary text-primary-foreground'
+														: 'border-border'
+												)}
+											>
+												{#if active}<Check class="size-2.5" />{/if}
+											</span>
+											{opt.label}
+										</div>
+										<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
+											{opt.hint}
+										</div>
+									</button>
+								{/each}
+							</div>
 
+							<div class="mt-3">
 								<div class="flex items-start gap-2.5">
 									<Checkbox
 										id="auto-remove-merged"

@@ -78,6 +78,16 @@
 		return () => ro.disconnect();
 	});
 
+	// Point the main-process fs watcher at the active repo so session changes
+	// (an agent's CLI save, a purge, another window) push live updates, and
+	// re-seed the badge count whenever the repo changes. watch() replaces any
+	// prior subscription for this window, so no explicit teardown is needed.
+	$effect(() => {
+		const repoId = app.activeRepo?.id ?? null;
+		void window.api.sessions.watch(repoId);
+		void actions.refreshSessionCount();
+	});
+
 	onMount(() => {
 		void actions.init();
 
@@ -98,6 +108,12 @@
 		// failure (the repo is already gone from the app, but its files remain).
 		const offTrashFailed = window.api.events.onRepoTrashFailed((name) => {
 			setError(`Couldn't move "${name}" to the trash. Its files are still on disk.`);
+		});
+
+		// An agent's CLI (or another window) changed this repo's sessions on disk —
+		// keep the badge live and reload the list if the Sessions tab is showing.
+		const offSessionsChanged = window.api.events.onSessionsChanged((repoId) => {
+			void actions.onSessionsChanged(repoId);
 		});
 
 		// Refresh the working tree whenever the window regains focus so file
@@ -175,6 +191,7 @@
 		return () => {
 			offRepoChanged();
 			offTrashFailed();
+			offSessionsChanged();
 			window.removeEventListener('focus', onFocus);
 			window.removeEventListener('resize', syncWindowControls);
 			window.removeEventListener('keydown', onSidebarHotkey);

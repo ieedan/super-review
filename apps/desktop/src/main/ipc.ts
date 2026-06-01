@@ -71,7 +71,14 @@ import {
 } from './git-service.js';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import * as gh from './github-service.js';
-import { deleteSession, getSession, listSessions } from './session-store.js';
+import {
+	clearSessions,
+	countSessions,
+	deleteSession,
+	getSession,
+	listSessions,
+	watchSessionsDir
+} from './session-store.js';
 import { installSkill, isSkillInstalled } from './skill-service.js';
 import { listTemplates } from './repo-templates.js';
 import {
@@ -134,6 +141,57 @@ function broadcastToOthers(senderId: number, channel: string, payload: unknown):
 		if (win.webContents.id === senderId) continue;
 		win.webContents.send(channel, payload);
 	}
+}
+
+// ─── Sessions file watcher ──────────────────────────────────────────────────
+// Each renderer subscribes to live updates for its active repo; the main
+// process keeps one fs.watch per distinct repo path (shared when multiple
+// windows watch the same repo) and broadcasts `sessions:changed` on any change.
+// Renderers filter the event by their own active repo. Watchers are reference
+// counted so a repo's watch is torn down once the last interested window drops
+// it (or is destroyed).
+const sessionWatchers = new Map<string, { close: () => void; refs: number }>();
+const sessionWatchByContents = new Map<number, string>();
+const sessionWatchHooked = new Set<number>();
+
+function releaseSessionWatch(repoPath: string): void {
+	const entry = sessionWatchers.get(repoPath);
+	if (!entry) return;
+	entry.refs -= 1;
+	if (entry.refs <= 0) {
+		entry.close();
+		sessionWatchers.delete(repoPath);
+	}
+}
+
+function setSessionWatch(sender: Electron.WebContents, repoId: string): void {
+	const repo = getRepo(repoId);
+	if (!repo) return;
+	const prev = sessionWatchByContents.get(sender.id);
+	if (prev === repo.path) return; // Already watching this repo for this window.
+	if (prev) releaseSessionWatch(prev);
+	sessionWatchByContents.set(sender.id, repo.path);
+
+	const entry = sessionWatchers.get(repo.path);
+	if (entry) {
+		entry.refs += 1;
+	} else {
+		const close = watchSessionsDir(repo.path, () => broadcast('sessions:changed', repoId));
+		sessionWatchers.set(repo.path, { close, refs: 1 });
+	}
+
+	// Drop this window's watch when it goes away (registered once per window).
+	if (!sessionWatchHooked.has(sender.id)) {
+		sessionWatchHooked.add(sender.id);
+		sender.once('destroyed', () => clearSessionWatch(sender.id));
+	}
+}
+
+function clearSessionWatch(senderId: number): void {
+	const prev = sessionWatchByContents.get(senderId);
+	if (prev) releaseSessionWatch(prev);
+	sessionWatchByContents.delete(senderId);
+	sessionWatchHooked.delete(senderId);
 }
 
 // Re-run buildRepoInfo off the critical path. If anything moved (favicon
@@ -360,7 +418,7 @@ export function registerIpc(): void {
 			// Sessions are frozen snapshots on disk, not live git state — serve their
 			// file list straight from the manifest.
 			if (ctx.kind === 'session') {
-				const session = await getSession(repoId, ctx.sessionId);
+				const session = await getSession(repoOrThrow(repoId).path, ctx.sessionId);
 				return (session?.files ?? []).map((f) => ({
 					path: f.path,
 					oldPath: f.oldPath,
@@ -379,7 +437,7 @@ export function registerIpc(): void {
 		async (_e, repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData> => {
 			// Session diffs come from the manifest, not git.
 			if (ctx.kind === 'session') {
-				const session = await getSession(repoId, ctx.sessionId);
+				const session = await getSession(repoOrThrow(repoId).path, ctx.sessionId);
 				const f = session?.files.find((x) => x.path === filePath);
 				if (!f) {
 					throw new Error(`File not in session ${ctx.sessionId}: ${filePath}`);
@@ -1032,18 +1090,39 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'sessions:list',
-		async (_e, repoId: string): Promise<SessionSummary[]> => listSessions(repoId)
+		async (_e, repoId: string): Promise<SessionSummary[]> => listSessions(repoOrThrow(repoId).path)
 	);
 
 	ipcMain.handle(
 		'sessions:get',
-		async (_e, repoId: string, id: string): Promise<Session | null> => getSession(repoId, id)
+		async (_e, repoId: string, id: string): Promise<Session | null> =>
+			getSession(repoOrThrow(repoId).path, id)
 	);
 
 	ipcMain.handle(
 		'sessions:remove',
-		async (_e, repoId: string, id: string): Promise<void> => deleteSession(repoId, id)
+		async (_e, repoId: string, id: string): Promise<void> =>
+			deleteSession(repoOrThrow(repoId).path, id)
 	);
+
+	ipcMain.handle(
+		'sessions:clear',
+		async (_e, repoId: string): Promise<void> => clearSessions(repoOrThrow(repoId).path)
+	);
+
+	ipcMain.handle(
+		'sessions:count',
+		async (_e, repoId: string): Promise<number> => countSessions(repoOrThrow(repoId).path)
+	);
+
+	// Start/stop live session updates for the calling window's active repo. A null
+	// repoId (or unwatch) tears down this window's watch.
+	ipcMain.handle('sessions:watch', (e, repoId: string | null): void => {
+		if (repoId) setSessionWatch(e.sender, repoId);
+		else clearSessionWatch(e.sender.id);
+	});
+
+	ipcMain.handle('sessions:unwatch', (e): void => clearSessionWatch(e.sender.id));
 
 	// ─── Skill ─────────────────────────────────────────────────────────────
 	// The document-session skill teaches an agent how/when to record a session.
