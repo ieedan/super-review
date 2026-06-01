@@ -481,11 +481,14 @@ export interface CreateRepoDefaults {
 	licenses: string[];
 }
 
+// Accent palette: 'super' is the brand flame, 'mono' the neutral monochrome
+// primary. Each maps to an `.accent-*` class in app.css.
+export type Accent = 'super' | 'mono';
+
 export interface UserPrefs {
 	viewMode: ViewMode;
 	theme: 'light' | 'dark';
-	// Accent palette: 'super' = brand flame, 'mono' = neutral monochrome primary.
-	accent: 'super' | 'mono';
+	accent: Accent;
 	activeRepoId?: string;
 	contextTab?: ContextTab;
 	externalEditor?: EditorKind | null;

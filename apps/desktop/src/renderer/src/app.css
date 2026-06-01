@@ -85,6 +85,32 @@
 	--code-font: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
 	/* Default-button gradient — matches the docs site's download button. */
 	--flame-gradient: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep));
+	/* Default-button shadow — soft flame glow; neutralized by .accent-mono. */
+	--btn-primary-shadow: 0 2px 8px -3px hsl(11 100% 55% / 0.5);
+}
+
+/* Monochrome accent — opt out of the brand flame. Reverts primary, ring, and
+   sidebar accents to the neutral palette and flattens the default button so it
+   matches the classic look. Default (no class) stays on the flame "Super"
+   palette defined above. */
+.accent-mono {
+	--color-primary: hsl(0 0% 9%);
+	--color-primary-foreground: hsl(0 0% 98%);
+	--color-ring: hsl(0 0% 3.9%);
+	--color-sidebar-primary: hsl(0 0% 9%);
+	--color-sidebar-primary-foreground: hsl(0 0% 98%);
+	--color-sidebar-ring: hsl(0 0% 3.9%);
+	/* Flatten the gradient to a solid primary fill and drop the coral glow. */
+	--flame-gradient: linear-gradient(var(--color-primary), var(--color-primary));
+	--btn-primary-shadow: 0 1px 2px 0 hsl(0 0% 0% / 0.12);
+}
+.accent-mono.dark {
+	--color-primary: hsl(0 0% 98%);
+	--color-primary-foreground: hsl(0 0% 9%);
+	--color-ring: hsl(0 0% 83.1%);
+	--color-sidebar-primary: hsl(0 0% 98%);
+	--color-sidebar-primary-foreground: hsl(0 0% 9%);
+	--color-sidebar-ring: hsl(0 0% 83.1%);
 }
 
 html,

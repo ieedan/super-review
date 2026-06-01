@@ -1,4 +1,5 @@
 import type {
+	Accent,
 	AppPlatform,
 	BranchInfo,
 	ChangedFile,
@@ -125,7 +126,7 @@ interface AppState {
 	animationsEnabled: boolean;
 	hotkeys: Hotkeys;
 	theme: 'light' | 'dark';
-	accent: 'super' | 'mono';
+	accent: Accent;
 	codeFont: string;
 	uiFont: string;
 	// Font families installed on the user's machine, queried lazily on launch.
@@ -418,11 +419,15 @@ function applyTheme(theme: 'light' | 'dark'): void {
 	root.classList.toggle('light', theme === 'light');
 }
 
-// Accent palette. 'super' (default) is the brand flame; 'mono' restores the
-// neutral monochrome primary and flat default buttons. Applied as a class so
-// app.css can override the relevant theme variables (see `.accent-mono` there).
-function applyAccent(accent: 'super' | 'mono'): void {
-	document.documentElement.classList.toggle('accent-mono', accent === 'mono');
+// Accent palette. Each accent maps to an `.accent-*` class that overrides the
+// primary/ring/sidebar theme variables (see app.css). 'super' (the default
+// flame) needs no class — its values are the app.css defaults — but we still
+// add `accent-super` so swapping accents is a simple add/remove.
+const ACCENT_CLASSES = ['accent-super', 'accent-mono'];
+function applyAccent(accent: Accent): void {
+	const root = document.documentElement;
+	root.classList.remove(...ACCENT_CLASSES);
+	root.classList.add(`accent-${accent}`);
 }
 
 // Built-in fallback stacks — kept in sync with the defaults in app.css. A
@@ -2365,7 +2370,7 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ theme });
 	},
 
-	async setAccent(accent: 'super' | 'mono'): Promise<void> {
+	async setAccent(accent: Accent): Promise<void> {
 		app.accent = accent;
 		applyAccent(accent);
 		app.prefs = await window.api.state.setPrefs({ accent });

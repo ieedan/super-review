@@ -17,21 +17,11 @@
 	xmlns="http://www.w3.org/2000/svg"
 	{...rest}
 >
-	<circle cx="8" cy="8" r="2" fill="currentColor"></circle>
+	<circle cx="8" cy="8" r="2.75" fill="currentColor"></circle>
 	<g class="origin-center animate-spin">
-		<circle
-			cx="8"
-			cy="8"
-			r="6"
-			stroke="currentColor"
-			stroke-opacity="0.3"
-			stroke-width="2"
+		<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-opacity="0.3" stroke-width="2"
 		></circle>
-		<path
-			d="M8 2a6 6 0 0 1 6 6"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
+		<path d="M8 2a6 6 0 0 1 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"
 		></path>
 	</g>
 </svg>
