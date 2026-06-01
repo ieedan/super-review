@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 import { simpleGit } from 'simple-git';
 import path from 'node:path';
-import { captureSession, type SessionMeta, type TourStepInput } from '../main/session-capture.js';
 import {
+	captureSession,
 	clearSessions,
 	findSessionByKey,
 	getSession,
 	listSessions,
-	writeSession
-} from '../main/session-store.js';
-import type { HarnessKind } from '@shared/types.js';
+	writeSession,
+	type HarnessKind,
+	type SessionMeta,
+	type TourStepInput
+} from '@super-review/core';
 
 // The JSON document an agent passes via `--tour` to author a guided tour.
 // Top-level metadata is optional here (flags can supply it instead); `steps`

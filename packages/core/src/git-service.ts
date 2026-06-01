@@ -15,8 +15,8 @@ import type {
 	FileStatus,
 	GitIdentity,
 	RepoInfo
-} from '@shared/types.js';
-import { imageMimeForPath } from '@shared/media.js';
+} from './types.js';
+import { imageMimeForPath } from './media.js';
 import { getGitignore, getLicense } from './repo-templates.js';
 
 const execFileAsync = promisify(execFile);
@@ -1386,13 +1386,20 @@ async function pathExistsInHead(git: SimpleGit, relPath: string): Promise<boolea
 // Discard a file's working-tree (and staged) changes, mirroring GitHub
 // Desktop's "Discard Changes". Tracked files are reset to their HEAD state
 // (recoverable from history); files with no HEAD version — new or untracked —
-// are moved to the OS trash so the discard stays recoverable. `oldPath` is the
-// pre-rename path: a rename also leaves the original deleted from the worktree,
-// so we restore it too.
+// are removed via the injected `trash` callback so the discard can stay
+// recoverable (the desktop app passes a move-to-OS-trash implementation; with
+// no callback we hard-remove the file). `oldPath` is the pre-rename path: a
+// rename also leaves the original deleted from the worktree, so we restore it
+// too.
+//
+// `trash` is dependency-injected rather than reaching for `electron` directly,
+// so this module stays Electron-free and importable from the plain-node CLI
+// (which captures sessions but never discards files).
 export async function discardChanges(
 	repoPath: string,
 	filePath: string,
-	oldPath?: string
+	oldPath?: string,
+	trash?: (absPath: string) => Promise<void>
 ): Promise<void> {
 	const git = simpleGit(repoPath);
 	const restoreOrTrash = async (relPath: string): Promise<void> => {
@@ -1402,10 +1409,12 @@ export async function discardChanges(
 		if (inHead) {
 			await git.raw(['checkout', 'HEAD', '--', relPath]);
 		} else {
-			// Lazy-import electron so this module stays importable from the plain-node
-			// CLI (which captures sessions but never discards files).
-			const { shell } = await import('electron');
-			await shell.trashItem(path.join(repoPath, relPath)).catch(() => {});
+			const absPath = path.join(repoPath, relPath);
+			if (trash) {
+				await trash(absPath).catch(() => {});
+			} else {
+				await fs.rm(absPath, { force: true }).catch(() => {});
+			}
 		}
 	};
 	await restoreOrTrash(filePath);

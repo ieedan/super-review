@@ -3,9 +3,6 @@
 	"version": "0.0.4",
 	"description": "A faster, saner desktop UI for reviewing agent-written code",
 	"main": "out/main/index.js",
-	"bin": {
-		"super-review": "out/main/cli.js"
-	},
 	"type": "module",
 	"private": true,
 	"author": "",
@@ -24,6 +21,7 @@
 	},
 	"dependencies": {
 		"@chenglou/pretext": "^0.0.7",
+		"@super-review/core": "workspace:*",
 		"@iconify-json/material-icon-theme": "^1.2.66",
 		"@iconify/svelte": "^5.2.1",
 		"@octokit/auth-oauth-device": "^7.1.3",

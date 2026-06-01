@@ -10,6 +10,7 @@
 		"dev:desktop": "pnpm --filter @super-review/desktop dev",
 		"dev:docs": "pnpm --filter @super-review/docs dev",
 		"build": "pnpm --filter @super-review/desktop build",
+		"build:cli": "pnpm --filter @super-review/cli build",
 		"preview": "pnpm --filter @super-review/desktop preview",
 		"start": "pnpm --filter @super-review/desktop start",
 		"package": "pnpm --filter @super-review/desktop package",

@@ -1,0 +1,28 @@
+{
+	"name": "@super-review/cli",
+	"version": "0.0.0",
+	"description": "Document an agent session for review with the super-review desktop app",
+	"type": "module",
+	"private": true,
+	"license": "MIT",
+	"bin": {
+		"super-review": "dist/index.js"
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsup",
+		"dev": "node dist/index.js",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@super-review/core": "workspace:*",
+		"simple-git": "^3.27.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"tsup": "^8",
+		"typescript": "^5.7.3"
+	}
+}

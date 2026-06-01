@@ -73,7 +73,7 @@ import {
 	setOriginAndPush,
 	stageFile,
 	undoLastCommit
-} from './git-service.js';
+} from '@super-review/core';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import * as gh from './github-service.js';
 import {
@@ -83,9 +83,9 @@ import {
 	getSession,
 	listSessions,
 	watchSessionsDir
-} from './session-store.js';
+} from '@super-review/core';
 import { installSkill, isSkillInstalled } from './skill-service.js';
-import { listTemplates } from './repo-templates.js';
+import { listTemplates } from '@super-review/core';
 import {
 	clearCollapsedFiles,
 	clearSeen,
@@ -584,7 +584,12 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:discardChanges',
 		async (_e, repoId: string, filePath: string, oldPath?: string): Promise<void> =>
-			discardChanges(repoOrThrow(repoId).path, filePath, oldPath)
+			// Inject the OS-trash implementation: core stays Electron-free, so the
+			// app supplies `shell.trashItem` to keep discards of new/untracked files
+			// recoverable (move to trash) rather than hard-deleting them.
+			discardChanges(repoOrThrow(repoId).path, filePath, oldPath, (p) =>
+				import('electron').then(({ shell }) => shell.trashItem(p))
+			)
 	);
 
 	ipcMain.handle(

@@ -1,6 +1,6 @@
 import { promises as fs, existsSync, watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
-import type { Session, SessionSummary } from '@shared/types.js';
+import type { Session, SessionSummary } from './types.js';
 
 // Sessions live inside the repo so they can be committed to a branch and travel
 // with a PR — a reviewer can pull the branch and open the documented tour without
