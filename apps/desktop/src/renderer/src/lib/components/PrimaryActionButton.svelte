@@ -176,7 +176,7 @@
 	>
 		<Icon class={cn('size-3.5', busy && 'animate-spin')} />
 		<span class="text-xs">{label}</span>
-		{#if mode === 'go-pr'}
+		{#if mode === 'go-pr' && !busy}
 			{#if checks && checks.checks.length > 0}
 				<Tooltip.Provider delayDuration={150}>
 					<Tooltip.Root>
