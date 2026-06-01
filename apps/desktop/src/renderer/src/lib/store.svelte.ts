@@ -232,6 +232,11 @@ interface AppState {
 	// content and re-fetch, since the file can stay in the list while its
 	// contents change out from under the cached diff.
 	diffReloadToken: number;
+	// Bumped on every focus/poll refresh. Unlike diffReloadToken this keeps the
+	// cache and the on-screen diff in place: open sections re-fetch in the
+	// background and swap only if the file changed on disk. That's how edits made
+	// outside the app (another editor, the CLI) get picked up without a flicker.
+	diffRevalidateToken: number;
 	loading: {
 		files: boolean;
 		branches: boolean;
@@ -363,6 +368,7 @@ const initial: AppState = {
 	conflictFiles: [],
 	conflictUnresolved: [],
 	diffReloadToken: 0,
+	diffRevalidateToken: 0,
 	loading: { files: false, branches: false, prs: false, repos: false },
 	error: null
 };
@@ -518,6 +524,15 @@ function clearConflicts(): void {
 function bumpDiffReload(): void {
 	diffCache.clear();
 	app.diffReloadToken++;
+}
+
+// Ask open diff sections to silently re-validate against disk. Unlike
+// bumpDiffReload this leaves the cache and the rendered diff untouched — the
+// sections background-fetch and swap only when the content actually changed —
+// so it's cheap enough to call on every focus/poll refresh to catch edits made
+// outside the app.
+function bumpDiffRevalidate(): void {
+	app.diffRevalidateToken++;
 }
 
 function applyTheme(theme: 'light' | 'dark'): void {
@@ -1984,6 +1999,9 @@ export const actions = {
 	// top-bar refresh button and the window-focus listener.
 	async refresh(): Promise<void> {
 		if (!app.activeRepo) return;
+		// External edits (made while the app was unfocused) keep the same file in
+		// the list but change its contents — nudge open diffs to re-validate.
+		bumpDiffRevalidate();
 		// On the Sessions tab, reload the manifests so an agent's CLI update lands
 		// (loadSessions re-opens the active session if one is showing).
 		if (app.contextTab === 'sessions') await actions.loadSessions();
@@ -1996,6 +2014,8 @@ export const actions = {
 	async fetchAndRefresh(): Promise<void> {
 		if (!app.activeRepo || app.fetchingOrigin) return;
 		app.fetchingOrigin = true;
+		// Same as refresh(): pick up out-of-app edits on open diffs.
+		bumpDiffRevalidate();
 		try {
 			const result = await window.api.git.fetchOrigin(app.activeRepo.id);
 			if (!result.ok && result.error) {
