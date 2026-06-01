@@ -11,6 +11,7 @@
 	} from 'lucide-svelte';
 	import { Button } from './ui/button';
 	import * as Tooltip from './ui/tooltip';
+	import GithubSpinner from './GithubSpinner.svelte';
 	import { actions, app } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import type { PRCheck } from '@shared/types';
@@ -218,7 +219,7 @@
 	{:else if checksState === 'failure'}
 		<X class="size-3.5 text-red-500" aria-label={checksTitle} />
 	{:else if checksState === 'pending'}
-		<Loader2 class="size-3.5 animate-spin text-muted-foreground" aria-label={checksTitle} />
+		<GithubSpinner class="text-[#d29922]" aria-label={checksTitle} />
 	{:else}
 		<GitPullRequestArrow class="size-3 text-muted-foreground" />
 	{/if}
@@ -233,7 +234,7 @@
 			{:else if check.state === 'failure'}
 				<X class="size-3.5 shrink-0 text-red-500" />
 			{:else}
-				<Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+				<GithubSpinner class="size-3.5 shrink-0 text-[#d29922]" />
 			{/if}
 			{#if check.avatarUrl}
 				<img src={check.avatarUrl} alt="" class="size-3.5 shrink-0 rounded-full" />

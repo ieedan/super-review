@@ -927,7 +927,7 @@
 >
 	<header
 		class={[
-			'sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card/95 px-3 py-2 backdrop-blur'
+			'sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
 		]}
 	>
 		<button
