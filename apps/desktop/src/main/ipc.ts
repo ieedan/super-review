@@ -54,6 +54,7 @@ import {
 	fetchOrigin,
 	fetchPRRef,
 	getConflicts,
+	getDefaultBranch,
 	recheckConflicts,
 	getCurrentBranch,
 	getDiff,
@@ -514,7 +515,22 @@ export function registerIpc(): void {
 
 	ipcMain.handle('git:getPushStatus', async (_e, repoId: string): Promise<PushStatus> => {
 		const repo = repoOrThrow(repoId);
-		return getPushStatus(repo.path, repo.defaultBranch);
+		let defaultBranch = repo.defaultBranch;
+		if (!defaultBranch) {
+			// Backfill the cached default branch for repos persisted before it could
+			// be resolved (e.g. added when origin/HEAD wasn't set). Without it the
+			// ahead/behind-of-default counts — and the Create PR button they gate —
+			// stay broken until the repo is re-added. getPushStatus already resolves
+			// live, but persisting here means it's a one-time cost, not every poll.
+			const detected = await getDefaultBranch(repo.path);
+			if (detected) {
+				defaultBranch = detected;
+				const merged: RepoInfo = { ...repo, defaultBranch: detected };
+				upsertRepo(merged);
+				broadcast('repos:active-changed', merged);
+			}
+		}
+		return getPushStatus(repo.path, defaultBranch);
 	});
 
 	ipcMain.handle(

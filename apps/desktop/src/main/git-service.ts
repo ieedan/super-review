@@ -409,12 +409,7 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 	} catch (err) {
 		console.error(`[repo] buildRepoInfo "${name}" failed to read remotes:`, err);
 	}
-	try {
-		const head = await git.raw(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
-		defaultBranch = head.trim().replace(/^origin\//, '');
-	} catch {
-		// ignore
-	}
+	defaultBranch = await detectDefaultBranch(git);
 	const iconDataUrl = await findRepoIcon(repoPath);
 	const description = await readRepoDescription(repoPath);
 	return {
@@ -1037,14 +1032,50 @@ export interface PushStatus {
 	pushRemote?: string;
 }
 
+// Detect the repo's default branch from local refs. origin/HEAD is only set at
+// clone time, so it's commonly absent for locally-created repos; fall back to
+// the first conventional default that actually exists (remote-tracking first,
+// then local). Returns the bare branch name (no `origin/` prefix).
+export async function detectDefaultBranch(git: SimpleGit): Promise<string | undefined> {
+	try {
+		const head = (await git.raw(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])).trim();
+		if (head) return head.replace(/^origin\//, '');
+	} catch {
+		// origin/HEAD not set — fall through to the conventional candidates.
+	}
+	const candidates = ['origin/main', 'origin/master', 'origin/trunk', 'main', 'master', 'trunk'];
+	for (const ref of candidates) {
+		try {
+			await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+			return ref.replace(/^origin\//, '');
+		} catch {
+			// Try the next candidate.
+		}
+	}
+	return undefined;
+}
+
+// Path-based wrapper for callers (the IPC layer) that only hold a repo path.
+export async function getDefaultBranch(repoPath: string): Promise<string | undefined> {
+	return detectDefaultBranch(simpleGit(repoPath));
+}
+
 async function countAheadOfDefault(
 	git: SimpleGit,
 	branch: string,
-	defaultBranch: string | undefined
+	defaultBranch: string | undefined,
+	hasRemote: boolean
 ): Promise<number> {
 	if (!defaultBranch || branch === defaultBranch) return 0;
+	// Resolve against the same ref the "behind" count uses (origin/<default> when
+	// available, falling back to the local branch). A freshly cloned repo often
+	// has no local <default> branch — only origin/<default> — so a bare
+	// `<default>..HEAD` would fail and silently report 0, hiding the Create PR
+	// button even though the branch has diverged.
+	const ref = await resolveDefaultRef(git, defaultBranch, hasRemote);
+	if (!ref) return 0;
 	try {
-		const out = (await git.raw(['rev-list', '--count', `${defaultBranch}..HEAD`])).trim();
+		const out = (await git.raw(['rev-list', '--count', `${ref}..HEAD`])).trim();
 		return Number(out) || 0;
 	} catch {
 		return 0;
@@ -1102,9 +1133,17 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 	}
 	const remotes = await git.getRemotes(true).catch(() => []);
 	const hasRemote = remotes.some((r) => r.name === 'origin');
-	const aheadOfDefault = branch ? await countAheadOfDefault(git, branch, defaultBranch) : 0;
+	// The caller passes the repo's cached default branch, but that's computed once
+	// at repo-add time and persisted — it can be undefined for repos added before
+	// detection improved, or stale. Resolve live when it's missing so the ahead/
+	// behind-of-default counts (and the Create PR affordance they gate) recover on
+	// the next refresh without needing the repo to be re-added.
+	const effectiveDefault = defaultBranch ?? (await detectDefaultBranch(git));
+	const aheadOfDefault = branch
+		? await countAheadOfDefault(git, branch, effectiveDefault, hasRemote)
+		: 0;
 	const behindDefault = branch
-		? await countBehindDefault(git, branch, defaultBranch, hasRemote)
+		? await countBehindDefault(git, branch, effectiveDefault, hasRemote)
 		: 0;
 	if (!branch || !hasRemote) {
 		return {
