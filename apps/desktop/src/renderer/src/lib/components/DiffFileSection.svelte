@@ -854,11 +854,17 @@
 			cancelled = true;
 		};
 	});
+	// Plain (non-reactive) marker of the path we last reset for. We only want to
+	// clear the toggle when a recycled section is pointed at a genuinely
+	// different file — NOT every time the parent hands us a fresh `file` object
+	// for the same path, which happens on each refresh and on window refocus.
+	// Resetting on identity alone is what made the preview snap back to Code.
+	let lastResetPath: string | undefined;
 	$effect(() => {
-		// Read `file.path` so this effect re-runs when a recycled section is
-		// pointed at a different file, dropping a stale preview state.
-		const _trackedPath = file.path;
-		showPreview = false;
+		if (file.path !== lastResetPath) {
+			lastResetPath = file.path;
+			showPreview = false;
+		}
 	});
 
 	const isSeen = $derived(app.seenFiles.has(file.path));
