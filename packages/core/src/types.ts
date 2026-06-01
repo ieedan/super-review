@@ -144,7 +144,11 @@ export type DiffContext =
 	| { kind: 'pr'; prNumber: number }
 	// A frozen snapshot of changes documented by a coding agent. Files don't come
 	// from git — they're read back from the session manifest on disk.
-	| { kind: 'session'; sessionId: string };
+	| { kind: 'session'; sessionId: string }
+	// A managed stash entry, addressed by its resolved commit SHA (`ref`). The
+	// stash commit's parents back the diff: `^1` HEAD parent, `^2` index, `^3`
+	// untracked tree. Index-shift-proof because we always resolve to a SHA.
+	| { kind: 'stash'; ref: string };
 
 // Which coding-agent harness produced a session. Drives the logo shown on the
 // session card; "other" falls back to a generic icon + `harnessLabel`.
@@ -477,6 +481,20 @@ export interface PullPushResult {
 	ok: boolean;
 	conflicts: string[];
 	error?: string;
+	// Files a pull couldn't proceed over because they carry uncommitted local
+	// changes git would overwrite (the "your local changes would be overwritten"
+	// abort). Distinct from `conflicts` (unmerged paths) — this is the blocked-pull
+	// signal that drives the stash prompt. Unset when the failure wasn't a block.
+	blockedFiles?: string[];
+}
+
+// A managed stash: a normal git stash whose message carries the
+// `!!super-review<branch>` marker so the app never touches user-created stashes.
+// `ref` is the resolved commit SHA (not `stash@{n}`, whose index shifts);
+// `fileCount` is how many files the stash captures, for the sidebar label.
+export interface ManagedStash {
+	ref: string;
+	fileCount: number;
 }
 
 export interface CommitResult {
@@ -718,6 +736,18 @@ export interface PreloadAPI {
 		discardChanges(repoId: string, filePath: string, oldPath?: string): Promise<void>;
 		continueMerge(repoId: string): Promise<PullPushResult>;
 		abortMerge(repoId: string): Promise<void>;
+		// Stash management (GitHub-Desktop parity): one managed stash per branch,
+		// created only when a pull is blocked by uncommitted local changes.
+		createManagedStash(repoId: string): Promise<{ ok: boolean; error?: string }>;
+		findManagedStash(repoId: string): Promise<ManagedStash | null>;
+		// Pop the managed stash by SHA. A clean pop drops the entry; a conflicted
+		// pop surfaces unmerged paths the same way pull does (no MERGE_HEAD).
+		restoreManagedStash(repoId: string, ref: string): Promise<PullPushResult>;
+		discardManagedStash(repoId: string, ref: string): Promise<void>;
+		// Finish/abort a conflicted stash pop — dedicated paths that must not make a
+		// merge commit and that drop (or preserve) the marker stash correctly.
+		finishStashPop(repoId: string, ref: string): Promise<PullPushResult>;
+		abortStashPop(repoId: string): Promise<void>;
 		// Stage and commit the given files. Each entry is either a whole-file
 		// selection or a partial one carrying a unified diff to apply (line/hunk
 		// staging) — see CommitFileSelection.

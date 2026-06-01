@@ -14,6 +14,7 @@ import type {
 	DiffData,
 	FileStatus,
 	GitIdentity,
+	ManagedStash,
 	RepoInfo
 } from './types.js';
 import { imageMimeForPath } from './media.js';
@@ -607,6 +608,11 @@ async function refsForContext(
 			// Sessions are frozen snapshots served from disk by the IPC layer; they
 			// never reach git-service. Guard the invariant rather than guess a ref.
 			throw new Error('session context is not backed by git');
+		case 'stash':
+			// Stash diffs don't fit the base/head shape (they fan out across the
+			// commit's `^1`/`^2`/`^3` parents), so listChangedFiles / getDiff handle
+			// the stash kind in dedicated branches before reaching here.
+			throw new Error('stash context is handled by dedicated branches');
 	}
 	void git;
 }
@@ -625,6 +631,71 @@ async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 
 export async function listChangedFiles(repoPath: string, ctx: DiffContext): Promise<ChangedFile[]> {
 	const git = simpleGit(repoPath);
+
+	// Stash diffs fan out across the stash commit's parents, so they don't go
+	// through refsForContext's base/head model. Tracked changes come from
+	// `<ref>^1 → <ref>`; untracked files (captured with --include-untracked) live
+	// in the standalone `^3` tree and are reported as additions.
+	if (ctx.kind === 'stash') {
+		const ref = ctx.ref;
+		const stashFiles: ChangedFile[] = [];
+		if (!(await revExists(git, ref))) return stashFiles;
+
+		const nameStatus = await git
+			.raw(['diff', '--name-status', '--find-renames', `${ref}^1`, ref])
+			.catch(() => '');
+		const numstatRaw = await git.raw(['diff', '--numstat', `${ref}^1`, ref]).catch(() => '');
+		const numstatMap = parseNumstat(numstatRaw);
+		for (const line of nameStatus.split('\n').filter(Boolean)) {
+			const parts = line.split('\t');
+			const code = parts[0];
+			let status: FileStatus = 'modified';
+			let oldPath: string | undefined;
+			let p = parts[1];
+			if (code.startsWith('A')) status = 'added';
+			else if (code.startsWith('D')) status = 'deleted';
+			else if (code.startsWith('M')) status = 'modified';
+			else if (code.startsWith('R')) {
+				status = 'renamed';
+				oldPath = parts[1];
+				p = parts[2];
+			} else if (code.startsWith('C')) {
+				status = 'copied';
+				oldPath = parts[1];
+				p = parts[2];
+			} else if (code.startsWith('T')) status = 'type-change';
+			const ns = numstatMap.get(p) ?? { additions: 0, deletions: 0, binary: false };
+			stashFiles.push({
+				path: p,
+				oldPath,
+				status,
+				additions: ns.additions,
+				deletions: ns.deletions,
+				isBinary: ns.binary
+			});
+		}
+
+		// Untracked files: the `^3` tree exists only when the stash was created
+		// with --include-untracked. Diff it against the empty tree so every entry
+		// shows up as an addition.
+		if (await revExists(git, `${ref}^3`)) {
+			const untrackedNumstat = await git
+				.raw(['diff', '--numstat', EMPTY_TREE, `${ref}^3`])
+				.catch(() => '');
+			const untrackedMap = parseNumstat(untrackedNumstat);
+			for (const [p, ns] of untrackedMap) {
+				stashFiles.push({
+					path: p,
+					status: 'added',
+					additions: ns.additions,
+					deletions: ns.deletions,
+					isBinary: ns.binary
+				});
+			}
+		}
+		return stashFiles;
+	}
+
 	const refs = await refsForContext(git, ctx);
 	const files: ChangedFile[] = [];
 
@@ -907,12 +978,106 @@ function synthesizeAddedFilePatch(filePath: string, contents: string): string {
 	return out.join('\n') + '\n';
 }
 
+// One file's diff inside a managed stash. Tracked changes diff `<ref>^1 → <ref>`
+// (old from `^1`, new from the stash tree); untracked files live in the
+// standalone `^3` tree and reuse the synthesized added-file patch, exactly like
+// the working-tree untracked path. Resolved against the stash commit's SHA, so
+// it's immune to index shifts.
+async function getStashDiff(repoPath: string, filePath: string, ref: string): Promise<DiffData> {
+	const git = simpleGit(repoPath);
+	const hasUntracked = await revExists(git, `${ref}^3`);
+	const isUntracked =
+		hasUntracked &&
+		(await git
+			.raw(['cat-file', '-e', `${ref}^3:${filePath}`])
+			.then(() => true)
+			.catch(() => false));
+
+	const oldRef = isUntracked ? undefined : `${ref}^1`;
+	const newRef = isUntracked ? `${ref}^3` : ref;
+
+	let patch = '';
+	let oldContents = oldRef ? await showFile(git, oldRef, filePath) : '';
+	let newContents = await showFile(git, newRef, filePath);
+
+	const numstatRaw = isUntracked
+		? await git.raw(['diff', '--numstat', EMPTY_TREE, `${ref}^3`, '--', filePath]).catch(() => '')
+		: await git.raw(['diff', '--numstat', `${ref}^1`, ref, '--', filePath]).catch(() => '');
+	const ns = parseNumstat(numstatRaw).get(filePath) ?? {
+		additions: 0,
+		deletions: 0,
+		binary: false
+	};
+	const isBinary = ns.binary;
+
+	if (isUntracked) {
+		patch = ''; // synthesized below for text files
+	} else {
+		patch = await git.raw(['diff', `${ref}^1`, ref, '--', filePath]).catch(() => '');
+	}
+
+	const imageMime = imageMimeForPath(filePath);
+	let oldImage: string | undefined;
+	let newImage: string | undefined;
+	if (imageMime) {
+		({ oldImage, newImage } = await imageDataUrls(repoPath, filePath, imageMime, oldRef, newRef));
+	}
+
+	const hasOld = oldContents.length > 0 || oldImage !== undefined;
+	const hasNew = newContents.length > 0 || newImage !== undefined;
+	let status: FileStatus;
+	if (hasNew && !hasOld) status = 'added';
+	else if (hasOld && !hasNew) status = 'deleted';
+	else status = 'modified';
+
+	const truncated = oldContents.length > MAX_FILE_BYTES || newContents.length > MAX_FILE_BYTES;
+	const dropTextContents = isBinary && imageMime !== null;
+
+	// Untracked files have no patch from git (they're not against any parent);
+	// synthesize an added-file patch so the staging gutters render the same way
+	// the working-tree untracked path does.
+	if (
+		isUntracked &&
+		!patch &&
+		status === 'added' &&
+		!isBinary &&
+		imageMime === null &&
+		!truncated &&
+		newContents
+	) {
+		patch = synthesizeAddedFilePatch(filePath, newContents);
+	}
+
+	if (truncated || dropTextContents) {
+		oldContents = '';
+		newContents = '';
+	}
+
+	return {
+		file: {
+			path: filePath,
+			oldPath: undefined,
+			status,
+			additions: ns.additions,
+			deletions: ns.deletions,
+			isBinary
+		},
+		patch,
+		oldContents,
+		newContents,
+		truncated,
+		oldImage,
+		newImage
+	};
+}
+
 export async function getDiff(
 	repoPath: string,
 	filePath: string,
 	ctx: DiffContext
 ): Promise<DiffData> {
 	const git = simpleGit(repoPath);
+	if (ctx.kind === 'stash') return getStashDiff(repoPath, filePath, ctx.ref);
 	const refs = await refsForContext(git, ctx);
 
 	let patch = '';
@@ -1209,6 +1374,7 @@ export interface PullPushResult {
 	ok: boolean;
 	conflicts: string[];
 	error?: string;
+	blockedFiles?: string[];
 }
 
 async function listUnmergedPaths(git: SimpleGit): Promise<string[]> {
@@ -1223,6 +1389,22 @@ async function listUnmergedPaths(git: SimpleGit): Promise<string[]> {
 	}
 }
 
+// git aborts a pull that would clobber uncommitted local edits with "Your local
+// changes to the following files would be overwritten by merge:" followed by a
+// tab-indented file list. Recognise that signature and pull out the file list so
+// the app can offer to stash instead of surfacing a raw error. Returns null for
+// any other error (which falls through to the generic `error` path).
+const OVERWRITE_RE =
+	/your local changes to the following files would be overwritten by (merge|checkout):/i;
+function parseOverwriteBlocked(message: string): string[] | null {
+	if (!OVERWRITE_RE.test(message)) return null;
+	return message
+		.split('\n')
+		.filter((l) => l.startsWith('\t'))
+		.map((l) => l.slice(1).trimEnd())
+		.filter(Boolean);
+}
+
 export async function pull(repoPath: string): Promise<PullPushResult> {
 	const git = simpleGit(repoPath);
 	try {
@@ -1231,10 +1413,18 @@ export async function pull(repoPath: string): Promise<PullPushResult> {
 	} catch (err) {
 		const conflicts = await listUnmergedPaths(git);
 		if (conflicts.length > 0) return { ok: false, conflicts };
+		// simple-git's GitError.message holds stdout+stderr, so the "would be
+		// overwritten" abort lands here. Surface the blocked file list (distinct
+		// from unmerged conflicts) so the renderer can prompt to stash + retry.
+		const message = err instanceof Error ? err.message : String(err);
+		const blockedFiles = parseOverwriteBlocked(message);
+		if (blockedFiles && blockedFiles.length > 0) {
+			return { ok: false, conflicts: [], blockedFiles };
+		}
 		return {
 			ok: false,
 			conflicts: [],
-			error: err instanceof Error ? err.message : String(err)
+			error: message
 		};
 	}
 }
@@ -1483,6 +1673,177 @@ export async function abortMerge(repoPath: string): Promise<void> {
 		await git.raw(['reset', '--hard', 'ORIG_HEAD']).catch(() => {});
 		await git.raw(['stash', 'pop']).catch(() => {});
 	}
+}
+
+// --- Managed stashes (GitHub-Desktop parity) --------------------------------
+//
+// A "managed" stash is a normal git stash whose message carries the marker
+// `!!super-review<branch>`, so we only ever touch stashes the app created — never
+// the user's own. We keep at most one per branch and create it only when a pull
+// is blocked by uncommitted local changes. Every pop/drop/diff resolves
+// `stash@{n}` → SHA first: stash indices shift as entries come and go, but the
+// commit SHA is stable, so operating on it is race-proof.
+
+// The marker that tags a managed stash for `branch`. Embedding the branch keeps
+// one stash per branch and lets us find the right one when several branches each
+// have one parked.
+function managedStashMarker(branch: string): string {
+	return `!!super-review${branch}`;
+}
+
+// Create the managed stash for `branch`, capturing untracked files too (they
+// land in the stash commit's `^3` tree). "No local changes to save" is a no-op —
+// there was simply nothing to stash, so the caller proceeds to the pull.
+export async function createManagedStash(
+	repoPath: string,
+	branch: string
+): Promise<{ ok: boolean; error?: string }> {
+	const git = simpleGit(repoPath);
+	try {
+		await git.raw(['stash', 'push', '--include-untracked', '-m', managedStashMarker(branch)]);
+		return { ok: true };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (/no local changes to save/i.test(message)) return { ok: true };
+		return { ok: false, error: message };
+	}
+}
+
+// git's well-known empty-tree object. Diffing a single tree against it lists
+// every entry in that tree as an addition — how we enumerate the untracked-only
+// `^3` tree (which has no parent of its own).
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+// Count the files a stash commit captures: tracked changes (`^1` → stash tree)
+// plus any untracked files parked in the standalone `^3` tree. Used for the
+// sidebar's "N changes" label.
+async function countStashFiles(git: SimpleGit, sha: string): Promise<number> {
+	const seen = new Set<string>();
+	const tracked = await git.raw(['diff', '--name-only', `${sha}^1`, sha]).catch(() => '');
+	for (const l of tracked
+		.split('\n')
+		.map((s) => s.trim())
+		.filter(Boolean))
+		seen.add(l);
+	if (await revExists(git, `${sha}^3`)) {
+		const untracked = await git
+			.raw(['diff', '--name-only', EMPTY_TREE, `${sha}^3`])
+			.catch(() => '');
+		for (const l of untracked
+			.split('\n')
+			.map((s) => s.trim())
+			.filter(Boolean))
+			seen.add(l);
+	}
+	return seen.size;
+}
+
+// Resolve a managed stash's commit SHA back to its *current* `stash@{n}`
+// reference. `git stash pop`/`drop` only accept a reflog selector (a raw SHA is
+// rejected), and the selector's index shifts as entries come and go — so we
+// store the stable SHA and re-resolve the live index right before popping or
+// dropping. Returns null when no live entry matches the SHA (already gone).
+async function resolveStashRef(git: SimpleGit, sha: string): Promise<string | null> {
+	const raw = await git.raw(['stash', 'list', '--format=%H %gd']).catch(() => '');
+	for (const line of raw
+		.split('\n')
+		.map((s) => s.trim())
+		.filter(Boolean)) {
+		const sep = line.indexOf(' ');
+		if (sep === -1) continue;
+		if (line.slice(0, sep) === sha) return line.slice(sep + 1).trim();
+	}
+	return null;
+}
+
+// Find the managed stash for `branch`, resolved to its commit SHA. `git stash
+// list` is ordered newest-first and its indices shift as entries are added or
+// dropped, so we key on the stable commit SHA (read straight from `%H`). Returns
+// null when there is no match; treats >1 match as "none" too (an inconsistent
+// state we won't guess at, rather than risk popping the wrong one).
+export async function findManagedStash(
+	repoPath: string,
+	branch: string
+): Promise<ManagedStash | null> {
+	const git = simpleGit(repoPath);
+	const marker = managedStashMarker(branch);
+	const raw = await git.raw(['stash', 'list', '--format=%H %gs']).catch(() => '');
+	const shas: string[] = [];
+	for (const line of raw
+		.split('\n')
+		.map((s) => s.trim())
+		.filter(Boolean)) {
+		const sep = line.indexOf(' ');
+		if (sep === -1) continue;
+		const sha = line.slice(0, sep); // %H
+		const subject = line.slice(sep + 1); // %gs (e.g. "On main: !!super-reviewmain")
+		if (subject.includes(marker)) shas.push(sha);
+	}
+	if (shas.length !== 1) return null;
+	const fileCount = await countStashFiles(git, shas[0]);
+	return { ref: shas[0], fileCount };
+}
+
+// Pop the managed stash identified by `sha`. A clean pop drops the entry
+// automatically (git's default). A conflicted pop leaves unmerged paths and
+// keeps the stash entry — we surface the conflicts exactly like pull() so the
+// shared conflict dialog drives resolution (see finishStashPop / abortStashPop
+// for the dedicated, MERGE_HEAD-free wrap-up). The SHA is re-resolved to its
+// live `stash@{n}` selector first, since `stash pop` rejects a raw SHA.
+export async function restoreManagedStash(repoPath: string, sha: string): Promise<PullPushResult> {
+	const git = simpleGit(repoPath);
+	const ref = await resolveStashRef(git, sha);
+	if (!ref) {
+		return { ok: false, conflicts: [], error: 'The stashed changes are no longer available.' };
+	}
+	try {
+		await git.raw(['stash', 'pop', ref]);
+		return { ok: true, conflicts: [] };
+	} catch (err) {
+		const conflicts = await listUnmergedPaths(git);
+		if (conflicts.length > 0) return { ok: false, conflicts };
+		return {
+			ok: false,
+			conflicts: [],
+			error: err instanceof Error ? err.message : String(err)
+		};
+	}
+}
+
+// Drop the managed stash by SHA without applying it (GitHub Desktop's "Discard
+// Stashed Changes"). Re-resolves the SHA to its live selector first.
+export async function discardManagedStash(repoPath: string, sha: string): Promise<void> {
+	const git = simpleGit(repoPath);
+	const ref = await resolveStashRef(git, sha);
+	if (ref) await git.raw(['stash', 'drop', ref]);
+}
+
+// Finish a conflicted stash pop once the user has resolved every file. A stash
+// pop has no MERGE_HEAD and must NOT create a commit (the resolved work stays in
+// the working tree, exactly like the post-fast-forward autostash case), so we do
+// not reuse `continueMerge`. We also can't lean on `dropAutostashBackup` — it
+// keys off the "autostash" label, not our `!!super-review` marker — so we drop
+// the entry explicitly by SHA. If conflicts remain, surface them again.
+export async function finishStashPop(repoPath: string, sha: string): Promise<PullPushResult> {
+	const git = simpleGit(repoPath);
+	const remaining = await listUnmergedPaths(git);
+	if (remaining.length > 0) return { ok: false, conflicts: remaining };
+	// The conflicted pop left the entry in place; resolve its live selector and
+	// drop it now that every path is resolved (a raw SHA is rejected by `drop`).
+	const ref = await resolveStashRef(git, sha);
+	if (ref) await git.raw(['stash', 'drop', ref]).catch(() => {});
+	return { ok: true, conflicts: [] };
+}
+
+// Abort a conflicted stash pop: discard the half-applied work from the working
+// tree, leaving the managed stash entry intact so nothing is lost. We do NOT
+// reuse `abortMerge` — `git merge --abort` is invalid with no merge in progress.
+// A conflicted `stash pop` leaves the entry in place, so a plain hard reset is
+// enough to recover the pre-restore state.
+export async function abortStashPop(repoPath: string): Promise<void> {
+	const git = simpleGit(repoPath);
+	await git.raw(['checkout', '--', '.']).catch(() => {});
+	await git.raw(['reset', '--hard', 'HEAD']).catch(() => {});
 }
 
 export interface CommitResult {

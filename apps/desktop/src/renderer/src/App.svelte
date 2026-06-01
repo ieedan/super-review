@@ -10,6 +10,7 @@
 	import ForkDialog from '$lib/components/ForkDialog.svelte';
 	import MergedSwitchDialog from '$lib/components/MergedSwitchDialog.svelte';
 	import MergedRemoveDialog from '$lib/components/MergedRemoveDialog.svelte';
+	import StashPromptDialog from '$lib/components/StashPromptDialog.svelte';
 	import BranchMenu from '$lib/components/BranchMenu.svelte';
 	import RepositoryMenu from '$lib/components/RepositoryMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
@@ -319,6 +320,7 @@
 <RepositorySettingsDialog />
 <MergedSwitchDialog />
 <MergedRemoveDialog />
+<StashPromptDialog />
 <BranchMenu />
 <RepositoryMenu />
 <AddRepoDialog />

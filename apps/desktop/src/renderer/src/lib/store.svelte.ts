@@ -13,6 +13,7 @@ import type {
 	FileListLayout,
 	GithubAccount,
 	LastCommit,
+	ManagedStash,
 	PRChecksSummary,
 	PRReviewComment,
 	PRSource,
@@ -223,6 +224,18 @@ interface AppState {
 	// Set after switching off a merged branch (via dialog or auto-switch) to drive
 	// the "remove this branch locally?" dialog. Holds the branch to delete.
 	mergedRemovePrompt: { branch: string } | null;
+	// Set when a pull is blocked by uncommitted local changes git would overwrite.
+	// Drives StashPromptDialog ("Stash Changes and Continue"). `files` is the
+	// blocked file list git reported. Cleared on confirm/dismiss.
+	stashPrompt: { files: string[] } | null;
+	// The managed stash parked on the current branch (one per branch), or null
+	// when there's none. Refreshed alongside files/branches; drives the "Stashed
+	// Changes" sidebar row.
+	stash: ManagedStash | null;
+	// Transient: set while the user is viewing the managed stash (the sidebar
+	// list + diff pane swap to the stash's contents). Kept off `contextTab` so it
+	// doesn't pollute the persisted tab; closing restores the prior context.
+	stashView: { ref: string } | null;
 	// PR currently being reviewed (when diffContext.kind === 'pr').
 	activePR: PRSummary | null;
 	// Review comments for the active PR, indexed by file path.
@@ -245,7 +258,10 @@ interface AppState {
 			| 'forking'
 			| 'conflicts'
 			| 'done';
-		intent: 'push' | 'pull';
+		// 'stash-restore' reuses the conflict dialog + push.stage machinery for a
+		// managed-stash pop, but routes continue/abort to the dedicated stash-pop
+		// finish/abort paths (a pop has no MERGE_HEAD and makes no commit).
+		intent: 'push' | 'pull' | 'stash-restore';
 		error: string | null;
 	};
 	// Every file involved in the current merge conflict. Persists through
@@ -386,6 +402,9 @@ const initial: AppState = {
 	forkPrompt: null,
 	mergedSwitchPrompt: null,
 	mergedRemovePrompt: null,
+	stashPrompt: null,
+	stash: null,
+	stashView: null,
 	activePR: null,
 	prComments: {},
 	loadingComments: false,
@@ -743,10 +762,34 @@ async function refreshBranches(): Promise<void> {
 	try {
 		app.branches = await window.api.git.listBranches(app.activeRepo.id);
 		app.currentBranch = await window.api.git.getCurrentBranch(app.activeRepo.id);
+		// The managed stash is keyed by the current branch, so a branch/repo switch
+		// (which always refreshes branches) should re-resolve it. Fire-and-forget —
+		// the sidebar row is non-critical and shouldn't block the branch refresh.
+		void refreshStash();
 	} catch (err) {
 		setError(err instanceof Error ? err.message : String(err));
 	} finally {
 		app.loading.branches = false;
+	}
+}
+
+// Resolve the managed stash parked on the current branch (one per branch) for
+// the "Stashed Changes" sidebar row. A missing stash clears the row; on the
+// stash view, a vanished stash (e.g. dropped elsewhere) also closes the view.
+async function refreshStash(): Promise<void> {
+	if (!app.activeRepo) {
+		app.stash = null;
+		return;
+	}
+	try {
+		const found = await window.api.git.findManagedStash(app.activeRepo.id);
+		app.stash = found;
+		if (!found && app.stashView) {
+			app.stashView = null;
+			app.diffContext = contextForTab(app.contextTab);
+		}
+	} catch {
+		// Non-critical — keep whatever we last knew rather than throwing a banner.
 	}
 }
 
@@ -2362,6 +2405,12 @@ export const actions = {
 					app.push.stage = 'conflicts';
 					return;
 				}
+				// Pull blocked by uncommitted local changes git would overwrite.
+				// Offer to stash them and continue instead of toasting a raw error.
+				if (pullResult.blockedFiles && pullResult.blockedFiles.length > 0) {
+					app.stashPrompt = { files: pullResult.blockedFiles };
+					return;
+				}
 				throw new Error(pullResult.error ?? 'Pull failed.');
 			}
 			app.push.stage = 'done';
@@ -2375,6 +2424,132 @@ export const actions = {
 			if (app.push.stage !== 'conflicts') {
 				app.push.inProgress = false;
 			}
+		}
+	},
+
+	// Confirm "Stash Changes and Continue" from the blocked-pull prompt: park the
+	// uncommitted changes in a managed stash, then re-run the pull. A "Stashed
+	// Changes" row appears in the sidebar (refreshStash) for later restore.
+	async confirmStashAndPull(): Promise<void> {
+		if (!app.activeRepo || app.push.inProgress) return;
+		const repoId = app.activeRepo.id;
+		app.stashPrompt = null;
+		app.push = {
+			inProgress: true,
+			stage: 'pulling',
+			intent: 'pull',
+			error: null
+		};
+		clearConflicts();
+		try {
+			const stashed = await window.api.git.createManagedStash(repoId);
+			if (!stashed.ok) throw new Error(stashed.error ?? 'Could not stash changes.');
+			const pullResult = await window.api.git.pull(repoId);
+			if (!pullResult.ok) {
+				if (pullResult.conflicts.length > 0) {
+					setConflicts(pullResult.conflicts);
+					app.push.stage = 'conflicts';
+					return;
+				}
+				throw new Error(pullResult.error ?? 'Pull failed.');
+			}
+			app.push.stage = 'done';
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+			await refreshBranchPR();
+		} catch (err) {
+			app.push.error = err instanceof Error ? err.message : String(err);
+			setError(app.push.error);
+		} finally {
+			if (app.push.stage !== 'conflicts') {
+				app.push.inProgress = false;
+			}
+		}
+	},
+
+	dismissStashPrompt(): void {
+		app.stashPrompt = null;
+	},
+
+	// Enter the transient stash view: the sidebar list + diff pane swap to the
+	// managed stash's contents. We point `diffContext` at the stash (not the tab
+	// context) and load its files; `stashView` tracks that we're in this mode so
+	// the banner shows and closing can restore the prior context.
+	async openStashView(): Promise<void> {
+		if (!app.stash) return;
+		app.stashView = { ref: app.stash.ref };
+		app.diffContext = { kind: 'stash', ref: app.stash.ref };
+		app.fileSearchQuery = '';
+		await refreshFiles();
+	},
+
+	// Leave the stash view, restoring the diff context the active tab drives.
+	async closeStashView(): Promise<void> {
+		if (!app.stashView) return;
+		app.stashView = null;
+		app.diffContext = contextForTab(app.contextTab);
+		app.fileSearchQuery = '';
+		await refreshFiles();
+	},
+
+	// Restore (pop) the managed stash back into the working tree. A clean pop
+	// drops the entry and clears the view; a conflicted pop reuses the shared
+	// conflict dialog under the 'stash-restore' intent so continue/abort route to
+	// the dedicated stash-pop finish/abort paths.
+	async restoreStash(): Promise<void> {
+		if (!app.activeRepo || !app.stash || app.push.inProgress) return;
+		const repoId = app.activeRepo.id;
+		const ref = app.stash.ref;
+		app.push = {
+			inProgress: true,
+			stage: 'pulling',
+			intent: 'stash-restore',
+			error: null
+		};
+		clearConflicts();
+		try {
+			const result = await window.api.git.restoreManagedStash(repoId, ref);
+			if (!result.ok) {
+				if (result.conflicts.length > 0) {
+					setConflicts(result.conflicts);
+					app.push.stage = 'conflicts';
+					return;
+				}
+				throw new Error(result.error ?? 'Could not restore stashed changes.');
+			}
+			// Clean pop: the entry is gone, leave the stash view back to the working
+			// tree where the restored changes now live.
+			app.stash = null;
+			app.stashView = null;
+			app.diffContext = contextForTab(app.contextTab);
+			app.push.stage = 'done';
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+		} catch (err) {
+			app.push.error = err instanceof Error ? err.message : String(err);
+			setError(app.push.error);
+		} finally {
+			if (app.push.stage !== 'conflicts') {
+				app.push.inProgress = false;
+			}
+		}
+	},
+
+	// Discard (drop) the managed stash without applying it. The caller (the stash
+	// view's Discard button) gates this behind the shared confirm-delete dialog,
+	// since the work is unrecoverable.
+	async discardStash(): Promise<void> {
+		if (!app.activeRepo || !app.stash) return;
+		const repoId = app.activeRepo.id;
+		const ref = app.stash.ref;
+		try {
+			await window.api.git.discardManagedStash(repoId, ref);
+			app.stash = null;
+			app.stashView = null;
+			app.diffContext = contextForTab(app.contextTab);
+			await Promise.all([refreshFiles(), refreshStash()]);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
 		}
 	},
 
@@ -2598,6 +2773,36 @@ export const actions = {
 	async continueMerge(): Promise<void> {
 		if (!app.activeRepo) return;
 		const repoId = app.activeRepo.id;
+		// A conflicted stash-restore pop has no MERGE_HEAD and must not create a
+		// commit — finishStashPop just verifies resolution and drops the marker
+		// stash. The restored changes stay in the working tree; never push.
+		if (app.push.intent === 'stash-restore') {
+			try {
+				const ref = app.stash?.ref ?? app.stashView?.ref;
+				if (!ref) throw new Error('No stash to finish restoring.');
+				const finished = await window.api.git.finishStashPop(repoId, ref);
+				if (!finished.ok) {
+					if (finished.conflicts.length > 0) {
+						setConflicts(finished.conflicts);
+						return;
+					}
+					throw new Error(finished.error ?? 'Could not finish restoring stashed changes.');
+				}
+				clearConflicts();
+				app.stash = null;
+				app.stashView = null;
+				app.diffContext = contextForTab(app.contextTab);
+				app.push.stage = 'done';
+				bumpDiffReload();
+				await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+			} catch (err) {
+				app.push.error = err instanceof Error ? err.message : String(err);
+				setError(app.push.error);
+			} finally {
+				app.push.inProgress = false;
+			}
+			return;
+		}
 		try {
 			const merge = await window.api.git.continueMerge(repoId);
 			if (!merge.ok) {
@@ -2633,8 +2838,16 @@ export const actions = {
 
 	async abortMerge(): Promise<void> {
 		if (!app.activeRepo) return;
+		// Aborting a conflicted stash-restore discards the half-applied work but
+		// leaves the managed stash intact (abortStashPop), so the user can try
+		// again later. `git merge --abort` would be invalid — there's no merge.
+		const isStashRestore = app.push.intent === 'stash-restore';
 		try {
-			await window.api.git.abortMerge(app.activeRepo.id);
+			if (isStashRestore) {
+				await window.api.git.abortStashPop(app.activeRepo.id);
+			} else {
+				await window.api.git.abortMerge(app.activeRepo.id);
+			}
 			clearConflicts();
 			app.push = {
 				inProgress: false,
@@ -2644,6 +2857,8 @@ export const actions = {
 			};
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+			// The stash entry is preserved on abort — keep the row by re-resolving it.
+			if (isStashRestore) await refreshStash();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
