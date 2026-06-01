@@ -3,6 +3,7 @@ import type {
 	AppPlatform,
 	BranchInfo,
 	ChangedFile,
+	CommitFileSelection,
 	ContextTab,
 	CreateRepoOptions,
 	DiffContext,
@@ -24,6 +25,12 @@ import type {
 	ViewMode
 } from '@shared/types';
 import { diffContextKey } from '@shared/diff-context';
+import {
+	buildFilteredPatch,
+	parseFilePatch,
+	stagingLineKey,
+	type DiffSide
+} from '@shared/diff-staging';
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@shared/hotkeys';
 import { comparePathsVSCodeStyle } from '$lib/utils';
@@ -113,6 +120,13 @@ interface AppState {
 	// means everything is committed by default and newly-changed files show up
 	// checked — matching GitHub Desktop. Only meaningful for the working tree.
 	excludedFromCommit: SvelteSet<string>;
+	// Individual changed lines explicitly unchecked in the Unstaged tab, for
+	// partial (line/hunk) staging. Each entry is a key from
+	// `stagingLineKey(path, side, lineNumber)`; presence means "leave this line
+	// out of the next commit". A file with any such key (and not in
+	// `excludedFromCommit`) is partially staged. Working tree only; in-memory and
+	// pruned/reset alongside `excludedFromCommit`.
+	stagingLineExclusions: SvelteSet<string>;
 	collapsedFiles: SvelteSet<string>;
 	viewMode: ViewMode;
 	// File list layout per sidebar tab. The active tab decides which one the
@@ -263,6 +277,7 @@ const initial: AppState = {
 	selectedFiles: new SvelteSet(),
 	seenFiles: new SvelteSet(),
 	excludedFromCommit: new SvelteSet(),
+	stagingLineExclusions: new SvelteSet(),
 	collapsedFiles: new SvelteSet(),
 	viewMode: 'split',
 	unstagedFileListLayout: 'tree',
@@ -369,6 +384,71 @@ function filesCacheKey(repoId: string, ctx: DiffContext): string {
 
 function diffCacheKeyFor(repoId: string, ctx: DiffContext, filePath: string): string {
 	return `${repoId}::${diffContextKey(ctx)}::${filePath}`;
+}
+
+// Extract the file path from a staging line-exclusion key (`${path}<NUL>…`).
+function pathFromLineKey(key: string): string {
+	const i = key.indexOf('\u0000');
+	return i === -1 ? key : key.slice(0, i);
+}
+
+// Drop every per-line staging exclusion belonging to the given files. Used when
+// a whole-file toggle takes over and should override any partial selection.
+function clearFileLineExclusions(paths: Iterable<string>): void {
+	const set = new Set(paths);
+	for (const k of [...app.stagingLineExclusions]) {
+		if (set.has(pathFromLineKey(k))) app.stagingLineExclusions.delete(k);
+	}
+}
+
+// Turn the checked working-tree files into the per-file selections the commit
+// IPC expects. A file with no per-line exclusions commits whole; one with
+// exclusions gets a reduced patch built from its current diff (re-fetched when
+// not cached, so the patch is always valid against the live HEAD). A stale
+// exclusion that no longer matches any line is simply ignored by the builder,
+// so a partial commit can never apply changes that aren't really there. Files
+// whose every change is excluded drop out entirely.
+async function buildCommitSelections(
+	repoId: string,
+	ctx: DiffContext,
+	included: ChangedFile[]
+): Promise<CommitFileSelection[]> {
+	const selections: CommitFileSelection[] = [];
+	for (const f of included) {
+		// Plain Sets — local scratch handed to buildFilteredPatch, not reactive state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const excludedAdds = new Set<number>();
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const excludedDels = new Set<number>();
+		for (const k of app.stagingLineExclusions) {
+			if (pathFromLineKey(k) !== f.path) continue;
+			// Tail after `${path}<NUL>` is a side marker ('a'/'d') plus a line number.
+			const tail = k.slice(f.path.length + 1);
+			const n = Number(tail.slice(1));
+			if (Number.isNaN(n)) continue;
+			if (tail[0] === 'a') excludedAdds.add(n);
+			else if (tail[0] === 'd') excludedDels.add(n);
+		}
+		if (excludedAdds.size === 0 && excludedDels.size === 0) {
+			selections.push({ path: f.path, oldPath: f.oldPath });
+			continue;
+		}
+		let diff = getCachedDiff(repoId, ctx, f.path);
+		if (!diff) {
+			diff = await window.api.git.getDiff(repoId, f.path, ctx).catch(() => undefined);
+		}
+		const parsed = diff?.patch ? parseFilePatch(diff.patch) : null;
+		if (!parsed) {
+			// Nothing to filter (e.g. an untracked file with no git patch) — commit
+			// the whole file rather than silently dropping it.
+			selections.push({ path: f.path, oldPath: f.oldPath });
+			continue;
+		}
+		const patch = buildFilteredPatch(parsed, excludedAdds, excludedDels);
+		// `null` means every change was excluded; leave the file out of the commit.
+		if (patch != null) selections.push({ path: f.path, oldPath: f.oldPath, patch });
+	}
+	return selections;
 }
 
 export function getCachedDiff(
@@ -551,6 +631,7 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.selectedFile = null;
 	app.selectedFiles = new SvelteSet();
 	app.excludedFromCommit = new SvelteSet();
+	app.stagingLineExclusions = new SvelteSet();
 	app.activeSessionId = null;
 	app.activeSessionDetail = null;
 	app.branchPR = null;
@@ -865,6 +946,18 @@ async function refreshFiles(): Promise<void> {
 			}
 		}
 
+		// Same pruning for per-line staging exclusions: drop keys for files that
+		// have left the working tree (pathFromLineKey recovers the path).
+		if (ctx.kind === 'workingTree' && app.stagingLineExclusions.size > 0) {
+			const present = new Set(files.map((f) => f.path));
+			const pruned = new SvelteSet(
+				[...app.stagingLineExclusions].filter((k) => present.has(pathFromLineKey(k)))
+			);
+			if (pruned.size !== app.stagingLineExclusions.size) {
+				app.stagingLineExclusions = pruned;
+			}
+		}
+
 		filesCache.set(cacheKey, {
 			changedFiles: files,
 			seenFiles: new Set(seenSet),
@@ -1054,6 +1147,7 @@ export const actions = {
 			app.sessions = [];
 			app.skillInstalled = null;
 			app.excludedFromCommit = new SvelteSet();
+			app.stagingLineExclusions = new SvelteSet();
 			app.prs = [];
 			app.prsHasMore = false;
 			prsPage = 0;
@@ -1318,28 +1412,86 @@ export const actions = {
 		app.seenFiles.clear();
 	},
 
-	// Toggle whether a working-tree file is included in the next commit. Kept in
-	// memory only — the selection resets when the repo changes or a file leaves
-	// the working tree (see refreshFiles / switchRepo).
+	// Toggle whether a working-tree file is included in the next commit. The file
+	// checkbox is a master toggle, so it also clears any partial (line/hunk)
+	// selection on the file. Kept in memory only — the selection resets when the
+	// repo changes or a file leaves the working tree (see refreshFiles /
+	// switchRepo).
 	toggleFileIncludedForCommit(filePath: string, included?: boolean): void {
 		const isIncluded = included ?? app.excludedFromCommit.has(filePath);
+		clearFileLineExclusions([filePath]);
 		if (isIncluded) app.excludedFromCommit.delete(filePath);
 		else app.excludedFromCommit.add(filePath);
 	},
 
-	// The header "select all" checkbox. Clearing the exclusion set includes
-	// everything; excluding every current file unchecks the lot.
+	// The header "select all" checkbox. Clearing the exclusion sets includes
+	// everything; excluding every current file unchecks the lot. Either way any
+	// partial selections are dropped.
 	setAllIncludedForCommit(included: boolean): void {
+		app.stagingLineExclusions = new SvelteSet();
 		if (included) app.excludedFromCommit.clear();
 		else app.excludedFromCommit = new SvelteSet(app.changedFiles.map((f) => f.path));
 	},
 
 	// Include/exclude a whole set of files at once — backs the folder checkboxes
-	// in tree view, which check/uncheck every file beneath them.
+	// in tree view, which check/uncheck every file beneath them. Clears partial
+	// selections on the affected files.
 	setFilesIncludedForCommit(paths: string[], included: boolean): void {
+		clearFileLineExclusions(paths);
 		for (const p of paths) {
 			if (included) app.excludedFromCommit.delete(p);
 			else app.excludedFromCommit.add(p);
+		}
+	},
+
+	// The staging state of a working-tree file: 'all' (fully included, the
+	// default), 'none' (whole-file checkbox off), or 'partial' (some lines/hunks
+	// excluded). Drives the tri-state file checkbox.
+	fileStagingState(filePath: string): 'all' | 'none' | 'partial' {
+		if (app.excludedFromCommit.has(filePath)) return 'none';
+		for (const k of app.stagingLineExclusions) {
+			if (pathFromLineKey(k) === filePath) return 'partial';
+		}
+		return 'all';
+	},
+
+	// Whether a single changed line will be part of the next commit. A line is
+	// in unless either its file or the line itself is excluded.
+	isLineIncludedForCommit(filePath: string, side: DiffSide, line: number): boolean {
+		if (app.excludedFromCommit.has(filePath)) return false;
+		return !app.stagingLineExclusions.has(stagingLineKey(filePath, side, line));
+	},
+
+	// Include or exclude a set of changed lines (one line, a whole hunk, or all
+	// of a file). `allFileLineKeys` is every changed-line key in the file, used
+	// to reconcile with the whole-file checkbox: a fully-excluded file is first
+	// "exploded" into per-line exclusions so an individual line can be turned
+	// back on, and the file collapses back to a clean all/none state once every
+	// or no line is excluded.
+	setLinesIncludedForCommit(
+		filePath: string,
+		lineKeys: string[],
+		included: boolean,
+		allFileLineKeys: string[]
+	): void {
+		if (app.excludedFromCommit.has(filePath)) {
+			app.excludedFromCommit.delete(filePath);
+			for (const k of allFileLineKeys) app.stagingLineExclusions.add(k);
+		}
+		for (const k of lineKeys) {
+			if (included) app.stagingLineExclusions.delete(k);
+			else app.stagingLineExclusions.add(k);
+		}
+		const excludedCount = allFileLineKeys.filter((k) => app.stagingLineExclusions.has(k)).length;
+		if (excludedCount === 0) {
+			// Fully included again — nothing partial to track.
+			return;
+		}
+		if (excludedCount === allFileLineKeys.length) {
+			// Every line excluded: collapse to a whole-file exclusion so the file
+			// checkbox reads as a clean "unchecked" rather than indeterminate.
+			for (const k of allFileLineKeys) app.stagingLineExclusions.delete(k);
+			app.excludedFromCommit.add(filePath);
 		}
 	},
 
@@ -1805,11 +1957,9 @@ export const actions = {
 		// both sides so git records the move rather than an add + orphaned delete.
 		const included = app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path));
 		if (included.length === 0) return false;
-		const paths: string[] = [];
-		for (const f of included) {
-			paths.push(f.path);
-			if (f.oldPath) paths.push(f.oldPath);
-		}
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		const selections = await buildCommitSelections(repoId, ctx, included);
+		if (selections.length === 0) return false;
 		const trimmedDescription = description?.trim() ?? '';
 		const message = trimmedDescription
 			? `${trimmedSummary}\n\n${trimmedDescription}`
@@ -1821,9 +1971,12 @@ export const actions = {
 			error: null
 		};
 		try {
-			const commit = await window.api.git.commit(repoId, message, paths);
+			const commit = await window.api.git.commit(repoId, message, selections);
 			if (!commit.ok) throw new Error(commit.error ?? 'Commit failed.');
 			app.push.stage = 'done';
+			// The selection was consumed; clear partial line exclusions so stale
+			// line numbers don't carry over onto the post-commit diff.
+			app.stagingLineExclusions = new SvelteSet();
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();

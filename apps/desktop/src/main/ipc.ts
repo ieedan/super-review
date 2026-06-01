@@ -10,6 +10,7 @@ import type {
 	CreateRepoDefaults,
 	CreateRepoOptions,
 	CommitDraft,
+	CommitFileSelection,
 	CommitResult,
 	DeviceFlowStart,
 	DeviceFlowStatus,
@@ -478,10 +479,15 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'git:commit',
-		async (_e, repoId: string, message: string, paths: string[]): Promise<CommitResult> => {
+		async (
+			_e,
+			repoId: string,
+			message: string,
+			files: CommitFileSelection[]
+		): Promise<CommitResult> => {
 			const repo = repoOrThrow(repoId);
 			const identity = gh.resolveCommitIdentity(repo.githubAccountId);
-			return commit(repo.path, message, paths, identity);
+			return commit(repo.path, message, files, identity);
 		}
 	);
 

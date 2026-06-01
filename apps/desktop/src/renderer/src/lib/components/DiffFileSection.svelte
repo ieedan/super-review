@@ -43,6 +43,12 @@
 	import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { scheduleRender } from '$lib/render-scheduler';
 	import { diffContextKey } from '@shared/diff-context';
+	import {
+		changedLineKeys,
+		parseFilePatch,
+		stagingLineKey,
+		type DiffSide
+	} from '@shared/diff-staging';
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
@@ -156,6 +162,30 @@
 					? 'This file was deleted.'
 					: null
 	);
+
+	// Partial (line/hunk) staging is offered only in the Unstaged working-tree
+	// tab, and only for files with a real git patch to carve up — modified
+	// tracked files. Added/untracked (no HEAD patch), deletions, renames-with-no-
+	// changes and binaries fall back to the whole-file checkbox in the sidebar.
+	const stagingEnabled = $derived(
+		app.contextTab === 'unstaged' &&
+			app.diffContext.kind === 'workingTree' &&
+			!file.isBinary &&
+			file.status !== 'deleted'
+	);
+	// Staging model for the loaded diff: every changed-line key in the file,
+	// derived from the raw git patch. Used to reconcile per-line/section toggles
+	// with the whole-file checkbox (see store.setLinesIncludedForCommit). Sections
+	// themselves are derived from the rendered DOM, not from here. Null when
+	// staging isn't offered or there's no filterable patch. Plain (non-reactive):
+	// rebuilt by renderDiff and read by the imperative gutter-control code.
+	interface StagingModel {
+		allKeys: string[];
+	}
+	let staging: StagingModel | null = null;
+	// The shadow root the staging click listener is currently bound to. Pierre
+	// recreates the diff (and its shadow root) on every render, so we rebind.
+	let stagingClickRoot: ShadowRoot | null = null;
 	// Handle for the most recently queued render so we can cancel it if a newer
 	// target supersedes it before the scheduler gets to it.
 	let cancelPendingRender: (() => void) | null = null;
@@ -408,6 +438,13 @@
 			}
 			instance = null;
 		}
+		// The staging click listener lives on the shadow root that's about to be
+		// destroyed with the container; drop our reference (and detach defensively).
+		if (stagingClickRoot) {
+			stagingClickRoot.removeEventListener('click', onStagingClick);
+			stagingClickRoot = null;
+		}
+		staging = null;
 		if (diffContainer) {
 			diffContainer.remove();
 			diffContainer = null;
@@ -502,10 +539,278 @@
 		actions.openComposer(file.path, side, range.start);
 	}
 
+	// ----------------------------------------------------------------------
+	// Partial (line/hunk) staging — a GitHub-Desktop-style double gutter to the
+	// left of the diff.
+	//
+	// Pierre renders the diff into an open shadow root and tags each gutter cell
+	// with `data-line-type` + `data-column-number` (the line number). We prepend
+	// two full-height blocks to every cell: an OUTER gutter reflecting the whole
+	// hunk's selection (✓ when all of it is staged, − when only some) and an INNER
+	// gutter for the single line. Clicking the outer toggles the entire hunk;
+	// clicking the inner toggles that one line. Cells are keyed by line number —
+	// the stable identity shared with the git patch and the store's exclusion set.
+	// CSS custom properties inherit across the shadow boundary, so an injected
+	// style element in the shadow root themes the controls. Selection state lives
+	// in the store; committing turns it into a reduced patch (see
+	// store.buildCommitSelections).
+	// ----------------------------------------------------------------------
+
+	// Scoped styles for the injected controls. Lives inside Pierre's shadow root
+	// (app.css can't reach in), but `--color-*` vars inherit across the boundary.
+	// These rules are unlayered, so they outrank Pierre's `@layer`-ed styles (e.g.
+	// the cell's `padding-inline`) regardless of specificity.
+	const STAGING_STYLE_ID = 'sr-staging-style';
+	const STAGING_CSS = `
+		:host {
+			--sr-gw: 18px;
+			--sr-bg-off: var(--color-muted, #8882);
+			--sr-bg-on: color-mix(in srgb, var(--color-primary, #888) 50%, var(--color-muted, #fff));
+			--sr-bg-hover: color-mix(in srgb, var(--color-primary, #888) 22%, var(--color-muted, #fff));
+		}
+		/* Reserve room for both gutter columns to the left of the line number. */
+		[data-column-number] { position: relative; padding-left: calc(2 * var(--sr-gw) + 6px); }
+		/* Pierre indents the collapsed-context separator's wrapper by one gap
+		   (~8px), which pushes its expander out of line with our gutter columns.
+		   Drop it so the expander sits flush at the gutter's left edge. */
+		[data-separator-wrapper] { padding-left: 0; }
+		.sr-gutter {
+			box-sizing: border-box; margin: 0; padding: 0; border: 0;
+			border-right: 1px solid var(--color-border, #8884);
+			background: var(--sr-bg-off); z-index: 4; cursor: pointer;
+		}
+		.sr-gutter.is-on { background: var(--sr-bg-on); }
+		.sr-gutter:hover { background: var(--sr-bg-hover); }
+		.sr-gutter[data-state='check']::after {
+			content: ''; width: 4px; height: 7px;
+			border: solid var(--color-primary-foreground, #fff);
+			border-width: 0 2px 2px 0; transform: rotate(45deg);
+		}
+		.sr-gutter[data-state='minus']::after {
+			content: ''; width: 8px; height: 2px; border-radius: 1px;
+			background: var(--color-primary-foreground, #fff);
+		}
+		/* Inner column: one block per changed line, inside each gutter cell. */
+		.sr-gutter-inner {
+			position: absolute; top: 0; bottom: 0; left: var(--sr-gw); width: var(--sr-gw);
+			display: grid; place-items: center;
+		}
+		.sr-gutter-inner[data-state='check']::after { margin-top: -1px; }
+		/* Outer column: a SINGLE button spanning the whole hunk, absolutely
+		   positioned over the gutter wrapper (top/height set inline per group).
+		   The icon sits on the hunk's first line. */
+		.sr-gutter-outer {
+			position: absolute; left: 0; width: var(--sr-gw);
+			display: flex; justify-content: center; align-items: flex-start;
+			padding-top: calc((1lh - 7px) / 2);
+		}
+		.sr-excluded [data-line-number-content] { opacity: 0.4; }
+	`;
+
+	// Parse the git patch into the file's full set of changed-line keys.
+	function buildStagingModel(patch: string): StagingModel | null {
+		const parsed = parseFilePatch(patch);
+		if (!parsed) return null;
+		const allKeys = changedLineKeys(file.path, parsed);
+		if (allKeys.length === 0) return null;
+		return { allKeys };
+	}
+
+	// Pierre's shadow root for the current diff (where the gutter cells live).
+	function stagingRoot(): ShadowRoot | null {
+		return diffContainer?.shadowRoot ?? null;
+	}
+
+	// Called after each Pierre render/rerender: (re)inject the controls, ensure
+	// the scoped stylesheet, and (re)bind the click listener to the shadow root.
+	function applyStagingControls(): void {
+		if (!staging) return;
+		const root = stagingRoot();
+		if (!root) return;
+		if (!root.getElementById(STAGING_STYLE_ID)) {
+			const style = document.createElement('style');
+			style.id = STAGING_STYLE_ID;
+			style.textContent = STAGING_CSS;
+			root.appendChild(style);
+		}
+		if (stagingClickRoot !== root) {
+			stagingClickRoot?.removeEventListener('click', onStagingClick);
+			root.addEventListener('click', onStagingClick);
+			stagingClickRoot = root;
+		}
+		syncStagingControls(root);
+	}
+
+	// Line keys backing each spanning outer (hunk) button, so a click can toggle
+	// the whole group. Keyed off the element; WeakMap so removed buttons are GC'd.
+	const outerKeys = new WeakMap<HTMLElement, string[]>();
+
+	// Get (or lazily create) a changed cell's inner (per-line) gutter block. It's
+	// the cell's first child so it paints to the left of the line number.
+	function ensureInnerBlock(cell: HTMLElement): HTMLButtonElement {
+		let block = cell.querySelector<HTMLButtonElement>(':scope > [data-sr-gutter-inner]');
+		if (!block) {
+			block = document.createElement('button');
+			block.type = 'button';
+			block.setAttribute('data-sr-gutter-inner', '');
+			block.setAttribute('role', 'checkbox');
+			block.className = 'sr-gutter sr-gutter-inner';
+			cell.insertBefore(block, cell.firstChild);
+		}
+		return block;
+	}
+
+	// A contiguous run of changed lines within one gutter (a "section"): the rows
+	// a single outer button spans. Broken by context lines and by any vertical gap
+	// (e.g. a split-view buffer), so the deletion and addition blocks of a change
+	// are independent sections rather than one.
+	interface GutterSection {
+		top: number;
+		bottom: number;
+		keys: string[];
+	}
+
+	// Reconcile the gutter controls with the store's selection. The inner column
+	// gets one block per changed line; the outer column gets ONE button spanning
+	// each contiguous changed section, absolutely positioned over the gutter so it
+	// reads (and behaves) as a single hunk control. Runs on (re)render and whenever
+	// the staging sets change.
+	function syncStagingControls(root: ShadowRoot): void {
+		if (!staging) return;
+		const fileExcluded = app.excludedFromCommit.has(file.path);
+
+		// One pass per code block (unified has one gutter; split has deletions +
+		// additions gutters). Sections never span across gutters.
+		for (const gutter of root.querySelectorAll<HTMLElement>('[data-gutter]')) {
+			const sections: GutterSection[] = [];
+			let current: GutterSection | null = null;
+
+			// Pass 1 (writes): per-line inner blocks. Collect changed cells in order.
+			const changedCells: { cell: HTMLElement; key: string; included: boolean }[] = [];
+			for (const cell of gutter.querySelectorAll<HTMLElement>('[data-column-number]')) {
+				const type = cell.getAttribute('data-line-type') ?? '';
+				const isAdd = type === 'additions' || type === 'change-addition';
+				const isDel = type === 'deletions' || type === 'change-deletion';
+				if (!isAdd && !isDel) {
+					// Context line: no band. Drop a stale block if the cell ever had one.
+					cell.querySelector(':scope > [data-sr-gutter-inner]')?.remove();
+					cell.classList.remove('sr-excluded');
+					continue;
+				}
+				const num = Number(cell.getAttribute('data-column-number'));
+				if (Number.isNaN(num)) continue;
+				const side: DiffSide = isAdd ? 'addition' : 'deletion';
+				const key = stagingLineKey(file.path, side, num);
+				const included = !fileExcluded && !app.stagingLineExclusions.has(key);
+
+				const inner = ensureInnerBlock(cell);
+				inner.dataset.srSide = side;
+				inner.dataset.srLine = String(num);
+				inner.classList.toggle('is-on', included);
+				inner.dataset.state = included ? 'check' : 'none';
+				inner.setAttribute('aria-checked', String(included));
+				inner.setAttribute(
+					'aria-label',
+					included ? 'Exclude line from commit' : 'Include line in commit'
+				);
+				cell.classList.toggle('sr-excluded', !included);
+				changedCells.push({ cell, key, included });
+			}
+
+			// Pass 2 (reads): group consecutive, vertically-adjacent changed cells
+			// into sections using their laid-out geometry.
+			let prevCell: HTMLElement | null = null;
+			for (const { cell, key } of changedCells) {
+				const top = cell.offsetTop;
+				const bottom = top + cell.offsetHeight;
+				const adjacent =
+					current != null &&
+					prevCell != null &&
+					prevCell === cell.previousElementSibling &&
+					Math.abs(top - current.bottom) < 1;
+				if (adjacent && current) {
+					current.bottom = bottom;
+					current.keys.push(key);
+				} else {
+					current = { top, bottom, keys: [key] };
+					sections.push(current);
+				}
+				prevCell = cell;
+			}
+
+			// Pass 3 (writes): one outer button per section, rebuilt each sync since
+			// its state and the section boundaries can change.
+			for (const stale of gutter.querySelectorAll(':scope > [data-sr-gutter-outer]')) {
+				stale.remove();
+			}
+			for (const section of sections) {
+				const includedCount = section.keys.filter((k) => !app.stagingLineExclusions.has(k)).length;
+				const full = !fileExcluded && includedCount === section.keys.length;
+				const some = !fileExcluded && includedCount > 0;
+				const btn = document.createElement('button');
+				btn.type = 'button';
+				btn.setAttribute('data-sr-gutter-outer', '');
+				btn.className = 'sr-gutter sr-gutter-outer';
+				btn.style.top = `${section.top}px`;
+				btn.style.height = `${section.bottom - section.top}px`;
+				btn.classList.toggle('is-on', some);
+				btn.dataset.state = some ? (full ? 'check' : 'minus') : 'none';
+				btn.setAttribute('aria-label', full ? 'Unstage section' : 'Stage section');
+				outerKeys.set(btn, section.keys);
+				gutter.appendChild(btn);
+			}
+		}
+	}
+
+	function onStagingClick(e: Event): void {
+		if (!staging) return;
+		const target = e.target as HTMLElement;
+		// Outer gutter: one button spanning the section — toggle all of its lines.
+		const hunkBtn = target.closest<HTMLElement>('[data-sr-gutter-outer]');
+		if (hunkBtn) {
+			e.preventDefault();
+			e.stopPropagation();
+			const keys = outerKeys.get(hunkBtn) ?? [];
+			if (keys.length === 0) return;
+			const allIncluded =
+				!app.excludedFromCommit.has(file.path) &&
+				keys.every((k) => !app.stagingLineExclusions.has(k));
+			actions.setLinesIncludedForCommit(file.path, keys, !allIncluded, staging.allKeys);
+			return;
+		}
+		// Inner gutter: toggle the single line.
+		const lineBtn = target.closest<HTMLElement>('[data-sr-gutter-inner]');
+		if (lineBtn) {
+			e.preventDefault();
+			e.stopPropagation();
+			const side = lineBtn.dataset.srSide as DiffSide;
+			const lineNum = Number(lineBtn.dataset.srLine);
+			const key = stagingLineKey(file.path, side, lineNum);
+			const included =
+				!app.excludedFromCommit.has(file.path) && !app.stagingLineExclusions.has(key);
+			actions.setLinesIncludedForCommit(file.path, [key], !included, staging.allKeys);
+		}
+	}
+
+	// Repaint the checkboxes in place whenever the staging selection changes —
+	// e.g. a toggle here, a hunk toggle, or the file's sidebar checkbox. Reading
+	// both sets' sizes registers the reactive dependency; any add/delete repaints.
+	$effect(() => {
+		void app.stagingLineExclusions.size;
+		void app.excludedFromCommit.size;
+		if (!staging || renderedKey == null) return;
+		const root = stagingRoot();
+		if (root) syncStagingControls(root);
+	});
+
 	function renderDiff(diff: DiffData): void {
 		if (!host) return;
 		disposeDiff();
 		if (diff.file.isBinary) return;
+
+		// Build the per-hunk staging model from the raw git patch up front so the
+		// gutter checkboxes can be injected as soon as Pierre finishes rendering.
+		staging = stagingEnabled && diff.patch ? buildStagingModel(diff.patch) : null;
 
 		diffContainer = document.createElement(DIFFS_TAG_NAME);
 		// `host` is ours and Svelte doesn't manage its children — Pierre renders
@@ -523,7 +828,11 @@
 				// Only enable it where commenting is meaningful — toggled live below
 				// via setOptions + flushManagers when `isPRContext` changes.
 				enableGutterUtility: isPRContext,
-				onGutterUtilityClick: onGutterClick
+				onGutterUtilityClick: onGutterClick,
+				// Inject the staging gutters after every (re)render. Pierre rebuilds
+				// its shadow DOM on render and on the worker's async highlight
+				// rerender, so re-apply each time.
+				onPostRender: applyStagingControls
 			},
 			// Highlight + diff-AST work runs on the shared worker pool so the main
 			// thread stays responsive; FileDiff paints plain text first, then
