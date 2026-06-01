@@ -7,8 +7,8 @@
 //
 // GitHub's `releases/latest/download/<name>` endpoint 302-redirects to the
 // newest release's matching asset and serves it with `Content-Disposition:
-// attachment`, so a plain link *downloads the binary directly* — no API call, no
-// version lookup, always the latest. It also works for authenticated visitors
+// attachment`, so a plain link *downloads the binary directly*, with no API call
+// and no version lookup, always the latest. It also works for authenticated visitors
 // while the repo is private (the unauthenticated REST API is CORS-blocked and
 // 404s for private repos, which is why we don't rely on it here).
 
@@ -61,7 +61,7 @@ export function detectOS(): OS {
 
 /**
  * Best-effort latest version string for display only (e.g. the "v0.0.5" pill).
- * Downloads never depend on this — it returns null when the API is unreachable,
+ * Downloads never depend on this. It returns null when the API is unreachable,
  * rate-limited, or 404s because the repo is private.
  */
 export async function fetchLatestVersion(fetcher: typeof fetch = fetch): Promise<string | null> {

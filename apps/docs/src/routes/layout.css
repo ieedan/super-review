@@ -2,7 +2,7 @@
 @plugin '@tailwindcss/typography';
 
 @theme {
-	/* Near-black canvas with a warm off-white ink — the desktop app's monochrome
+	/* Near-black canvas with a warm off-white ink. The desktop app's monochrome
 	   palette, inverted to a confident dark marketing surface. */
 	--color-base: hsl(20 8% 4%);
 	--color-elevated: hsl(20 7% 7%);
@@ -12,12 +12,12 @@
 	--color-line: hsl(28 9% 15%);
 	--color-line-bright: hsl(28 10% 22%);
 
-	/* Brand flame — pulled from the app icon's coral→red-orange gradient. */
+	/* Brand flame, pulled from the app icon's coral to red-orange gradient. */
 	--color-flame: hsl(11 100% 64%);
 	--color-flame-deep: hsl(6 88% 56%);
 	--color-flame-soft: hsl(16 100% 70%);
 
-	/* Diff signature — additions / deletions, fitting a code-review tool. */
+	/* Diff signature: additions / deletions, fitting a code-review tool. */
 	--color-add: hsl(142 58% 52%);
 	--color-del: hsl(2 78% 63%);
 
@@ -100,7 +100,7 @@ body {
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Brand flame gradient — used on the wordmark and key accents. */
+/* Brand flame gradient, used on the wordmark and key accents. */
 .flame-text {
 	background: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep));
 	-webkit-background-clip: text;

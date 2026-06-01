@@ -1,34 +1,13 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { base } from '$app/paths';
-	import {
-		detectOS,
-		fetchLatestVersion,
-		DOWNLOADS,
-		LATEST_RELEASE_URL,
-		RELEASES_URL,
-		REPO,
-		type OS
-	} from '$lib/releases';
 
-	let os = $state<OS>('other');
-	let version = $state<string | null>(null);
-
-	onMount(async () => {
-		os = detectOS();
-		// Display-only; the download links work regardless of whether this resolves.
-		version = await fetchLatestVersion();
-	});
-
-	// Lead with the visitor's platform; the other one stays available as a
-	// secondary option. Non-mac/windows visitors get macOS first.
-	const primary = $derived(os === 'windows' ? DOWNLOADS.windows : DOWNLOADS.mac);
-	const secondary = $derived(os === 'windows' ? DOWNLOADS.mac : DOWNLOADS.windows);
+	// Downloads aren't live yet, so the CTAs are disabled "Coming soon" placeholders
+	// until the first public release. Re-enable by restoring the download <a>'s
+	// (OS detection + DOWNLOADS still live in $lib/releases.ts).
 
 	// ── App preview ────────────────────────────────────────────────────────
 	// Real product screenshot in static/. Set to null to fall back to the mini
 	// mockup snippet below. Swap the file (or this path) to update the image.
-	const screenshot: string | null = `${base}/app-preview.webp`;
+	const screenshot: string | null = '/app-preview.webp';
 
 	const files = [
 		{ name: 'src/auth/session.ts', add: 3, del: 2, active: true },
@@ -49,19 +28,35 @@
 </script>
 
 <svelte:head>
-	<title>Super Review — a faster, saner way to review agent-written code</title>
+	<title>Super Review: a faster, saner way to review agent-written code</title>
 	<meta
 		name="description"
-		content="Super Review is a local-first desktop app that turns sprawling agent diffs into a calm, reviewable flow. Free and open source for macOS and Windows."
+		content="A local-first desktop app designed to structure and review agent-written code."
 	/>
-	<meta property="og:title" content="Super Review" />
+	<link rel="canonical" href="https://superreview.dev/" />
+
+	<!-- Open Graph -->
+	<meta property="og:type" content="website" />
+	<meta property="og:site_name" content="Super Review" />
+	<meta property="og:url" content="https://superreview.dev/" />
+	<meta property="og:title" content="Super Review: review agent-written code" />
 	<meta
 		property="og:description"
-		content="A faster, saner desktop app for reviewing agent-written code."
+		content="A local-first desktop app designed to structure and review agent-written code."
 	/>
-	<meta property="og:type" content="website" />
-	<meta property="og:image" content="{base}/icon.png" />
-	<meta name="twitter:card" content="summary" />
+	<meta property="og:image" content="https://superreview.dev/og.png" />
+	<meta property="og:image:width" content="1200" />
+	<meta property="og:image:height" content="630" />
+	<meta property="og:image:alt" content="Super Review: a faster, saner way to review agent-written code" />
+
+	<!-- Twitter / X -->
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content="Super Review: review agent-written code" />
+	<meta
+		name="twitter:description"
+		content="A local-first desktop app designed to structure and review agent-written code."
+	/>
+	<meta name="twitter:image" content="https://superreview.dev/og.png" />
 </svelte:head>
 
 <div class="atmosphere"><div class="grid-bg"></div></div>
@@ -71,18 +66,17 @@
 	<!-- Nav -->
 	<header class="flex items-center justify-between py-5">
 		<a href="/" class="flex items-center gap-2.5">
-			<img src="{base}/icon.png" alt="" class="h-8 w-8 rounded-lg shadow-lg" />
+			<img src="/icon.png" alt="" class="h-8 w-8 rounded-lg shadow-lg" />
 			<span class="font-display text-lg font-bold tracking-tight">Super Review</span>
 		</a>
-		<a
-			href={primary.url}
-			download={primary.filename}
-			class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-[hsl(20_8%_6%)] transition-transform duration-150 hover:-translate-y-0.5"
-			style="background-image: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep)); box-shadow: 0 6px 24px -8px hsl(11 100% 58% / 0.6);"
+		<span
+			class="border-line text-muted inline-flex cursor-default items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold"
+			aria-disabled="true"
+			title="Downloads coming soon"
 		>
-			{@render downloadArrow('h-4 w-4')}
-			Download
-		</a>
+			<span class="bg-flame h-1.5 w-1.5 animate-pulse rounded-full"></span>
+			Coming soon
+		</span>
 	</header>
 
 	<!-- Hero -->
@@ -99,40 +93,26 @@
 			class="reveal mt-6 max-w-xl text-lg leading-relaxed text-pretty text-muted"
 			style="animation-delay: 180ms"
 		>
-			A local-first desktop app that turns sprawling agent diffs into a calm, reviewable flow — read
-			every change, approve with confidence, and ship.
+			A local-first desktop app designed to structure and review agent-written code.
 		</p>
 
-		<!-- Download -->
+		<!-- Download (coming soon; see note in <script>) -->
 		<div class="reveal mt-9 flex flex-col items-center gap-3" style="animation-delay: 260ms">
-			<a
-				href={primary.url}
-				download={primary.filename}
-				class="group inline-flex items-center gap-3 rounded-xl px-7 py-4 font-semibold text-[hsl(20_8%_6%)] transition-transform duration-150 hover:-translate-y-0.5"
-				style="background-image: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep)); box-shadow: 0 10px 40px -10px hsl(11 100% 58% / 0.55);"
+			<span
+				class="border-line bg-elevated/60 text-muted inline-flex cursor-default items-center gap-3 rounded-xl border px-7 py-4 font-semibold"
+				aria-disabled="true"
 			>
-				{@render osMark(primary.os, 'h-5 w-5')}
+				<span class="bg-flame h-2 w-2 animate-pulse rounded-full"></span>
 				<span class="flex flex-col items-start leading-tight">
-					<span>Download for {primary.label}</span>
-					<span class="text-xs font-normal opacity-80">{primary.arch}</span>
+					<span class="text-fg">Downloads coming soon</span>
+					<span class="text-faint text-xs font-normal">macOS & Windows</span>
 				</span>
-				{@render downloadArrow('ml-1 h-4 w-4 transition-transform group-hover:translate-y-0.5')}
-			</a>
-			<div class="text-faint flex flex-wrap items-center justify-center gap-x-3 font-mono text-xs">
-				<a
-					href={secondary.url}
-					download={secondary.filename}
-					class="transition-colors hover:text-flame"
-				>
-					Also for {secondary.label}
+			</span>
+			<!-- <div class="text-faint flex flex-wrap items-center justify-center gap-x-3 font-mono text-xs">
+				<a href="https://github.com/{REPO}" class="transition-colors hover:text-flame">
+					Star on GitHub
 				</a>
-				<span aria-hidden="true">·</span>
-				{#if version}
-					<a href={LATEST_RELEASE_URL} class="transition-colors hover:text-flame">v{version}</a>
-					<span aria-hidden="true">·</span>
-				{/if}
-				<span>Free &amp; open source</span>
-			</div>
+			</div> -->
 		</div>
 
 		<!-- App preview -->
@@ -160,17 +140,12 @@
 		class="border-line text-faint mt-auto flex flex-col items-center justify-between gap-4 border-t py-8 text-sm sm:flex-row"
 	>
 		<div class="flex items-center gap-2.5">
-			<img src="{base}/icon.png" alt="" class="h-6 w-6 rounded-md" />
+			<img src="/icon.png" alt="" class="h-6 w-6 rounded-md" />
 			<span>Super Review</span>
-			<span class="text-line-bright">·</span>
-			<span>MIT licensed</span>
 		</div>
 		<div class="flex items-center gap-5">
-			<a href="https://github.com/{REPO}" class="hover:text-fg transition-colors">GitHub</a>
-			<a href={RELEASES_URL} class="hover:text-fg transition-colors">Releases</a>
-			<a href="https://github.com/{REPO}/blob/main/LICENSE" class="hover:text-fg transition-colors"
-				>License</a
-			>
+			<!-- <a href="https://github.com/{REPO}" class="hover:text-fg transition-colors">GitHub</a> -->
+			<!-- <a href={RELEASES_URL} class="hover:text-fg transition-colors">Releases</a> -->
 		</div>
 	</footer>
 </div>
@@ -277,37 +252,6 @@
 			</div>
 		</div>
 	</div>
-{/snippet}
-
-{#snippet osMark(o: 'mac' | 'windows', cls: string)}
-	{#if o === 'mac'}
-		<svg viewBox="0 0 384 512" fill="currentColor" class={cls} aria-hidden="true">
-			<path
-				d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"
-			/>
-		</svg>
-	{:else}
-		<svg viewBox="0 0 448 512" fill="currentColor" class={cls} aria-hidden="true">
-			<path
-				d="M0 93.7l183.6-25.3v177.4H0V93.7zm0 324.6l183.6 25.3V268.4H0v149.9zm203.8 28L448 480V268.4H203.8v177.9zm0-380.6v180.1H448V32L203.8 65.7z"
-			/>
-		</svg>
-	{/if}
-{/snippet}
-
-{#snippet downloadArrow(cls: string)}
-	<svg
-		viewBox="0 0 24 24"
-		fill="none"
-		stroke="currentColor"
-		stroke-width="2"
-		stroke-linecap="round"
-		stroke-linejoin="round"
-		class={cls}
-		aria-hidden="true"
-	>
-		<path d="M12 3v12m0 0l4-4m-4 4l-4-4M4 20h16" />
-	</svg>
 {/snippet}
 
 {#snippet check(cls: string)}
