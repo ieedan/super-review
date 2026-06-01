@@ -38,6 +38,14 @@ export default defineConfig({
 	renderer: {
 		root: resolve(__dirname, 'src/renderer'),
 		plugins: [tailwindcss(), svelte()],
+		// Emit Web Workers as ES modules. The @pierre/diffs render worker
+		// code-splits (Shiki lazy-loads grammar chunks via dynamic import), which
+		// the default `iife` worker format can't do. Electron's Chromium renderer
+		// supports module workers, and electron-vite's relative `base` keeps the
+		// split chunk URLs resolvable under the packaged `file://` origin.
+		worker: {
+			format: 'es'
+		},
 		build: {
 			rollupOptions: {
 				input: resolve(__dirname, 'src/renderer/index.html')
