@@ -3,12 +3,18 @@ name: Release
 # Changesets-driven autorelease. On every push to `main`:
 #   1. `version` runs changesets/action — it opens/updates a "Version Packages"
 #      PR while changesets are pending, and once that PR merges (no changesets
-#      left) decides whether the freshly-bumped version needs releasing.
+#      left) it (a) publishes the `super-review` CLI to npm via `pnpm ci:release`
+#      and (b) decides whether the freshly-bumped desktop version needs releasing.
 #   2. `build` packages the desktop app on macOS arm64 + Windows x64 via
 #      electron-builder (`pnpm release`, --publish always), producing a *draft*
 #      GitHub Release with all artifacts.
 #   3. `publish-release` pushes the `v<version>` tag at the built commit and
 #      flips the draft release to published (so electron-updater sees it).
+#
+# npm auth for the CLI publish uses a `secrets.NPM_TOKEN` (an npm automation/
+# granular token) wired in as NODE_AUTH_TOKEN. setup-node's registry-url writes
+# the .npmrc that consumes it. (Provenance via OIDC would be nicer but requires
+# a public source repo — switch to it once this repo is public.)
 # See PUBLISHING.md for the contributor-facing walkthrough.
 on:
   push:
@@ -48,19 +54,28 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+          # Writes an .npmrc that authenticates via NODE_AUTH_TOKEN (set below).
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Create Version PR / version packages
+      # While changesets are pending, this opens/updates the "Version Packages"
+      # PR. Once that PR merges (no changesets left), it instead runs the
+      # `publish` command, which publishes the `super-review` CLI to npm. The
+      # private desktop/docs/core packages are skipped by `changeset publish`.
+      - name: Create Version PR / publish CLI
         id: changesets
         uses: changesets/action@v1
         with:
           version: pnpm changeset:version
+          publish: pnpm ci:release
           commit: 'chore(release): version desktop app'
           title: 'chore(release): version desktop app'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # npm automation/granular token with publish rights for `super-review`.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Runs only when there are no pending changesets — i.e. nothing to PR.
       # That's either a routine push (version already tagged → skip) or a just
