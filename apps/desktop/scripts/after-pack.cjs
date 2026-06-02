@@ -35,17 +35,19 @@ exports.default = async function afterPack(context) {
 	const appName = `${packager.appInfo.productFilename}.app`;
 	const appPath = path.join(appOutDir, appName);
 
-	console.log(`  • after-pack: ad-hoc signing ${appName} (no Developer ID; avoids "damaged" on Apple Silicon)`);
+	console.log(
+		`  • after-pack: ad-hoc signing ${appName} (no Developer ID; avoids "damaged" on Apple Silicon)`
+	);
 
 	// --deep signs nested helpers/frameworks inside-out, which is required for a
 	// valid bundle signature and is the standard ad-hoc fix. "-" = ad-hoc.
 	execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
-		stdio: 'inherit',
+		stdio: 'inherit'
 	});
 
 	// Sanity-check the result so a broken signature fails the build loudly
 	// rather than shipping another "damaged" artifact.
 	execFileSync('codesign', ['--verify', '--deep', '--strict', appPath], {
-		stdio: 'inherit',
+		stdio: 'inherit'
 	});
 };
