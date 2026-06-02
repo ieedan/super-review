@@ -657,7 +657,10 @@ async function refsForContext(
 		case 'workingTree':
 			return { workingTree: true };
 		case 'branch':
-			return { base: ctx.base, head: ctx.head, workingTree: false };
+			// Prefer origin/<base> so the diff matches GitHub even when the local
+			// default branch is behind the remote (head stays as-is — it's the
+			// branch/PR-head being reviewed).
+			return { base: await preferRemoteBase(git, ctx.base), head: ctx.head, workingTree: false };
 		case 'pr':
 			return {
 				base: `pr/${ctx.prNumber}/base`,
@@ -687,6 +690,18 @@ async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+// Resolve a branch-diff base to its remote-tracking copy when one exists, so the
+// comparison uses the up-to-date remote tip (`origin/main`) — matching how
+// GitHub computes a PR/branch diff — instead of a possibly-stale local default
+// branch, which would surface every commit merged to the real default since the
+// user last updated their local copy. Falls back to the given ref (a local-only
+// repo, or a base that has no remote-tracking ref).
+async function preferRemoteBase(git: SimpleGit, base: string): Promise<string> {
+	if (base.startsWith('origin/')) return base;
+	const remote = `origin/${base}`;
+	return (await revExists(git, remote)) ? remote : base;
 }
 
 export async function listChangedFiles(repoPath: string, ctx: DiffContext): Promise<ChangedFile[]> {
@@ -827,16 +842,19 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 	if (refs.base && refs.head) {
 		// Bail out cleanly when either side doesn't exist yet (e.g. a repo with no
 		// commits, where `main...main` would throw) — there are simply no changes.
-		if (!(await revExists(git, refs.base)) || !(await revExists(git, refs.head))) {
+		const [baseExists, headExists] = await Promise.all([
+			revExists(git, refs.base),
+			revExists(git, refs.head)
+		]);
+		if (!baseExists || !headExists) {
 			return files;
 		}
-		const raw = await git.raw([
-			'diff',
-			'--name-status',
-			'--find-renames',
-			`${refs.base}...${refs.head}`
+		// The name-status and numstat passes are independent — run them together so
+		// the switch into a branch/PR view waits on one round-trip, not two.
+		const [raw, numstatRaw] = await Promise.all([
+			git.raw(['diff', '--name-status', '--find-renames', `${refs.base}...${refs.head}`]),
+			git.raw(['diff', '--numstat', `${refs.base}...${refs.head}`])
 		]);
-		const numstatRaw = await git.raw(['diff', '--numstat', `${refs.base}...${refs.head}`]);
 		const numstatMap = parseNumstat(numstatRaw);
 
 		for (const line of raw.split('\n').filter(Boolean)) {
@@ -1175,10 +1193,17 @@ export async function getDiff(
 		deletions = ns.deletions;
 		isBinary = ns.binary;
 	} else if (refs.base && refs.head) {
-		patch = await git.raw(['diff', `${refs.base}...${refs.head}`, '--', filePath]).catch(() => '');
-		oldContents = await showFile(git, oldSideRef!, filePath);
-		newContents = await showFile(git, refs.head, filePath);
-		const ns = await safeNumstat(git, refs.base, refs.head, filePath);
+		// The patch, both file contents, and the numstat are independent reads —
+		// fetch them concurrently so a file's diff is one round-trip deep, not four.
+		const [patchOut, oldOut, newOut, ns] = await Promise.all([
+			git.raw(['diff', `${refs.base}...${refs.head}`, '--', filePath]).catch(() => ''),
+			showFile(git, oldSideRef!, filePath),
+			showFile(git, refs.head, filePath),
+			safeNumstat(git, refs.base, refs.head, filePath)
+		]);
+		patch = patchOut;
+		oldContents = oldOut;
+		newContents = newOut;
 		additions = ns.additions;
 		deletions = ns.deletions;
 		isBinary = ns.binary;

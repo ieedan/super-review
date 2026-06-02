@@ -8,7 +8,8 @@
 	import TerminalButton from './TerminalButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
 	import * as Sidebar from './ui/sidebar';
-	import { app } from '$lib/store.svelte';
+	import { CornerUpLeft } from 'lucide-svelte';
+	import { actions, app, isReadOnlyView } from '$lib/store.svelte';
 </script>
 
 <header
@@ -24,6 +25,20 @@
 		{#if app.activeRepo}
 			<span class="text-muted-foreground">/</span>
 			<BranchPicker />
+			<!-- While reviewing a branch or PR read-only, the picker shows the
+			     *viewed* target; this pill surfaces what's actually checked out and
+			     clicks back to it. Hidden when nothing is being viewed read-only. -->
+			{#if isReadOnlyView()}
+				<button
+					type="button"
+					onclick={() => actions.returnToCheckedOutBranch()}
+					title={`Reviewing read-only. Back to the checked-out branch (${app.currentBranch})`}
+					class="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+				>
+					<CornerUpLeft class="size-3.5" />
+					<span class="font-mono">{app.currentBranch}</span>
+				</button>
+			{/if}
 		{/if}
 	</div>
 	<div class="flex-1"></div>
@@ -31,9 +46,15 @@
 	<div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
 		{#if app.activeRepo}
 			<RefreshButton />
-			<UpdateBranchButton />
-			<EditorButton />
-			<TerminalButton />
+			<!-- Update-branch, editor and terminal all act on the *checked-out*
+			     branch / working tree — not what a read-only view shows. Hide them
+			     there so we don't operate on (or send the user to) the wrong branch,
+			     or imply the view is writable. -->
+			{#if !isReadOnlyView()}
+				<UpdateBranchButton />
+				<EditorButton />
+				<TerminalButton />
+			{/if}
 			<PrimaryActionButton />
 		{/if}
 		<GithubSignIn />

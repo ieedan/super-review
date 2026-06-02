@@ -2,6 +2,7 @@
 	import { Command as CommandPrimitive } from 'bits-ui';
 	import {
 		ChevronDown,
+		Eye,
 		GitBranch,
 		GitFork,
 		GitMerge,
@@ -18,7 +19,14 @@
 	import * as Command from './ui/command';
 	import * as Tabs from './ui/tabs';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
-	import { actions, app } from '$lib/store.svelte';
+	import {
+		actions,
+		app,
+		isReadOnlyView,
+		isViewingOtherBranch,
+		viewedBranch,
+		viewedPRLabel
+	} from '$lib/store.svelte';
 	import { cn, formatRelative } from '$lib/utils';
 	import type { BranchInfo, PRSource, PRSummary } from '@shared/types';
 
@@ -73,12 +81,17 @@
 		e.preventDefault();
 		const action = await window.api.menu.showBranchContextMenu({
 			name: b.name,
-			canDelete: !b.current
+			canDelete: !b.current,
+			// Offer read-only viewing for any branch except the one already shown.
+			canView: b.name !== viewedBranch()
 		});
 		if (action === 'copy') {
 			await actions.copyToClipboard(b.name);
 		} else if (action === 'delete') {
 			requestDelete(b);
+		} else if (action === 'view') {
+			open = false;
+			await actions.viewBranchReadOnly(b.name);
 		}
 	}
 
@@ -110,6 +123,25 @@
 	async function openPR(pr: PRSummary): Promise<void> {
 		open = false;
 		await actions.checkoutPR(pr);
+	}
+
+	// Right-click a PR row: pop the native menu and dispatch. "View Read-Only"
+	// reviews the PR's diff without checking it out; copy/open act on the PR we
+	// already hold, so they need no extra round-trip.
+	async function showPRContextMenu(e: MouseEvent, pr: PRSummary): Promise<void> {
+		e.preventDefault();
+		const action = await window.api.menu.showPRContextMenu({
+			number: pr.number,
+			canView: app.viewPR?.number !== pr.number
+		});
+		if (action === 'view') {
+			open = false;
+			await actions.viewPRReadOnly(pr);
+		} else if (action === 'copyUrl') {
+			await actions.copyToClipboard(pr.url);
+		} else if (action === 'openOnGitHub') {
+			await window.api.shell.openExternal(pr.url);
+		}
 	}
 
 	function openCreate(): void {
@@ -231,13 +263,21 @@
 			: `${r.githubOwner}/${r.githubRepo}`;
 	}
 
-	// When the current branch has an associated PR, mirror its status glyph + tint
-	// in the trigger; otherwise fall back to a plain branch icon.
+	// The trigger labels whatever is shown in the UI: a read-only view target (a
+	// branch, or a PR's head branch) when one is set, otherwise the checked-out
+	// branch. While reviewing read-only, an eye glyph signals it; otherwise mirror
+	// the current branch's PR status glyph + tint, falling back to a branch icon.
 	const triggerIcon = $derived(
-		app.branchPR
-			? prStatus(app.branchPR)
-			: { icon: GitBranch, class: 'text-muted-foreground', label: 'Branch' }
+		isReadOnlyView()
+			? { icon: Eye, class: 'text-muted-foreground', label: 'Viewing read-only' }
+			: app.branchPR
+				? prStatus(app.branchPR)
+				: { icon: GitBranch, class: 'text-muted-foreground', label: 'Branch' }
 	);
+
+	// The text shown in the trigger: a viewed PR's head branch, else the viewed
+	// or checked-out branch.
+	const triggerLabel = $derived(viewedPRLabel() ?? viewedBranch() ?? 'no branch');
 </script>
 
 <Popover.Root
@@ -253,7 +293,7 @@
 		{@const TriggerIcon = triggerIcon.icon}
 		<TriggerIcon class={cn('size-3.5', triggerIcon.class)} aria-label={triggerIcon.label} />
 		<span>
-			{app.currentBranch ?? 'no branch'}
+			{triggerLabel}
 		</span>
 		<ChevronDown class="size-3.5 text-muted-foreground" />
 	</Popover.Trigger>
@@ -317,26 +357,44 @@
 												</div>
 											{:else}
 												{@const b = row.branch}
+												{@const isViewed = b.name === viewedBranch()}
+												{@const drifted = isViewingOtherBranch()}
 												<Command.Item
 													value={b.name}
 													onSelect={() => checkout(b.name)}
 													oncontextmenu={(e) => showContextMenu(e, b)}
-													class={cn('flex items-center gap-2', b.current && 'bg-accent/60')}
+													class={cn('flex items-center gap-2', isViewed && 'bg-accent/60')}
 												>
-													<GitBranch
-														class={cn(
-															'size-3.5',
-															b.current ? 'text-success' : 'text-muted-foreground'
-														)}
-													/>
+													<!-- The row you're looking at gets an eye while reviewing a
+													     branch read-only; the checked-out branch keeps the green
+													     branch glyph. With no drift these are the same row. -->
+													{#if drifted && isViewed}
+														<Eye class="size-3.5 text-foreground" aria-label="Viewing read-only" />
+													{:else}
+														<GitBranch
+															class={cn(
+																'size-3.5',
+																b.current ? 'text-success' : 'text-muted-foreground'
+															)}
+														/>
+													{/if}
 													<span
 														class={cn(
 															'min-w-0 flex-1 truncate font-mono text-xs',
-															b.current && 'font-semibold'
+															isViewed && 'font-semibold'
 														)}
 													>
 														{b.name}
 													</span>
+													<!-- Surface the disk truth: while drifted, mark which branch is
+													     actually checked out so it's never hidden. -->
+													{#if drifted && b.current}
+														<span
+															class="shrink-0 rounded bg-foreground/10 px-1 py-0.5 text-[10px] leading-none font-medium text-muted-foreground"
+														>
+															checked out
+														</span>
+													{/if}
 													{#if relativeFor(b)}
 														<span class="shrink-0 text-[10px] text-muted-foreground">
 															{relativeFor(b)}
@@ -418,16 +476,24 @@
 											{:else}
 												{@const pr = row.pr}
 												{@const status = prStatus(pr)}
-												{@const Icon = status.icon}
+												{@const isViewed = app.viewPR?.number === pr.number}
+												{@const Icon = isViewed ? Eye : status.icon}
 												<button
 													type="button"
 													onclick={() => openPR(pr)}
+													oncontextmenu={(e) => showPRContextMenu(e, pr)}
 													title={pr.title}
-													class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent"
+													class={cn(
+														'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent',
+														isViewed && 'bg-accent/60'
+													)}
 												>
 													<Icon
-														class={cn('size-4 shrink-0', status.class)}
-														aria-label={status.label}
+														class={cn(
+															'size-4 shrink-0',
+															isViewed ? 'text-foreground' : status.class
+														)}
+														aria-label={isViewed ? 'Viewing read-only' : status.label}
 													/>
 													<div class="flex min-w-0 flex-1 flex-col">
 														<span class="truncate text-xs font-medium">

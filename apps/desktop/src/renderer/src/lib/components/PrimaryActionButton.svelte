@@ -12,11 +12,18 @@
 	import { Button } from './ui/button';
 	import * as Tooltip from './ui/tooltip';
 	import GithubSpinner from './GithubSpinner.svelte';
-	import { actions, app } from '$lib/store.svelte';
+	import { actions, app, isReadOnlyView, uiPR } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import type { PRCheck } from '@shared/types';
 
 	const status = $derived(app.pushStatus);
+	// The PR the button acts on — follows what's on screen (a viewed PR/branch in
+	// read-only mode, else the checked-out branch's PR).
+	const pr = $derived(uiPR());
+	// In a read-only view the working tree isn't this branch, so publish/push/
+	// commit make no sense — the only meaningful action is opening the PR (if any)
+	// for whatever's being viewed.
+	const readOnly = $derived(isReadOnlyView());
 	const stage = $derived(app.push.stage);
 	// Spin ONLY for this button's own push/publish operation. Other in-flight git
 	// ops (pull, update branch, commit) keep the button disabled (see `disabled`
@@ -33,11 +40,14 @@
 	const branchHasChanges = $derived((status?.aheadOfDefault ?? 0) > 0);
 
 	const mode = $derived.by<Mode>(() => {
+		// Read-only view: only offer to open the viewed branch/PR's PR. No push/
+		// publish/create — those act on the checked-out working tree, not this view.
+		if (readOnly) return pr ? 'go-pr' : 'none';
 		// No remote yet → offer to publish to GitHub (GitHub-Desktop style). This
 		// also resolves the "I committed but there's no push button" dead end.
 		if (status && !status.hasRemote) return 'publish';
 		if (status?.hasRemote && (status.ahead > 0 || !status.hasUpstream)) return 'push';
-		if (app.branchPR) return 'go-pr';
+		if (pr) return 'go-pr';
 		if (branchHasChanges) return 'create-pr';
 		return 'none';
 	});
@@ -61,7 +71,7 @@
 			case 'push':
 				return status && status.ahead > 0 ? `Push ${status.ahead}` : 'Publish';
 			case 'go-pr':
-				return `PR #${app.branchPR?.number}`;
+				return `PR #${pr?.number}`;
 			case 'create-pr':
 				return 'Create PR';
 			case 'none':
@@ -86,6 +96,8 @@
 	});
 
 	const disabled = $derived.by(() => {
+		// Opening a PR from a read-only view is always safe (just a link).
+		if (readOnly) return false;
 		// Lock the button during ANY in-flight git operation (the store also guards
 		// each action on app.push.inProgress), even ones that don't spin this button.
 		if (app.push.inProgress) return true;
@@ -104,6 +116,15 @@
 				void actions.push();
 				return;
 			case 'go-pr':
+				// Open the specific PR that's on screen (viewed PR/branch in read-only
+				// mode, or the checked-out branch's PR), rather than always the
+				// checked-out branch's.
+				if (pr?.url) {
+					void window.api.shell.openExternal(pr.url);
+					return;
+				}
+				void actions.openPRPage();
+				return;
 			case 'create-pr':
 				void actions.openPRPage();
 				return;
@@ -113,8 +134,10 @@
 	// CI/workflow status for the branch PR's head commit, guarded so a stale poll
 	// result can't paint the wrong PR. `null`/`'none'` means there's nothing to
 	// show, in which case we fall back to the plain PR icon.
+	// CI checks are polled only for the checked-out branch's PR, so don't try to
+	// show them in a read-only view (the button there is a plain "open PR" link).
 	const checks = $derived(
-		app.branchPRChecks && app.branchPRChecks.number === app.branchPR?.number
+		!readOnly && app.branchPRChecks && app.branchPRChecks.number === app.branchPR?.number
 			? app.branchPRChecks.summary
 			: null
 	);
@@ -175,7 +198,7 @@
 				return `Push ${status.ahead} commit${status.ahead === 1 ? '' : 's'} to ${remote}`;
 			}
 			case 'go-pr':
-				return app.branchPR ? `Open PR #${app.branchPR.number}` : 'Open PR';
+				return pr ? `Open PR #${pr.number}` : 'Open PR';
 			case 'create-pr':
 				return 'Open the create-pull-request page on GitHub';
 			case 'none':
