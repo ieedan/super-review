@@ -2184,7 +2184,7 @@ export const actions = {
 				// can't be told apart from a pre-existing one (findManagedStash wants
 				// exactly one). v1: surface it rather than risk popping the wrong one.
 				throw new Error(
-					'Could not bring your changes over — this branch already has stashed changes.'
+					'Could not bring your changes over. This branch already has stashed changes.'
 				);
 			}
 			ref = found.ref;

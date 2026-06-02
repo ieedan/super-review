@@ -209,7 +209,7 @@
 			<form class="grid gap-4" onsubmit={finish}>
 				<p class="text-xs text-muted-foreground">
 					<span class="font-mono">{name.trim()}</span> is ready. You have uncommitted changes on
-					<span class="font-mono">{currentBranch}</span> — where should they go?
+					<span class="font-mono">{currentBranch}</span>. Where should they go?
 				</p>
 
 				<RadioGroup bind:value={bringChoice} disabled={busy} class="gap-2">

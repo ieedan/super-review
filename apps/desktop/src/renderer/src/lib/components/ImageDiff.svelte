@@ -93,7 +93,7 @@
 	<div class="p-4 text-xs text-muted-foreground">Loading image…</div>
 {:else if !oldSrc && !newSrc}
 	<div class="p-4 text-sm text-muted-foreground">
-		Image preview unavailable — the file is too large or couldn't be read.
+		Image preview unavailable. The file is too large or couldn't be read.
 	</div>
 {:else}
 	<div class="grid gap-4 p-4" class:sm:grid-cols-2={!single}>

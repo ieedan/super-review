@@ -1509,7 +1509,7 @@
 					<span class="opacity-50">Scroll to load</span>
 				</div>
 			{:else if diffData?.file.isBinary}
-				<div class="p-4 text-sm text-muted-foreground">Binary file — diff not shown.</div>
+				<div class="p-4 text-sm text-muted-foreground">Binary file, diff not shown.</div>
 			{:else if diffData?.truncated}
 				<div class="p-4 text-sm text-muted-foreground">
 					File too large to render. Diff preview disabled.

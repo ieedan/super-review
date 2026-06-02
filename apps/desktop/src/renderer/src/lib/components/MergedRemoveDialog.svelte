@@ -31,7 +31,7 @@
 				<Dialog.Title class="text-sm font-semibold">Remove this branch locally?</Dialog.Title>
 				<Dialog.Description class="mt-1 text-xs">
 					<span class="font-mono">{prompt?.branch}</span> has merged. Delete the local branch? This only
-					removes it from your machine — the remote is untouched.
+					removes it from your machine. The remote is untouched.
 				</Dialog.Description>
 			</div>
 		</Dialog.Header>
