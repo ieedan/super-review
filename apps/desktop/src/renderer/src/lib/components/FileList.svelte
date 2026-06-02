@@ -27,7 +27,7 @@
 	import SessionTour from './SessionTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { harnessLabel } from '$lib/harness-logos';
-	import { actions, app, type ContextTab } from '$lib/store.svelte';
+	import { actions, app, isViewingOtherBranch, type ContextTab } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import { languageIconForPath } from '$lib/file-icons';
 	import { truncatePathPrefix } from '$lib/path-truncate';
@@ -712,19 +712,24 @@
 					<Tabs.List
 						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent p-0"
 					>
-						<Tabs.Trigger
-							value="unstaged"
-							class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-						>
-							Unstaged
-							{#if app.unstagedFileCount > 0}
-								<span
-									class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
-								>
-									{app.unstagedFileCount > 99 ? '99+' : app.unstagedFileCount}
-								</span>
-							{/if}
-						</Tabs.Trigger>
+						<!-- Unstaged is the working tree of the checked-out branch. While a
+						     branch is being reviewed read-only there's no working tree to
+						     commit against, so the tab is hidden. -->
+						{#if !isViewingOtherBranch()}
+							<Tabs.Trigger
+								value="unstaged"
+								class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+							>
+								Unstaged
+								{#if app.unstagedFileCount > 0}
+									<span
+										class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
+									>
+										{app.unstagedFileCount > 99 ? '99+' : app.unstagedFileCount}
+									</span>
+								{/if}
+							</Tabs.Trigger>
+						{/if}
 						<Tabs.Trigger
 							value="branch"
 							class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"

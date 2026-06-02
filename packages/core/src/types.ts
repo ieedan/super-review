@@ -341,7 +341,7 @@ export interface DiffLineContextMenuParams {
 
 // Actions a branch row's native context menu can return. `null` (from the
 // IPC) means the menu was dismissed without a choice.
-export type BranchContextMenuAction = 'copy' | 'delete';
+export type BranchContextMenuAction = 'copy' | 'delete' | 'view';
 
 // Actions a repo row's native context menu can return. `null` (from the IPC)
 // means the menu was dismissed without a choice.
@@ -424,6 +424,9 @@ export interface BranchContextMenuParams {
 	// Whether to show "Delete Branch…" — hidden for the currently checked-out
 	// branch (which git can't delete anyway).
 	canDelete: boolean;
+	// Whether to show "View Read-Only" — hidden for the branch already shown in
+	// the UI (viewing it would be a no-op / return-home).
+	canView: boolean;
 }
 
 // What the renderer hands the main process to build a file row's native menu.

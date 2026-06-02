@@ -1211,7 +1211,14 @@ export function registerIpc(): void {
 				}
 			});
 
-			const template: MenuItemConstructorOptions[] = [item('Copy Branch Name', 'copy')];
+			const template: MenuItemConstructorOptions[] = [];
+			// Read-only view: show the branch's committed state without checking it
+			// out, leaving the working tree where it is.
+			if (params.canView) {
+				template.push(item('View Read-Only', 'view'));
+				template.push({ type: 'separator' });
+			}
+			template.push(item('Copy Branch Name', 'copy'));
 			if (params.canDelete) {
 				template.push({ type: 'separator' });
 				template.push(item('Delete Branch…', 'delete'));

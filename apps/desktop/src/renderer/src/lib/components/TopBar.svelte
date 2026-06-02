@@ -8,7 +8,8 @@
 	import TerminalButton from './TerminalButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
 	import * as Sidebar from './ui/sidebar';
-	import { app } from '$lib/store.svelte';
+	import { CornerUpLeft } from 'lucide-svelte';
+	import { actions, app, isViewingOtherBranch } from '$lib/store.svelte';
 </script>
 
 <header
@@ -24,6 +25,20 @@
 		{#if app.activeRepo}
 			<span class="text-muted-foreground">/</span>
 			<BranchPicker />
+			<!-- While reviewing a branch read-only, the picker shows the *viewed*
+			     branch; this pill surfaces what's actually checked out and clicks
+			     back to it. Hidden when the two agree. -->
+			{#if isViewingOtherBranch()}
+				<button
+					type="button"
+					onclick={() => actions.returnToCheckedOutBranch()}
+					title={`Reviewing read-only — back to the checked-out branch (${app.currentBranch})`}
+					class="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+				>
+					<CornerUpLeft class="size-3.5" />
+					<span class="font-mono">{app.currentBranch}</span>
+				</button>
+			{/if}
 		{/if}
 	</div>
 	<div class="flex-1"></div>
