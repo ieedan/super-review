@@ -44,8 +44,8 @@
 				<Dialog.Title class="text-sm font-semibold">Resolve merge conflicts</Dialog.Title>
 				<Dialog.Description class="mt-1 text-xs">
 					Merging produced conflicts. Open each file{editorLabel ? ` in ${editorLabel}` : ''},
-					resolve the markers, and save. Each file is checked off automatically once its markers
-					are gone.
+					resolve the markers, and save. Each file is checked off automatically once its markers are
+					gone.
 					{#if isPullOnly}
 						Then we'll finish the merge.
 					{:else}

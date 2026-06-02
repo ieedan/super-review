@@ -764,8 +764,9 @@
 					</div>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Files matching these glob patterns have their diffs hidden behind a "Load diff" button
-						by default, such as lock files and build outputs. A pattern with no slash matches the file
-						name anywhere (e.g. <code>*.lock</code>); one with a slash matches the full path (e.g.
+						by default, such as lock files and build outputs. A pattern with no slash matches the
+						file name anywhere (e.g. <code>*.lock</code>); one with a slash matches the full path
+						(e.g.
 						<code>dist/**</code>).
 					</p>
 
