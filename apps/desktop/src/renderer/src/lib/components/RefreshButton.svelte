@@ -5,12 +5,24 @@
 	import { actions, app } from '$lib/store.svelte';
 	import { cn, formatRelative } from '$lib/utils';
 
-	const pullStage = $derived(app.push.intent === 'pull' ? app.push.stage : 'idle');
+	// Spin the Pull affordance ONLY for this button's own pull operation. `op`
+	// (not the coarser `intent === 'pull'`, which an update-branch/upstream sync
+	// also sets) maps 1:1 to the action this button triggers.
+	const pullStage = $derived(app.push.op === 'pull' ? app.push.stage : 'idle');
 	const pulling = $derived(
-		app.push.inProgress && app.push.intent === 'pull' && pullStage !== 'conflicts'
+		app.push.inProgress && app.push.op === 'pull' && pullStage !== 'conflicts'
 	);
-	const refreshing = $derived(app.loading.files || app.loading.branches || app.fetchingOrigin);
-	const busy = $derived(refreshing || pulling);
+	// Spin the refresh icon only for a standalone fetch/refresh. While any
+	// push-state operation owns the header (pull, update branch, push, commit…)
+	// its own button shows the spinner — and the refreshFiles/refreshBranches it
+	// runs on completion flip these same loading flags, which would otherwise
+	// light a second spinner here. Gating on !inProgress keeps it to one.
+	const refreshing = $derived(
+		!app.push.inProgress && (app.loading.files || app.loading.branches || app.fetchingOrigin)
+	);
+	// Disable during any in-flight git operation so a fetch can't be stacked on a
+	// push/update, even though only the pull op (and a standalone refresh) spins.
+	const busy = $derived(refreshing || pulling || app.push.inProgress);
 
 	// Switch to pull mode when origin has commits we don't, and we have no
 	// local commits to push (the primary action button handles the sync case
