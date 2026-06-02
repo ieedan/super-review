@@ -560,17 +560,28 @@ function filesCacheKey(repoId: string, ctx: DiffContext): string {
 // Paint the file list from the per-context cache for the current diff context,
 // if we've shown it before. Makes a context switch feel instant — the previous
 // content shows immediately while `refreshFiles` revalidates in the background.
-// No-op on a cache miss (the caller's refresh then shows the loading state).
-function hydrateFilesFromCache(): void {
-	if (!app.activeRepo) return;
+// Returns whether a cached list was found: on a miss the caller should clear the
+// stale list and show a loading state rather than leaving the old diff on screen.
+function hydrateFilesFromCache(): boolean {
+	if (!app.activeRepo) return false;
 	const cached = filesCache.get(
 		filesCacheKey(app.activeRepo.id, $state.snapshot(app.diffContext) as DiffContext)
 	);
-	if (!cached) return;
+	if (!cached) return false;
 	app.changedFiles = cached.changedFiles;
 	app.seenFiles = new SvelteSet(cached.seenFiles);
 	app.collapsedFiles = new SvelteSet(cached.collapsedFiles);
 	app.selectedFile = cached.selectedFile;
+	return true;
+}
+
+// Drop the on-screen file list and flip the loading flag so the diff view shows
+// its "Loading…" state immediately, rather than leaving the previous context's
+// diff visible (which reads as a frozen UI) while a fresh list is fetched.
+function showLoadingFiles(): void {
+	app.changedFiles = [];
+	app.selectedFile = null;
+	app.loading.files = true;
 }
 
 function diffCacheKeyFor(repoId: string, ctx: DiffContext, filePath: string): string {
@@ -1982,9 +1993,9 @@ export const actions = {
 		}
 		if (app.contextTab === 'branch') {
 			app.diffContext = contextForTab('branch');
-			// Show any cached file list for this branch instantly; refreshFiles then
-			// revalidates in the background.
-			hydrateFilesFromCache();
+			// Show any cached file list for this branch instantly; on a miss, show a
+			// loading state instead of the previous branch's stale diff.
+			if (!hydrateFilesFromCache()) showLoadingFiles();
 		}
 		if (app.contextTab !== 'sessions') {
 			await refreshFiles();
@@ -1999,6 +2010,10 @@ export const actions = {
 	async viewPRReadOnly(pr: PRSummary): Promise<void> {
 		if (!app.activeRepo) return;
 		if (app.viewPR?.number === pr.number) return;
+		// Show the loading state up front — fetching the PR ref is a network round
+		// trip, so without this the previous diff would sit there looking frozen
+		// for the whole fetch. (The Sessions tab keeps its open session instead.)
+		if (app.contextTab !== 'sessions') showLoadingFiles();
 		try {
 			// `pr` is a $state proxy; snapshot so it survives the IPC structured
 			// clone and so the stored value is a plain object.
@@ -2019,6 +2034,8 @@ export const actions = {
 				await refreshFiles();
 			}
 		} catch (err) {
+			// Clear the loading flag we set above so the view doesn't spin forever.
+			app.loading.files = false;
 			setError(err instanceof Error ? err.message : String(err));
 		}
 	},
