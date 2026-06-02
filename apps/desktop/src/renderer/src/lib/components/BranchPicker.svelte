@@ -63,7 +63,7 @@
 
 	async function checkout(name: string): Promise<void> {
 		open = false;
-		await actions.checkoutBranch(name);
+		await actions.requestBranchSwitch(name);
 	}
 
 	// Right-click a branch row: pop the native OS context menu and dispatch the

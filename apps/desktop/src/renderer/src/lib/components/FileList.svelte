@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		Archive,
 		ArrowLeft,
 		Check,
 		ChevronRight,
@@ -12,9 +13,12 @@
 		MessageSquare,
 		Minus,
 		PanelLeft,
+		RotateCcw,
 		Search,
+		Trash2,
 		X
 	} from 'lucide-svelte';
+	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { Tween } from 'svelte/motion';
 	import { cubicOut } from 'svelte/easing';
@@ -692,7 +696,24 @@
          totals, and the collapse trigger pinned right. Matches the diff sticky
          header height so their bottom borders line up across panes. -->
 		<div class="flex h-11 items-center gap-2 border-b border-border px-2">
-			{#if app.activeSessionId}
+			{#if app.stashView}
+				<!-- Viewing the managed stash: the tab strip is replaced with a back
+             button returning to the working tree, and a label. The Restore /
+             Discard actions live in the banner row below. -->
+				<Button
+					variant="ghost"
+					size="icon"
+					class="size-7 flex-none"
+					title="Back to changes"
+					onclick={() => actions.closeStashView()}
+				>
+					<ArrowLeft class="size-4" />
+				</Button>
+				<span class="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm">
+					<Archive class="size-4 shrink-0 text-muted-foreground" />
+					Stashed Changes
+				</span>
+			{:else if app.activeSessionId}
 				<!-- A session's diff is open: the tab strip is replaced with a back
              button and a muted "Sessions" label naming where it returns to.
              The session's own logo/name/description live in the row below. -->
@@ -769,6 +790,48 @@
 				<PanelLeft class="size-3.5" />
 			</Button>
 		</div>
+
+		{#if app.stashView}
+			<!-- Restore / Discard banner for the stash being viewed. Restore pops the
+           stash back into the working tree (reusing the conflict dialog if the
+           pop conflicts); Discard drops it for good (gated by a confirm). -->
+			<div class="flex items-center gap-2 border-b border-border px-2 py-2">
+				<span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+					{#if app.stash}
+						{app.stash.fileCount}
+						{app.stash.fileCount === 1 ? 'change' : 'changes'} stashed on this branch
+					{:else}
+						Stashed changes
+					{/if}
+				</span>
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={app.push.inProgress}
+					onclick={() => actions.restoreStash()}
+				>
+					<RotateCcw class="size-3.5" /> Restore
+				</Button>
+				<Button
+					variant="destructive"
+					size="sm"
+					disabled={app.push.inProgress}
+					onclick={() =>
+						confirmDelete({
+							title: 'Discard stashed changes?',
+							icon: 'warning',
+							description:
+								'The stashed changes will be permanently dropped. This cannot be undone.',
+							confirm: { text: 'Discard' },
+							onConfirm: async () => {
+								await actions.discardStash();
+							}
+						})}
+				>
+					<Trash2 class="size-3.5" /> Discard
+				</Button>
+			</div>
+		{/if}
 
 		{#if app.activeSessionId}
 			<!-- The open session's identity, on its own row so the top header isn't
@@ -938,7 +1001,7 @@
 					{#if node.kind === 'folder'}
 						{@const open = !app.collapsedFolders.has(node.path)}
 						{@const isFocused = focusedPath === node.path}
-						{@const isUnstaged = app.contextTab === 'unstaged'}
+						{@const isUnstaged = app.contextTab === 'unstaged' && !app.stashView}
 						<!-- Folder commit checkbox (Unstaged only): tri-state over every
                    descendant file — checked when all are included, a dash when
                    only some are, empty when none. -->
@@ -1010,7 +1073,7 @@
                    "seen" indicator; the seen flow still drives collapse, but its
                    state isn't surfaced here. `seenVisual` gates the strikethrough
                    so unstaged filenames never read as "seen". -->
-						{@const isUnstaged = app.contextTab === 'unstaged'}
+						{@const isUnstaged = app.contextTab === 'unstaged' && !app.stashView}
 						{@const stagingState = actions.fileStagingState(node.file.path)}
 						{@const isIncluded = stagingState !== 'none'}
 						{@const isPartial = stagingState === 'partial'}
@@ -1143,8 +1206,26 @@
 		{/if}
 	</Sidebar.Content>
 
-	{#if app.contextTab === 'unstaged'}
+	{#if app.contextTab === 'unstaged' && !app.stashView}
 		<Sidebar.Footer class="gap-0 p-0">
+			{#if app.stash}
+				<!-- The branch's managed stash: click to enter the stash view (its
+             diff + Restore/Discard actions). Sits above the commit box, like
+             GitHub Desktop's "Stashed Changes" entry. -->
+				<button
+					type="button"
+					class="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm hover:bg-accent/50"
+					onclick={() => actions.openStashView()}
+				>
+					<Archive class="size-4 shrink-0 text-muted-foreground" />
+					<span class="flex-1 truncate">Stashed Changes</span>
+					<span class="text-xs text-muted-foreground tabular-nums">
+						{app.stash.fileCount}
+						{app.stash.fileCount === 1 ? 'change' : 'changes'}
+					</span>
+					<ChevronRight class="size-4 shrink-0 text-muted-foreground" />
+				</button>
+			{/if}
 			<CommitBox />
 		</Sidebar.Footer>
 	{/if}
