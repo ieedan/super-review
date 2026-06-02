@@ -46,12 +46,12 @@
 	<div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
 		{#if app.activeRepo}
 			<RefreshButton />
-			<UpdateBranchButton />
-			<!-- Editor/terminal open the working tree, which is the *checked-out*
-			     branch — not what a read-only view shows. Hide them there so we don't
-			     send the user to files that don't match the view (or imply it's
-			     writable). -->
+			<!-- Update-branch, editor and terminal all act on the *checked-out*
+			     branch / working tree — not what a read-only view shows. Hide them
+			     there so we don't operate on (or send the user to) the wrong branch,
+			     or imply the view is writable. -->
 			{#if !isReadOnlyView()}
+				<UpdateBranchButton />
 				<EditorButton />
 				<TerminalButton />
 			{/if}
