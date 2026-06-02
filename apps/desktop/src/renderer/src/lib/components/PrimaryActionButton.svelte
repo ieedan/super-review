@@ -18,9 +18,12 @@
 
 	const status = $derived(app.pushStatus);
 	const stage = $derived(app.push.stage);
-	// While stage is 'conflicts' the flow is paused waiting on the conflict
-	// dialog, not actively working — don't spin (this isn't even a push).
-	const busy = $derived(app.push.inProgress && stage !== 'conflicts');
+	// Spin ONLY for this button's own push/publish operation. Other in-flight git
+	// ops (pull, update branch, commit) keep the button disabled (see `disabled`
+	// below) but must not spin it — otherwise the header shows two spinners at
+	// once (e.g. the update-branch spinner plus a phantom one here). While stage
+	// is 'conflicts' the flow is paused on the conflict dialog, not working.
+	const busy = $derived(app.push.inProgress && app.push.op === 'push' && stage !== 'conflicts');
 
 	type Mode = 'publish' | 'push' | 'go-pr' | 'create-pr' | 'none';
 
@@ -83,7 +86,9 @@
 	});
 
 	const disabled = $derived.by(() => {
-		if (busy) return true;
+		// Lock the button during ANY in-flight git operation (the store also guards
+		// each action on app.push.inProgress), even ones that don't spin this button.
+		if (app.push.inProgress) return true;
 		if (mode === 'publish') return false; // dialog handles the not-signed-in case
 		if (mode === 'push') return !status?.hasRemote;
 		// PR actions require a GitHub-linked repo.
