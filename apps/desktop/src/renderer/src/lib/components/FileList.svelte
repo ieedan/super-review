@@ -18,6 +18,9 @@
 		Trash2,
 		X
 	} from 'lucide-svelte';
+	// lucide-svelte (0.474) predates this glyph, so pull the checked variant from
+	// @lucide/svelte (also a project dep) via its per-icon path.
+	import MessageSquareCheck from '@lucide/svelte/icons/message-square-check';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { Tween } from 'svelte/motion';
@@ -1083,9 +1086,11 @@
 						{@const isActive = app.selectedFile === node.file.path}
 						{@const isSelected = app.selectedFiles.has(node.file.path)}
 						{@const isFocused = focusedPath === node.file.path}
-						{@const threadCount = (app.prComments[node.file.path] ?? []).filter(
-							(c) => !c.inReplyTo
-						).length}
+						{@const threads = (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo)}
+						{@const threadCount = threads.length}
+						<!-- Every thread on the file resolved → swap the icon for a checked
+                   variant so the sidebar reads "comments handled" at a glance. -->
+						{@const allThreadsResolved = threadCount > 0 && threads.every((t) => t.isResolved)}
 						<!-- Unstaged rows show a commit-inclusion checkbox instead of the
                    "seen" indicator; the seen flow still drives collapse, but its
                    state isn't surfaced here. `seenVisual` gates the strikethrough
@@ -1192,9 +1197,15 @@
 									{#if threadCount > 0}
 										<span
 											class="flex items-center gap-0.5 text-muted-foreground"
-											title="{threadCount} comment thread{threadCount === 1 ? '' : 's'}"
+											title="{threadCount} comment thread{threadCount === 1
+												? ''
+												: 's'}{allThreadsResolved ? ' (resolved)' : ''}"
 										>
-											<MessageSquare class="size-3" />
+											{#if allThreadsResolved}
+												<MessageSquareCheck class="size-3" />
+											{:else}
+												<MessageSquare class="size-3" />
+											{/if}
 											{threadCount}
 										</span>
 									{/if}

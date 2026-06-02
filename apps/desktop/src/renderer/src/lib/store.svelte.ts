@@ -175,6 +175,7 @@ interface AppState {
 	animationsEnabled: boolean;
 	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
+	unmarkSeenOnChange: boolean;
 	hotkeys: Hotkeys;
 	// Initial window bounds, applied on the next launch (see UserPrefs).
 	windowWidth: number;
@@ -475,6 +476,7 @@ const initial: AppState = {
 	animationsEnabled: false,
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
+	unmarkSeenOnChange: true,
 	hotkeys: DEFAULT_HOTKEYS,
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
@@ -601,6 +603,16 @@ async function detectUpstream(): Promise<void> {
 
 function filesCacheKey(repoId: string, ctx: DiffContext): string {
 	return `${repoId}::${diffContextKey(ctx)}`;
+}
+
+// A cheap fingerprint of a changed file's diff, captured when the file is marked
+// seen and re-checked on every refresh. When it changes — new commits pushed to a
+// branch, or further working-tree edits — the seen mark is cleared so the file
+// resurfaces (gated by the unmarkSeenOnChange pref). Built from the diff stats and
+// status, which move for essentially any real content change; an edit that keeps
+// the exact same +/- counts is the rare miss we accept to avoid per-file hashing.
+function fileContentSig(f: ChangedFile): string {
+	return `${f.status}:${f.additions}:${f.deletions}:${f.isBinary ? 'b' : 't'}`;
 }
 
 // Paint the file list from the per-context cache for the current diff context,
@@ -1348,12 +1360,16 @@ async function refreshFiles(): Promise<void> {
 		app.loading.files = true;
 	}
 	try {
-		// Kick off both IPC calls in parallel — getSeenFiles is just a store
-		// read but it still costs a context bridge roundtrip.
-		const [raw, seenList, collapsedList] = await Promise.all([
+		// Kick off the IPC calls in parallel — the state reads are just store
+		// lookups but each still costs a context bridge roundtrip. The seen
+		// signatures ride along so we can clear seen marks on files that changed
+		// since they were marked (see below).
+		const ctxKey = diffContextKey(ctx);
+		const [raw, seenList, seenSigs, collapsedList] = await Promise.all([
 			window.api.git.listChangedFiles(repoId, ctx),
-			window.api.state.getSeenFiles(repoId, diffContextKey(ctx)),
-			window.api.state.getCollapsedFiles(repoId, diffContextKey(ctx))
+			window.api.state.getSeenFiles(repoId, ctxKey),
+			window.api.state.getSeenSignatures(repoId, ctxKey),
+			window.api.state.getCollapsedFiles(repoId, ctxKey)
 		]);
 		// Sort by path so the diff view and the sidebar tree agree on order —
 		// otherwise the "first file in the tree" can land mid-list in the diff
@@ -1367,6 +1383,23 @@ async function refreshFiles(): Promise<void> {
 
 		const seenSet = new SvelteSet(seenList);
 		const collapsedSet = new SvelteSet(collapsedList);
+
+		// Clear the "seen" mark on any file whose content changed since it was
+		// marked — fresh commits on a branch, or further working-tree edits — so it
+		// resurfaces for re-review. We compare the signature captured at mark-seen
+		// time against the current one; a missing/empty stored signature (older
+		// data) is left alone since we have no baseline. Persist each clear so the
+		// mark stays gone across refreshes. Opt-out via the unmarkSeenOnChange pref.
+		if (app.unmarkSeenOnChange) {
+			for (const file of files) {
+				if (!seenSet.has(file.path)) continue;
+				const prevSig = seenSigs[file.path];
+				if (prevSig && prevSig !== fileContentSig(file)) {
+					seenSet.delete(file.path);
+					void window.api.state.setFileSeen(repoId, ctxKey, file.path, false);
+				}
+			}
+		}
 
 		const stillSelected = app.selectedFile && files.some((f) => f.path === app.selectedFile);
 		const firstUnseen = files.find((f) => !seenSet.has(f.path));
@@ -1481,6 +1514,7 @@ export const actions = {
 		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
 		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
+		app.unmarkSeenOnChange = app.prefs.unmarkSeenOnChange ?? true;
 		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
 		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
 		app.startMaximized = app.prefs.startMaximized ?? false;
@@ -1919,8 +1953,12 @@ export const actions = {
 		// `seenFiles` is a SvelteSet, so the in-place mutation is reactive.
 		if (next) app.seenFiles.add(filePath);
 		else app.seenFiles.delete(filePath);
+		// Stamp the file's current content signature when marking it seen so a later
+		// change (new commits, more edits) can clear the mark on refresh.
+		const file = app.changedFiles.find((f) => f.path === filePath);
+		const sig = next && file ? fileContentSig(file) : undefined;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
-		await window.api.state.setFileSeen(app.activeRepo.id, diffContextKey(ctx), filePath, next);
+		await window.api.state.setFileSeen(app.activeRepo.id, diffContextKey(ctx), filePath, next, sig);
 	},
 
 	async clearSeen(): Promise<void> {
@@ -3720,6 +3758,11 @@ export const actions = {
 	async setAutoRemoveMergedBranch(value: boolean): Promise<void> {
 		app.autoRemoveMergedBranch = value;
 		app.prefs = await window.api.state.setPrefs({ autoRemoveMergedBranch: value });
+	},
+
+	async setUnmarkSeenOnChange(value: boolean): Promise<void> {
+		app.unmarkSeenOnChange = value;
+		app.prefs = await window.api.state.setPrefs({ unmarkSeenOnChange: value });
 	},
 
 	// Persist the initial window size. Clamped to the window minimums (and falling
