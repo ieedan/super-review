@@ -228,6 +228,11 @@ interface AppState {
 	// Drives StashPromptDialog ("Stash Changes and Continue"). `files` is the
 	// blocked file list git reported. Cleared on confirm/dismiss.
 	stashPrompt: { files: string[] } | null;
+	// Set when the user switches to (or has just created) a branch with a dirty
+	// working tree, asking what to do with the in-progress work: leave it stashed
+	// on the current branch, or bring it over to `target`. Drives
+	// SwitchBranchDialog. Cleared on confirm/dismiss and on repo switch.
+	switchBranchPrompt: { target: string } | null;
 	// The managed stash parked on the current branch (one per branch), or null
 	// when there's none. Refreshed alongside files/branches; drives the "Stashed
 	// Changes" sidebar row.
@@ -403,6 +408,7 @@ const initial: AppState = {
 	mergedSwitchPrompt: null,
 	mergedRemovePrompt: null,
 	stashPrompt: null,
+	switchBranchPrompt: null,
 	stash: null,
 	stashView: null,
 	activePR: null,
@@ -751,6 +757,7 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.sessions = [];
 	app.sessionCount = 0;
 	app.branchPR = null;
+	app.switchBranchPrompt = null;
 	await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
 	await refreshBranchPR();
 	void refreshSkillInstalled();
@@ -1829,6 +1836,142 @@ export const actions = {
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			return false;
+		}
+	},
+
+	// User-initiated branch switch (the branch picker). With a clean tree this is
+	// just `checkoutBranch`; with a dirty tree we open SwitchBranchDialog to ask
+	// whether to leave the in-progress work behind (stashed on the current branch)
+	// or bring it along to `target`. No-op when already on `target`.
+	async requestBranchSwitch(target: string): Promise<void> {
+		if (!app.activeRepo || target === app.currentBranch) return;
+		const dirty = await window.api.git.isDirty(app.activeRepo.id).catch(() => false);
+		if (dirty) {
+			app.switchBranchPrompt = { target };
+		} else {
+			await actions.checkoutBranch(target);
+		}
+	},
+
+	dismissSwitchPrompt(): void {
+		app.switchBranchPrompt = null;
+	},
+
+	// "Leave my changes on <current>": stash the in-progress work on the branch
+	// we're leaving (the existing "Stashed Changes" row handles restore/discard on
+	// return — no auto-pop), then switch to the target.
+	async confirmLeaveAndSwitch(): Promise<void> {
+		const prompt = app.switchBranchPrompt;
+		if (!app.activeRepo || !prompt) return;
+		const target = prompt.target;
+		const repoId = app.activeRepo.id;
+		app.switchBranchPrompt = null;
+		try {
+			const stashed = await window.api.git.createManagedStash(repoId);
+			if (!stashed.ok) throw new Error(stashed.error ?? 'Could not stash your changes.');
+			await actions.checkoutBranch(target);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// "Bring my changes to <target>": carry the in-progress work to the target.
+	async confirmBringAndSwitch(): Promise<void> {
+		const prompt = app.switchBranchPrompt;
+		if (!prompt) return;
+		const target = prompt.target;
+		app.switchBranchPrompt = null;
+		await actions.bringChangesToBranch(target);
+	},
+
+	// Stash the working tree on the current branch and stay put. Used by the
+	// create-branch dialog's "leave" choice: the new branch was already created
+	// (without checkout), so we just park the changes here — the "Stashed Changes"
+	// row then appears for later restore.
+	async stashChangesOnBranch(_branch: string): Promise<void> {
+		if (!app.activeRepo || app.push.inProgress) return;
+		const repoId = app.activeRepo.id;
+		try {
+			const stashed = await window.api.git.createManagedStash(repoId);
+			if (!stashed.ok) throw new Error(stashed.error ?? 'Could not stash your changes.');
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Carry the dirty working tree from the current branch onto `target`: park it
+	// in a managed stash, switch, then pop it on the far side. A conflicted pop
+	// reuses the shared stash-restore conflict flow (continueMerge/abortMerge wrap
+	// it up). Shared by the switch-branch and create-branch "bring" choices.
+	async bringChangesToBranch(target: string): Promise<void> {
+		if (!app.activeRepo || app.push.inProgress) return;
+		const repoId = app.activeRepo.id;
+
+		// Park the dirty work and resolve it to a stable SHA while we're still on
+		// the source branch (the stash is keyed to that branch), then switch. Bail
+		// cleanly if any step fails.
+		let ref: string;
+		let fileCount: number;
+		try {
+			const stashed = await window.api.git.createManagedStash(repoId);
+			if (!stashed.ok) throw new Error(stashed.error ?? 'Could not stash your changes.');
+			const found = await window.api.git.findManagedStash(repoId);
+			if (!found) {
+				// createManagedStash keys off the current branch, so a second stash
+				// can't be told apart from a pre-existing one (findManagedStash wants
+				// exactly one). v1: surface it rather than risk popping the wrong one.
+				throw new Error(
+					'Could not bring your changes over — this branch already has stashed changes.'
+				);
+			}
+			ref = found.ref;
+			fileCount = found.fileCount;
+			await window.api.git.checkout(repoId, target);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return;
+		}
+
+		// On `target` now (the stash left the tree clean) — land the UI there
+		// before popping the carried-over work.
+		if (app.contextTab === 'branch') {
+			app.diffContext = contextForTab('branch');
+		}
+		await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+		await refreshBranchPR();
+
+		// Pop the stash onto the target, reusing the stash-restore conflict flow so
+		// a conflicted pop opens the shared dialog (continue/abort finish/abort it).
+		app.push = { inProgress: true, stage: 'pulling', intent: 'stash-restore', error: null };
+		clearConflicts();
+		try {
+			const result = await window.api.git.restoreManagedStash(repoId, ref);
+			if (!result.ok) {
+				if (result.conflicts.length > 0) {
+					setConflicts(result.conflicts);
+					// The conflicted pop kept the stash entry; point app.stash at it so
+					// the dialog's continue/abort can finish or abort the pop by ref.
+					app.stash = { ref, fileCount };
+					app.push.stage = 'conflicts';
+					return;
+				}
+				throw new Error(result.error ?? 'Could not bring your changes over.');
+			}
+			// Clean pop: the entry is gone and the work now lives in target's tree.
+			app.stash = null;
+			app.push.stage = 'done';
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshPushStatus()]);
+		} catch (err) {
+			app.push.error = err instanceof Error ? err.message : String(err);
+			setError(app.push.error);
+			await Promise.all([refreshFiles(), refreshPushStatus()]);
+		} finally {
+			if (app.push.stage !== 'conflicts') {
+				app.push.inProgress = false;
+			}
 		}
 	},
 

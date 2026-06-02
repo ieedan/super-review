@@ -79,20 +79,23 @@
 		}
 	}
 
-	// Step two. The branch already exists; we only decide what to do with the
-	// uncommitted changes. "Bring" switches onto the new branch (the working
-	// tree follows); "leave" stays put. Either way we close when done.
+	// Step two. The branch already exists (created without checkout); we only
+	// decide what to do with the uncommitted changes. "Bring" carries them onto
+	// the new branch (stash → switch → pop, routing a conflicted pop to the
+	// conflict dialog); "leave" stashes them on the current branch and stays put.
+	// Either way we close when done.
 	async function finish(e?: Event): Promise<void> {
 		e?.preventDefault();
 		if (busy) return;
-		if (bringChoice === 'bring') {
-			busy = true;
-			try {
-				const ok = await actions.checkoutBranch(name.trim());
-				if (!ok) return;
-			} finally {
-				busy = false;
+		busy = true;
+		try {
+			if (bringChoice === 'bring') {
+				await actions.bringChangesToBranch(name.trim());
+			} else if (currentBranch) {
+				await actions.stashChangesOnBranch(currentBranch);
 			}
+		} finally {
+			busy = false;
 		}
 		actions.closeCreateBranchDialog();
 	}
@@ -147,7 +150,7 @@
 					/>
 				</div>
 
-				{#if defaultBranch || showCurrentOption}
+				{#if showCurrentOption}
 					<div class="grid gap-2">
 						<div class="text-xs font-medium">Create branch based on…</div>
 						<RadioGroup bind:value={baseChoice} disabled={busy} class="gap-2">
@@ -207,16 +210,16 @@
 
 				<RadioGroup bind:value={bringChoice} disabled={busy} class="gap-2">
 					{@render optionCard(
-						'branch-bring-bring',
-						'bring',
-						`Take them to ${name.trim() || 'new branch'}`,
-						'Switch to the new branch. Your uncommitted changes come along.'
-					)}
-					{@render optionCard(
 						'branch-bring-leave',
 						'leave',
-						`Keep them on ${currentBranch}`,
-						'Stay here and keep working. The new branch waits for you.'
+						`Leave my changes on ${currentBranch}`,
+						'Your in-progress work will be stashed on this branch for you to return to later'
+					)}
+					{@render optionCard(
+						'branch-bring-bring',
+						'bring',
+						`Bring my changes to ${name.trim() || 'new branch'}`,
+						'Your in-progress work will follow you to the new branch'
 					)}
 				</RadioGroup>
 
