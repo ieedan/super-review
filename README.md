@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/ieedan/super-review/main/apps/docs/static/icon.png" alt="Super Review logo" width="128" />
+  <img src="https://github.com/user-attachments/assets/b9c55fea-1936-4b39-ac07-41cba2ba30b9" alt="Super Review logo" width="128" />
 
   <h1>Super Review</h1>
 </div>
@@ -11,5 +11,5 @@ diffs, branch switching, GitHub PR review, "mark as seen" to collapse files, and
 a per-repo dropdown with auto-detected favicons.
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/ieedan/super-review/main/apps/docs/static/app-preview.webp" alt="Super Review screenshot" />
+  <img src="https://github.com/user-attachments/assets/1aa72a5c-2482-4ccb-8ef8-9b5c194df10e" alt="Super Review screenshot" />
 </div>
