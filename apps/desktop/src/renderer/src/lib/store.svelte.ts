@@ -254,6 +254,11 @@ interface AppState {
 	addRepoDialogOpen: boolean;
 	publishDialogOpen: boolean;
 	createBranchDialogOpen: boolean;
+	// The branch the create-branch dialog was opened from, snapshotted on open so
+	// the dialog's "based on…" options stay fixed for its lifetime. Creating with
+	// checkout switches app.currentBranch to the new branch mid-flow; reading that
+	// live would flash the selector visible (current !== default) before close.
+	createBranchFrom: string | null;
 	push: {
 		inProgress: boolean;
 		stage:
@@ -269,6 +274,12 @@ interface AppState {
 		// managed-stash pop, but routes continue/abort to the dedicated stash-pop
 		// finish/abort paths (a pop has no MERGE_HEAD and makes no commit).
 		intent: 'push' | 'pull' | 'stash-restore';
+		// SHA of the managed stash a conflicted 'stash-restore' pop is finishing.
+		// Carried here (not read off `app.stash`) because a bring-to-another-branch
+		// pop lands on the target while the kept stash stays marked for the source
+		// branch — so `refreshStash` (focus/poll) finds no match for the current
+		// branch and nulls `app.stash`, which would otherwise strand continueMerge.
+		stashRef?: string | null;
 		error: string | null;
 	};
 	// Every file involved in the current merge conflict. Persists through
@@ -420,6 +431,7 @@ const initial: AppState = {
 	addRepoDialogOpen: false,
 	publishDialogOpen: false,
 	createBranchDialogOpen: false,
+	createBranchFrom: null,
 	push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
 	conflictFiles: [],
 	conflictUnresolved: [],
@@ -1955,7 +1967,11 @@ export const actions = {
 					setConflicts(result.conflicts);
 					// The conflicted pop kept the stash entry; point app.stash at it so
 					// the dialog's continue/abort can finish or abort the pop by ref.
+					// Also pin the ref on push state — we're now on `target`, so a
+					// focus/poll refreshStash would null app.stash (the entry is still
+					// marked for the source branch) and strand continueMerge.
 					app.stash = { ref, fileCount };
+					app.push.stashRef = ref;
 					app.push.stage = 'conflicts';
 					return;
 				}
@@ -2319,10 +2335,15 @@ export const actions = {
 	},
 
 	openCreateBranchDialog(): void {
+		// Snapshot the source branch now (on the open event) so the dialog's
+		// "based on…" options don't react to the branch switch a checkout creation
+		// performs mid-flow — see app.createBranchFrom.
+		app.createBranchFrom = app.currentBranch ?? null;
 		app.createBranchDialogOpen = true;
 	},
 	closeCreateBranchDialog(): void {
 		app.createBranchDialogOpen = false;
+		app.createBranchFrom = null;
 	},
 
 	// Create a new branch. `checkout` decides whether we switch onto it as part
@@ -2923,7 +2944,9 @@ export const actions = {
 		// stash. The restored changes stay in the working tree; never push.
 		if (app.push.intent === 'stash-restore') {
 			try {
-				const ref = app.stash?.ref ?? app.stashView?.ref;
+				// Prefer the ref pinned on push state: a bring-to-another-branch pop
+				// leaves us on the target, where refreshStash nulls app.stash.
+				const ref = app.push.stashRef ?? app.stash?.ref ?? app.stashView?.ref;
 				if (!ref) throw new Error('No stash to finish restoring.');
 				const finished = await window.api.git.finishStashPop(repoId, ref);
 				if (!finished.ok) {
@@ -2936,6 +2959,7 @@ export const actions = {
 				clearConflicts();
 				app.stash = null;
 				app.stashView = null;
+				app.push.stashRef = null;
 				app.diffContext = contextForTab(app.contextTab);
 				app.push.stage = 'done';
 				bumpDiffReload();

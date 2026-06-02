@@ -19,7 +19,11 @@
 	let error = $state<string | null>(null);
 
 	const defaultBranch = $derived(app.activeRepo?.defaultBranch ?? null);
-	const currentBranch = $derived(app.currentBranch ?? null);
+	// The branch we're creating from, snapshotted when the dialog opened (see
+	// app.createBranchFrom). Reading app.currentBranch live would flip
+	// showCurrentOption true mid-create — a checkout creation switches the current
+	// branch to the new one — flashing the "based on…" selector before close.
+	const currentBranch = $derived(app.createBranchFrom);
 	const showCurrentOption = $derived(!!currentBranch && currentBranch !== defaultBranch);
 
 	const baseRef = $derived(
