@@ -282,6 +282,12 @@ interface AppState {
 		// managed-stash pop, but routes continue/abort to the dedicated stash-pop
 		// finish/abort paths (a pop has no MERGE_HEAD and makes no commit).
 		intent: 'push' | 'pull' | 'stash-restore';
+		// The specific user-facing action that owns this operation. `intent` is too
+		// coarse for header spinner attribution — pull, update-from-default, and
+		// update-from-upstream all share intent 'pull', so a single 'pull' op would
+		// light every pull-shaped button at once. `op` maps 1:1 to the button that
+		// should spin, so at most one header spinner is ever active for an op.
+		op: 'push' | 'pull' | 'update' | 'update-upstream' | 'commit' | 'stash-restore';
 		// SHA of the managed stash a conflicted 'stash-restore' pop is finishing.
 		// Carried here (not read off `app.stash`) because a bring-to-another-branch
 		// pop lands on the target while the kept stash stays marked for the source
@@ -444,7 +450,7 @@ const initial: AppState = {
 	createBranchDialogOpen: false,
 	cleanupBranchesDialogOpen: false,
 	createBranchFrom: null,
-	push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
+	push: { inProgress: false, stage: 'idle', intent: 'push', op: 'push', error: null },
 	conflictFiles: [],
 	conflictUnresolved: [],
 	diffReloadToken: 0,
@@ -1982,7 +1988,13 @@ export const actions = {
 
 		// Pop the stash onto the target, reusing the stash-restore conflict flow so
 		// a conflicted pop opens the shared dialog (continue/abort finish/abort it).
-		app.push = { inProgress: true, stage: 'pulling', intent: 'stash-restore', error: null };
+		app.push = {
+			inProgress: true,
+			stage: 'pulling',
+			intent: 'stash-restore',
+			op: 'stash-restore',
+			error: null
+		};
 		clearConflicts();
 		try {
 			const result = await window.api.git.restoreManagedStash(repoId, ref);
@@ -2529,6 +2541,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'committing',
 			intent: 'push',
+			op: 'commit',
 			error: null
 		};
 		try {
@@ -2560,6 +2573,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'committing',
 			intent: 'push',
+			op: 'commit',
 			error: null
 		};
 		try {
@@ -2615,6 +2629,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'fetching',
 			intent: 'pull',
+			op: 'pull',
 			error: null
 		};
 		clearConflicts();
@@ -2661,6 +2676,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'pulling',
 			intent: 'pull',
+			op: 'pull',
 			error: null
 		};
 		clearConflicts();
@@ -2727,6 +2743,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'pulling',
 			intent: 'stash-restore',
+			op: 'stash-restore',
 			error: null
 		};
 		clearConflicts();
@@ -2790,6 +2807,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'fetching',
 			intent: 'pull',
+			op: 'update',
 			error: null
 		};
 		clearConflicts();
@@ -2836,6 +2854,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'pulling',
 			intent: 'pull',
+			op: 'update-upstream',
 			error: null
 		};
 		clearConflicts();
@@ -2872,6 +2891,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'fetching',
 			intent: 'push',
+			op: 'push',
 			error: null
 		};
 		clearConflicts();
@@ -2935,7 +2955,7 @@ export const actions = {
 		const prompt = app.forkPrompt;
 		if (!prompt || !app.activeRepo || app.push.inProgress) return;
 		const repoId = app.activeRepo.id;
-		app.push = { inProgress: true, stage: 'forking', intent: 'push', error: null };
+		app.push = { inProgress: true, stage: 'forking', intent: 'push', op: 'push', error: null };
 		try {
 			const fork = await window.api.github.createFork(repoId);
 			const updated = await window.api.git.convertToFork(
@@ -3079,6 +3099,7 @@ export const actions = {
 				inProgress: false,
 				stage: 'idle',
 				intent: 'push',
+				op: 'push',
 				error: null
 			};
 			bumpDiffReload();
