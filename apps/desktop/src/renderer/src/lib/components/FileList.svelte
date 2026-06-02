@@ -731,7 +731,7 @@
 				<!-- Tab strip: drives which diff context fuels the file list. -->
 				<Tabs.Root value={app.contextTab} onValueChange={setTab} class="min-w-0 flex-1 gap-0">
 					<Tabs.List
-						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent p-0"
+						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
 					>
 						<Tabs.Trigger
 							value="unstaged"
