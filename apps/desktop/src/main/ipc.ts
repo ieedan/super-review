@@ -4,6 +4,8 @@ import path from 'node:path';
 import type {
 	BranchContextMenuAction,
 	BranchContextMenuParams,
+	PRContextMenuAction,
+	PRContextMenuParams,
 	BranchInfo,
 	ChangedFile,
 	CloneResult,
@@ -1288,6 +1290,39 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<BranchContextMenuAction | null>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// Pull-request row context menu (in the branch picker's PRs tab). Mirrors the
+	// branch menu: "View Read-Only" opens the PR's diff without checking out; the
+	// renderer handles copy/open with the PR it already holds.
+	ipcMain.handle(
+		'menu:showPRContextMenu',
+		async (e, params: PRContextMenuParams): Promise<PRContextMenuAction | null> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: PRContextMenuAction | null = null;
+			const item = (label: string, action: PRContextMenuAction): MenuItemConstructorOptions => ({
+				label,
+				click: () => {
+					chosen = action;
+				}
+			});
+
+			const template: MenuItemConstructorOptions[] = [];
+			if (params.canView) {
+				template.push(item('View Read-Only', 'view'));
+				template.push({ type: 'separator' });
+			}
+			template.push(item('Copy Link', 'copyUrl'));
+			template.push(item('Open on GitHub', 'openOnGitHub'));
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<PRContextMenuAction | null>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)

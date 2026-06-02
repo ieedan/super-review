@@ -80,6 +80,12 @@ interface AppState {
 	// never touched. The Unstaged tab is hidden while it's set, since there's no
 	// working tree to commit against for a branch that isn't checked out.
 	viewBranch: string | null;
+	// The pull request being reviewed read-only, without checking it out. The
+	// app fetches the PR's head ref and shows it (vs. the default branch) on the
+	// Branch tab — the same diff a checkout would show, but the working tree is
+	// never touched. Mutually exclusive with `viewBranch` in practice (entering
+	// one clears the other). Like `viewBranch`, it hides the Unstaged tab.
+	viewPR: PRSummary | null;
 	prs: PRSummary[];
 	// Whether more PR pages remain to be fetched (drives the infinite scroll in
 	// the branch picker's Pull Requests tab).
@@ -328,10 +334,25 @@ export function viewedBranch(): string | null {
 }
 
 // True when we're reviewing a branch read-only that isn't the checked-out one.
-// Drives the Unstaged-tab hiding, the picker's read-only affordance, and the
-// header's "checked out elsewhere" hint.
+// Branch-specific (used where branch-name semantics matter); for the broad
+// "are we in a read-only view" question (which also covers PRs) use
+// `isReadOnlyView()`.
 export function isViewingOtherBranch(): boolean {
 	return app.viewBranch != null && app.viewBranch !== app.currentBranch;
+}
+
+// True whenever the UI is showing a read-only view — a branch other than the
+// checkout, or a pull request — rather than the checked-out working branch.
+// Drives the Unstaged-tab hiding, comment suppression, and the header's
+// "checked out elsewhere" hint.
+export function isReadOnlyView(): boolean {
+	return isViewingOtherBranch() || app.viewPR != null;
+}
+
+// A short label for the read-only PR being viewed (its head branch), or null
+// when not viewing a PR. The picker trigger shows this in place of a branch.
+export function viewedPRLabel(): string | null {
+	return app.viewPR?.headRef ?? null;
 }
 
 // Resolve which PR the comment surface should target.
@@ -344,9 +365,9 @@ export function isViewingOtherBranch(): boolean {
 export function commentablePRNumber(): number | null {
 	if (app.diffContext.kind === 'pr') return app.diffContext.prNumber;
 	// `branchPR` tracks the checked-out branch; while reviewing a *different*
-	// branch read-only its line numbers wouldn't line up with what's on screen,
-	// so don't offer commenting against it.
-	if (app.branchPR && !isViewingOtherBranch()) return app.branchPR.number;
+	// branch or a PR read-only its line numbers wouldn't line up with what's on
+	// screen, so don't offer commenting against it.
+	if (app.branchPR && !isReadOnlyView()) return app.branchPR.number;
 	return null;
 }
 
@@ -354,7 +375,7 @@ export function commentablePRNumber(): number | null {
 // or the current branch's PR).
 function commentablePR(): PRSummary | null {
 	if (app.diffContext.kind === 'pr') return app.activePR;
-	if (isViewingOtherBranch()) return null;
+	if (isReadOnlyView()) return null;
 	return app.branchPR;
 }
 
@@ -372,6 +393,7 @@ const initial: AppState = {
 	branches: [],
 	currentBranch: null,
 	viewBranch: null,
+	viewPR: null,
 	prs: [],
 	prsHasMore: false,
 	loadingMorePRs: false,
@@ -789,8 +811,9 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	repoFrecency.use(repo.id);
 	applyContextTab('unstaged');
 	app.diffContext = { kind: 'workingTree' };
-	// A read-only view branch belongs to the previous repo — drop it.
+	// A read-only view (branch or PR) belongs to the previous repo — drop it.
 	app.viewBranch = null;
+	app.viewPR = null;
 	// Drop the previous repo's view immediately so its file list / diff don't
 	// linger on screen while the new repo's data loads in.
 	app.changedFiles = [];
@@ -1109,9 +1132,12 @@ function applyContextTab(tab: ContextTab): void {
 function contextForTab(tab: ContextTab): DiffContext {
 	if (tab === 'branch') {
 		const base = app.activeRepo?.defaultBranch ?? 'main';
-		// Target the read-only view branch when one is set; otherwise the
-		// checked-out branch. Both read from git refs, so neither touches disk.
-		const head = app.viewBranch ?? app.currentBranch ?? 'HEAD';
+		// Target the read-only view when one is set — a fetched PR head ref, or a
+		// view branch — otherwise the checked-out branch. All read from git refs,
+		// so none touches disk.
+		const head = app.viewPR
+			? `pr/${app.viewPR.number}/head`
+			: (app.viewBranch ?? app.currentBranch ?? 'HEAD');
 		return { kind: 'branch', base, head };
 	}
 	if (tab === 'sessions' && app.activeSessionId) {
@@ -1412,6 +1438,7 @@ export const actions = {
 			applyContextTab('unstaged');
 			app.diffContext = { kind: 'workingTree' };
 			app.viewBranch = null;
+			app.viewPR = null;
 			await refreshRepos();
 			app.activeRepo = await window.api.repos.getActive();
 			if (app.activeRepo) {
@@ -1437,6 +1464,7 @@ export const actions = {
 			applyContextTab('unstaged');
 			app.diffContext = { kind: 'workingTree' };
 			app.viewBranch = null;
+			app.viewPR = null;
 			await refreshRepos();
 			app.activeRepo = await window.api.repos.getActive();
 			if (app.activeRepo) {
@@ -1474,6 +1502,7 @@ export const actions = {
 			applyContextTab('unstaged');
 			app.diffContext = { kind: 'workingTree' };
 			app.viewBranch = null;
+			app.viewPR = null;
 			// Clear the outgoing repo's file list / diff so it doesn't linger while
 			// the new repo loads.
 			app.changedFiles = [];
@@ -1880,6 +1909,7 @@ export const actions = {
 			// Checking out makes the view follow the checkout again — drop any
 			// read-only view so the UI reflects the branch now on disk.
 			app.viewBranch = null;
+			app.viewPR = null;
 			// Re-derive the diff context for tabs that depend on currentBranch.
 			if (app.contextTab === 'branch') {
 				app.diffContext = contextForTab('branch');
@@ -1909,6 +1939,8 @@ export const actions = {
 		}
 		if (app.viewBranch === branch) return;
 		app.viewBranch = branch;
+		// Entering a branch view supersedes any PR view.
+		app.viewPR = null;
 		if (app.contextTab === 'unstaged') {
 			applyContextTab('branch');
 		}
@@ -1920,11 +1952,43 @@ export const actions = {
 		}
 	},
 
-	// Stop the read-only view and follow the checked-out branch again. The
-	// Unstaged tab reappears; the Branch diff re-targets the checked-out branch.
+	// Review a pull request read-only, without checking out its head branch. We
+	// fetch the PR's head ref (and base) into local refs and show it on the
+	// Branch tab against the default branch — the same diff a checkout would
+	// produce, but the working tree is untouched. Mirrors `viewBranchReadOnly`:
+	// the Unstaged tab hides and the Sessions tab is left alone.
+	async viewPRReadOnly(pr: PRSummary): Promise<void> {
+		if (!app.activeRepo) return;
+		if (app.viewPR?.number === pr.number) return;
+		try {
+			// `pr` is a $state proxy; snapshot so it survives the IPC structured
+			// clone and so the stored value is a plain object.
+			const snapshot = $state.snapshot(pr) as PRSummary;
+			// Fetch pr/<n>/head (+ base) without checking anything out.
+			await window.api.github.fetchPR(app.activeRepo.id, pr.number, ...prHostArgs(snapshot));
+			if (!app.activeRepo) return;
+			app.viewPR = snapshot;
+			app.viewBranch = null;
+			if (app.contextTab === 'unstaged') {
+				applyContextTab('branch');
+			}
+			if (app.contextTab === 'branch') {
+				app.diffContext = contextForTab('branch');
+			}
+			if (app.contextTab !== 'sessions') {
+				await refreshFiles();
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Stop the read-only view (branch or PR) and follow the checked-out branch
+	// again. The Unstaged tab reappears; the Branch diff re-targets the checkout.
 	async returnToCheckedOutBranch(): Promise<void> {
-		if (app.viewBranch == null) return;
+		if (app.viewBranch == null && app.viewPR == null) return;
 		app.viewBranch = null;
+		app.viewPR = null;
 		if (app.contextTab === 'branch') {
 			app.diffContext = contextForTab('branch');
 		}
@@ -2134,6 +2198,7 @@ export const actions = {
 			// structured-clone across the IPC boundary ("object could not be cloned").
 			await window.api.git.checkoutPR(app.activeRepo.id, $state.snapshot(pr), app.prsSource);
 			app.viewBranch = null;
+			app.viewPR = null;
 			applyContextTab('branch');
 			await refreshBranches();
 			app.diffContext = contextForTab('branch');

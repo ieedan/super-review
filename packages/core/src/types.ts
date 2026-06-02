@@ -364,6 +364,10 @@ export interface DiffLineContextMenuParams {
 // IPC) means the menu was dismissed without a choice.
 export type BranchContextMenuAction = 'copy' | 'delete' | 'view';
 
+// Actions a pull-request row's native context menu can return. `view` opens the
+// PR's diff read-only (no checkout). `null` (from the IPC) means dismissed.
+export type PRContextMenuAction = 'view' | 'copyUrl' | 'openOnGitHub';
+
 // Actions a repo row's native context menu can return. `null` (from the IPC)
 // means the menu was dismissed without a choice.
 export type RepoContextMenuAction = 'copyPath' | 'reveal' | 'remove' | 'settings';
@@ -448,6 +452,15 @@ export interface BranchContextMenuParams {
 	canDelete: boolean;
 	// Whether to show "View Read-Only" — hidden for the branch already shown in
 	// the UI (viewing it would be a no-op / return-home).
+	canView: boolean;
+}
+
+// What the renderer hands the main process to build a pull-request row's native
+// menu.
+export interface PRContextMenuParams {
+	// The PR number, used to label the menu.
+	number: number;
+	// Whether to show "View Read-Only" — hidden for the PR already shown in the UI.
 	canView: boolean;
 }
 
@@ -959,6 +972,9 @@ export interface PreloadAPI {
 		// Pop up a native OS context menu for a branch row. Resolves to the chosen
 		// action, or null when the menu is dismissed without a selection.
 		showBranchContextMenu(params: BranchContextMenuParams): Promise<BranchContextMenuAction | null>;
+		// Pop up a native OS context menu for a pull-request row. Resolves to the
+		// chosen action, or null when the menu is dismissed without a selection.
+		showPRContextMenu(params: PRContextMenuParams): Promise<PRContextMenuAction | null>;
 		// Pop up a native OS context menu for a repo row in the picker. Resolves to
 		// the chosen action, or null when the menu is dismissed without a selection.
 		showRepoContextMenu(params: RepoContextMenuParams): Promise<RepoContextMenuAction | null>;

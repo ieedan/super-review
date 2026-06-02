@@ -19,7 +19,14 @@
 	import * as Command from './ui/command';
 	import * as Tabs from './ui/tabs';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
-	import { actions, app, isViewingOtherBranch, viewedBranch } from '$lib/store.svelte';
+	import {
+		actions,
+		app,
+		isReadOnlyView,
+		isViewingOtherBranch,
+		viewedBranch,
+		viewedPRLabel
+	} from '$lib/store.svelte';
 	import { cn, formatRelative } from '$lib/utils';
 	import type { BranchInfo, PRSource, PRSummary } from '@shared/types';
 
@@ -116,6 +123,25 @@
 	async function openPR(pr: PRSummary): Promise<void> {
 		open = false;
 		await actions.checkoutPR(pr);
+	}
+
+	// Right-click a PR row: pop the native menu and dispatch. "View Read-Only"
+	// reviews the PR's diff without checking it out; copy/open act on the PR we
+	// already hold, so they need no extra round-trip.
+	async function showPRContextMenu(e: MouseEvent, pr: PRSummary): Promise<void> {
+		e.preventDefault();
+		const action = await window.api.menu.showPRContextMenu({
+			number: pr.number,
+			canView: app.viewPR?.number !== pr.number
+		});
+		if (action === 'view') {
+			open = false;
+			await actions.viewPRReadOnly(pr);
+		} else if (action === 'copyUrl') {
+			await actions.copyToClipboard(pr.url);
+		} else if (action === 'openOnGitHub') {
+			await window.api.shell.openExternal(pr.url);
+		}
 	}
 
 	function openCreate(): void {
@@ -237,17 +263,21 @@
 			: `${r.githubOwner}/${r.githubRepo}`;
 	}
 
-	// The trigger labels whatever branch is shown in the UI (the read-only view
-	// target when one is set, otherwise the checked-out branch). While reviewing
-	// read-only, an eye glyph signals it; otherwise mirror the current branch's PR
-	// status glyph + tint, falling back to a plain branch icon.
+	// The trigger labels whatever is shown in the UI: a read-only view target (a
+	// branch, or a PR's head branch) when one is set, otherwise the checked-out
+	// branch. While reviewing read-only, an eye glyph signals it; otherwise mirror
+	// the current branch's PR status glyph + tint, falling back to a branch icon.
 	const triggerIcon = $derived(
-		isViewingOtherBranch()
+		isReadOnlyView()
 			? { icon: Eye, class: 'text-muted-foreground', label: 'Viewing read-only' }
 			: app.branchPR
 				? prStatus(app.branchPR)
 				: { icon: GitBranch, class: 'text-muted-foreground', label: 'Branch' }
 	);
+
+	// The text shown in the trigger: a viewed PR's head branch, else the viewed
+	// or checked-out branch.
+	const triggerLabel = $derived(viewedPRLabel() ?? viewedBranch() ?? 'no branch');
 </script>
 
 <Popover.Root
@@ -263,7 +293,7 @@
 		{@const TriggerIcon = triggerIcon.icon}
 		<TriggerIcon class={cn('size-3.5', triggerIcon.class)} aria-label={triggerIcon.label} />
 		<span>
-			{viewedBranch() ?? 'no branch'}
+			{triggerLabel}
 		</span>
 		<ChevronDown class="size-3.5 text-muted-foreground" />
 	</Popover.Trigger>
@@ -446,16 +476,24 @@
 											{:else}
 												{@const pr = row.pr}
 												{@const status = prStatus(pr)}
-												{@const Icon = status.icon}
+												{@const isViewed = app.viewPR?.number === pr.number}
+												{@const Icon = isViewed ? Eye : status.icon}
 												<button
 													type="button"
 													onclick={() => openPR(pr)}
+													oncontextmenu={(e) => showPRContextMenu(e, pr)}
 													title={pr.title}
-													class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent"
+													class={cn(
+														'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent',
+														isViewed && 'bg-accent/60'
+													)}
 												>
 													<Icon
-														class={cn('size-4 shrink-0', status.class)}
-														aria-label={status.label}
+														class={cn(
+															'size-4 shrink-0',
+															isViewed ? 'text-foreground' : status.class
+														)}
+														aria-label={isViewed ? 'Viewing read-only' : status.label}
 													/>
 													<div class="flex min-w-0 flex-1 flex-col">
 														<span class="truncate text-xs font-medium">

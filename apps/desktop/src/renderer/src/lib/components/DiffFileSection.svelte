@@ -37,7 +37,7 @@
 		composerKey,
 		effectiveEditor,
 		getCachedDiff,
-		isViewingOtherBranch,
+		isReadOnlyView,
 		setCachedDiff
 	} from '$lib/store.svelte';
 	import { diffDeferReason } from '@shared/diff-defer';
@@ -203,11 +203,11 @@
 	// The Unstaged tab is intentionally excluded — its line numbers reflect
 	// uncommitted changes and don't translate to anything on GitHub.
 	// `branchPR` tracks the checked-out branch; while reviewing a *different*
-	// branch read-only it doesn't correspond to the diff on screen, so don't
-	// surface its comments here.
+	// branch or a PR read-only it doesn't correspond to the diff on screen, so
+	// don't surface its comments here.
 	const isPRContext = $derived(
 		app.diffContext.kind === 'pr' ||
-			(app.contextTab === 'branch' && app.branchPR != null && !isViewingOtherBranch())
+			(app.contextTab === 'branch' && app.branchPR != null && !isReadOnlyView())
 	);
 
 	// Memoize the `metadata` objects we hand Pierre — its annotation cache uses

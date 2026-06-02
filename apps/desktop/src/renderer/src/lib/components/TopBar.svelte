@@ -9,7 +9,7 @@
 	import RefreshButton from './RefreshButton.svelte';
 	import * as Sidebar from './ui/sidebar';
 	import { CornerUpLeft } from 'lucide-svelte';
-	import { actions, app, isViewingOtherBranch } from '$lib/store.svelte';
+	import { actions, app, isReadOnlyView } from '$lib/store.svelte';
 </script>
 
 <header
@@ -25,10 +25,10 @@
 		{#if app.activeRepo}
 			<span class="text-muted-foreground">/</span>
 			<BranchPicker />
-			<!-- While reviewing a branch read-only, the picker shows the *viewed*
-			     branch; this pill surfaces what's actually checked out and clicks
-			     back to it. Hidden when the two agree. -->
-			{#if isViewingOtherBranch()}
+			<!-- While reviewing a branch or PR read-only, the picker shows the
+			     *viewed* target; this pill surfaces what's actually checked out and
+			     clicks back to it. Hidden when nothing is being viewed read-only. -->
+			{#if isReadOnlyView()}
 				<button
 					type="button"
 					onclick={() => actions.returnToCheckedOutBranch()}

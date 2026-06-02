@@ -31,7 +31,7 @@
 	import SessionTour from './SessionTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { harnessLabel } from '$lib/harness-logos';
-	import { actions, app, isViewingOtherBranch, type ContextTab } from '$lib/store.svelte';
+	import { actions, app, isReadOnlyView, type ContextTab } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import { languageIconForPath } from '$lib/file-icons';
 	import { truncatePathPrefix } from '$lib/path-truncate';
@@ -734,9 +734,9 @@
 						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent p-0"
 					>
 						<!-- Unstaged is the working tree of the checked-out branch. While a
-						     branch is being reviewed read-only there's no working tree to
-						     commit against, so the tab is hidden. -->
-						{#if !isViewingOtherBranch()}
+						     branch or PR is being reviewed read-only there's no working tree
+						     to commit against, so the tab is hidden. -->
+						{#if !isReadOnlyView()}
 							<Tabs.Trigger
 								value="unstaged"
 								class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
