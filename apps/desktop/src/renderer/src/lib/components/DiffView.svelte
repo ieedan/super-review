@@ -6,7 +6,7 @@
 	import NoChanges from './NoChanges.svelte';
 	import FindBar from './FindBar.svelte';
 	import { app } from '$lib/store.svelte';
-	import { openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
+	import { find, openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
 	import { matchesFileQuery } from '$lib/file-search';
 	import { tourGroups } from '$lib/session-tour';
 	import type { ChangedFile } from '@shared/types';
@@ -269,10 +269,17 @@
 	});
 
 	// Ctrl/Cmd+F opens (or re-focuses) the find bar from anywhere in the app.
-	// The bar itself handles Esc / Enter while focused; this listener just
-	// surfaces the bar and bumps `focusNonce` so repeat presses re-focus.
+	// Escape closes it from anywhere too: the bar's input handles Esc while
+	// focused, but once focus leaves the input (pressing Enter to jump to a
+	// match, clicking a nav button, or clicking into the diff) that local
+	// handler never fires — so we mirror the open shortcut with a global Esc.
 	$effect(() => {
 		function onKeydown(e: KeyboardEvent): void {
+			if (e.key === 'Escape' && find.open) {
+				e.preventDefault();
+				closeFind();
+				return;
+			}
 			if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
 			if (e.key !== 'f' && e.key !== 'F') return;
 			if (!app.activeRepo) return;
