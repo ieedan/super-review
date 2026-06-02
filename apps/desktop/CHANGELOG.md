@@ -1,5 +1,11 @@
 # @super-review/desktop
 
+## 0.1.2
+
+### Patch Changes
+
+- fix: fix paths with `fix-path` ([`e3a23b3`](https://github.com/ieedan/super-review/commit/e3a23b3987467caf2c3845be6870079fed6c2032))
+
 ## 0.1.1
 
 ### Patch Changes
