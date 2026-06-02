@@ -549,6 +549,22 @@ function filesCacheKey(repoId: string, ctx: DiffContext): string {
 	return `${repoId}::${diffContextKey(ctx)}`;
 }
 
+// Paint the file list from the per-context cache for the current diff context,
+// if we've shown it before. Makes a context switch feel instant — the previous
+// content shows immediately while `refreshFiles` revalidates in the background.
+// No-op on a cache miss (the caller's refresh then shows the loading state).
+function hydrateFilesFromCache(): void {
+	if (!app.activeRepo) return;
+	const cached = filesCache.get(
+		filesCacheKey(app.activeRepo.id, $state.snapshot(app.diffContext) as DiffContext)
+	);
+	if (!cached) return;
+	app.changedFiles = cached.changedFiles;
+	app.seenFiles = new SvelteSet(cached.seenFiles);
+	app.collapsedFiles = new SvelteSet(cached.collapsedFiles);
+	app.selectedFile = cached.selectedFile;
+}
+
 function diffCacheKeyFor(repoId: string, ctx: DiffContext, filePath: string): string {
 	return `${repoId}::${diffContextKey(ctx)}::${filePath}`;
 }
@@ -1946,6 +1962,9 @@ export const actions = {
 		}
 		if (app.contextTab === 'branch') {
 			app.diffContext = contextForTab('branch');
+			// Show any cached file list for this branch instantly; refreshFiles then
+			// revalidates in the background.
+			hydrateFilesFromCache();
 		}
 		if (app.contextTab !== 'sessions') {
 			await refreshFiles();
@@ -1974,6 +1993,7 @@ export const actions = {
 			}
 			if (app.contextTab === 'branch') {
 				app.diffContext = contextForTab('branch');
+				hydrateFilesFromCache();
 			}
 			if (app.contextTab !== 'sessions') {
 				await refreshFiles();
