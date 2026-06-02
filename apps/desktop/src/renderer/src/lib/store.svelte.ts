@@ -30,7 +30,9 @@ import type {
 } from '@shared/types';
 import { diffContextKey } from '@shared/diff-context';
 import {
+	buildDiscardPatch,
 	buildFilteredPatch,
+	lineKeySides,
 	parseFilePatch,
 	stagingLineKey,
 	type DiffSide
@@ -3085,6 +3087,52 @@ export const actions = {
 				await actions.openFileWithDefault(file.path);
 				break;
 		}
+	},
+
+	// Discard a hunk (an outer gutter button's section) or a single line (an inner
+	// button) from the staging gutter's native context menu. The caller passes the
+	// exact line keys to discard; we confirm via the menu, then build a
+	// working-tree-based patch for those lines and apply it. Only offered in the
+	// unstaged working-tree tab where line staging lives (see
+	// DiffFileSection.onStagingContextMenu), so the diff is always HEAD->worktree.
+	async discardDiffLines(filePath: string, keys: string[], scope: 'line' | 'lines'): Promise<void> {
+		if (!app.activeRepo || keys.length === 0) return;
+		const repoId = app.activeRepo.id;
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+
+		const action = await window.api.menu.showDiffLineContextMenu({ scope });
+		if (!action) return;
+
+		// Parse the file's current diff so the reduced patch is built against live
+		// content (re-fetch if not cached).
+		let diff = getCachedDiff(repoId, ctx, filePath);
+		if (!diff) {
+			diff = await window.api.git.getDiff(repoId, filePath, ctx).catch(() => undefined);
+		}
+		const parsed = diff?.patch ? parseFilePatch(diff.patch) : null;
+		if (!parsed) return;
+
+		const { adds, dels } = lineKeySides(filePath, keys);
+		const patch = buildDiscardPatch(parsed, adds, dels);
+		// `null` means none of the keys match a current change (e.g. the file moved
+		// underneath) — nothing to discard.
+		if (!patch) return;
+
+		try {
+			await window.api.git.discardLines(repoId, filePath, patch);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return;
+		}
+
+		// The discarded changes no longer exist, so any staging exclusions that
+		// referenced them are stale — drop them.
+		for (const k of keys) app.stagingLineExclusions.delete(k);
+
+		// The file's content changed in place: force the open diff to re-fetch and
+		// refresh the list (the file drops out if that was its last change).
+		bumpDiffReload();
+		await Promise.all([refreshFiles(), refreshPushStatus()]);
 	},
 
 	// Discard a file's changes via the file-list context menu. Tracked files are

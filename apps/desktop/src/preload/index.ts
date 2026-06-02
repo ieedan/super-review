@@ -16,6 +16,7 @@ import type {
 	DeviceFlowStatus,
 	DiffContext,
 	DiffData,
+	DiffLineContextMenuAction,
 	EditorKind,
 	FileContextMenuAction,
 	GithubAccount,
@@ -98,6 +99,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:stageFile', repoId, filePath) as Promise<void>,
 		discardChanges: (repoId, filePath, oldPath) =>
 			ipcRenderer.invoke('git:discardChanges', repoId, filePath, oldPath) as Promise<void>,
+		discardLines: (repoId, filePath, patch) =>
+			ipcRenderer.invoke('git:discardLines', repoId, filePath, patch) as Promise<void>,
 		continueMerge: (repoId) =>
 			ipcRenderer.invoke('git:continueMerge', repoId) as Promise<PullPushResult>,
 		abortMerge: (repoId) => ipcRenderer.invoke('git:abortMerge', repoId) as Promise<void>,
@@ -285,6 +288,11 @@ const api: PreloadAPI = {
 				'menu:showFileContextMenu',
 				params
 			) as Promise<FileContextMenuAction | null>,
+		showDiffLineContextMenu: (params) =>
+			ipcRenderer.invoke(
+				'menu:showDiffLineContextMenu',
+				params
+			) as Promise<DiffLineContextMenuAction | null>,
 		showBranchContextMenu: (params) =>
 			ipcRenderer.invoke(
 				'menu:showBranchContextMenu',

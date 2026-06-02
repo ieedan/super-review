@@ -607,6 +607,9 @@
 			display: grid; place-items: center;
 		}
 		.sr-gutter-inner[data-state='check']::after { margin-top: -1px; }
+		/* Single-line section: the lone checkbox stands in for the hunk control, so
+		   center it across both gutter columns (no separate outer button is drawn). */
+		.sr-gutter-inner.sr-gutter-solo { left: calc(var(--sr-gw) / 2); }
 		/* Outer column: a SINGLE button spanning the whole hunk, absolutely
 		   positioned over the gutter wrapper (top/height set inline per group).
 		   The icon sits on the hunk's first line. */
@@ -646,7 +649,9 @@
 		}
 		if (stagingClickRoot !== root) {
 			stagingClickRoot?.removeEventListener('click', onStagingClick);
+			stagingClickRoot?.removeEventListener('contextmenu', onStagingContextMenu);
 			root.addEventListener('click', onStagingClick);
+			root.addEventListener('contextmenu', onStagingContextMenu);
 			stagingClickRoot = root;
 		}
 		syncStagingControls(root);
@@ -679,6 +684,7 @@
 		top: number;
 		bottom: number;
 		keys: string[];
+		cells: HTMLElement[];
 	}
 
 	// Reconcile the gutter controls with the store's selection. The inner column
@@ -742,8 +748,9 @@
 				if (adjacent && current) {
 					current.bottom = bottom;
 					current.keys.push(key);
+					current.cells.push(cell);
 				} else {
-					current = { top, bottom, keys: [key] };
+					current = { top, bottom, keys: [key], cells: [cell] };
 					sections.push(current);
 				}
 				prevCell = cell;
@@ -755,6 +762,18 @@
 				stale.remove();
 			}
 			for (const section of sections) {
+				// A single-line section needs no separate hunk control: its lone
+				// per-line checkbox already toggles the whole "hunk". Center that
+				// checkbox across both gutter columns (sr-gutter-solo) and skip the
+				// outer button so the two don't stack up side by side.
+				const solo = section.keys.length === 1;
+				for (const cell of section.cells) {
+					cell
+						.querySelector(':scope > [data-sr-gutter-inner]')
+						?.classList.toggle('sr-gutter-solo', solo);
+				}
+				if (solo) continue;
+
 				const includedCount = section.keys.filter((k) => !app.stagingLineExclusions.has(k)).length;
 				const full = !fileExcluded && includedCount === section.keys.length;
 				const some = !fileExcluded && includedCount > 0;
@@ -800,6 +819,38 @@
 			const included =
 				!app.excludedFromCommit.has(file.path) && !app.stagingLineExclusions.has(key);
 			actions.setLinesIncludedForCommit(file.path, [key], !included, staging.allKeys);
+		}
+	}
+
+	// Right-click on a staging gutter control: offer a native discard menu — the
+	// destructive counterpart to the checkbox under the cursor. The outer (hunk)
+	// button discards every changed line in its section ("Discard modified
+	// lines"); an inner button discards just its line ("Discard modified line").
+	// Anchoring on the gutter buttons (rather than the code rows) means the menu
+	// is available for every changed line, including whitespace-only ones.
+	function onStagingContextMenu(e: Event): void {
+		if (!staging) return;
+		const target = e.target as HTMLElement;
+		// Outer gutter: one button spanning a section — discard all its lines.
+		const hunkBtn = target.closest<HTMLElement>('[data-sr-gutter-outer]');
+		if (hunkBtn) {
+			const keys = outerKeys.get(hunkBtn) ?? [];
+			if (keys.length === 0) return;
+			e.preventDefault();
+			e.stopPropagation();
+			void actions.discardDiffLines(file.path, keys, 'lines');
+			return;
+		}
+		// Inner gutter: a single line.
+		const lineBtn = target.closest<HTMLElement>('[data-sr-gutter-inner]');
+		if (lineBtn) {
+			const side = lineBtn.dataset.srSide as DiffSide;
+			const num = Number(lineBtn.dataset.srLine);
+			if (Number.isNaN(num)) return;
+			const key = stagingLineKey(file.path, side, num);
+			e.preventDefault();
+			e.stopPropagation();
+			void actions.discardDiffLines(file.path, [key], 'line');
 		}
 	}
 
