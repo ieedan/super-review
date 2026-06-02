@@ -16,6 +16,8 @@ import type {
 	DeviceFlowStatus,
 	DiffContext,
 	DiffData,
+	DiffLineContextMenuAction,
+	DiffLineContextMenuParams,
 	EditorKind,
 	FileContextMenuAction,
 	FileContextMenuParams,
@@ -53,6 +55,7 @@ import {
 	createRepo,
 	deleteBranch,
 	discardChanges,
+	discardLines,
 	ensureInitialCommit,
 	fetchOrigin,
 	fetchPRRef,
@@ -594,6 +597,12 @@ export function registerIpc(): void {
 			discardChanges(repoOrThrow(repoId).path, filePath, oldPath, (p) =>
 				import('electron').then(({ shell }) => shell.trashItem(p))
 			)
+	);
+
+	ipcMain.handle(
+		'git:discardLines',
+		async (_e, repoId: string, _filePath: string, patch: string): Promise<void> =>
+			discardLines(repoOrThrow(repoId).path, patch)
 	);
 
 	ipcMain.handle(
@@ -1147,6 +1156,35 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<FileContextMenuAction | null>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// Pop up the staging gutter's native discard menu and resolve with the chosen
+	// action. The renderer builds the discard patch and applies it (so it can
+	// refresh afterward); we only render the menu. Discarding is recoverable (the
+	// lines remain in HEAD), so — like the file discard — no extra confirm.
+	ipcMain.handle(
+		'menu:showDiffLineContextMenu',
+		async (e, params: DiffLineContextMenuParams): Promise<DiffLineContextMenuAction | null> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: DiffLineContextMenuAction | null = null;
+			const label = params.scope === 'lines' ? 'Discard modified lines' : 'Discard modified line';
+			const template: MenuItemConstructorOptions[] = [
+				{
+					label,
+					click: () => {
+						chosen = 'discard';
+					}
+				}
+			];
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<DiffLineContextMenuAction | null>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)

@@ -1437,6 +1437,29 @@ export async function discardChanges(
 	if (oldPath && oldPath !== filePath) await restoreOrTrash(oldPath);
 }
 
+// Discard a subset of a file's working-tree changes (a hunk or a single line)
+// from the diff's native "Discard" context menu. `patch` is a unified diff built
+// renderer-side whose base is the current working tree (see
+// diff-staging.buildDiscardPatch); applying it forward removes the discarded
+// additions and restores the discarded deletions. We apply to the working tree
+// only — never `--cached` or `--index` — so the user's real index is left as
+// untouched as partial staging leaves it. Discards stay recoverable: the removed
+// lines remain in HEAD's version of the file.
+export async function discardLines(repoPath: string, patch: string): Promise<void> {
+	const git = simpleGit(repoPath);
+	const gitDir = (await git.raw(['rev-parse', '--absolute-git-dir'])).trim();
+	const patchPath = path.join(gitDir, `super-review-discard-${process.pid}-${Date.now()}.patch`);
+	const text = patch.endsWith('\n') ? patch : `${patch}\n`;
+	try {
+		await fs.writeFile(patchPath, text, 'utf8');
+		// `--whitespace=nowarn` keeps benign whitespace from aborting the apply,
+		// matching commitPartial's scratch-index apply.
+		await git.raw(['apply', '--whitespace=nowarn', patchPath]);
+	} finally {
+		await fs.rm(patchPath, { force: true }).catch(() => {});
+	}
+}
+
 // Try to wrap up an in-progress merge once the user has resolved conflicts. If
 // unmerged paths remain we surface them again. When a merge is in progress we
 // create the merge commit (which also re-applies any `--autostash` work, and
