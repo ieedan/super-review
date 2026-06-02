@@ -900,42 +900,14 @@
 					{/if}
 				</div>
 
-				<div>
-					<h3 class="text-base font-semibold">Start maximized</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Open the window maximized to fill the screen. Takes effect on the next launch.
-					</p>
-
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ value: false, label: 'Off', hint: 'Open at the window size above.' }, { value: true, label: 'On', hint: 'Open maximized to fill the screen.' }] as opt (opt.label)}
-							{@const active = draftStartMaximized === opt.value}
-							<button
-								type="button"
-								onclick={() => (draftStartMaximized = opt.value)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
-							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
-								<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
-									{opt.hint}
-								</div>
-							</button>
-						{/each}
-					</div>
+				<div class="flex items-start gap-2.5">
+					<Checkbox id="start-maximized" bind:checked={draftStartMaximized} class="mt-0.5" />
+					<label for="start-maximized" class="grid cursor-pointer gap-0.5 leading-snug">
+						<span class="text-sm font-medium">Start maximized</span>
+						<span class="text-xs text-muted-foreground">
+							Open the window maximized to fill the screen. Takes effect on the next launch.
+						</span>
+					</label>
 				</div>
 			</section>
 		{:else if activeTab === 'editor'}
