@@ -188,7 +188,7 @@
 			</Dialog.Title>
 			<Dialog.Description>
 				{#if mode === 'clone'}
-					Paste a Git URL — you'll pick a destination folder next.
+					Paste a Git URL. You'll pick a destination folder next.
 				{:else if mode === 'create'}
 					Scaffold a new repository with an optional README, .gitignore, and license.
 				{:else}

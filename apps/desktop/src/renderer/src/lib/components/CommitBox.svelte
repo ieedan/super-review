@@ -141,7 +141,7 @@
 			onSelectAccount={(id) => actions.setRepoGithubAccount(id)}
 			onUseDefault={() => actions.setRepoGithubAccount(null)}
 			triggerTitle={effectiveAccount
-				? `This project uses ${effectiveAccount.login} — click to switch`
+				? `This project uses ${effectiveAccount.login}. Click to switch`
 				: 'Select an account for this project'}
 			triggerClass="group relative shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
 		>

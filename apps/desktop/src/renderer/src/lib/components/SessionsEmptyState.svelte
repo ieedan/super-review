@@ -17,7 +17,7 @@
 			<h2 class="text-lg font-semibold">No sessions yet</h2>
 			{#if app.skillInstalled === false}
 				<p class="mt-2 text-sm text-muted-foreground">
-					Get started with sessions by installing the skill — it lets coding agents document their
+					Get started with sessions by installing the skill. It lets coding agents document their
 					changes here for review.
 				</p>
 				<div class="mt-5 flex justify-center">
