@@ -1,0 +1,14 @@
+# super-review
+
+## 0.0.1
+
+### Patch Changes
+
+- Parse the CLI's commands and flags with `commander` instead of a hand-rolled ([#25](https://github.com/ieedan/super-review/pull/25))
+  argv parser. This gives consistent, auto-generated `--help` menus at every level
+  (`super-review`, `super-review session`, `super-review session save/clear`),
+  a `--version` flag, plus unknown-command/flag detection with suggestions. The
+  command and flag signature is unchanged — `session save` and `session clear`
+  and all their options behave exactly as before.
+
+- Extract the session-authoring CLI into a standalone `super-review` package, backed by a shared `@super-review/core` (the pure-node session + git layer). The desktop app no longer bundles the CLI or exposes the `super-review` bin — it consumes `@super-review/core` for its session/diff read paths. Behavior is unchanged; this is a structural refactor that makes the CLI independently buildable and publishable. ([#25](https://github.com/ieedan/super-review/pull/25))

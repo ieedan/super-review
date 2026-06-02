@@ -1,6 +1,6 @@
 {
 	"name": "super-review",
-	"version": "0.0.0",
+	"version": "0.0.1",
 	"description": "Document an agent session for review with the super-review desktop app",
 	"type": "module",
 	"license": "MIT",

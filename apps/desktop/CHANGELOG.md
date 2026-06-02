@@ -1,5 +1,117 @@
 # @super-review/desktop
 
+## 0.1.0
+
+### Minor Changes
+
+- Add line- and hunk-level staging (checkbox-per-line) to the Unstaged tab. ([#18](https://github.com/ieedan/super-review/pull/18))
+
+  Previously a commit could only include or exclude whole files. You can now carve up a file: every changed line in a modified file's diff has a checkbox in the gutter, and each hunk has a toggle, so you can commit just the lines you want and leave the rest as working-tree changes — like GitHub Desktop. The sidebar file checkbox becomes tri-state (checked / partial / unchecked) to reflect a partial selection, and committing a subset builds a reduced patch that's applied through a scratch index, leaving your real index and the unselected changes untouched. Whole-file staging is unchanged for added/untracked, deleted, renamed and binary files.
+
+- Add a diff layout setting to choose between scrolling through all file diffs at once or reviewing one file at a time. ([#17](https://github.com/ieedan/super-review/pull/17))
+
+  A new "Diff layout" option under Settings → Appearance lets you pick between the default "Scrollable" layout (every file's diff stacked in one continuous scroll) and "One at a time", which shows only the selected file's diff and switches as you pick files in the sidebar — similar to GitHub Desktop.
+
+- Add a native context menu to discard a hunk or an individual line. ([#27](https://github.com/ieedan/super-review/pull/27))
+
+  Previously you could stage individual lines but only discard whole files. Right-clicking a staging gutter control in the Unstaged working-tree diff now opens a native discard menu: the hunk button offers "Discard modified lines" (the whole section) and a line button offers "Discard modified line". The discard builds a working-tree-based patch — removing the discarded additions and restoring the discarded deletions — and applies it to the working tree only, leaving your index untouched. Discards stay recoverable since the removed lines remain in HEAD.
+
+- Offer to fork a repository when you don't have write access to its GitHub remote. ([#25](https://github.com/ieedan/super-review/pull/25))
+  A banner in the commit box explains the missing access, and committing or pushing
+  (or clicking the banner link) prompts to create a fork — matching GitHub Desktop.
+  Confirming creates the fork under your account, repoints `origin` at it, and
+  resumes the commit/push against your fork. You choose how to use the fork — "to
+  contribute to the parent project" (keeps the original as `upstream`, so the PR
+  list and "Create PR" target the parent) or "for my own purposes" (works the fork
+  standalone). "Create PR" on a fork now opens the compare against the right repo.
+
+- Render image diffs side by side, and add a Code/Image toggle for SVGs. ([#16](https://github.com/ieedan/super-review/pull/16))
+
+  Image files (`png`, `jpg`, `gif`, `webp`, `avif`, `bmp`, `ico`, `svg`) now show their old and new versions side by side — like GitHub — instead of the "Binary file — diff not shown" placeholder. Raster images show only this side-by-side view; SVGs, being text, default to their source diff and gain a Markdown-preview-style "Image"/"Code" toggle so you can flip between the rendered image and the source. Image bytes up to 10 MB are embedded; larger files fall back to an "unavailable" note. Captured sessions freeze the image data so their image diffs render offline.
+
+- Offer to switch back to the default branch when a branch's PR merges. ([#24](https://github.com/ieedan/super-review/pull/24))
+
+  When you're on a non-default branch and its PR is observed going from unmerged → merged, a dialog asks whether to switch the working tree back to the default branch, do nothing, or remember either choice via an "Always do this automatically" checkbox. After switching, a second dialog offers to remove the now-merged branch locally (remote untouched), with an "Always remove merged branches locally" checkbox. Both prompts only fire on a live merge transition we observed — never when navigating to an already-merged PR. Behavior settings expose the matching controls: a three-way "Merged branches" choice (Ask each time / Switch back / Do nothing) and the auto-remove toggle.
+
+- Add a "Publish to GitHub" flow for repositories with no remote. ([#24](https://github.com/ieedan/super-review/pull/24))
+
+  When the active repository has no `origin` remote, the top-bar primary action now shows **Publish** instead of nothing — fixing the dead end where a freshly created/committed repo offered no way to push. Clicking it opens a GitHub-Desktop-style **Publish Repository** dialog (Name defaulting to the folder, Description, a "Keep this code private" checkbox, and an Organization dropdown). Publishing makes the initial commit if the repo has none yet (so a freshly seeded README is committed rather than failing the push), creates the repository on GitHub via the signed-in account (under the chosen org or the account itself), wires it up as `origin`, and pushes the current branch — using the system git credential helper, never writing a token into the repo config. The flow is retryable: if the GitHub repo already exists (e.g. a prior attempt created it but the push failed), it's reused instead of erroring.
+
+- Review any branch or pull request read-only without checking it out. ([#30](https://github.com/ieedan/super-review/pull/30))
+
+  Right-click a branch — or a pull request, in the picker's Pull Requests tab — and choose **View Read-Only** to review its diff without touching the working tree, so an agent (or your own in-progress work) on another branch is never disrupted. A PR shows the same diff a checkout would (its head vs. the default branch), but nothing is checked out. The picker labels whatever's on screen; a pill in the top bar surfaces the branch that's actually checked out and clicks back to it.
+
+  While reviewing read-only the header follows the view rather than the checkout: the Unstaged tab is hidden (no working tree to commit against), the PR button opens the _viewed_ branch/PR's pull request, Refresh re-reads the viewed diff (no "Pull"), and the open-in-editor/terminal buttons are hidden (they'd open the checked-out branch's files). Branch and PR diffs also now compare against `origin/<default>` rather than the local default branch, so they match GitHub even when your local default is behind the remote.
+
+- Add a **Repository** menu (Push/Pull/Fetch, Remove, View on GitHub, Open in ([#25](https://github.com/ieedan/super-review/pull/25))
+  editor/terminal, Show in Finder, Create Issue on GitHub, Repository Settings…) and
+  a **Repository Settings** dialog whose Fork Behavior pane lets you change a fork's
+  contribution target after the fact — switch between contributing to the parent
+  (upstream wired up; PRs / View on GitHub / Create Issue target the parent) and
+  working on the fork for your own purposes. Repository Settings is also reachable
+  from the repo context menu. App settings and repo settings now share one dialog
+  shell.
+
+- Add stash-aware branch switching and creation with GitHub Desktop parity. When ([#26](https://github.com/ieedan/super-review/pull/26))
+  you switch to — or create — a branch with a dirty working tree, the app now asks
+  what to do with your in-progress work: leave it stashed on the branch you're
+  leaving (the existing "Stashed Changes" row handles restore/discard on return),
+  or bring it along to the target (a conflicted carry routes to the existing
+  conflict-resolution flow). Both choices build on the managed-stash and checkout
+  primitives, so no new git behavior is introduced. Also hides the "Create branch
+  based on…" selector when you're on the default branch, where the only option was
+  itself.
+
+- Add stash management with GitHub Desktop parity. When a pull is blocked by ([#26](https://github.com/ieedan/super-review/pull/26))
+  uncommitted local changes that would be overwritten, the app now offers to
+  "Stash Changes and Continue" instead of surfacing a raw error. It keeps one
+  managed stash per branch (tagged so user-created stashes are never touched),
+  shows a "Stashed Changes" entry in the sidebar, and lets you review its diff
+  (including untracked files) and Restore or Discard it. Restoring reuses the
+  existing conflict-resolution flow when the pop conflicts.
+
+- Add window startup settings under Settings → App. You can now set the window's default open size and choose to start maximized. ([#31](https://github.com/ieedan/super-review/pull/31))
+
+  A new "App" tab exposes a width/height for the initial window size (clamped to the window's minimum) and a "Start maximized" toggle. The default open size is now 1250×825, and the window opens centered on the current display. These apply on the next launch — when Start maximized is on, the width/height serve as the restored (un-maximized) size.
+
+### Patch Changes
+
+- Render diffs on a @pierre/diffs worker pool so syntax highlighting and diff-AST ([#22](https://github.com/ieedan/super-review/pull/22))
+  generation run off the main thread. Scrolling, typing in comment composers, and
+  tab switches stay responsive while large diffs paint; diffs show plain text
+  first and upgrade to highlighted output as the workers finish. If the worker
+  pool can't start, rendering transparently falls back to the main thread.
+
+- Extract the session-authoring CLI into a standalone `super-review` package, backed by a shared `@super-review/core` (the pure-node session + git layer). The desktop app no longer bundles the CLI or exposes the `super-review` bin — it consumes `@super-review/core` for its session/diff read paths. Behavior is unchanged; this is a structural refactor that makes the CLI independently buildable and publishable. ([#25](https://github.com/ieedan/super-review/pull/25))
+
+- Hide the GitHub CI status indicator on the primary action button while a push/fetch/pull is in progress, so it no longer renders alongside the "Working…" state. ([#23](https://github.com/ieedan/super-review/pull/23))
+
+- Make navigating between files instant in the "One at a time" diff layout. ([#17](https://github.com/ieedan/super-review/pull/17))
+
+  The previous and next file's diffs are now rendered off-screen ahead of time, so stepping to either no longer waits on a fetch and re-render — the diff is already there when you switch to it.
+
+- Reword user-facing UI copy to drop em-dashes. Dialogs, tooltips, and empty states now read as plain sentences without the dash, keeping the information that mattered and trimming filler where it didn't. ([#29](https://github.com/ieedan/super-review/pull/29))
+
+- Refresh open diffs when files change outside the app. ([#21](https://github.com/ieedan/super-review/pull/21))
+
+  Returning to the window (or the periodic origin poll) refreshed the file list but served each file's diff from an in-memory cache that was only ever invalidated by in-app git operations. An already-open diff could stay frozen on stale content no matter how many times you switched away and back. Focus and poll refreshes now re-validate open diffs against disk in the background, swapping in the new content only when it actually changed — so edits made in another editor or the CLI show up without a loading flicker.
+
+- Separate the header button loading states so only one spinner shows at a time. ([#32](https://github.com/ieedan/super-review/pull/32))
+
+  The Refresh, Update branch, and Create PR/Push buttons all read the shared push state, distinguished only by the coarse `intent` field. Any pull-shaped operation (pull, update-from-default, upstream sync) lit up multiple buttons at once, the Create PR/Push button spun for any in-progress operation even though opening the create-PR page does no push work, and every operation's trailing file/branch refresh spun the Refresh icon on top of the owning button. A precise `op` discriminator now attributes each spinner to exactly one button, so the header never shows two spinners for a single operation.
+
+- Publish release artifacts under stable, version-less filenames ([#19](https://github.com/ieedan/super-review/pull/19))
+  (`Super-Review-mac-arm64.dmg`, `Super-Review-win-x64.exe`) so the download site
+  can link straight to `releases/latest/download/<name>` and always serve the
+  newest build.
+
+- Require `--tour` to be passed as inline JSON. ([#14](https://github.com/ieedan/super-review/pull/14))
+
+  The `session save --tour` flag no longer accepts a path to a JSON file (or `-` for stdin); the tour document is now passed directly as the argument's value. This trims an unnecessary file-read round-trip and the associated error cases. For a large tour, expand the JSON inline via the shell (e.g. `--tour "$(cat tour.json)"`).
+
+- Updated dependencies [[`12dd89f`](https://github.com/ieedan/super-review/commit/12dd89ff8627d8da1774dc58083f6cbcd94a3b69), [`0926681`](https://github.com/ieedan/super-review/commit/0926681c5c51834d9c7c94b59401e322d057bdbe), [`0926681`](https://github.com/ieedan/super-review/commit/0926681c5c51834d9c7c94b59401e322d057bdbe), [`0926681`](https://github.com/ieedan/super-review/commit/0926681c5c51834d9c7c94b59401e322d057bdbe), [`6aa4d11`](https://github.com/ieedan/super-review/commit/6aa4d11557e1b879dcb81f56373b4b1a47eb53b8)]:
+  - @super-review/core@0.1.0
+
 ## 0.0.4
 
 ### Patch Changes

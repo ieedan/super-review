@@ -31,7 +31,13 @@
 	import SessionTour from './SessionTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { harnessLabel } from '$lib/harness-logos';
-	import { actions, app, canViewBranchTab, isReadOnlyView, type ContextTab } from '$lib/store.svelte';
+	import {
+		actions,
+		app,
+		canViewBranchTab,
+		isReadOnlyView,
+		type ContextTab
+	} from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import { languageIconForPath } from '$lib/file-icons';
 	import { truncatePathPrefix } from '$lib/path-truncate';
