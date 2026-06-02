@@ -6,7 +6,10 @@
 
 	const editor = $derived(effectiveEditor());
 	const open = $derived(app.push.stage === 'conflicts');
-	const isPullOnly = $derived(app.push.intent === 'pull');
+	// Only a `push` flow pushes after the merge is finished. A pull-only flow and a
+	// stash restore (which pops into the working tree, never commits or pushes)
+	// both just finish the merge — so they drop the "& push" wording.
+	const pushesAfterMerge = $derived(app.push.intent === 'push');
 
 	// A file is resolved once its conflict markers are gone — recheckConflicts
 	// (polled below) stages it and drops it from the unresolved set. The dialog
@@ -46,10 +49,10 @@
 					Merging produced conflicts. Open each file{editorLabel ? ` in ${editorLabel}` : ''},
 					resolve the markers, and save. Each file is checked off automatically once its markers are
 					gone.
-					{#if isPullOnly}
-						Then we'll finish the merge.
-					{:else}
+					{#if pushesAfterMerge}
 						Then we'll finish the merge and continue the push.
+					{:else}
+						Then we'll finish the merge.
 					{/if}
 				</Dialog.Description>
 			</div>
@@ -91,7 +94,7 @@
 				onclick={() => actions.continueMerge()}
 				disabled={!allResolved}
 			>
-				{isPullOnly ? 'Continue merge' : 'Continue merge & push'}
+				{pushesAfterMerge ? 'Continue merge & push' : 'Continue merge'}
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

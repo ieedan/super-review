@@ -22,6 +22,7 @@ import type {
 	GithubAccount,
 	GithubOrg,
 	LastCommit,
+	ManagedStash,
 	NewReviewCommentInput,
 	PRChecksSummary,
 	PRReviewComment,
@@ -103,6 +104,20 @@ const api: PreloadAPI = {
 		continueMerge: (repoId) =>
 			ipcRenderer.invoke('git:continueMerge', repoId) as Promise<PullPushResult>,
 		abortMerge: (repoId) => ipcRenderer.invoke('git:abortMerge', repoId) as Promise<void>,
+		createManagedStash: (repoId) =>
+			ipcRenderer.invoke('git:createManagedStash', repoId) as Promise<{
+				ok: boolean;
+				error?: string;
+			}>,
+		findManagedStash: (repoId) =>
+			ipcRenderer.invoke('git:findManagedStash', repoId) as Promise<ManagedStash | null>,
+		restoreManagedStash: (repoId, ref) =>
+			ipcRenderer.invoke('git:restoreManagedStash', repoId, ref) as Promise<PullPushResult>,
+		discardManagedStash: (repoId, ref) =>
+			ipcRenderer.invoke('git:discardManagedStash', repoId, ref) as Promise<void>,
+		finishStashPop: (repoId, ref) =>
+			ipcRenderer.invoke('git:finishStashPop', repoId, ref) as Promise<PullPushResult>,
+		abortStashPop: (repoId) => ipcRenderer.invoke('git:abortStashPop', repoId) as Promise<void>,
 		commit: (repoId, message, files: CommitFileSelection[]) =>
 			ipcRenderer.invoke('git:commit', repoId, message, files) as Promise<CommitResult>,
 		getLastCommit: (repoId) =>
