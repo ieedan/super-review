@@ -626,6 +626,16 @@ export interface PublishRepoOptions {
 // primary. Each maps to an `.accent-*` class in app.css.
 export type Accent = 'super' | 'mono';
 
+// Window sizing defaults and minimums, shared between the main process (which
+// creates the BrowserWindow) and the App settings UI (which validates the
+// user's input against them). Logical pixels.
+export const WINDOW_BOUNDS = {
+	defaultWidth: 1250,
+	defaultHeight: 825,
+	minWidth: 720,
+	minHeight: 480
+} as const;
+
 export interface UserPrefs {
 	viewMode: ViewMode;
 	// Whether the diff view scrolls through all files at once ('scroll') or shows
@@ -675,6 +685,14 @@ export interface UserPrefs {
 	// User-configurable keyboard shortcuts, keyed by action. See DEFAULT_HOTKEYS
 	// in @shared/hotkeys for the defaults and matching semantics.
 	hotkeys: Hotkeys;
+	// Size of the app window when it opens, in logical pixels. Clamped to
+	// WINDOW_BOUNDS.min* by the main process. These are the initial bounds only —
+	// resizing an open window doesn't change them; they apply to the next launch.
+	windowWidth: number;
+	windowHeight: number;
+	// When true, the window opens maximized. windowWidth/windowHeight still serve
+	// as the pre-maximize ("restore") bounds.
+	startMaximized: boolean;
 }
 
 export interface DeviceFlowStart {
