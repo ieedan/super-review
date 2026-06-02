@@ -657,7 +657,10 @@ async function refsForContext(
 		case 'workingTree':
 			return { workingTree: true };
 		case 'branch':
-			return { base: ctx.base, head: ctx.head, workingTree: false };
+			// Prefer origin/<base> so the diff matches GitHub even when the local
+			// default branch is behind the remote (head stays as-is — it's the
+			// branch/PR-head being reviewed).
+			return { base: await preferRemoteBase(git, ctx.base), head: ctx.head, workingTree: false };
 		case 'pr':
 			return {
 				base: `pr/${ctx.prNumber}/base`,
@@ -687,6 +690,18 @@ async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+// Resolve a branch-diff base to its remote-tracking copy when one exists, so the
+// comparison uses the up-to-date remote tip (`origin/main`) — matching how
+// GitHub computes a PR/branch diff — instead of a possibly-stale local default
+// branch, which would surface every commit merged to the real default since the
+// user last updated their local copy. Falls back to the given ref (a local-only
+// repo, or a base that has no remote-tracking ref).
+async function preferRemoteBase(git: SimpleGit, base: string): Promise<string> {
+	if (base.startsWith('origin/')) return base;
+	const remote = `origin/${base}`;
+	return (await revExists(git, remote)) ? remote : base;
 }
 
 export async function listChangedFiles(repoPath: string, ctx: DiffContext): Promise<ChangedFile[]> {
