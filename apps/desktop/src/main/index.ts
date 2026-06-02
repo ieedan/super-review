@@ -1,11 +1,21 @@
 import { app, BrowserWindow, ipcMain, nativeImage, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fixPath from 'fix-path';
 import { registerIpc } from './ipc.js';
 import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
 import { getPrefs } from './store.js';
 import { WINDOW_BOUNDS } from '@shared/types.js';
+
+// macOS/Linux GUI launchers (Finder, Dock, Spotlight) start apps with a minimal
+// PATH that excludes Homebrew, asdf, mise, etc. The git subprocesses we spawn —
+// and the hooks they invoke, such as Git LFS's `pre-push` hook shelling out to
+// `git-lfs` — inherit that stripped PATH and fail to find binaries the user has
+// on their shell PATH. Re-derive the real PATH from the user's login shell
+// before anything spawns. No-ops on Windows; harmless in dev (re-derives the
+// same PATH a terminal launch already has).
+fixPath();
 
 // Set before the app menu is built so macOS shows our name (not "Electron") in
 // the app menu and its About/Hide/Quit items. Matches electron-builder's
