@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.1.1
+
+### Patch Changes
+
+- fix: fix release workflow to "sign" binaries ([`8df64f6`](https://github.com/ieedan/super-review/commit/8df64f6c31f663fc7aae32954fb8e55374bbcea6))
+
+- fix: ensure files without icons for them show a fallback icon ([`8df64f6`](https://github.com/ieedan/super-review/commit/8df64f6c31f663fc7aae32954fb8e55374bbcea6))
+
 ## 0.1.0
 
 ### Minor Changes
