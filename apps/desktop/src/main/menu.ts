@@ -78,6 +78,7 @@ function buildRepositorySubmenu(): MenuItemConstructorOptions[] {
 		{ type: 'separator' },
 		item('Create Issue on GitHub', 'createIssue', s.hasRepo && s.hasGithub, 'CmdOrCtrl+I'),
 		{ type: 'separator' },
+		item('Clean Up Local Branches…', 'cleanupBranches', s.hasRepo),
 		item('Repository Settings…', 'settings', s.hasRepo)
 	];
 }

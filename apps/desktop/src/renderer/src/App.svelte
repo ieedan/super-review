@@ -10,11 +10,14 @@
 	import ForkDialog from '$lib/components/ForkDialog.svelte';
 	import MergedSwitchDialog from '$lib/components/MergedSwitchDialog.svelte';
 	import MergedRemoveDialog from '$lib/components/MergedRemoveDialog.svelte';
+	import StashPromptDialog from '$lib/components/StashPromptDialog.svelte';
+	import SwitchBranchDialog from '$lib/components/SwitchBranchDialog.svelte';
 	import BranchMenu from '$lib/components/BranchMenu.svelte';
 	import RepositoryMenu from '$lib/components/RepositoryMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
 	import PublishRepoDialog from '$lib/components/PublishRepoDialog.svelte';
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
+	import CleanupBranchesDialog from '$lib/components/CleanupBranchesDialog.svelte';
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
 	import RepositorySettingsDialog from '$lib/components/RepositorySettingsDialog.svelte';
 	import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
@@ -319,11 +322,14 @@
 <RepositorySettingsDialog />
 <MergedSwitchDialog />
 <MergedRemoveDialog />
+<StashPromptDialog />
+<SwitchBranchDialog />
 <BranchMenu />
 <RepositoryMenu />
 <AddRepoDialog />
 <PublishRepoDialog />
 <CreateBranchDialog />
+<CleanupBranchesDialog />
 <SettingsDialog />
 <GithubSignInDialog />
 <CommandPalette />

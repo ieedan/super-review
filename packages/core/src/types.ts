@@ -43,6 +43,23 @@ export interface BranchInfo {
 	lastCommitAt?: number;
 }
 
+// A local branch that no longer lives on any remote — a candidate for "Clean Up
+// Local Branches". It either never tracked a remote, or its upstream is "gone"
+// (the remote branch was deleted and pruned, e.g. after a PR merged). The
+// checked-out branch is never included (git refuses to delete it).
+export interface LocalOnlyBranch {
+	name: string;
+	// Unix epoch ms of the branch tip's committer date (see BranchInfo).
+	lastCommitAt?: number;
+	// The configured tracking ref that no longer resolves (e.g. "origin/feat"),
+	// or undefined when the branch never tracked a remote at all.
+	goneUpstream?: string;
+	// How many stash entries were created on this branch (any stash, not just the
+	// app's managed ones), so the cleanup dialog can warn before deleting work
+	// the user parked there. Deleting a branch never drops its stashes.
+	stashCount: number;
+}
+
 export type FileStatus =
 	| 'added'
 	| 'modified'
@@ -144,7 +161,11 @@ export type DiffContext =
 	| { kind: 'pr'; prNumber: number }
 	// A frozen snapshot of changes documented by a coding agent. Files don't come
 	// from git — they're read back from the session manifest on disk.
-	| { kind: 'session'; sessionId: string };
+	| { kind: 'session'; sessionId: string }
+	// A managed stash entry, addressed by its resolved commit SHA (`ref`). The
+	// stash commit's parents back the diff: `^1` HEAD parent, `^2` index, `^3`
+	// untracked tree. Index-shift-proof because we always resolve to a SHA.
+	| { kind: 'stash'; ref: string };
 
 // Which coding-agent harness produced a session. Drives the logo shown on the
 // session card; "other" falls back to a generic icon + `harnessLabel`.
@@ -390,6 +411,7 @@ export type RepositoryMenuAction =
 	| 'showInFinder'
 	| 'openInEditor'
 	| 'createIssue'
+	| 'cleanupBranches'
 	| 'settings';
 
 // Renderer-computed state deciding which "Repository" menu items are enabled and
@@ -492,6 +514,20 @@ export interface PullPushResult {
 	ok: boolean;
 	conflicts: string[];
 	error?: string;
+	// Files a pull couldn't proceed over because they carry uncommitted local
+	// changes git would overwrite (the "your local changes would be overwritten"
+	// abort). Distinct from `conflicts` (unmerged paths) — this is the blocked-pull
+	// signal that drives the stash prompt. Unset when the failure wasn't a block.
+	blockedFiles?: string[];
+}
+
+// A managed stash: a normal git stash whose message carries the
+// `!!super-review<branch>` marker so the app never touches user-created stashes.
+// `ref` is the resolved commit SHA (not `stash@{n}`, whose index shifts);
+// `fileCount` is how many files the stash captures, for the sidebar label.
+export interface ManagedStash {
+	ref: string;
+	fileCount: number;
 }
 
 export interface CommitResult {
@@ -697,6 +733,9 @@ export interface PreloadAPI {
 	};
 	git: {
 		listBranches(repoId: string): Promise<BranchInfo[]>;
+		// Local branches no longer present on any remote — the cleanup candidates
+		// for "Clean Up Local Branches" (each carrying its stash count).
+		listLocalOnlyBranches(repoId: string): Promise<LocalOnlyBranch[]>;
 		getCurrentBranch(repoId: string): Promise<string | null>;
 		checkout(repoId: string, branch: string): Promise<void>;
 		checkoutPR(repoId: string, pr: PRSummary, source?: PRSource): Promise<void>;
@@ -737,6 +776,18 @@ export interface PreloadAPI {
 		discardLines(repoId: string, filePath: string, patch: string): Promise<void>;
 		continueMerge(repoId: string): Promise<PullPushResult>;
 		abortMerge(repoId: string): Promise<void>;
+		// Stash management (GitHub-Desktop parity): one managed stash per branch,
+		// created only when a pull is blocked by uncommitted local changes.
+		createManagedStash(repoId: string): Promise<{ ok: boolean; error?: string }>;
+		findManagedStash(repoId: string): Promise<ManagedStash | null>;
+		// Pop the managed stash by SHA. A clean pop drops the entry; a conflicted
+		// pop surfaces unmerged paths the same way pull does (no MERGE_HEAD).
+		restoreManagedStash(repoId: string, ref: string): Promise<PullPushResult>;
+		discardManagedStash(repoId: string, ref: string): Promise<void>;
+		// Finish/abort a conflicted stash pop — dedicated paths that must not make a
+		// merge commit and that drop (or preserve) the marker stash correctly.
+		finishStashPop(repoId: string, ref: string): Promise<PullPushResult>;
+		abortStashPop(repoId: string): Promise<void>;
 		// Stage and commit the given files. Each entry is either a whole-file
 		// selection or a partial one carrying a unified diff to apply (line/hunk
 		// staging) — see CommitFileSelection.

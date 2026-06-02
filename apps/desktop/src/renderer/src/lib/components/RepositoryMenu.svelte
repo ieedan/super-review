@@ -96,6 +96,9 @@
 			case 'createIssue':
 				void actions.createIssueOnGithub();
 				return;
+			case 'cleanupBranches':
+				actions.openCleanupBranchesDialog();
+				return;
 			case 'settings':
 				actions.openRepoSettingsDialog();
 				return;

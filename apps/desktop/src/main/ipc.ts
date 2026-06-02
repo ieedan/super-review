@@ -24,6 +24,8 @@ import type {
 	GithubAccount,
 	GithubOrg,
 	LastCommit,
+	LocalOnlyBranch,
+	ManagedStash,
 	NewReviewCommentInput,
 	PRChecksSummary,
 	PRReviewComment,
@@ -52,9 +54,15 @@ import {
 	convertToForkRemotes,
 	removeUpstreamRemote,
 	createBranch,
+	createManagedStash,
 	createRepo,
 	deleteBranch,
 	discardChanges,
+	discardManagedStash,
+	findManagedStash,
+	restoreManagedStash,
+	finishStashPop,
+	abortStashPop,
 	discardLines,
 	ensureInitialCommit,
 	fetchOrigin,
@@ -69,6 +77,7 @@ import {
 	isGitRepo,
 	isWorkingTreeDirty,
 	listBranches,
+	listLocalOnlyBranches,
 	listChangedFiles,
 	mergeIntoCurrent,
 	updateFromUpstream,
@@ -418,6 +427,13 @@ export function registerIpc(): void {
 		return listBranches(repoOrThrow(repoId).path);
 	});
 
+	ipcMain.handle(
+		'git:listLocalOnlyBranches',
+		async (_e, repoId: string): Promise<LocalOnlyBranch[]> => {
+			return listLocalOnlyBranches(repoOrThrow(repoId).path);
+		}
+	);
+
 	ipcMain.handle('git:getCurrentBranch', async (_e, repoId: string): Promise<string | null> => {
 		return getCurrentBranch(repoOrThrow(repoId).path);
 	});
@@ -612,6 +628,52 @@ export function registerIpc(): void {
 
 	ipcMain.handle('git:abortMerge', async (_e, repoId: string): Promise<void> => {
 		await abortMerge(repoOrThrow(repoId).path);
+	});
+
+	// Stash management. Create/find key off the current branch (one managed stash
+	// per branch); restore/discard/finish/abort operate on a resolved SHA the
+	// renderer passes back, so they're immune to stash-index shifts.
+	ipcMain.handle(
+		'git:createManagedStash',
+		async (_e, repoId: string): Promise<{ ok: boolean; error?: string }> => {
+			const repo = repoOrThrow(repoId);
+			const branch = await getCurrentBranch(repo.path);
+			if (!branch) return { ok: false, error: 'Not on a branch (detached HEAD).' };
+			return createManagedStash(repo.path, branch);
+		}
+	);
+
+	ipcMain.handle(
+		'git:findManagedStash',
+		async (_e, repoId: string): Promise<ManagedStash | null> => {
+			const repo = repoOrThrow(repoId);
+			const branch = await getCurrentBranch(repo.path);
+			if (!branch) return null;
+			return findManagedStash(repo.path, branch);
+		}
+	);
+
+	ipcMain.handle(
+		'git:restoreManagedStash',
+		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
+			restoreManagedStash(repoOrThrow(repoId).path, ref)
+	);
+
+	ipcMain.handle(
+		'git:discardManagedStash',
+		async (_e, repoId: string, ref: string): Promise<void> => {
+			await discardManagedStash(repoOrThrow(repoId).path, ref);
+		}
+	);
+
+	ipcMain.handle(
+		'git:finishStashPop',
+		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
+			finishStashPop(repoOrThrow(repoId).path, ref)
+	);
+
+	ipcMain.handle('git:abortStashPop', async (_e, repoId: string): Promise<void> => {
+		await abortStashPop(repoOrThrow(repoId).path);
 	});
 
 	ipcMain.handle(
