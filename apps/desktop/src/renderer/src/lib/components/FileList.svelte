@@ -813,7 +813,7 @@
 					<RotateCcw class="size-3.5" /> Restore
 				</Button>
 				<Button
-					variant="outline"
+					variant="destructive"
 					size="sm"
 					disabled={app.push.inProgress}
 					onclick={() =>
@@ -1223,6 +1223,7 @@
 						{app.stash.fileCount}
 						{app.stash.fileCount === 1 ? 'change' : 'changes'}
 					</span>
+					<ChevronRight class="size-4 shrink-0 text-muted-foreground" />
 				</button>
 			{/if}
 			<CommitBox />

@@ -25,8 +25,7 @@
 					Unable to pull when changes are present on your branch
 				</Dialog.Title>
 				<Dialog.Description class="mt-1 text-xs">
-					You have changes in progress that would be overwritten. Stash them and continue, and we'll
-					keep them aside so you can restore or discard them afterward.
+					The following files would be overwritten:
 				</Dialog.Description>
 			</div>
 		</Dialog.Header>
@@ -38,6 +37,10 @@
 				</div>
 			{/each}
 		</div>
+
+		<p class="px-4 pb-3 text-xs text-muted-foreground">
+			You can stash your changes now and recover them afterwards.
+		</p>
 
 		<Dialog.Footer class="mx-0 mb-0 border-t border-border p-3">
 			<Button variant="secondary" size="sm" onclick={dismiss}>Close</Button>

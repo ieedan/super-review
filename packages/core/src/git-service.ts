@@ -1796,18 +1796,28 @@ export async function restoreManagedStash(repoPath: string, sha: string): Promis
 	if (!ref) {
 		return { ok: false, conflicts: [], error: 'The stashed changes are no longer available.' };
 	}
+	// A conflicted `git stash pop` exits non-zero, but simple-git RESOLVES it
+	// rather than throwing (unlike `git pull`, which rejects) — so we can't lean on
+	// the catch to spot conflicts, or a conflicted pop looks like a clean one and
+	// the dialog never opens. Inspect the index for unmerged paths after the pop
+	// regardless of how it returned. A real conflict leaves the stash entry in
+	// place (git keeps it) for finishStashPop / abortStashPop to wrap up.
+	let popError: unknown = null;
 	try {
 		await git.raw(['stash', 'pop', ref]);
-		return { ok: true, conflicts: [] };
 	} catch (err) {
-		const conflicts = await listUnmergedPaths(git);
-		if (conflicts.length > 0) return { ok: false, conflicts };
+		popError = err;
+	}
+	const conflicts = await listUnmergedPaths(git);
+	if (conflicts.length > 0) return { ok: false, conflicts };
+	if (popError) {
 		return {
 			ok: false,
 			conflicts: [],
-			error: err instanceof Error ? err.message : String(err)
+			error: popError instanceof Error ? popError.message : String(popError)
 		};
 	}
+	return { ok: true, conflicts: [] };
 }
 
 // Drop the managed stash by SHA without applying it (GitHub Desktop's "Discard
