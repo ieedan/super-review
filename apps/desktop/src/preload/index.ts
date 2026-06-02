@@ -22,6 +22,7 @@ import type {
 	GithubAccount,
 	GithubOrg,
 	LastCommit,
+	LocalOnlyBranch,
 	ManagedStash,
 	NewReviewCommentInput,
 	PRChecksSummary,
@@ -64,6 +65,8 @@ const api: PreloadAPI = {
 	git: {
 		listBranches: (repoId) =>
 			ipcRenderer.invoke('git:listBranches', repoId) as Promise<BranchInfo[]>,
+		listLocalOnlyBranches: (repoId) =>
+			ipcRenderer.invoke('git:listLocalOnlyBranches', repoId) as Promise<LocalOnlyBranch[]>,
 		getCurrentBranch: (repoId) =>
 			ipcRenderer.invoke('git:getCurrentBranch', repoId) as Promise<string | null>,
 		checkout: (repoId, branch) =>

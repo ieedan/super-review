@@ -24,6 +24,7 @@ import type {
 	GithubAccount,
 	GithubOrg,
 	LastCommit,
+	LocalOnlyBranch,
 	ManagedStash,
 	NewReviewCommentInput,
 	PRChecksSummary,
@@ -76,6 +77,7 @@ import {
 	isGitRepo,
 	isWorkingTreeDirty,
 	listBranches,
+	listLocalOnlyBranches,
 	listChangedFiles,
 	mergeIntoCurrent,
 	updateFromUpstream,
@@ -424,6 +426,13 @@ export function registerIpc(): void {
 	ipcMain.handle('git:listBranches', async (_e, repoId: string): Promise<BranchInfo[]> => {
 		return listBranches(repoOrThrow(repoId).path);
 	});
+
+	ipcMain.handle(
+		'git:listLocalOnlyBranches',
+		async (_e, repoId: string): Promise<LocalOnlyBranch[]> => {
+			return listLocalOnlyBranches(repoOrThrow(repoId).path);
+		}
+	);
 
 	ipcMain.handle('git:getCurrentBranch', async (_e, repoId: string): Promise<string | null> => {
 		return getCurrentBranch(repoOrThrow(repoId).path);

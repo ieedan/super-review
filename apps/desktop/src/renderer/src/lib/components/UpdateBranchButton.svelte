@@ -10,11 +10,13 @@
 	const behind = $derived(status?.behindDefault ?? 0);
 	const defaultBranch = $derived(app.activeRepo?.defaultBranch ?? 'main');
 
-	// The update flow runs through the shared push state with intent "pull".
-	// While stage is 'conflicts' the merge is paused on the conflict dialog —
-	// the flow isn't actively running, so don't show the spinner.
+	// Spin ONLY for this button's own update-from-default operation. The shared
+	// push state's `intent` is 'pull' for a plain pull and an upstream sync too,
+	// so keying on intent would light this button up for those unrelated actions;
+	// `op === 'update'` is set solely by updateFromDefault. While stage is
+	// 'conflicts' the merge is paused on the conflict dialog — don't spin.
 	const updating = $derived(
-		app.push.inProgress && app.push.intent === 'pull' && app.push.stage !== 'conflicts'
+		app.push.inProgress && app.push.op === 'update' && app.push.stage !== 'conflicts'
 	);
 
 	const title = $derived(

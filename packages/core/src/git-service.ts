@@ -14,6 +14,7 @@ import type {
 	DiffData,
 	FileStatus,
 	GitIdentity,
+	LocalOnlyBranch,
 	ManagedStash,
 	RepoInfo
 } from './types.js';
@@ -473,6 +474,65 @@ export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
 		if (a.current !== b.current) return a.current ? -1 : 1;
 		if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1;
 		// Most recently updated first — matches GitHub Desktop's branch list.
+		const at = a.lastCommitAt ?? 0;
+		const bt = b.lastCommitAt ?? 0;
+		if (at !== bt) return bt - at;
+		return a.name.localeCompare(b.name);
+	});
+	return branches;
+}
+
+// List local branches that no longer live on any remote — the cleanup
+// candidates for "Clean Up Local Branches". A branch qualifies when it tracks
+// nothing (`%(upstream:short)` is empty) or its tracking ref is gone
+// (`%(upstream:track)` reports "[gone]", i.e. the remote branch was deleted and
+// pruned — the usual state after a PR merges). A branch with a live upstream is
+// still on the remote, so it's never offered. The checked-out branch is always
+// excluded: git refuses to delete it. Each candidate carries how many stashes
+// were created on it so the UI can warn before deleting parked work.
+export async function listLocalOnlyBranches(repoPath: string): Promise<LocalOnlyBranch[]> {
+	const git = simpleGit(repoPath);
+	const [currentRaw, raw, stashRaw] = await Promise.all([
+		git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
+		git.raw([
+			'for-each-ref',
+			'--format=%(refname:short)\t%(committerdate:unix)\t%(upstream:short)\t%(upstream:track)',
+			'refs/heads'
+		]),
+		git.raw(['stash', 'list', '--format=%gs']).catch(() => '')
+	]);
+	const current = currentRaw.trim();
+
+	// Tally stashes per branch from their reflog subjects. Git writes either
+	// "WIP on <branch>: …" (its auto message) or "On <branch>: …" (a custom `-m`
+	// message — what our managed stashes use), so one pattern covers both. A
+	// refname can't contain a colon, so the first ":" always ends the branch.
+	const stashCounts = new Map<string, number>();
+	for (const line of stashRaw.split('\n')) {
+		const m = /^(?:WIP on|On) (.+?):/.exec(line.trim());
+		if (!m) continue;
+		stashCounts.set(m[1], (stashCounts.get(m[1]) ?? 0) + 1);
+	}
+
+	const branches: LocalOnlyBranch[] = [];
+	for (const line of raw.split('\n').filter(Boolean)) {
+		const [name, tsRaw, upstream, track] = line.split('\t');
+		if (!name || name === current) continue;
+		// `%(upstream:track)` is empty for an in-sync branch and "[gone]" once the
+		// remote branch is deleted, so a branch is local-only when it tracks
+		// nothing or its tracking ref is gone.
+		const gone = (track ?? '').includes('gone');
+		if (upstream && !gone) continue;
+		const ts = Number(tsRaw);
+		branches.push({
+			name,
+			lastCommitAt: Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined,
+			goneUpstream: gone ? upstream : undefined,
+			stashCount: stashCounts.get(name) ?? 0
+		});
+	}
+	// Most recently updated first, like the branch picker.
+	branches.sort((a, b) => {
 		const at = a.lastCommitAt ?? 0;
 		const bt = b.lastCommitAt ?? 0;
 		if (at !== bt) return bt - at;

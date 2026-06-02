@@ -28,6 +28,7 @@ import type {
 	UserPrefs,
 	ViewMode
 } from '@shared/types';
+import { WINDOW_BOUNDS } from '@shared/types';
 import { diffContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
@@ -154,6 +155,10 @@ interface AppState {
 	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
 	hotkeys: Hotkeys;
+	// Initial window bounds, applied on the next launch (see UserPrefs).
+	windowWidth: number;
+	windowHeight: number;
+	startMaximized: boolean;
 	theme: 'light' | 'dark';
 	accent: Accent;
 	codeFont: string;
@@ -254,6 +259,9 @@ interface AppState {
 	addRepoDialogOpen: boolean;
 	publishDialogOpen: boolean;
 	createBranchDialogOpen: boolean;
+	// Whether the "Clean Up Local Branches" dialog is open. The dialog itself
+	// loads the local-only branch candidates when it opens.
+	cleanupBranchesDialogOpen: boolean;
 	// The branch the create-branch dialog was opened from, snapshotted on open so
 	// the dialog's "based on…" options stay fixed for its lifetime. Creating with
 	// checkout switches app.currentBranch to the new branch mid-flow; reading that
@@ -274,6 +282,12 @@ interface AppState {
 		// managed-stash pop, but routes continue/abort to the dedicated stash-pop
 		// finish/abort paths (a pop has no MERGE_HEAD and makes no commit).
 		intent: 'push' | 'pull' | 'stash-restore';
+		// The specific user-facing action that owns this operation. `intent` is too
+		// coarse for header spinner attribution — pull, update-from-default, and
+		// update-from-upstream all share intent 'pull', so a single 'pull' op would
+		// light every pull-shaped button at once. `op` maps 1:1 to the button that
+		// should spin, so at most one header spinner is ever active for an op.
+		op: 'push' | 'pull' | 'update' | 'update-upstream' | 'commit' | 'stash-restore';
 		// SHA of the managed stash a conflicted 'stash-restore' pop is finishing.
 		// Carried here (not read off `app.stash`) because a bring-to-another-branch
 		// pop lands on the target while the kept stash stays marked for the source
@@ -377,6 +391,9 @@ const initial: AppState = {
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
 	hotkeys: DEFAULT_HOTKEYS,
+	windowWidth: WINDOW_BOUNDS.defaultWidth,
+	windowHeight: WINDOW_BOUNDS.defaultHeight,
+	startMaximized: false,
 	theme: 'dark',
 	accent: 'super',
 	codeFont: 'system',
@@ -431,8 +448,9 @@ const initial: AppState = {
 	addRepoDialogOpen: false,
 	publishDialogOpen: false,
 	createBranchDialogOpen: false,
+	cleanupBranchesDialogOpen: false,
 	createBranchFrom: null,
-	push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
+	push: { inProgress: false, stage: 'idle', intent: 'push', op: 'push', error: null },
 	conflictFiles: [],
 	conflictUnresolved: [],
 	diffReloadToken: 0,
@@ -1299,6 +1317,15 @@ function uniqueStrings(values: string[]): string[] {
 	return [...new Set(values)];
 }
 
+// Clamp a window dimension to its minimum, falling back to the default for
+// empty/invalid input. Mirrors the main process's windowDimension so the
+// renderer never persists a value the window can't honor.
+function clampWindowDimension(value: number, min: number, fallback: number): number {
+	const n = Number(value);
+	if (!Number.isFinite(n) || n <= 0) return fallback;
+	return Math.max(min, Math.floor(n));
+}
+
 export const actions = {
 	async init(): Promise<void> {
 		app.prefs = await window.api.state.getPrefs();
@@ -1313,6 +1340,9 @@ export const actions = {
 		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
 		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
+		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
+		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
+		app.startMaximized = app.prefs.startMaximized ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
@@ -1958,7 +1988,13 @@ export const actions = {
 
 		// Pop the stash onto the target, reusing the stash-restore conflict flow so
 		// a conflicted pop opens the shared dialog (continue/abort finish/abort it).
-		app.push = { inProgress: true, stage: 'pulling', intent: 'stash-restore', error: null };
+		app.push = {
+			inProgress: true,
+			stage: 'pulling',
+			intent: 'stash-restore',
+			op: 'stash-restore',
+			error: null
+		};
 		clearConflicts();
 		try {
 			const result = await window.api.git.restoreManagedStash(repoId, ref);
@@ -2346,6 +2382,39 @@ export const actions = {
 		app.createBranchFrom = null;
 	},
 
+	openCleanupBranchesDialog(): void {
+		app.cleanupBranchesDialogOpen = true;
+	},
+	closeCleanupBranchesDialog(): void {
+		app.cleanupBranchesDialogOpen = false;
+	},
+
+	// Delete the chosen local-only branches in one pass (none of them is the
+	// checked-out branch — listLocalOnlyBranches excludes it). `deleteRemote` is
+	// always false: these branches have no live remote to clean up. We attempt
+	// every branch, collect failures, then refresh once and surface a combined
+	// error so one stuck branch doesn't abort the rest. Returns true when every
+	// deletion succeeded.
+	async cleanupLocalBranches(names: string[]): Promise<boolean> {
+		if (!app.activeRepo || names.length === 0) return false;
+		const repoId = app.activeRepo.id;
+		const failures: string[] = [];
+		for (const name of names) {
+			try {
+				const result = await window.api.git.deleteBranch(repoId, name, { deleteRemote: false });
+				if (!result.ok) failures.push(`${name}: ${result.error ?? 'unknown error'}`);
+			} catch (err) {
+				failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+		await Promise.all([refreshBranches(), refreshPushStatus()]);
+		if (failures.length > 0) {
+			setError(`Could not delete ${failures.length} branch(es):\n${failures.join('\n')}`);
+			return false;
+		}
+		return true;
+	},
+
 	// Create a new branch. `checkout` decides whether we switch onto it as part
 	// of creating it: true → `checkout -b` (the working tree follows along);
 	// false → `git branch` (the branch is created but we stay put). The create
@@ -2472,6 +2541,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'committing',
 			intent: 'push',
+			op: 'commit',
 			error: null
 		};
 		try {
@@ -2503,6 +2573,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'committing',
 			intent: 'push',
+			op: 'commit',
 			error: null
 		};
 		try {
@@ -2558,6 +2629,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'fetching',
 			intent: 'pull',
+			op: 'pull',
 			error: null
 		};
 		clearConflicts();
@@ -2604,6 +2676,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'pulling',
 			intent: 'pull',
+			op: 'pull',
 			error: null
 		};
 		clearConflicts();
@@ -2670,6 +2743,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'pulling',
 			intent: 'stash-restore',
+			op: 'stash-restore',
 			error: null
 		};
 		clearConflicts();
@@ -2733,6 +2807,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'fetching',
 			intent: 'pull',
+			op: 'update',
 			error: null
 		};
 		clearConflicts();
@@ -2779,6 +2854,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'pulling',
 			intent: 'pull',
+			op: 'update-upstream',
 			error: null
 		};
 		clearConflicts();
@@ -2815,6 +2891,7 @@ export const actions = {
 			inProgress: true,
 			stage: 'fetching',
 			intent: 'push',
+			op: 'push',
 			error: null
 		};
 		clearConflicts();
@@ -2878,7 +2955,7 @@ export const actions = {
 		const prompt = app.forkPrompt;
 		if (!prompt || !app.activeRepo || app.push.inProgress) return;
 		const repoId = app.activeRepo.id;
-		app.push = { inProgress: true, stage: 'forking', intent: 'push', error: null };
+		app.push = { inProgress: true, stage: 'forking', intent: 'push', op: 'push', error: null };
 		try {
 			const fork = await window.api.github.createFork(repoId);
 			const updated = await window.api.git.convertToFork(
@@ -3022,6 +3099,7 @@ export const actions = {
 				inProgress: false,
 				stage: 'idle',
 				intent: 'push',
+				op: 'push',
 				error: null
 			};
 			bumpDiffReload();
@@ -3379,6 +3457,22 @@ export const actions = {
 	async setAutoRemoveMergedBranch(value: boolean): Promise<void> {
 		app.autoRemoveMergedBranch = value;
 		app.prefs = await window.api.state.setPrefs({ autoRemoveMergedBranch: value });
+	},
+
+	// Persist the initial window size. Clamped to the window minimums (and falling
+	// back to the defaults for empty/invalid input) so a stored value can never
+	// produce a smaller-than-allowed window. Takes effect on the next launch.
+	async setWindowSize(width: number, height: number): Promise<void> {
+		const w = clampWindowDimension(width, WINDOW_BOUNDS.minWidth, WINDOW_BOUNDS.defaultWidth);
+		const h = clampWindowDimension(height, WINDOW_BOUNDS.minHeight, WINDOW_BOUNDS.defaultHeight);
+		app.windowWidth = w;
+		app.windowHeight = h;
+		app.prefs = await window.api.state.setPrefs({ windowWidth: w, windowHeight: h });
+	},
+
+	async setStartMaximized(value: boolean): Promise<void> {
+		app.startMaximized = value;
+		app.prefs = await window.api.state.setPrefs({ startMaximized: value });
 	},
 
 	// Resolve the "switch back to the default branch?" dialog. `action` is the
