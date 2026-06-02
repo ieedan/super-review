@@ -2,7 +2,7 @@
 	import { Tooltip as TooltipPrimitive } from 'bits-ui';
 	import { ArrowDown, Loader2, RefreshCw } from 'lucide-svelte';
 	import { buttonVariants } from './ui/button';
-	import { actions, app } from '$lib/store.svelte';
+	import { actions, app, isReadOnlyView } from '$lib/store.svelte';
 	import { cn, formatRelative } from '$lib/utils';
 
 	// Spin the Pull affordance ONLY for this button's own pull operation. `op`
@@ -26,9 +26,12 @@
 
 	// Switch to pull mode when origin has commits we don't, and we have no
 	// local commits to push (the primary action button handles the sync case
-	// by pulling-then-pushing).
+	// by pulling-then-pushing). Pull targets the checked-out branch, so it's
+	// suppressed in a read-only view — there, the button is a plain refresh that
+	// re-reads the *viewed* branch's diff (via the active diff context).
 	const canPull = $derived(
-		!!app.pushStatus &&
+		!isReadOnlyView() &&
+			!!app.pushStatus &&
 			app.pushStatus.hasUpstream &&
 			app.pushStatus.behind > 0 &&
 			app.pushStatus.ahead === 0
@@ -48,6 +51,9 @@
 	});
 
 	const behindLabel = $derived.by(() => {
+		// The ahead/behind counts are the checked-out branch's vs origin — not
+		// meaningful while reviewing another branch/PR read-only.
+		if (isReadOnlyView()) return null;
 		const s = app.pushStatus;
 		if (!s) return null;
 		if (s.behind === 0 && s.ahead === 0) return 'Up to date with origin';
@@ -109,7 +115,7 @@
 				</span>
 			{:else}
 				<RefreshCw class={cn('size-3.5', refreshing && 'animate-spin')} />
-				{#if app.pushStatus && app.pushStatus.behind > 0}
+				{#if !isReadOnlyView() && app.pushStatus && app.pushStatus.behind > 0}
 					<span
 						class="absolute top-1 right-1 size-1.5 rounded-full bg-primary ring-2 ring-card"
 						aria-hidden="true"

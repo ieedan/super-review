@@ -47,8 +47,14 @@
 		{#if app.activeRepo}
 			<RefreshButton />
 			<UpdateBranchButton />
-			<EditorButton />
-			<TerminalButton />
+			<!-- Editor/terminal open the working tree, which is the *checked-out*
+			     branch — not what a read-only view shows. Hide them there so we don't
+			     send the user to files that don't match the view (or imply it's
+			     writable). -->
+			{#if !isReadOnlyView()}
+				<EditorButton />
+				<TerminalButton />
+			{/if}
 			<PrimaryActionButton />
 		{/if}
 		<GithubSignIn />

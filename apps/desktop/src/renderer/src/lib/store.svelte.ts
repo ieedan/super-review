@@ -87,6 +87,11 @@ interface AppState {
 	// never touched. Mutually exclusive with `viewBranch` in practice (entering
 	// one clears the other). Like `viewBranch`, it hides the Unstaged tab.
 	viewPR: PRSummary | null;
+	// The open PR (if any) for the read-only `viewBranch`, looked up so the header
+	// reflects what's on screen rather than the checked-out branch. Best-effort
+	// and only meaningful while `isViewingOtherBranch()`; `uiPR()` gates on that,
+	// so a stale value when we're not viewing a branch is harmless.
+	viewBranchPR: PRSummary | null;
 	prs: PRSummary[];
 	// Whether more PR pages remain to be fetched (drives the infinite scroll in
 	// the branch picker's Pull Requests tab).
@@ -366,6 +371,17 @@ export function viewedPRLabel(): string | null {
 	return app.viewPR?.headRef ?? null;
 }
 
+// The PR the header should act on: the one matching whatever's on screen. When
+// reviewing a PR read-only that's the viewed PR; when reviewing another branch
+// read-only it's that branch's PR (looked up into `viewBranchPR`); otherwise
+// it's the checked-out branch's PR. Lets the header's PR button follow the view
+// instead of always pointing at the checked-out branch.
+export function uiPR(): PRSummary | null {
+	if (app.viewPR) return app.viewPR;
+	if (isViewingOtherBranch()) return app.viewBranchPR;
+	return app.branchPR;
+}
+
 // Resolve which PR the comment surface should target.
 // - `kind: 'pr'` context: the PR being reviewed (its number lives on the ctx).
 // - any other context with a known `branchPR`: comment against that PR. The
@@ -405,6 +421,7 @@ const initial: AppState = {
 	currentBranch: null,
 	viewBranch: null,
 	viewPR: null,
+	viewBranchPR: null,
 	prs: [],
 	prsHasMore: false,
 	loadingMorePRs: false,
@@ -1080,6 +1097,24 @@ async function refreshBranchPR(): Promise<void> {
 	}
 	await refreshBranchPRChecks();
 	void refreshBranchPRPushAccess();
+}
+
+// Look up the open PR for a read-only *viewed* branch — the analogue of
+// refreshBranchPR for the checked-out branch — so the header's PR button can
+// follow the view. Best-effort and guarded: a slow result that lands after the
+// user switched away (or off the read-only view) is dropped.
+async function resolveViewBranchPR(branch: string): Promise<void> {
+	const repo = app.activeRepo;
+	if (!repo || !repo.githubOwner || !repo.githubRepo || !app.activeGithubAccount) return;
+	const repoId = repo.id;
+	try {
+		const pr = await window.api.github.findPRForBranch(repoId, branch);
+		if (app.activeRepo?.id === repoId && app.viewBranch === branch) {
+			app.viewBranchPR = pr;
+		}
+	} catch {
+		// Best-effort — leave it unresolved (button just won't show a PR).
+	}
 }
 
 // Poll the CI/workflow status for the current branch PR's head commit. Cheap
@@ -1994,6 +2029,11 @@ export const actions = {
 		app.viewBranch = branch;
 		// Entering a branch view supersedes any PR view.
 		app.viewPR = null;
+		// Resolve this branch's PR (best-effort, async) so the header's PR button
+		// follows the view rather than the checked-out branch. Reset first so a
+		// previous view's PR doesn't linger while the lookup is in flight.
+		app.viewBranchPR = null;
+		void resolveViewBranchPR(branch);
 		if (app.contextTab === 'unstaged') {
 			applyContextTab('branch');
 		}
