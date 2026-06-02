@@ -28,6 +28,7 @@ import type {
 	UserPrefs,
 	ViewMode
 } from '@shared/types';
+import { WINDOW_BOUNDS } from '@shared/types';
 import { diffContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
@@ -154,6 +155,10 @@ interface AppState {
 	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
 	hotkeys: Hotkeys;
+	// Initial window bounds, applied on the next launch (see UserPrefs).
+	windowWidth: number;
+	windowHeight: number;
+	startMaximized: boolean;
 	theme: 'light' | 'dark';
 	accent: Accent;
 	codeFont: string;
@@ -386,6 +391,9 @@ const initial: AppState = {
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
 	hotkeys: DEFAULT_HOTKEYS,
+	windowWidth: WINDOW_BOUNDS.defaultWidth,
+	windowHeight: WINDOW_BOUNDS.defaultHeight,
+	startMaximized: false,
 	theme: 'dark',
 	accent: 'super',
 	codeFont: 'system',
@@ -1309,6 +1317,15 @@ function uniqueStrings(values: string[]): string[] {
 	return [...new Set(values)];
 }
 
+// Clamp a window dimension to its minimum, falling back to the default for
+// empty/invalid input. Mirrors the main process's windowDimension so the
+// renderer never persists a value the window can't honor.
+function clampWindowDimension(value: number, min: number, fallback: number): number {
+	const n = Number(value);
+	if (!Number.isFinite(n) || n <= 0) return fallback;
+	return Math.max(min, Math.floor(n));
+}
+
 export const actions = {
 	async init(): Promise<void> {
 		app.prefs = await window.api.state.getPrefs();
@@ -1323,6 +1340,9 @@ export const actions = {
 		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
 		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
+		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
+		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
+		app.startMaximized = app.prefs.startMaximized ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
@@ -3437,6 +3457,22 @@ export const actions = {
 	async setAutoRemoveMergedBranch(value: boolean): Promise<void> {
 		app.autoRemoveMergedBranch = value;
 		app.prefs = await window.api.state.setPrefs({ autoRemoveMergedBranch: value });
+	},
+
+	// Persist the initial window size. Clamped to the window minimums (and falling
+	// back to the defaults for empty/invalid input) so a stored value can never
+	// produce a smaller-than-allowed window. Takes effect on the next launch.
+	async setWindowSize(width: number, height: number): Promise<void> {
+		const w = clampWindowDimension(width, WINDOW_BOUNDS.minWidth, WINDOW_BOUNDS.defaultWidth);
+		const h = clampWindowDimension(height, WINDOW_BOUNDS.minHeight, WINDOW_BOUNDS.defaultHeight);
+		app.windowWidth = w;
+		app.windowHeight = h;
+		app.prefs = await window.api.state.setPrefs({ windowWidth: w, windowHeight: h });
+	},
+
+	async setStartMaximized(value: boolean): Promise<void> {
+		app.startMaximized = value;
+		app.prefs = await window.api.state.setPrefs({ startMaximized: value });
 	},
 
 	// Resolve the "switch back to the default branch?" dialog. `action` is the

@@ -1,5 +1,12 @@
 import Store from 'electron-store';
-import type { CommitDraft, GithubAccount, PRSource, RepoInfo, UserPrefs } from '@shared/types.js';
+import {
+	WINDOW_BOUNDS,
+	type CommitDraft,
+	type GithubAccount,
+	type PRSource,
+	type RepoInfo,
+	type UserPrefs
+} from '@shared/types.js';
 
 // Records which PR a locally checked-out branch corresponds to, so the UI can
 // show "View PR" (and resolve the right repo) even for cross-repo PRs that a
@@ -51,7 +58,10 @@ const defaults: Schema = {
 		animationsEnabled: false,
 		prMergedBehavior: 'prompt',
 		autoRemoveMergedBranch: false,
-		hotkeys: DEFAULT_HOTKEYS
+		hotkeys: DEFAULT_HOTKEYS,
+		windowWidth: WINDOW_BOUNDS.defaultWidth,
+		windowHeight: WINDOW_BOUNDS.defaultHeight,
+		startMaximized: false
 	},
 	seen: {},
 	collapsedFiles: {},
