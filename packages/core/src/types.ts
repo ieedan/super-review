@@ -43,6 +43,23 @@ export interface BranchInfo {
 	lastCommitAt?: number;
 }
 
+// A local branch that no longer lives on any remote — a candidate for "Clean Up
+// Local Branches". It either never tracked a remote, or its upstream is "gone"
+// (the remote branch was deleted and pruned, e.g. after a PR merged). The
+// checked-out branch is never included (git refuses to delete it).
+export interface LocalOnlyBranch {
+	name: string;
+	// Unix epoch ms of the branch tip's committer date (see BranchInfo).
+	lastCommitAt?: number;
+	// The configured tracking ref that no longer resolves (e.g. "origin/feat"),
+	// or undefined when the branch never tracked a remote at all.
+	goneUpstream?: string;
+	// How many stash entries were created on this branch (any stash, not just the
+	// app's managed ones), so the cleanup dialog can warn before deleting work
+	// the user parked there. Deleting a branch never drops its stashes.
+	stashCount: number;
+}
+
 export type FileStatus =
 	| 'added'
 	| 'modified'
@@ -394,6 +411,7 @@ export type RepositoryMenuAction =
 	| 'showInFinder'
 	| 'openInEditor'
 	| 'createIssue'
+	| 'cleanupBranches'
 	| 'settings';
 
 // Renderer-computed state deciding which "Repository" menu items are enabled and
@@ -712,6 +730,9 @@ export interface PreloadAPI {
 	};
 	git: {
 		listBranches(repoId: string): Promise<BranchInfo[]>;
+		// Local branches no longer present on any remote — the cleanup candidates
+		// for "Clean Up Local Branches" (each carrying its stash count).
+		listLocalOnlyBranches(repoId: string): Promise<LocalOnlyBranch[]>;
 		getCurrentBranch(repoId: string): Promise<string | null>;
 		checkout(repoId: string, branch: string): Promise<void>;
 		checkoutPR(repoId: string, pr: PRSummary, source?: PRSource): Promise<void>;

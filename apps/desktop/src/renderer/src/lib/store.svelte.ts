@@ -254,6 +254,9 @@ interface AppState {
 	addRepoDialogOpen: boolean;
 	publishDialogOpen: boolean;
 	createBranchDialogOpen: boolean;
+	// Whether the "Clean Up Local Branches" dialog is open. The dialog itself
+	// loads the local-only branch candidates when it opens.
+	cleanupBranchesDialogOpen: boolean;
 	// The branch the create-branch dialog was opened from, snapshotted on open so
 	// the dialog's "based on…" options stay fixed for its lifetime. Creating with
 	// checkout switches app.currentBranch to the new branch mid-flow; reading that
@@ -431,6 +434,7 @@ const initial: AppState = {
 	addRepoDialogOpen: false,
 	publishDialogOpen: false,
 	createBranchDialogOpen: false,
+	cleanupBranchesDialogOpen: false,
 	createBranchFrom: null,
 	push: { inProgress: false, stage: 'idle', intent: 'push', error: null },
 	conflictFiles: [],
@@ -2344,6 +2348,39 @@ export const actions = {
 	closeCreateBranchDialog(): void {
 		app.createBranchDialogOpen = false;
 		app.createBranchFrom = null;
+	},
+
+	openCleanupBranchesDialog(): void {
+		app.cleanupBranchesDialogOpen = true;
+	},
+	closeCleanupBranchesDialog(): void {
+		app.cleanupBranchesDialogOpen = false;
+	},
+
+	// Delete the chosen local-only branches in one pass (none of them is the
+	// checked-out branch — listLocalOnlyBranches excludes it). `deleteRemote` is
+	// always false: these branches have no live remote to clean up. We attempt
+	// every branch, collect failures, then refresh once and surface a combined
+	// error so one stuck branch doesn't abort the rest. Returns true when every
+	// deletion succeeded.
+	async cleanupLocalBranches(names: string[]): Promise<boolean> {
+		if (!app.activeRepo || names.length === 0) return false;
+		const repoId = app.activeRepo.id;
+		const failures: string[] = [];
+		for (const name of names) {
+			try {
+				const result = await window.api.git.deleteBranch(repoId, name, { deleteRemote: false });
+				if (!result.ok) failures.push(`${name}: ${result.error ?? 'unknown error'}`);
+			} catch (err) {
+				failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+		await Promise.all([refreshBranches(), refreshPushStatus()]);
+		if (failures.length > 0) {
+			setError(`Could not delete ${failures.length} branch(es):\n${failures.join('\n')}`);
+			return false;
+		}
+		return true;
 	},
 
 	// Create a new branch. `checkout` decides whether we switch onto it as part

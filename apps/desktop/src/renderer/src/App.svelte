@@ -17,6 +17,7 @@
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
 	import PublishRepoDialog from '$lib/components/PublishRepoDialog.svelte';
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
+	import CleanupBranchesDialog from '$lib/components/CleanupBranchesDialog.svelte';
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
 	import RepositorySettingsDialog from '$lib/components/RepositorySettingsDialog.svelte';
 	import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
@@ -328,6 +329,7 @@
 <AddRepoDialog />
 <PublishRepoDialog />
 <CreateBranchDialog />
+<CleanupBranchesDialog />
 <SettingsDialog />
 <GithubSignInDialog />
 <CommandPalette />
