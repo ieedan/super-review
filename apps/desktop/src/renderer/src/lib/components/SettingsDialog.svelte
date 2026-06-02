@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		AppWindow,
 		Check,
 		Code2,
 		Keyboard,
@@ -51,7 +52,7 @@
 		type HotkeyAction,
 		type Hotkeys
 	} from '@shared/hotkeys';
-	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM } from '@shared/types';
+	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM, WINDOW_BOUNDS } from '@shared/types';
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
 	import type {
@@ -63,13 +64,14 @@
 		ViewMode
 	} from '@shared/types';
 
-	type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'editor' | 'hotkeys';
+	type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
 	let activeTab = $state<SettingsTab>('accounts');
 
 	const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
 		{ id: 'accounts', label: 'Accounts', icon: User },
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
+		{ id: 'app', label: 'App', icon: AppWindow },
 		{ id: 'editor', label: 'Integrations', icon: Code2 },
 		{ id: 'hotkeys', label: 'Hotkeys', icon: Keyboard }
 	];
@@ -115,6 +117,9 @@
 	let draftPrMergedBehavior = $state<PrMergedBehavior>('prompt');
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
 	let draftMaxDiffLines = $state<number>(1500);
+	let draftWindowWidth = $state<number>(WINDOW_BOUNDS.defaultWidth);
+	let draftWindowHeight = $state<number>(WINDOW_BOUNDS.defaultHeight);
+	let draftStartMaximized = $state<boolean>(false);
 	let draftHiddenDiffPatterns = $state<string[]>([]);
 	let newPattern = $state<string>('');
 	let draftTheme = $state<'light' | 'dark'>('dark');
@@ -135,6 +140,9 @@
 			draftPrMergedBehavior = app.prMergedBehavior;
 			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
 			draftMaxDiffLines = app.maxDiffLines;
+			draftWindowWidth = app.windowWidth;
+			draftWindowHeight = app.windowHeight;
+			draftStartMaximized = app.startMaximized;
 			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
 			newPattern = '';
 			draftTheme = app.theme;
@@ -199,6 +207,15 @@
 		return a.length === b.length && a.every((v, i) => v === b[i]);
 	}
 
+	// Clamp a window dimension to its minimum, falling back to the default for
+	// empty/invalid input. Matches the store's clampWindowDimension so what we
+	// compare and save lines up with what gets persisted.
+	function clampWindowDim(value: number, min: number, fallback: number): number {
+		const n = Number(value);
+		if (!Number.isFinite(n) || n <= 0) return fallback;
+		return Math.max(min, Math.floor(n));
+	}
+
 	async function save(): Promise<void> {
 		const promises: Promise<unknown>[] = [];
 		if (draftViewMode !== app.viewMode) {
@@ -232,6 +249,22 @@
 		}
 		if (!arraysEqual(draftHiddenDiffPatterns, app.hiddenDiffPatterns)) {
 			promises.push(actions.setHiddenDiffPatterns(draftHiddenDiffPatterns));
+		}
+		const clampedWindowWidth = clampWindowDim(
+			draftWindowWidth,
+			WINDOW_BOUNDS.minWidth,
+			WINDOW_BOUNDS.defaultWidth
+		);
+		const clampedWindowHeight = clampWindowDim(
+			draftWindowHeight,
+			WINDOW_BOUNDS.minHeight,
+			WINDOW_BOUNDS.defaultHeight
+		);
+		if (clampedWindowWidth !== app.windowWidth || clampedWindowHeight !== app.windowHeight) {
+			promises.push(actions.setWindowSize(clampedWindowWidth, clampedWindowHeight));
+		}
+		if (draftStartMaximized !== app.startMaximized) {
+			promises.push(actions.setStartMaximized(draftStartMaximized));
 		}
 		if (draftTheme !== app.theme) {
 			promises.push(actions.setTheme(draftTheme));
@@ -821,6 +854,60 @@
 							</Table.Root>
 						</div>
 					{/if}
+				</div>
+			</section>
+		{:else if activeTab === 'app'}
+			<section class="space-y-6">
+				<div>
+					<h3 class="text-base font-semibold">Window size</h3>
+					<p class="mt-1 text-xs text-muted-foreground">
+						The size the window opens at, in pixels. Takes effect the next time the app launches.
+						Values below the minimum ({WINDOW_BOUNDS.minWidth}×{WINDOW_BOUNDS.minHeight}) are raised
+						to it.
+					</p>
+
+					<div class="mt-4 flex items-center gap-3">
+						<div class="flex items-center gap-2">
+							<Input
+								id="window-width"
+								type="number"
+								min={WINDOW_BOUNDS.minWidth}
+								step="10"
+								bind:value={draftWindowWidth}
+								disabled={draftStartMaximized}
+								class="w-28"
+							/>
+							<label for="window-width" class="text-xs text-muted-foreground">width</label>
+						</div>
+						<span class="text-muted-foreground">×</span>
+						<div class="flex items-center gap-2">
+							<Input
+								id="window-height"
+								type="number"
+								min={WINDOW_BOUNDS.minHeight}
+								step="10"
+								bind:value={draftWindowHeight}
+								disabled={draftStartMaximized}
+								class="w-28"
+							/>
+							<label for="window-height" class="text-xs text-muted-foreground">height</label>
+						</div>
+					</div>
+					{#if draftStartMaximized}
+						<p class="mt-2 text-xs text-muted-foreground">
+							Used as the restored size when you un-maximize the window.
+						</p>
+					{/if}
+				</div>
+
+				<div class="flex items-start gap-2.5">
+					<Checkbox id="start-maximized" bind:checked={draftStartMaximized} class="mt-0.5" />
+					<label for="start-maximized" class="grid cursor-pointer gap-0.5 leading-snug">
+						<span class="text-sm font-medium">Start maximized</span>
+						<span class="text-xs text-muted-foreground">
+							Open the window maximized to fill the screen. Takes effect on the next launch.
+						</span>
+					</label>
 				</div>
 			</section>
 		{:else if activeTab === 'editor'}
