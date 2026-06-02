@@ -32,7 +32,7 @@
 				<button
 					type="button"
 					onclick={() => actions.returnToCheckedOutBranch()}
-					title={`Reviewing read-only — back to the checked-out branch (${app.currentBranch})`}
+					title={`Reviewing read-only. Back to the checked-out branch (${app.currentBranch})`}
 					class="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
 				>
 					<CornerUpLeft class="size-3.5" />
