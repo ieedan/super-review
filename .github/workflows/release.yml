@@ -196,9 +196,10 @@ jobs:
           ' apps/desktop/CHANGELOG.md > release-notes.md
           # electron-builder uploads to a *draft* release; add the notes and
           # flip it live so electron-updater can resolve it.
+          TITLE="Super Review Desktop@$VERSION"
           if [ -s release-notes.md ]; then
-            gh release edit "$V" --notes-file release-notes.md --draft=false --latest
+            gh release edit "$V" --title "$TITLE" --notes-file release-notes.md --draft=false --latest
           else
             echo "No changelog section found for $VERSION — publishing without notes"
-            gh release edit "$V" --draft=false --latest
+            gh release edit "$V" --title "$TITLE" --draft=false --latest
           fi

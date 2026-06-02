@@ -10,6 +10,12 @@ extraMetadata:
   main: out/main/index.js
 asar: true
 
+# Ad-hoc signs the macOS .app when no Developer ID is configured, so unsigned
+# release builds still launch on Apple Silicon instead of failing with the
+# misleading "damaged and can't be opened" Gatekeeper error. No-op when real
+# Apple signing credentials are present. See scripts/after-pack.cjs.
+afterPack: scripts/after-pack.cjs
+
 # electron-builder otherwise computes this by scanning node_modules, which is
 # unreliable under pnpm's symlinked layout on a clean CI runner and fails with
 # "Cannot compute electron version from installed node modules". Pin it — keep

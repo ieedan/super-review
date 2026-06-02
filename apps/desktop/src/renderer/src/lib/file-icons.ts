@@ -8,6 +8,14 @@ import { icons as materialIconTheme } from '@iconify-json/material-icon-theme';
 
 addCollection(materialIconTheme);
 
+// Names actually present in the bundled collection. The offline <Icon> renders
+// nothing (a blank gap) when handed a name that isn't here, so we validate every
+// resolved name against this set and fall back to the generic file icon instead.
+const AVAILABLE_ICONS = new Set<string>([
+	...Object.keys(materialIconTheme.icons),
+	...Object.keys(materialIconTheme.aliases ?? {})
+]);
+
 const EXACT_NAMES: Record<string, string> = {
 	dockerfile: 'material-icon-theme:docker',
 	'docker-compose.yml': 'material-icon-theme:docker',
@@ -43,8 +51,8 @@ const EXACT_NAMES: Record<string, string> = {
 	'tsconfig.json': 'material-icon-theme:tsconfig',
 	'tsconfig.node.json': 'material-icon-theme:tsconfig',
 	'tsconfig.web.json': 'material-icon-theme:tsconfig',
-	'svelte.config.js': 'material-icon-theme:svelte-config',
-	'svelte.config.ts': 'material-icon-theme:svelte-config',
+	'svelte.config.js': 'material-icon-theme:svelte',
+	'svelte.config.ts': 'material-icon-theme:svelte',
 	'vite.config.ts': 'material-icon-theme:vite',
 	'vite.config.js': 'material-icon-theme:vite',
 	'vitest.config.ts': 'material-icon-theme:vitest',
@@ -53,8 +61,7 @@ const EXACT_NAMES: Record<string, string> = {
 	'postcss.config.js': 'material-icon-theme:postcss',
 	'webpack.config.js': 'material-icon-theme:webpack',
 	'rollup.config.js': 'material-icon-theme:rollup',
-	'electron.vite.config.ts': 'material-icon-theme:electron',
-	'electron-builder.yml': 'material-icon-theme:electron',
+	'electron.vite.config.ts': 'material-icon-theme:vite',
 	'components.json': 'material-icon-theme:json',
 	makefile: 'material-icon-theme:makefile',
 	'cargo.toml': 'material-icon-theme:rust',
@@ -66,7 +73,7 @@ const EXACT_NAMES: Record<string, string> = {
 const EXTENSIONS: Record<string, string> = {
 	// TypeScript / JavaScript
 	ts: 'material-icon-theme:typescript',
-	tsx: 'material-icon-theme:react_ts',
+	tsx: 'material-icon-theme:react-ts',
 	cts: 'material-icon-theme:typescript',
 	mts: 'material-icon-theme:typescript',
 	'd.ts': 'material-icon-theme:typescript-def',
@@ -202,21 +209,29 @@ const EXTENSIONS: Record<string, string> = {
 	prisma: 'material-icon-theme:prisma'
 };
 
-const DEFAULT_ICON = 'material-icon-theme:file';
+const DEFAULT_ICON = 'material-icon-theme:document';
+
+// Guard against names missing from the bundled collection (typos, icons not
+// shipped in this theme version) — those render as a blank gap, so fall back to
+// the generic file icon instead.
+function ensureAvailable(icon: string): string {
+	const bare = icon.slice(icon.indexOf(':') + 1);
+	return AVAILABLE_ICONS.has(bare) ? icon : DEFAULT_ICON;
+}
 
 export function languageIconForPath(path: string): string {
 	const name = path.split('/').pop()?.toLowerCase() ?? '';
 	if (!name) return DEFAULT_ICON;
 
-	if (EXACT_NAMES[name]) return EXACT_NAMES[name];
+	if (EXACT_NAMES[name]) return ensureAvailable(EXACT_NAMES[name]);
 
 	// Match compound extensions like `.d.ts` and `.module.css` before single ext.
 	for (const ext of Object.keys(EXTENSIONS)) {
-		if (ext.includes('.') && name.endsWith('.' + ext)) return EXTENSIONS[ext];
+		if (ext.includes('.') && name.endsWith('.' + ext)) return ensureAvailable(EXTENSIONS[ext]);
 	}
 
 	const dot = name.lastIndexOf('.');
 	if (dot <= 0) return DEFAULT_ICON;
 	const ext = name.slice(dot + 1);
-	return EXTENSIONS[ext] ?? DEFAULT_ICON;
+	return ensureAvailable(EXTENSIONS[ext] ?? DEFAULT_ICON);
 }
