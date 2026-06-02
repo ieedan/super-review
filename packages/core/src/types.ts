@@ -327,6 +327,18 @@ export type FileContextMenuAction =
 	| 'openInEditor'
 	| 'openDefault';
 
+// Action the staging gutter's native discard menu can return. `null` (from the
+// IPC) means the menu was dismissed; `discard` confirms the discard. The renderer
+// already knows which lines it targeted, so a single confirm action suffices.
+export type DiffLineContextMenuAction = 'discard';
+
+// What the renderer hands the main process to build the discard menu. The scope
+// drives the single item's wording: `line` for an inner (per-line) button,
+// `lines` for an outer (hunk/section) button.
+export interface DiffLineContextMenuParams {
+	scope: 'line' | 'lines';
+}
+
 // Actions a branch row's native context menu can return. `null` (from the
 // IPC) means the menu was dismissed without a choice.
 export type BranchContextMenuAction = 'copy' | 'delete';
@@ -716,6 +728,10 @@ export interface PreloadAPI {
 		// Discard a file's working-tree + staged changes. `oldPath` is the
 		// pre-rename path, so discarding a rename also restores the original.
 		discardChanges(repoId: string, filePath: string, oldPath?: string): Promise<void>;
+		// Discard a subset of a file's working-tree changes (a hunk or one line).
+		// `patch` is a working-tree-based unified diff (see buildDiscardPatch) that
+		// removes the discarded additions and restores the discarded deletions.
+		discardLines(repoId: string, filePath: string, patch: string): Promise<void>;
 		continueMerge(repoId: string): Promise<PullPushResult>;
 		abortMerge(repoId: string): Promise<void>;
 		// Stage and commit the given files. Each entry is either a whole-file
@@ -881,6 +897,11 @@ export interface PreloadAPI {
 		// Pop up a native OS context menu for a file row. Resolves to the chosen
 		// action, or null when the menu is dismissed without a selection.
 		showFileContextMenu(params: FileContextMenuParams): Promise<FileContextMenuAction | null>;
+		// Pop up a native OS context menu for a changed diff line. Resolves to the
+		// chosen action, or null when the menu is dismissed without a selection.
+		showDiffLineContextMenu(
+			params: DiffLineContextMenuParams
+		): Promise<DiffLineContextMenuAction | null>;
 		// Pop up a native OS context menu for a branch row. Resolves to the chosen
 		// action, or null when the menu is dismissed without a selection.
 		showBranchContextMenu(params: BranchContextMenuParams): Promise<BranchContextMenuAction | null>;

@@ -193,3 +193,98 @@ export function buildFilteredPatch(
 	if (!hadHunk) return null;
 	return out.join('\n') + '\n';
 }
+
+// Split a set of line keys (all belonging to `filePath`) into the addition and
+// deletion line numbers they reference. Shared by the patch builders; an
+// addition key carries a new-file line number, a deletion key an old-file one.
+export function lineKeySides(
+	filePath: string,
+	keys: Iterable<string>
+): { adds: Set<number>; dels: Set<number> } {
+	const adds = new Set<number>();
+	const dels = new Set<number>();
+	for (const k of keys) {
+		// Tail after `${path}<NUL>` is a side marker ('a'/'d') plus a line number.
+		const tail = k.slice(filePath.length + 1);
+		const n = Number(tail.slice(1));
+		if (Number.isNaN(n)) continue;
+		if (tail[0] === 'a') adds.add(n);
+		else if (tail[0] === 'd') dels.add(n);
+	}
+	return { adds, dels };
+}
+
+// Rebuild a unified diff that, applied forward to the WORKING TREE with
+// `git apply`, discards the selected changes: it removes the selected additions
+// (`discardAdds`, new-file line numbers) and restores the selected deletions
+// (`discardDels`, old-file line numbers). Unlike buildFilteredPatch — whose base
+// is HEAD — this patch's base is the working tree, so each hunk's old side is
+// numbered by the new-file lines of the source diff. Kept additions stay as
+// context; non-discarded deletions are absent from the working tree and so don't
+// appear at all. Returns null when nothing is discarded.
+export function buildDiscardPatch(
+	parsed: ParsedFilePatch,
+	discardAdds: Set<number>,
+	discardDels: Set<number>
+): string | null {
+	const out: string[] = [...parsed.header];
+	let hadHunk = false;
+	// Running new-minus-old line difference of the hunks kept so far, so each
+	// emitted hunk's `+start` stays consistent after lines are removed/restored.
+	let delta = 0;
+
+	for (const hunk of parsed.hunks) {
+		const body: string[] = [];
+		// Counts against the patch's base (the working tree) and result.
+		let oldCount = 0;
+		let newCount = 0;
+		let hasChange = false;
+
+		for (const line of hunk.lines) {
+			if (line.kind === 'context') {
+				body.push(` ${line.text}`);
+				oldCount++;
+				newCount++;
+				if (line.noNewline) body.push('\\ No newline at end of file');
+			} else if (line.kind === 'add') {
+				if (discardAdds.has(line.newLine!)) {
+					// Present in the working tree; drop it back out.
+					body.push(`-${line.text}`);
+					oldCount++;
+					hasChange = true;
+				} else {
+					// Kept: still in the working tree, so it's context here.
+					body.push(` ${line.text}`);
+					oldCount++;
+					newCount++;
+				}
+				if (line.noNewline) body.push('\\ No newline at end of file');
+			} else {
+				// deletion
+				if (discardDels.has(line.oldLine!)) {
+					// Absent from the working tree; add it back.
+					body.push(`+${line.text}`);
+					newCount++;
+					hasChange = true;
+					if (line.noNewline) body.push('\\ No newline at end of file');
+				}
+				// Otherwise the line stays deleted — not in the working tree, not in
+				// the result — so it contributes nothing to this patch.
+			}
+		}
+
+		// No discarded change in this hunk — emit nothing for it.
+		if (!hasChange) continue;
+
+		// The hunk's working-tree start is the source diff's new-file start.
+		const oldStart = hunk.newStart;
+		const newStart = oldStart + delta;
+		out.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@${hunk.heading}`);
+		out.push(...body);
+		delta += newCount - oldCount;
+		hadHunk = true;
+	}
+
+	if (!hadHunk) return null;
+	return out.join('\n') + '\n';
+}
