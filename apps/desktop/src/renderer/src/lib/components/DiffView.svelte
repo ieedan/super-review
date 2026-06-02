@@ -7,6 +7,7 @@
 	import FindBar from './FindBar.svelte';
 	import { app } from '$lib/store.svelte';
 	import { find, openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
+	import { shortcut, type Options as ShortcutOptions } from '$lib/actions/shortcut.svelte';
 	import { matchesFileQuery } from '$lib/file-search';
 	import { tourGroups } from '$lib/session-tour';
 	import type { ChangedFile } from '@shared/types';
@@ -268,27 +269,32 @@
 		return () => setFindRoot(null);
 	});
 
-	// Ctrl/Cmd+F opens (or re-focuses) the find bar from anywhere in the app.
-	// Escape closes it from anywhere too: the bar's input handles Esc while
-	// focused, but once focus leaves the input (pressing Enter to jump to a
-	// match, clicking a nav button, or clicking into the diff) that local
-	// handler never fires — so we mirror the open shortcut with a global Esc.
-	$effect(() => {
-		function onKeydown(e: KeyboardEvent): void {
-			if (e.key === 'Escape' && find.open) {
+	// App-wide find shortcuts, mounted on <svelte:window> via the shortcut
+	// action (below) so they fire regardless of where focus currently is:
+	//   • Ctrl/Cmd+F opens (or re-focuses) the find bar.
+	//   • Escape closes it. The bar's input handles Esc while focused, but once
+	//     focus leaves the input (pressing Enter to jump to a match, clicking a
+	//     nav button, or clicking into the diff) that local handler never fires,
+	//     so this catches it everywhere. preventDefault is opt-out here so a bare
+	//     Escape still reaches dialogs/menus when find isn't open.
+	const findShortcuts: ShortcutOptions[] = [
+		{
+			key: 'f',
+			ctrl: true,
+			callback: () => {
+				if (app.activeRepo) openFind();
+			}
+		},
+		{
+			key: 'Escape',
+			preventDefault: false,
+			callback: (e) => {
+				if (!find.open) return;
 				e.preventDefault();
 				closeFind();
-				return;
 			}
-			if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-			if (e.key !== 'f' && e.key !== 'F') return;
-			if (!app.activeRepo) return;
-			e.preventDefault();
-			openFind();
 		}
-		window.addEventListener('keydown', onKeydown);
-		return () => window.removeEventListener('keydown', onKeydown);
-	});
+	];
 
 	onDestroy(() => {
 		observer?.disconnect();
@@ -296,6 +302,8 @@
 		closeFind();
 	});
 </script>
+
+<svelte:window use:shortcut={findShortcuts} />
 
 <section class="relative flex h-full min-w-0 flex-1 flex-col">
 	<FindBar />
