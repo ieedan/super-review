@@ -20,7 +20,7 @@
 	isPinned={!!app.activeRepo?.githubAccountId}
 	onSelectAccount={(id) => actions.setRepoGithubAccount(id)}
 	onUseDefault={() => actions.setRepoGithubAccount(null)}
-	triggerTitle={account ? `This project uses ${account.login} — click to switch` : 'Account'}
+	triggerTitle={account ? `This project uses ${account.login}. Click to switch` : 'Account'}
 	triggerClass={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'rounded-full p-0')}
 >
 	{#snippet trigger()}

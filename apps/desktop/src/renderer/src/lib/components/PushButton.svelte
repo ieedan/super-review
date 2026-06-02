@@ -45,7 +45,7 @@
 		const parts: string[] = [];
 		if (status.branch) parts.push(`Branch: ${status.branch}`);
 		parts.push(`Ahead ${status.ahead}, behind ${status.behind}`);
-		if (!status.hasUpstream) parts.push('No upstream — will set on push');
+		if (!status.hasUpstream) parts.push('No upstream, set on push');
 		return parts.join(' · ');
 	});
 

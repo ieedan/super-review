@@ -18,7 +18,7 @@
 	);
 
 	const title = $derived(
-		`Update from ${defaultBranch} — ${behind} commit${behind === 1 ? '' : 's'} behind`
+		`Update from ${defaultBranch} (${behind} commit${behind === 1 ? '' : 's'} behind)`
 	);
 
 	function click(): void {
