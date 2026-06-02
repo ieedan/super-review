@@ -10,7 +10,7 @@
 		"dev:desktop": "pnpm --filter @super-review/desktop dev",
 		"dev:docs": "pnpm --filter @super-review/docs dev",
 		"build": "pnpm --filter @super-review/desktop build",
-		"build:cli": "pnpm --filter super-review build",
+		"build:cli": "pnpm --filter ./packages/cli build",
 		"preview": "pnpm --filter @super-review/desktop preview",
 		"start": "pnpm --filter @super-review/desktop start",
 		"package": "pnpm --filter @super-review/desktop package",
@@ -18,6 +18,7 @@
 		"release": "pnpm --filter @super-review/desktop release",
 		"changeset": "changeset",
 		"changeset:version": "changeset version && pnpm install --lockfile-only && pnpm format",
+		"ci:release": "pnpm build:cli && changeset publish",
 		"typecheck": "pnpm -r typecheck",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint ."
