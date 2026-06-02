@@ -41,6 +41,9 @@ import {
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@shared/hotkeys';
 import { comparePathsVSCodeStyle } from '$lib/utils';
+
+export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
+export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '$lib/repo-frecency.svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import {
@@ -206,6 +209,12 @@ interface AppState {
 	editors: Record<EditorKind, boolean>;
 	terminals: Record<TerminalKind, boolean>;
 	settingsDialogOpen: boolean;
+	// When set, SettingsDialog switches to this tab on the next open.
+	settingsDialogTab: SettingsTab | null;
+	// When set, SettingsDialog scrolls to `settings-<id>` inside the active tab.
+	settingsDialogScrollTo: SettingsScrollTarget | null;
+	// Bumped when scroll should run while the dialog is already open.
+	settingsDialogScrollNonce: number;
 	// Whether the per-repo Repository Settings dialog is open (Fork Behavior, …).
 	repoSettingsDialogOpen: boolean;
 	// Cmd/Ctrl+K fuzzy file-search palette. Opened from the header search box or
@@ -365,6 +374,17 @@ export function isReadOnlyView(): boolean {
 	return isViewingOtherBranch() || app.viewPR != null;
 }
 
+// True when the Branch tab has something to show. The Branch diff compares the
+// default branch (base) against the viewed head. On a plain default-branch
+// checkout those are identical, so the diff is always empty — hide the tab. A
+// read-only view (a PR or another branch) always has head !== base, so the tab
+// stays useful there even while the default branch is the one checked out.
+export function canViewBranchTab(): boolean {
+	if (isReadOnlyView()) return true;
+	const base = app.activeRepo?.defaultBranch ?? 'main';
+	return app.currentBranch !== base;
+}
+
 // A short label for the read-only PR being viewed (its head branch), or null
 // when not viewing a PR. The picker trigger shows this in place of a branch.
 export function viewedPRLabel(): string | null {
@@ -490,6 +510,9 @@ const initial: AppState = {
 		powershell: false
 	},
 	settingsDialogOpen: false,
+	settingsDialogTab: null,
+	settingsDialogScrollTo: null,
+	settingsDialogScrollNonce: 0,
 	repoSettingsDialogOpen: false,
 	commandMenuOpen: false,
 	githubSignInOpen: false,
@@ -1482,9 +1505,18 @@ export const actions = {
 			// its DiffContext, so refresh branches first when restoring it.
 			const savedTab = app.prefs.contextTab;
 			if (savedTab === 'branch') {
+				// The Branch tab needs branches resolved before it can build its diff
+				// context (and before we can tell whether it's empty on this branch).
 				await refreshBranches();
-				app.contextTab = 'branch';
-				app.diffContext = contextForTab('branch');
+				if (canViewBranchTab()) {
+					app.contextTab = 'branch';
+					app.diffContext = contextForTab('branch');
+				} else {
+					// Launched on the default branch, where the Branch tab is hidden —
+					// fall back to the Unstaged working-tree view.
+					app.contextTab = 'unstaged';
+					app.diffContext = { kind: 'workingTree' };
+				}
 				await Promise.all([refreshFiles(), refreshPushStatus()]);
 			} else if (savedTab === 'sessions') {
 				app.contextTab = 'sessions';
@@ -1998,12 +2030,18 @@ export const actions = {
 			// read-only view so the UI reflects the branch now on disk.
 			app.viewBranch = null;
 			app.viewPR = null;
+			// Checking out the default branch empties (and hides) the Branch tab, so
+			// fall back to Unstaged rather than leaving a hidden tab selected.
+			const landingOnDefault = branch === (app.activeRepo.defaultBranch ?? 'main');
 			// Re-derive the diff context for tabs that depend on currentBranch.
-			if (app.contextTab === 'branch') {
+			if (app.contextTab === 'branch' && !landingOnDefault) {
 				app.diffContext = contextForTab('branch');
 			}
 			await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 			await refreshBranchPR();
+			if (app.contextTab === 'branch' && landingOnDefault) {
+				await actions.setContextTab('unstaged');
+			}
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -2092,6 +2130,12 @@ export const actions = {
 		if (app.viewBranch == null && app.viewPR == null) return;
 		app.viewBranch = null;
 		app.viewPR = null;
+		// Dropping the read-only view may land us back on a plain default-branch
+		// checkout, where the Branch tab is empty and hidden — fall back to Unstaged.
+		if (app.contextTab === 'branch' && !canViewBranchTab()) {
+			await actions.setContextTab('unstaged');
+			return;
+		}
 		if (app.contextTab === 'branch') {
 			app.diffContext = contextForTab('branch');
 		}
@@ -3759,7 +3803,12 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ uiFont: font });
 	},
 
-	openSettingsDialog(): void {
+	openSettingsDialog(tab?: SettingsTab, scrollTo?: SettingsScrollTarget): void {
+		if (tab) app.settingsDialogTab = tab;
+		if (scrollTo) {
+			app.settingsDialogScrollTo = scrollTo;
+			app.settingsDialogScrollNonce++;
+		}
 		app.settingsDialogOpen = true;
 	},
 	closeSettingsDialog(): void {

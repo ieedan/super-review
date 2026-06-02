@@ -17,6 +17,7 @@ export const DEFAULT_MAX_DIFF_LINES = 1500;
 // `*` matches within a path segment, `**` matches across segments, `?` matches
 // a single non-slash char. Matching is case-insensitive.
 export const DEFAULT_HIDDEN_DIFF_PATTERNS: string[] = [
+	'.super-review/sessions/*',
 	// JS / TS
 	'package-lock.json',
 	'npm-shrinkwrap.json',

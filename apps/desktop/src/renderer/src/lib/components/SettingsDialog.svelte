@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import {
 		AppWindow,
 		Check,
@@ -39,7 +40,8 @@
 		codeFontCss,
 		effectiveEditor,
 		effectiveTerminal,
-		uiFontCss
+		uiFontCss,
+		type SettingsTab
 	} from '$lib/store.svelte';
 	import HotkeyInput from './HotkeyInput.svelte';
 	import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
@@ -64,7 +66,6 @@
 		ViewMode
 	} from '@shared/types';
 
-	type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
 	let activeTab = $state<SettingsTab>('accounts');
 
 	const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
@@ -129,6 +130,28 @@
 	let draftEditor = $state<EditorKind | null>(null);
 	let draftTerminal = $state<TerminalKind | null>(null);
 	let draftHotkeys = $state<Hotkeys>({ ...DEFAULT_HOTKEYS });
+
+	$effect(() => {
+		if (!dialogOpen) return;
+
+		const tab = app.settingsDialogTab;
+		const scrollTo = app.settingsDialogScrollTo;
+		void app.settingsDialogScrollNonce;
+
+		if (tab) {
+			activeTab = tab;
+			app.settingsDialogTab = null;
+		}
+
+		if (scrollTo) {
+			app.settingsDialogScrollTo = null;
+			const id = `settings-${scrollTo}`;
+			void tick().then(async () => {
+				await tick();
+				document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			});
+		}
+	});
 
 	$effect(() => {
 		if (dialogOpen) {
@@ -786,7 +809,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-hidden-files" class="scroll-mt-4">
 					<div class="flex items-center justify-between gap-2">
 						<h3 class="text-base font-semibold">Hidden files</h3>
 						{#if !arraysEqual([...draftHiddenDiffPatterns].sort(), [...DEFAULT_HIDDEN_DIFF_PATTERNS].sort())}

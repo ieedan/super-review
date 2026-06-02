@@ -1489,7 +1489,14 @@
 				<div class="flex flex-col items-center gap-2 p-6 text-center">
 					<p class="text-xs text-muted-foreground">
 						{#if deferReason === 'pattern'}
-							This file is hidden by default.
+							This file is hidden by default.{' '}
+							<button
+								type="button"
+								class="text-primary underline underline-offset-2 hover:no-underline"
+								onclick={() => actions.openSettingsDialog('behavior', 'hidden-files')}
+							>
+								Configure
+							</button>
 						{:else}
 							This diff is too big to be displayed by default ({file.additions + file.deletions} changed
 							lines).

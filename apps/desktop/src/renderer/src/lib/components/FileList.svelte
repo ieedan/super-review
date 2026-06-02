@@ -31,7 +31,7 @@
 	import SessionTour from './SessionTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { harnessLabel } from '$lib/harness-logos';
-	import { actions, app, isReadOnlyView, type ContextTab } from '$lib/store.svelte';
+	import { actions, app, canViewBranchTab, isReadOnlyView, type ContextTab } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import { languageIconForPath } from '$lib/file-icons';
 	import { truncatePathPrefix } from '$lib/path-truncate';
@@ -751,12 +751,18 @@
 								{/if}
 							</Tabs.Trigger>
 						{/if}
-						<Tabs.Trigger
-							value="branch"
-							class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-						>
-							Branch
-						</Tabs.Trigger>
+						<!-- The Branch tab diffs the viewed head against the default branch.
+						     On a plain default-branch checkout those are identical, so it can
+						     only ever render an empty diff — hide it. A read-only view (PR or
+						     another branch) keeps head != base, so the tab stays useful. -->
+						{#if canViewBranchTab()}
+							<Tabs.Trigger
+								value="branch"
+								class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+							>
+								Branch
+							</Tabs.Trigger>
+						{/if}
 						<Tabs.Trigger
 							value="sessions"
 							class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
