@@ -8,12 +8,39 @@ import { icons as materialIconTheme } from '@iconify-json/material-icon-theme';
 
 addCollection(materialIconTheme);
 
+// Our own brand mark, registered as an offline icon so it flows through the same
+// <OfflineIcon icon={...} /> rendering path as every Material icon. It keeps its
+// full coral/white coloring (no `currentColor`), so it reads as the app logo
+// rather than a themed glyph. Used for the session manifests we write under
+// `.super-review/sessions/` — see SUPER_REVIEW_ICON below.
+const SUPER_REVIEW_ICON = 'super-review:logo';
+addCollection({
+	prefix: 'super-review',
+	width: 512,
+	height: 512,
+	icons: {
+		logo: {
+			body:
+				'<defs><linearGradient id="superReviewLogo" x1="0" y1="0" x2="1" y2="1">' +
+				'<stop offset="0" stop-color="#FF7059"/><stop offset="1" stop-color="#F8472A"/>' +
+				'</linearGradient></defs>' +
+				'<rect x="48" y="48" width="416" height="416" rx="96" fill="url(#superReviewLogo)"/>' +
+				'<circle cx="230" cy="230" r="120" fill="none" stroke="#fff" stroke-width="30"/>' +
+				'<line x1="318" y1="318" x2="402" y2="402" stroke="#fff" stroke-width="34" stroke-linecap="round"/>' +
+				'<g transform="translate(123.75 128) scale(8.5)">' +
+				'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="#fff"/></g>'
+		}
+	}
+});
+
 // Names actually present in the bundled collection. The offline <Icon> renders
 // nothing (a blank gap) when handed a name that isn't here, so we validate every
 // resolved name against this set and fall back to the generic file icon instead.
 const AVAILABLE_ICONS = new Set<string>([
 	...Object.keys(materialIconTheme.icons),
-	...Object.keys(materialIconTheme.aliases ?? {})
+	...Object.keys(materialIconTheme.aliases ?? {}),
+	// Our offline-registered brand mark (bare name, matching ensureAvailable).
+	'logo'
 ]);
 
 const EXACT_NAMES: Record<string, string> = {
@@ -220,6 +247,16 @@ function ensureAvailable(icon: string): string {
 }
 
 export function languageIconForPath(path: string): string {
+	const lower = path.toLowerCase();
+
+	// Super Review's own session manifests live under `.super-review/sessions/`
+	// as `<id>.json`. They're our files, so badge them with the app logo instead
+	// of the generic JSON icon. Match on the full path so unrelated JSON named
+	// like a UUID elsewhere in the tree keeps its normal icon.
+	if (lower.includes('.super-review/sessions/') && lower.endsWith('.json')) {
+		return SUPER_REVIEW_ICON;
+	}
+
 	const name = path.split('/').pop()?.toLowerCase() ?? '';
 	if (!name) return DEFAULT_ICON;
 
