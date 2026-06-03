@@ -53,7 +53,7 @@
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
-	import { calloutsForFile } from '$lib/session-tour';
+	import { calloutsForFile, tourFileOrder } from '$lib/session-tour';
 	import type {
 		ChangedFile,
 		DiffContext,
@@ -1324,8 +1324,16 @@
 		const visible = q
 			? app.changedFiles.filter((f) => f.path.toLowerCase().includes(q))
 			: app.changedFiles;
-		const idx = visible.findIndex((f) => f.path === file.path);
-		const next = idx >= 0 ? visible[idx + 1] : undefined;
+		// In a session's Tour view the diff renders files in the agent's reading
+		// order (tour groups), not the changes-view order. Advance along the order
+		// the user is actually looking at so "Mark seen" steps to the next visible
+		// section instead of jumping around the list.
+		const ordered =
+			app.sessionView === 'tour'
+				? (tourFileOrder(app.activeSessionDetail, visible) ?? visible)
+				: visible;
+		const idx = ordered.findIndex((f) => f.path === file.path);
+		const next = idx >= 0 ? ordered[idx + 1] : undefined;
 		if (next) actions.scrollToFile(next.path);
 	}
 
