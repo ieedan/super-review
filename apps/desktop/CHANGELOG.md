@@ -1,5 +1,20 @@
 # @super-review/desktop
 
+## 0.1.3
+
+### Patch Changes
+
+- Add `session save --committed` to document changes that have already been committed: it captures the current branch diffed against its base (auto-detected default branch, overridable with `--base`/`--head`) instead of only the working tree. Also fixes `revExists` reporting a missing ref (e.g. `origin/main` in a remote-less repo) as existing. ([#38](https://github.com/ieedan/super-review/pull/38))
+
+- Fix: Escape now closes the find bar from anywhere, not just while its input is focused ([#35](https://github.com/ieedan/super-review/pull/35))
+
+- feat: unmark seen files when they change, and show a checked comment icon for resolved threads ([#37](https://github.com/ieedan/super-review/pull/37))
+
+  In the review view, a file you marked as "seen" is now automatically unmarked when its content changes (new commits pushed to a branch, or further working-tree edits), so it resurfaces for re-review. This works in both the branch and unstaged views and can be turned off under Behavior → Reviewing. The sidebar comment icon also switches to a checked variant once every thread on a file is resolved.
+
+- Updated dependencies [[`373a17d`](https://github.com/ieedan/super-review/commit/373a17d43ab3f51e9a7369a1143575b4dc9617c6)]:
+  - @super-review/core@0.1.1
+
 ## 0.1.2
 
 ### Patch Changes

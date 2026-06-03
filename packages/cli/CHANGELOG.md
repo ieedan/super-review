@@ -1,5 +1,11 @@
 # super-review
 
+## 0.0.2
+
+### Patch Changes
+
+- Add `session save --committed` to document changes that have already been committed: it captures the current branch diffed against its base (auto-detected default branch, overridable with `--base`/`--head`) instead of only the working tree. Also fixes `revExists` reporting a missing ref (e.g. `origin/main` in a remote-less repo) as existing. ([#38](https://github.com/ieedan/super-review/pull/38))
+
 ## 0.0.1
 
 ### Patch Changes
