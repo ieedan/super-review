@@ -1289,6 +1289,42 @@ function contextForTab(tab: ContextTab): DiffContext {
 	return { kind: 'workingTree' };
 }
 
+// Structural equality for two session summaries. Covers every field the UI
+// renders, so an unchanged refresh compares equal and we can skip the churn.
+function sessionSummaryEqual(x: SessionSummary, y: SessionSummary): boolean {
+	return (
+		x.id === y.id &&
+		x.repoId === y.repoId &&
+		x.key === y.key &&
+		x.name === y.name &&
+		x.description === y.description &&
+		x.harness === y.harness &&
+		x.harnessLabel === y.harnessLabel &&
+		x.harnessUrl === y.harnessUrl &&
+		x.branch === y.branch &&
+		x.baseRef === y.baseRef &&
+		x.createdAt === y.createdAt &&
+		x.updatedAt === y.updatedAt &&
+		x.fileCount === y.fileCount &&
+		x.additions === y.additions &&
+		x.deletions === y.deletions &&
+		x.stepCount === y.stepCount
+	);
+}
+
+// Structural equality for two session lists. A focus/poll refresh re-fetches
+// the sessions even when nothing on disk moved; reassigning `app.sessions` with
+// the fresh (deeply-proxied) array there re-runs every keyed row's reactive
+// reads and child subtrees, flashing and shifting the sessions list for no
+// reason. We compare field-by-field so a genuine no-op refresh stays a no-op.
+function sessionsEqual(a: SessionSummary[], b: SessionSummary[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (!sessionSummaryEqual(a[i], b[i])) return false;
+	}
+	return true;
+}
+
 // Fetch the working-tree file count and store it on `app.unstagedFileCount`
 // so the Unstaged tab badge stays accurate even when another tab is active.
 // Errors are swallowed — the badge is non-critical and we'd rather keep a
@@ -1819,14 +1855,32 @@ export const actions = {
 		// from the ref) instead of the checked-out branch's working-tree sessions.
 		const sessions = await window.api.sessions.list(repoId, sessionRef());
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
-		app.sessions = sessions;
-		// Keep the badge in step with the freshly loaded list.
-		app.sessionCount = sessions.length;
-		if (app.activeSessionId) {
-			if (sessions.some((s) => s.id === app.activeSessionId)) {
-				await actions.openSession(app.activeSessionId);
-			} else {
+
+		// Grab the open session's previous + next summary before swapping the list
+		// in, so we can tell a real re-capture apart from a no-op refresh.
+		const openId = app.activeSessionId;
+		const prevOpen = openId ? app.sessions.find((s) => s.id === openId) : undefined;
+		const nextOpen = openId ? sessions.find((s) => s.id === openId) : undefined;
+
+		// Only swap in the fresh list when it actually differs — a focus/poll
+		// refresh that finds nothing changed must not churn the keyed list (it
+		// flashes and shifts the sessions view).
+		if (!sessionsEqual(sessions, app.sessions)) {
+			app.sessions = sessions;
+			// Keep the badge in step with the freshly loaded list.
+			app.sessionCount = sessions.length;
+		}
+
+		if (openId) {
+			if (!nextOpen) {
+				// The open session was removed on disk — fall back to the list.
 				actions.closeSession();
+			} else if (!prevOpen || !sessionSummaryEqual(prevOpen, nextOpen)) {
+				// A re-capture landed (its summary moved) — re-open so the frozen diff
+				// and tour reflect the update. Skipped when nothing changed, otherwise
+				// every refresh would reset the view to the tour, drop the file search,
+				// and reload the diff, flashing and shifting the open session.
+				await actions.openSession(openId);
 			}
 		}
 	},
