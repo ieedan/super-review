@@ -173,7 +173,7 @@ async function runSave(opts: SaveOptions): Promise<void> {
 			committedMode
 				? `no committed changes on ${ctx!.kind === 'branch' ? ctx!.head : 'HEAD'} vs ${
 						ctx!.kind === 'branch' ? ctx!.base : 'base'
-				  } to capture`
+					} to capture`
 				: 'no working-tree changes to capture'
 		);
 	}
@@ -230,10 +230,7 @@ export const save = new Command('save')
 		'--base <ref>',
 		'Base ref to diff against (implies --committed). Defaults to the auto-detected default branch.'
 	)
-	.option(
-		'--head <ref>',
-		'Head ref to diff (implies --committed). Defaults to the current branch.'
-	)
+	.option('--head <ref>', 'Head ref to diff (implies --committed). Defaults to the current branch.')
 	.option(
 		'--tour <json>',
 		"Inline JSON describing a guided tour: ordered steps that group related files with commentary, so the reviewer reads the change as a narrative. Flags override the document's top-level name/description/harness."
