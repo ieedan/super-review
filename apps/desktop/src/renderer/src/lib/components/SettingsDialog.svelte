@@ -3,6 +3,7 @@
 	import {
 		AppWindow,
 		Check,
+		ChevronDown,
 		Code2,
 		Keyboard,
 		LogOut,
@@ -15,7 +16,8 @@
 	} from 'lucide-svelte';
 	import SettingsShell from './SettingsShell.svelte';
 	import * as Avatar from './ui/avatar';
-	import { Button } from './ui/button';
+	import * as DropdownMenu from './ui/dropdown-menu';
+	import { Button, buttonVariants } from './ui/button';
 	import { Checkbox } from './ui/checkbox';
 	import { Input } from './ui/input';
 	import * as Table from './ui/table';
@@ -57,6 +59,7 @@
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM, WINDOW_BOUNDS } from '@shared/types';
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
+	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '$lib/diff-themes';
 	import type {
 		Accent,
 		DiffLayout,
@@ -125,12 +128,18 @@
 	let draftHiddenDiffPatterns = $state<string[]>([]);
 	let newPattern = $state<string>('');
 	let draftTheme = $state<'light' | 'dark'>('dark');
+	let draftDiffTheme = $state<string>('pierre');
 	let draftAccent = $state<Accent>('super');
 	let draftCodeFont = $state<string>('system');
 	let draftUiFont = $state<string>('system');
 	let draftEditor = $state<EditorKind | null>(null);
 	let draftTerminal = $state<TerminalKind | null>(null);
 	let draftHotkeys = $state<Hotkeys>({ ...DEFAULT_HOTKEYS });
+
+	// The diff theme the previews on this tab render with — tracks the in-progress
+	// selection so the split/unified and code-font previews reflect it too.
+	const draftDiffThemePair = $derived(diffThemePair(draftDiffTheme));
+	const draftDiffThemeLabel = $derived(resolveDiffThemePreset(draftDiffTheme).label);
 
 	$effect(() => {
 		if (!dialogOpen) return;
@@ -171,6 +180,7 @@
 			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
 			newPattern = '';
 			draftTheme = app.theme;
+			draftDiffTheme = app.diffTheme;
 			draftAccent = app.accent;
 			draftCodeFont = app.codeFont;
 			draftUiFont = app.uiFont;
@@ -296,6 +306,9 @@
 		}
 		if (draftTheme !== app.theme) {
 			promises.push(actions.setTheme(draftTheme));
+		}
+		if (draftDiffTheme !== app.diffTheme) {
+			promises.push(actions.setDiffTheme(draftDiffTheme));
 		}
 		if (draftAccent !== app.accent) {
 			promises.push(actions.setAccent(draftAccent));
@@ -548,7 +561,7 @@
 						class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5"
 						style="--code-font: {codeFontCss(draftCodeFont)}"
 					>
-						<DiffStylePreview mode={draftViewMode} />
+						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
 					</div>
 				</div>
 
@@ -581,10 +594,48 @@
 									{opt.label}
 								</div>
 								<div class="w-full bg-background p-1.5">
-									<DiffStylePreview mode={opt.mode} />
+									<DiffStylePreview mode={opt.mode} theme={draftDiffThemePair} />
 								</div>
 							</button>
 						{/each}
+					</div>
+				</div>
+
+				<div>
+					<h3 class="text-base font-semibold">Diff theme</h3>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Syntax highlighting theme for diff code blocks. Each theme has a light and dark variant
+						that follows your appearance.
+					</p>
+
+					<div class="mt-3">
+						<DropdownMenu.Root>
+							<DropdownMenu.Trigger
+								class={cn(
+									buttonVariants({ variant: 'outline', size: 'sm' }),
+									'w-full justify-between font-normal'
+								)}
+							>
+								<span class="truncate">{draftDiffThemeLabel}</span>
+								<ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
+							</DropdownMenu.Trigger>
+							<DropdownMenu.Content align="start" class="max-h-[260px]">
+								{#each DIFF_THEMES as opt (opt.id)}
+									<DropdownMenu.Item class="gap-2" onSelect={() => (draftDiffTheme = opt.id)}>
+										<Check
+											class={cn(
+												'size-3.5',
+												draftDiffTheme === opt.id ? 'opacity-100' : 'opacity-0'
+											)}
+										/>
+										<span class="flex-1 truncate">{opt.label}</span>
+									</DropdownMenu.Item>
+								{/each}
+							</DropdownMenu.Content>
+						</DropdownMenu.Root>
+					</div>
+					<div class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5">
+						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
 					</div>
 				</div>
 
