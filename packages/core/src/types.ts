@@ -673,11 +673,6 @@ export interface UserPrefs {
 	// dark and a light variant, so the diff follows the app's light/dark `theme`.
 	// Defaults to 'pierre'. Unknown ids fall back to the default at resolve time.
 	diffTheme: string;
-	// Add/delete colors for the user-tunable 'pierre-custom' diff theme. Only the
-	// two diff colors are customizable; syntax highlighting stays Pierre. Ignored
-	// unless diffTheme is 'pierre-custom'. Optional for back-compat with prefs
-	// written before this existed.
-	diffCustomColors?: { addition: string; deletion: string };
 	accent: Accent;
 	activeRepoId?: string;
 	contextTab?: ContextTab;

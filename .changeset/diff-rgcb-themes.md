@@ -3,4 +3,4 @@
 '@super-review/core': patch
 ---
 
-feat: add red-green-color-blind diff themes — "Pierre (rgcb)" (blue/orange) and "Pierre (high contrast)" presets, plus a user-tunable "Pierre (custom)" palette with live color pickers in Appearance settings
+feat: add red-green-color-blind diff themes — "Pierre Deuteranopia" (blue/orange, CVD-safe) and "Pierre High Contrast" presets in Appearance settings

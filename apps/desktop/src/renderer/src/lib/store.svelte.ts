@@ -41,8 +41,7 @@ import {
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@shared/hotkeys';
 import { comparePathsVSCodeStyle } from '$lib/utils';
-import { DEFAULT_DIFF_THEME, diffThemePair, CUSTOM_DIFF_THEME } from '$lib/diff-themes';
-import { DEFAULT_CUSTOM_DIFF_COLORS, type DiffColorPair } from '$lib/diff-custom-themes';
+import { DEFAULT_DIFF_THEME, diffThemePair } from '$lib/diff-themes';
 import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 
 export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
@@ -187,8 +186,6 @@ interface AppState {
 	theme: 'light' | 'dark';
 	// Selected diff code-block theme preset id (see lib/diff-themes).
 	diffTheme: string;
-	// Add/delete colors for the 'pierre-custom' diff theme (see lib/diff-themes).
-	diffCustomColors: DiffColorPair;
 	accent: Accent;
 	codeFont: string;
 	uiFont: string;
@@ -490,7 +487,6 @@ const initial: AppState = {
 	startMaximized: false,
 	theme: 'dark',
 	diffTheme: DEFAULT_DIFF_THEME,
-	diffCustomColors: { ...DEFAULT_CUSTOM_DIFF_COLORS },
 	accent: 'super',
 	codeFont: 'system',
 	uiFont: 'system',
@@ -786,9 +782,7 @@ function applyTheme(theme: 'light' | 'dark'): void {
 // keeps flipping light/dark in CSS. No-ops until the pool exists; the App boots
 // it before prefs load, and applyDiffTheme runs again right after prefs land.
 function applyDiffTheme(): void {
-	void getDiffWorkerPool()?.setRenderOptions({
-		theme: diffThemePair(app.diffTheme, app.diffCustomColors)
-	});
+	void getDiffWorkerPool()?.setRenderOptions({ theme: diffThemePair(app.diffTheme) });
 }
 
 // Accent palette. Each accent maps to an `.accent-*` class that overrides the
@@ -1561,7 +1555,6 @@ export const actions = {
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
 		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;
-		app.diffCustomColors = app.prefs.diffCustomColors ?? { ...DEFAULT_CUSTOM_DIFF_COLORS };
 		// Only reconfigure the pool when it's not the default it already booted
 		// with — avoids eagerly initializing the workers at startup for the common
 		// case (the pool defaults to the 'pierre' pair).
@@ -3898,13 +3891,6 @@ export const actions = {
 		app.diffTheme = diffTheme;
 		applyDiffTheme();
 		app.prefs = await window.api.state.setPrefs({ diffTheme });
-	},
-
-	async setDiffCustomColors(colors: DiffColorPair): Promise<void> {
-		app.diffCustomColors = colors;
-		// Re-tokenize live diffs only when the custom palette is the one on screen.
-		if (app.diffTheme === CUSTOM_DIFF_THEME) applyDiffTheme();
-		app.prefs = await window.api.state.setPrefs({ diffCustomColors: colors });
 	},
 
 	async setAccent(accent: Accent): Promise<void> {

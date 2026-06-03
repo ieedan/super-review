@@ -59,13 +59,7 @@
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM, WINDOW_BOUNDS } from '@shared/types';
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
-	import {
-		DIFF_THEMES,
-		diffThemePair,
-		resolveDiffThemePreset,
-		CUSTOM_DIFF_THEME
-	} from '$lib/diff-themes';
-	import { DEFAULT_CUSTOM_DIFF_COLORS, type DiffColorPair } from '$lib/diff-custom-themes';
+	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '$lib/diff-themes';
 	import type {
 		Accent,
 		DiffLayout,
@@ -135,7 +129,6 @@
 	let newPattern = $state<string>('');
 	let draftTheme = $state<'light' | 'dark'>('dark');
 	let draftDiffTheme = $state<string>('pierre');
-	let draftDiffCustomColors = $state<DiffColorPair>({ ...DEFAULT_CUSTOM_DIFF_COLORS });
 	let draftAccent = $state<Accent>('super');
 	let draftCodeFont = $state<string>('system');
 	let draftUiFont = $state<string>('system');
@@ -145,7 +138,7 @@
 
 	// The diff theme the previews on this tab render with — tracks the in-progress
 	// selection so the split/unified and code-font previews reflect it too.
-	const draftDiffThemePair = $derived(diffThemePair(draftDiffTheme, draftDiffCustomColors));
+	const draftDiffThemePair = $derived(diffThemePair(draftDiffTheme));
 	const draftDiffThemeLabel = $derived(resolveDiffThemePreset(draftDiffTheme).label);
 
 	$effect(() => {
@@ -188,7 +181,6 @@
 			newPattern = '';
 			draftTheme = app.theme;
 			draftDiffTheme = app.diffTheme;
-			draftDiffCustomColors = { ...app.diffCustomColors };
 			draftAccent = app.accent;
 			draftCodeFont = app.codeFont;
 			draftUiFont = app.uiFont;
@@ -317,12 +309,6 @@
 		}
 		if (draftDiffTheme !== app.diffTheme) {
 			promises.push(actions.setDiffTheme(draftDiffTheme));
-		}
-		if (
-			draftDiffCustomColors.addition !== app.diffCustomColors.addition ||
-			draftDiffCustomColors.deletion !== app.diffCustomColors.deletion
-		) {
-			promises.push(actions.setDiffCustomColors({ ...draftDiffCustomColors }));
 		}
 		if (draftAccent !== app.accent) {
 			promises.push(actions.setAccent(draftAccent));
@@ -648,36 +634,6 @@
 							</DropdownMenu.Content>
 						</DropdownMenu.Root>
 					</div>
-
-					{#if draftDiffTheme === CUSTOM_DIFF_THEME}
-						<div class="mt-3 flex flex-wrap gap-4">
-							<label class="flex items-center gap-2 text-xs text-muted-foreground">
-								<input
-									type="color"
-									class="size-7 cursor-pointer rounded border border-border bg-transparent p-0"
-									bind:value={draftDiffCustomColors.addition}
-									aria-label="Added lines color"
-								/>
-								Added lines
-							</label>
-							<label class="flex items-center gap-2 text-xs text-muted-foreground">
-								<input
-									type="color"
-									class="size-7 cursor-pointer rounded border border-border bg-transparent p-0"
-									bind:value={draftDiffCustomColors.deletion}
-									aria-label="Removed lines color"
-								/>
-								Removed lines
-							</label>
-							<button
-								type="button"
-								class="text-xs text-muted-foreground underline-offset-2 hover:underline"
-								onclick={() => (draftDiffCustomColors = { ...DEFAULT_CUSTOM_DIFF_COLORS })}
-							>
-								Reset
-							</button>
-						</div>
-					{/if}
 
 					<div class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5">
 						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
