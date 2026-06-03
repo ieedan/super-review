@@ -1012,7 +1012,8 @@ async function countWorkingLines(
 		const stat = await fs.stat(abs);
 		if (!stat.isFile()) return null;
 		if (stat.size === 0) return { additions: 0, binary: false, sig: 'empty' };
-		if (stat.size > MAX_FILE_BYTES) return { additions: 0, binary: false, sig: `size:${stat.size}` };
+		if (stat.size > MAX_FILE_BYTES)
+			return { additions: 0, binary: false, sig: `size:${stat.size}` };
 		const buf = await fs.readFile(abs);
 		const sig = createHash('sha1').update(buf).digest('hex');
 		const probeEnd = Math.min(buf.length, 8192);
