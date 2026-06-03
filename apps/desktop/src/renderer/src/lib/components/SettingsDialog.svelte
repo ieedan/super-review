@@ -3,6 +3,7 @@
 	import {
 		AppWindow,
 		Check,
+		ChevronDown,
 		Code2,
 		Keyboard,
 		LogOut,
@@ -15,7 +16,8 @@
 	} from 'lucide-svelte';
 	import SettingsShell from './SettingsShell.svelte';
 	import * as Avatar from './ui/avatar';
-	import { Button } from './ui/button';
+	import * as DropdownMenu from './ui/dropdown-menu';
+	import { Button, buttonVariants } from './ui/button';
 	import { Checkbox } from './ui/checkbox';
 	import { Input } from './ui/input';
 	import * as Table from './ui/table';
@@ -57,7 +59,7 @@
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM, WINDOW_BOUNDS } from '@shared/types';
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
-	import { DIFF_THEMES, diffThemePair } from '$lib/diff-themes';
+	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '$lib/diff-themes';
 	import type {
 		Accent,
 		DiffLayout,
@@ -137,6 +139,7 @@
 	// The diff theme the previews on this tab render with — tracks the in-progress
 	// selection so the split/unified and code-font previews reflect it too.
 	const draftDiffThemePair = $derived(diffThemePair(draftDiffTheme));
+	const draftDiffThemeLabel = $derived(resolveDiffThemePreset(draftDiffTheme).label);
 
 	$effect(() => {
 		if (!dialogOpen) return;
@@ -605,35 +608,34 @@
 						that follows your appearance.
 					</p>
 
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each DIFF_THEMES as opt (opt.id)}
-							{@const active = draftDiffTheme === opt.id}
-							<button
-								type="button"
-								onclick={() => (draftDiffTheme = opt.id)}
+					<div class="mt-3">
+						<DropdownMenu.Root>
+							<DropdownMenu.Trigger
 								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
+									buttonVariants({ variant: 'outline', size: 'sm' }),
+									'w-full justify-between font-normal'
 								)}
 							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
-								<div class="w-full bg-background p-1.5">
-									<DiffStylePreview mode={draftViewMode} theme={diffThemePair(opt.id)} />
-								</div>
-							</button>
-						{/each}
+								<span class="truncate">{draftDiffThemeLabel}</span>
+								<ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
+							</DropdownMenu.Trigger>
+							<DropdownMenu.Content align="start" class="max-h-[260px]">
+								{#each DIFF_THEMES as opt (opt.id)}
+									<DropdownMenu.Item class="gap-2" onSelect={() => (draftDiffTheme = opt.id)}>
+										<Check
+											class={cn(
+												'size-3.5',
+												draftDiffTheme === opt.id ? 'opacity-100' : 'opacity-0'
+											)}
+										/>
+										<span class="flex-1 truncate">{opt.label}</span>
+									</DropdownMenu.Item>
+								{/each}
+							</DropdownMenu.Content>
+						</DropdownMenu.Root>
+					</div>
+					<div class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5">
+						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
 					</div>
 				</div>
 
