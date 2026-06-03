@@ -56,6 +56,16 @@ export function tourGroups(detail: Session | null, files: ChangedFile[]): TourGr
 	return groups;
 }
 
+// Flatten a session's tour into the file order the diff view renders: each
+// authored step's files (reading order) followed by the trailing "Other
+// changes". Returns null when the session has no tour, so callers fall back to
+// the changes-view order.
+export function tourFileOrder(detail: Session | null, files: ChangedFile[]): ChangedFile[] | null {
+	const groups = tourGroups(detail, files);
+	if (!groups) return null;
+	return groups.flatMap((g) => g.files);
+}
+
 // All callouts the session pins to a given file, across every step, in step
 // order. Empty when the session has no tour or none target this file.
 export function calloutsForFile(detail: Session | null, path: string): SessionCallout[] {
