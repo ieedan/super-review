@@ -817,8 +817,8 @@
 							<label for="unmark-seen-on-change" class="grid cursor-pointer gap-0.5 leading-snug">
 								<span class="text-sm font-medium">Unmark seen files when they change</span>
 								<span class="text-xs text-muted-foreground">
-									When a file you marked as seen picks up new changes — fresh commits pushed to the
-									branch, or further edits — clear its seen mark so it resurfaces for review.
+									When a file you marked as seen picks up new changes, fresh commits pushed to the
+									branch, or further edits, clear its seen mark so it resurfaces for review.
 								</span>
 							</label>
 						</div>

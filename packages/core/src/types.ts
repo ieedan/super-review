@@ -76,6 +76,14 @@ export interface ChangedFile {
 	additions: number;
 	deletions: number;
 	isBinary: boolean;
+	// A content-derived fingerprint of the file's current (head/worktree) state,
+	// used to detect when a file marked "seen" has actually changed since — even
+	// an in-place edit that keeps the same +/- counts. For committed contexts
+	// (branch/PR/commit/stash) it's the destination blob OID, which git already
+	// has; for the working tree it's the blob hash git computes for the diff. May
+	// be undefined when git can't supply one (e.g. a deleted file), in which case
+	// callers fall back to the stat-based signature.
+	contentSig?: string;
 }
 
 export interface DiffData {

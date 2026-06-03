@@ -605,13 +605,16 @@ function filesCacheKey(repoId: string, ctx: DiffContext): string {
 	return `${repoId}::${diffContextKey(ctx)}`;
 }
 
-// A cheap fingerprint of a changed file's diff, captured when the file is marked
+// A fingerprint of a changed file's content, captured when the file is marked
 // seen and re-checked on every refresh. When it changes — new commits pushed to a
 // branch, or further working-tree edits — the seen mark is cleared so the file
-// resurfaces (gated by the unmarkSeenOnChange pref). Built from the diff stats and
-// status, which move for essentially any real content change; an edit that keeps
-// the exact same +/- counts is the rare miss we accept to avoid per-file hashing.
+// resurfaces (gated by the unmarkSeenOnChange pref). Prefer the content signature
+// git supplies (the destination blob OID, or the worktree blob hash from the diff
+// patch), which moves on any real edit — even one that keeps the same +/- counts.
+// Fall back to the stat-based signature when git couldn't supply one (e.g. a
+// deleted file, or older cached data) so the behavior degrades rather than breaks.
 function fileContentSig(f: ChangedFile): string {
+	if (f.contentSig) return `oid:${f.contentSig}`;
 	return `${f.status}:${f.additions}:${f.deletions}:${f.isBinary ? 'b' : 't'}`;
 }
 
