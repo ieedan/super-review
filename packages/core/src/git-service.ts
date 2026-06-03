@@ -728,6 +728,9 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 			.catch(() => '');
 		const numstatRaw = await git.raw(['diff', '--numstat', `${ref}^1`, ref]).catch(() => '');
 		const numstatMap = parseNumstat(numstatRaw);
+		const oidMap = parseRawOids(
+			await git.raw(['diff', '--raw', '--find-renames', `${ref}^1`, ref]).catch(() => '')
+		);
 		for (const line of nameStatus.split('\n').filter(Boolean)) {
 			const parts = line.split('\t');
 			const code = parts[0];
@@ -753,7 +756,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				status,
 				additions: ns.additions,
 				deletions: ns.deletions,
-				isBinary: ns.binary
+				isBinary: ns.binary,
+				contentSig: oidMap.get(p)
 			});
 		}
 
@@ -765,13 +769,17 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				.raw(['diff', '--numstat', EMPTY_TREE, `${ref}^3`])
 				.catch(() => '');
 			const untrackedMap = parseNumstat(untrackedNumstat);
+			const untrackedOids = parseRawOids(
+				await git.raw(['diff', '--raw', EMPTY_TREE, `${ref}^3`]).catch(() => '')
+			);
 			for (const [p, ns] of untrackedMap) {
 				stashFiles.push({
 					path: p,
 					status: 'added',
 					additions: ns.additions,
 					deletions: ns.deletions,
-					isBinary: ns.binary
+					isBinary: ns.binary,
+					contentSig: untrackedOids.get(p)
 				});
 			}
 		}
@@ -787,11 +795,18 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 		// cost: each git subprocess spawn is ~30-100ms on macOS, so a repo with
 		// 30 changed files paid 1-3s just for numstats. Untracked files aren't
 		// included in `diff HEAD`; we count those from disk in parallel below.
-		const [status, numstatRaw] = await Promise.all([
+		// The full `diff HEAD` patch rides along (one more subprocess) purely for
+		// its per-file `index` lines: unlike `--raw`, the patch makes git hash the
+		// working-tree blob, giving a content signature that moves on any real edit
+		// — even one that keeps the same +/- counts. Untracked files aren't in it;
+		// we hash those from disk alongside the line count below.
+		const [status, numstatRaw, patchRaw] = await Promise.all([
 			git.status(),
-			git.raw(['diff', '--numstat', 'HEAD']).catch(() => '')
+			git.raw(['diff', '--numstat', 'HEAD']).catch(() => ''),
+			git.raw(['diff', '--find-renames', 'HEAD']).catch(() => '')
 		]);
 		const numstatMap = parseNumstat(numstatRaw);
+		const oidMap = parsePatchOids(patchRaw);
 		const untrackedReadTasks: Array<{ index: number; filePath: string }> = [];
 
 		for (const f of status.files) {
@@ -814,7 +829,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				status: fullStatus,
 				additions: ns.additions,
 				deletions: ns.deletions,
-				isBinary: ns.binary
+				isBinary: ns.binary,
+				contentSig: oidMap.get(p)
 			});
 			// numstat returns nothing for untracked files (git doesn't track them)
 			// and sometimes for staged adds depending on what's in the index.
@@ -837,7 +853,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 						files[index] = {
 							...files[index],
 							additions: counted.additions,
-							isBinary: counted.binary
+							isBinary: counted.binary,
+							contentSig: counted.sig ?? files[index].contentSig
 						};
 					}
 				})
@@ -856,13 +873,17 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 		if (!baseExists || !headExists) {
 			return files;
 		}
-		// The name-status and numstat passes are independent — run them together so
-		// the switch into a branch/PR view waits on one round-trip, not two.
-		const [raw, numstatRaw] = await Promise.all([
+		// The name-status, numstat, and raw passes are independent — run them
+		// together so the switch into a branch/PR view waits on one round-trip, not
+		// three. The `--raw` pass carries the destination blob OID per file, which
+		// becomes the content signature used to resurface seen files that changed.
+		const [raw, numstatRaw, rawOidsRaw] = await Promise.all([
 			git.raw(['diff', '--name-status', '--find-renames', `${refs.base}...${refs.head}`]),
-			git.raw(['diff', '--numstat', `${refs.base}...${refs.head}`])
+			git.raw(['diff', '--numstat', `${refs.base}...${refs.head}`]),
+			git.raw(['diff', '--raw', '--find-renames', `${refs.base}...${refs.head}`]).catch(() => '')
 		]);
 		const numstatMap = parseNumstat(numstatRaw);
+		const oidMap = parseRawOids(rawOidsRaw);
 
 		for (const line of raw.split('\n').filter(Boolean)) {
 			const parts = line.split('\t');
@@ -893,7 +914,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				status,
 				additions: ns.additions,
 				deletions: ns.deletions,
-				isBinary: ns.binary
+				isBinary: ns.binary,
+				contentSig: oidMap.get(p)
 			});
 		}
 	}
@@ -904,6 +926,50 @@ interface NumstatRow {
 	additions: number;
 	deletions: number;
 	binary: boolean;
+}
+
+// Map each changed file's path to its destination blob OID, parsed from
+// `git diff --raw` output. Lines look like:
+//   :100644 100644 <srcsha> <dstsha> M\tpath
+//   :100644 100644 <srcsha> <dstsha> R100\toldpath\tnewpath
+// The OID is git's content hash, so it differs whenever the file's content
+// differs — even an edit that keeps the same +/- counts. An all-zero dst sha
+// means git didn't hash that side (a worktree blob under --raw); skip it so the
+// caller falls back to the stat signature.
+function parseRawOids(raw: string): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const line of raw.split('\n').filter(Boolean)) {
+		const tabIdx = line.indexOf('\t');
+		if (tabIdx === -1) continue;
+		const meta = line.slice(0, tabIdx).split(' ');
+		const dstSha = meta[3];
+		if (!dstSha || /^0+$/.test(dstSha)) continue;
+		const paths = line.slice(tabIdx + 1).split('\t');
+		const p = paths[paths.length - 1];
+		map.set(p, dstSha);
+	}
+	return map;
+}
+
+// Map each file's path to its destination blob OID, parsed from a full
+// `git diff` patch. Unlike `--raw`, the patch makes git hash the working-tree
+// content, so the `index <src>..<dst>` line carries a real dst OID even for
+// unstaged edits — the only batched way to get a content signature for the
+// working tree. Pure renames (100% similar) have no index line and are simply
+// absent, so the caller falls back to the stat signature for them.
+function parsePatchOids(patch: string): Map<string, string> {
+	const map = new Map<string, string>();
+	let currentPath: string | undefined;
+	for (const line of patch.split('\n')) {
+		if (line.startsWith('diff --git ')) {
+			const bIdx = line.indexOf(' b/');
+			currentPath = bIdx === -1 ? undefined : line.slice(bIdx + 3);
+		} else if (currentPath && line.startsWith('index ')) {
+			const m = line.match(/^index [0-9a-f]+\.\.([0-9a-f]+)/);
+			if (m && !/^0+$/.test(m[1])) map.set(currentPath, m[1]);
+		}
+	}
+	return map;
 }
 
 function parseNumstat(raw: string): Map<string, NumstatRow> {
@@ -941,28 +1007,32 @@ async function safeNumstat(
 
 // Raw newline count of a working-copy file, plus a quick null-byte probe to
 // flag binaries. Used as a fallback when git numstat can't produce a count
-// (untracked files, fresh adds).
+// (untracked files, fresh adds). Also returns a content signature (sha1 of the
+// bytes) so untracked files, which never reach `git diff`, still resurface when
+// edited; oversized files fall back to a size-based signature.
 async function countWorkingLines(
 	repoPath: string,
 	filePath: string
-): Promise<{ additions: number; binary: boolean } | null> {
+): Promise<{ additions: number; binary: boolean; sig?: string } | null> {
 	try {
 		const abs = path.join(repoPath, filePath);
 		const stat = await fs.stat(abs);
 		if (!stat.isFile()) return null;
-		if (stat.size === 0) return { additions: 0, binary: false };
-		if (stat.size > MAX_FILE_BYTES) return { additions: 0, binary: false };
+		if (stat.size === 0) return { additions: 0, binary: false, sig: 'empty' };
+		if (stat.size > MAX_FILE_BYTES)
+			return { additions: 0, binary: false, sig: `size:${stat.size}` };
 		const buf = await fs.readFile(abs);
+		const sig = createHash('sha1').update(buf).digest('hex');
 		const probeEnd = Math.min(buf.length, 8192);
 		for (let i = 0; i < probeEnd; i++) {
-			if (buf[i] === 0) return { additions: 0, binary: true };
+			if (buf[i] === 0) return { additions: 0, binary: true, sig };
 		}
 		let lines = 0;
 		for (let i = 0; i < buf.length; i++) {
 			if (buf[i] === 0x0a) lines++;
 		}
 		if (buf[buf.length - 1] !== 0x0a) lines++;
-		return { additions: lines, binary: false };
+		return { additions: lines, binary: false, sig };
 	} catch {
 		return null;
 	}

@@ -117,6 +117,7 @@
 	let draftOpenFileOnArrowNav = $state<boolean>(true);
 	let draftPrMergedBehavior = $state<PrMergedBehavior>('prompt');
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
+	let draftUnmarkSeenOnChange = $state<boolean>(true);
 	let draftMaxDiffLines = $state<number>(1500);
 	let draftWindowWidth = $state<number>(WINDOW_BOUNDS.defaultWidth);
 	let draftWindowHeight = $state<number>(WINDOW_BOUNDS.defaultHeight);
@@ -162,6 +163,7 @@
 			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
 			draftPrMergedBehavior = app.prMergedBehavior;
 			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
+			draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
 			draftMaxDiffLines = app.maxDiffLines;
 			draftWindowWidth = app.windowWidth;
 			draftWindowHeight = app.windowHeight;
@@ -261,6 +263,9 @@
 		}
 		if (draftAutoRemoveMergedBranch !== app.autoRemoveMergedBranch) {
 			promises.push(actions.setAutoRemoveMergedBranch(draftAutoRemoveMergedBranch));
+		}
+		if (draftUnmarkSeenOnChange !== app.unmarkSeenOnChange) {
+			promises.push(actions.setUnmarkSeenOnChange(draftUnmarkSeenOnChange));
 		}
 		const parsedMaxDiffLines = Number(draftMaxDiffLines);
 		const clampedMaxDiffLines =
@@ -790,6 +795,30 @@
 								<span class="text-xs text-muted-foreground">
 									After switching back, delete the merged branch from your machine without asking.
 									The remote is never touched.
+								</span>
+							</label>
+						</div>
+					</div>
+				</div>
+
+				<div>
+					<h3 class="text-base font-semibold">Reviewing</h3>
+					<p class="mt-1 text-xs text-muted-foreground">
+						How the review view tracks which files you've already looked at.
+					</p>
+
+					<div class="mt-3">
+						<div class="flex items-start gap-2.5">
+							<Checkbox
+								id="unmark-seen-on-change"
+								bind:checked={draftUnmarkSeenOnChange}
+								class="mt-0.5"
+							/>
+							<label for="unmark-seen-on-change" class="grid cursor-pointer gap-0.5 leading-snug">
+								<span class="text-sm font-medium">Unmark seen files when they change</span>
+								<span class="text-xs text-muted-foreground">
+									When a file you marked as seen picks up new changes, fresh commits pushed to the
+									branch, or further edits, clear its seen mark so it resurfaces for review.
 								</span>
 							</label>
 						</div>

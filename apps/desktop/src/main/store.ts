@@ -25,8 +25,11 @@ export interface StoredGithubAccount extends GithubAccount {
 interface Schema {
 	repos: Record<string, RepoInfo>;
 	prefs: UserPrefs;
-	// seen[repoId][contextKey] = filePath[]
-	seen: Record<string, Record<string, string[]>>;
+	// seen[repoId][contextKey] = { [filePath]: contentSig }. The signature is the
+	// file's diff fingerprint at mark-seen time, used to clear the mark when the
+	// file later changes (see UserPrefs.unmarkSeenOnChange). Older builds stored a
+	// bare filePath[]; normalizeSeen migrates that shape on read (empty sigs).
+	seen: Record<string, Record<string, Record<string, string>>>;
 	// collapsedFiles[repoId][contextKey] = filePath[]
 	collapsedFiles: Record<string, Record<string, string[]>>;
 	// Unsent commit message drafts, keyed by repoId.
@@ -58,6 +61,7 @@ const defaults: Schema = {
 		animationsEnabled: false,
 		prMergedBehavior: 'prompt',
 		autoRemoveMergedBranch: false,
+		unmarkSeenOnChange: true,
 		hotkeys: DEFAULT_HOTKEYS,
 		windowWidth: WINDOW_BOUNDS.defaultWidth,
 		windowHeight: WINDOW_BOUNDS.defaultHeight,
@@ -209,17 +213,37 @@ export function setPrefs(patch: Partial<UserPrefs>): UserPrefs {
 	return next;
 }
 
-export function getSeen(repoId: string, contextKey: string): string[] {
-	return store.get('seen')[repoId]?.[contextKey] ?? [];
+// Coerce a stored seen entry into a path→signature map, migrating the legacy
+// filePath[] shape (no signatures) written by older builds.
+function normalizeSeen(raw: Record<string, string> | string[] | undefined): Record<string, string> {
+	if (!raw) return {};
+	if (Array.isArray(raw)) return Object.fromEntries(raw.map((p) => [p, '']));
+	return { ...raw };
 }
 
-export function setSeen(repoId: string, contextKey: string, filePath: string, seen: boolean): void {
+export function getSeen(repoId: string, contextKey: string): string[] {
+	return Object.keys(normalizeSeen(store.get('seen')[repoId]?.[contextKey]));
+}
+
+// The content signatures captured when each path was marked seen. Paths from
+// older builds (or marked seen before signatures were tracked) report ''.
+export function getSeenSignatures(repoId: string, contextKey: string): Record<string, string> {
+	return normalizeSeen(store.get('seen')[repoId]?.[contextKey]);
+}
+
+export function setSeen(
+	repoId: string,
+	contextKey: string,
+	filePath: string,
+	seen: boolean,
+	sig = ''
+): void {
 	const all = store.get('seen');
 	const forRepo = (all[repoId] ??= {});
-	const forCtx = new Set(forRepo[contextKey] ?? []);
-	if (seen) forCtx.add(filePath);
-	else forCtx.delete(filePath);
-	forRepo[contextKey] = [...forCtx];
+	const forCtx = normalizeSeen(forRepo[contextKey]);
+	if (seen) forCtx[filePath] = sig;
+	else delete forCtx[filePath];
+	forRepo[contextKey] = forCtx;
 	store.set('seen', all);
 }
 
