@@ -57,6 +57,7 @@
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM, WINDOW_BOUNDS } from '@shared/types';
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
+	import { DIFF_THEMES, diffThemePair } from '$lib/diff-themes';
 	import type {
 		Accent,
 		DiffLayout,
@@ -125,12 +126,17 @@
 	let draftHiddenDiffPatterns = $state<string[]>([]);
 	let newPattern = $state<string>('');
 	let draftTheme = $state<'light' | 'dark'>('dark');
+	let draftDiffTheme = $state<string>('pierre');
 	let draftAccent = $state<Accent>('super');
 	let draftCodeFont = $state<string>('system');
 	let draftUiFont = $state<string>('system');
 	let draftEditor = $state<EditorKind | null>(null);
 	let draftTerminal = $state<TerminalKind | null>(null);
 	let draftHotkeys = $state<Hotkeys>({ ...DEFAULT_HOTKEYS });
+
+	// The diff theme the previews on this tab render with — tracks the in-progress
+	// selection so the split/unified and code-font previews reflect it too.
+	const draftDiffThemePair = $derived(diffThemePair(draftDiffTheme));
 
 	$effect(() => {
 		if (!dialogOpen) return;
@@ -171,6 +177,7 @@
 			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
 			newPattern = '';
 			draftTheme = app.theme;
+			draftDiffTheme = app.diffTheme;
 			draftAccent = app.accent;
 			draftCodeFont = app.codeFont;
 			draftUiFont = app.uiFont;
@@ -296,6 +303,9 @@
 		}
 		if (draftTheme !== app.theme) {
 			promises.push(actions.setTheme(draftTheme));
+		}
+		if (draftDiffTheme !== app.diffTheme) {
+			promises.push(actions.setDiffTheme(draftDiffTheme));
 		}
 		if (draftAccent !== app.accent) {
 			promises.push(actions.setAccent(draftAccent));
@@ -548,7 +558,7 @@
 						class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5"
 						style="--code-font: {codeFontCss(draftCodeFont)}"
 					>
-						<DiffStylePreview mode={draftViewMode} />
+						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
 					</div>
 				</div>
 
@@ -581,7 +591,46 @@
 									{opt.label}
 								</div>
 								<div class="w-full bg-background p-1.5">
-									<DiffStylePreview mode={opt.mode} />
+									<DiffStylePreview mode={opt.mode} theme={draftDiffThemePair} />
+								</div>
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<div>
+					<h3 class="text-base font-semibold">Diff theme</h3>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Syntax highlighting theme for diff code blocks. Each theme has a light and dark variant
+						that follows your appearance.
+					</p>
+
+					<div class="mt-4 grid grid-cols-2 gap-3">
+						{#each DIFF_THEMES as opt (opt.id)}
+							{@const active = draftDiffTheme === opt.id}
+							<button
+								type="button"
+								onclick={() => (draftDiffTheme = opt.id)}
+								class={cn(
+									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
+									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
+								)}
+							>
+								<div
+									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
+								>
+									<span
+										class={cn(
+											'grid size-3.5 place-items-center rounded-full border',
+											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
+										)}
+									>
+										{#if active}<Check class="size-2.5" />{/if}
+									</span>
+									{opt.label}
+								</div>
+								<div class="w-full bg-background p-1.5">
+									<DiffStylePreview mode={draftViewMode} theme={diffThemePair(opt.id)} />
 								</div>
 							</button>
 						{/each}

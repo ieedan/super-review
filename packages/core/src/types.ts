@@ -666,6 +666,11 @@ export interface UserPrefs {
 	// one file's diff at a time ('single'). Defaults to 'scroll'.
 	diffLayout: DiffLayout;
 	theme: 'light' | 'dark';
+	// Syntax-highlighting theme for diff code blocks, identified by a preset id
+	// from DIFF_THEMES (see the renderer's lib/diff-themes). Each preset bundles a
+	// dark and a light variant, so the diff follows the app's light/dark `theme`.
+	// Defaults to 'pierre'. Unknown ids fall back to the default at resolve time.
+	diffTheme: string;
 	accent: Accent;
 	activeRepoId?: string;
 	contextTab?: ContextTab;
