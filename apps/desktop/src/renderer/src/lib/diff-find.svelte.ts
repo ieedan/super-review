@@ -731,9 +731,55 @@ async function preloadAllPatches(): Promise<void> {
 	await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 }
 
+// Pull the current text selection so Cmd/Ctrl+F can seed the find bar with it,
+// the way browsers and VSCode do. The diff content lives inside per-file shadow
+// roots, where the document-level selection retargets to the shadow host and
+// `window.getSelection().toString()` comes back empty — so when the top-level
+// selection is empty we fall back to Chromium's non-standard
+// `ShadowRoot.getSelection()` on the registered sections' shadow roots.
+function readSelectionText(): string {
+	const top = window.getSelection()?.toString() ?? '';
+	const raw = top.trim() ? top : selectionTextFromSections();
+	const trimmed = raw.trim();
+	// Only seed single-line selections: a multi-line selection won't match the
+	// patch text anyway (block separators break matches across lines), and
+	// clobbering the box with it would be more surprising than useful.
+	if (!trimmed || /[\r\n]/.test(trimmed)) return '';
+	return trimmed;
+}
+
+type ShadowRootWithSelection = ShadowRoot & { getSelection?: () => Selection | null };
+
+function selectionTextFromSections(): string {
+	for (const reg of sections.values()) {
+		const text = shadowSelectionText(reg.sectionEl);
+		if (text) return text;
+	}
+	return '';
+}
+
+function shadowSelectionText(el: Element): string {
+	const root = el.shadowRoot as ShadowRootWithSelection | null;
+	if (root && typeof root.getSelection === 'function') {
+		const text = root.getSelection()?.toString() ?? '';
+		if (text.trim()) return text;
+	}
+	const kids = el.children;
+	for (let i = 0; i < kids.length; i++) {
+		const text = shadowSelectionText(kids[i]);
+		if (text) return text;
+	}
+	return '';
+}
+
 export function openFind(): void {
+	const selection = readSelectionText();
 	find.open = true;
 	find.focusNonce++;
+	// Seed the query with the current selection, like browsers / VSCode. The
+	// FindBar input reflects find.query and selects it on open, so the next
+	// keystroke still replaces it.
+	if (selection && selection !== find.query) find.query = selection;
 	// Always kick off a preload so unmounted files contribute to the count.
 	// Safe to call repeatedly — cached files are skipped, in-flight session
 	// is superseded by the new one.
