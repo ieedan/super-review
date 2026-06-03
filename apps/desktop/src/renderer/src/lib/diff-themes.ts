@@ -12,6 +12,27 @@
 // (Shiki) identifiers the main process never needs to know about.
 
 import type { DiffsThemeNames, ThemesType } from '@pierre/diffs';
+import {
+	registerBuiltInDiffThemes,
+	ensureCustomDiffTheme,
+	defaultCustomThemeNames,
+	RGCB_DARK,
+	RGCB_LIGHT,
+	HC_DARK,
+	HC_LIGHT,
+	type DiffColorPair
+} from '$lib/diff-custom-themes';
+
+// Register the rgcb / high-contrast / default-custom Shiki themes now, at module
+// load. Every diff path imports this module, so the loaders are in place before
+// the highlighter preloads or the worker pool resolves any theme.
+registerBuiltInDiffThemes();
+
+// The preset id for the user-tunable palette. Its dark/light theme names are
+// derived from the user's chosen colors at resolve time (see diffThemePair), so
+// the names baked into the preset below are just the default-palette pair used
+// for preloading and as a fallback.
+export const CUSTOM_DIFF_THEME = 'pierre-custom';
 
 export interface DiffThemePreset {
 	id: string;
@@ -28,6 +49,18 @@ export interface DiffThemePreset {
 export const DIFF_THEMES: DiffThemePreset[] = [
 	{ id: 'pierre', label: 'Pierre', dark: 'pierre-dark', light: 'pierre-light' },
 	{ id: 'pierre-soft', label: 'Pierre Soft', dark: 'pierre-dark-soft', light: 'pierre-light-soft' },
+	// Red-green-color-blind accommodations: same Pierre syntax theme, only the
+	// add/del diff colors differ (see diff-custom-themes).
+	{ id: 'pierre-rgcb', label: 'Pierre (rgcb)', dark: RGCB_DARK, light: RGCB_LIGHT },
+	{ id: 'pierre-hc', label: 'Pierre (high contrast)', dark: HC_DARK, light: HC_LIGHT },
+	// User-tunable palette. dark/light here are the default-palette names; the live
+	// pair is resolved from the user's colors in diffThemePair.
+	{
+		id: CUSTOM_DIFF_THEME,
+		label: 'Pierre (custom)',
+		dark: defaultCustomThemeNames()[0],
+		light: defaultCustomThemeNames()[1]
+	},
 	{ id: 'github', label: 'GitHub', dark: 'github-dark-default', light: 'github-light-default' },
 	{ id: 'one', label: 'One', dark: 'one-dark-pro', light: 'one-light' },
 	{ id: 'vitesse', label: 'Vitesse', dark: 'vitesse-dark', light: 'vitesse-light' },
@@ -59,9 +92,19 @@ export function resolveDiffThemePreset(id: string | null | undefined): DiffTheme
 	return (id != null && PRESETS_BY_ID.get(id)) || PRESETS_BY_ID.get(DEFAULT_DIFF_THEME)!;
 }
 
-// The `{ dark, light }` pair to hand @pierre/diffs as its `theme` option. Returns
-// the same object instance for a given id across calls.
-export function diffThemePair(id: string | null | undefined): ThemesType {
+// The `{ dark, light }` pair to hand @pierre/diffs as its `theme` option. For
+// fixed presets this returns the same object instance for a given id across
+// calls. The 'pierre-custom' preset resolves its pair from `customColors` (its
+// add/del colors), versioning the theme name by color so edits take effect (and
+// returning a stable object per color combo so previews don't rebuild on every
+// tick).
+export function diffThemePair(
+	id: string | null | undefined,
+	customColors?: DiffColorPair
+): ThemesType {
+	if (id === CUSTOM_DIFF_THEME && customColors != null) {
+		return ensureCustomDiffTheme(customColors);
+	}
 	return (id != null && PAIRS_BY_ID.get(id)) || PAIRS_BY_ID.get(DEFAULT_DIFF_THEME)!;
 }
 

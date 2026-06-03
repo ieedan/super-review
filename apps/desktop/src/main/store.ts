@@ -50,6 +50,7 @@ const defaults: Schema = {
 		diffLayout: 'scroll',
 		theme: 'dark',
 		diffTheme: 'pierre',
+		diffCustomColors: { addition: '#3b9eff', deletion: '#ff7a3d' },
 		accent: 'super',
 		unstagedFileListLayout: 'tree',
 		branchFileListLayout: 'tree',
