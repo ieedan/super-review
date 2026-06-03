@@ -12,6 +12,18 @@
 // (Shiki) identifiers the main process never needs to know about.
 
 import type { DiffsThemeNames, ThemesType } from '@pierre/diffs';
+import {
+	registerBuiltInDiffThemes,
+	RGCB_DARK,
+	RGCB_LIGHT,
+	HC_DARK,
+	HC_LIGHT
+} from '$lib/diff-custom-themes';
+
+// Register the accessibility (deuteranopia / high-contrast) Shiki themes now, at
+// module load. Every diff path imports this module, so the loaders are in place
+// before the highlighter preloads or the worker pool resolves any theme.
+registerBuiltInDiffThemes();
 
 export interface DiffThemePreset {
 	id: string;
@@ -28,6 +40,10 @@ export interface DiffThemePreset {
 export const DIFF_THEMES: DiffThemePreset[] = [
 	{ id: 'pierre', label: 'Pierre', dark: 'pierre-dark', light: 'pierre-light' },
 	{ id: 'pierre-soft', label: 'Pierre Soft', dark: 'pierre-dark-soft', light: 'pierre-light-soft' },
+	// Red-green-color-blind accommodations: same Pierre syntax theme, only the
+	// add/del diff colors differ (see diff-custom-themes).
+	{ id: 'pierre-rgcb', label: 'Pierre Deuteranopia', dark: RGCB_DARK, light: RGCB_LIGHT },
+	{ id: 'pierre-hc', label: 'Pierre High Contrast', dark: HC_DARK, light: HC_LIGHT },
 	{ id: 'github', label: 'GitHub', dark: 'github-dark-default', light: 'github-light-default' },
 	{ id: 'one', label: 'One', dark: 'one-dark-pro', light: 'one-light' },
 	{ id: 'vitesse', label: 'Vitesse', dark: 'vitesse-dark', light: 'vitesse-light' },

@@ -634,6 +634,7 @@
 							</DropdownMenu.Content>
 						</DropdownMenu.Root>
 					</div>
+
 					<div class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5">
 						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
 					</div>
