@@ -1,6 +1,20 @@
 import { promises as fs, existsSync, watch, type FSWatcher } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import type { Session, SessionSummary } from './types.js';
+
+const execFileAsync = promisify(execFile);
+
+// Session manifests embed full patches and (base64) images, so a single one can
+// run to several MB — well past execFile's 1 MB default. Cap generously so a
+// `git show` of a fat manifest doesn't get truncated into a parse error.
+const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
+
+// Git always addresses paths with forward slashes, so the in-tree sessions
+// location is hardcoded posix rather than derived from `sessionsDir` (which uses
+// the OS separator). Used by the read-from-ref helpers below.
+const SESSIONS_TREE_PATH = '.super-review/sessions';
 
 // Sessions live inside the repo so they can be committed to a branch and travel
 // with a PR — a reviewer can pull the branch and open the documented tour without
@@ -58,6 +72,75 @@ export async function listSessions(repoPath: string): Promise<SessionSummary[]> 
 
 export async function getSession(repoPath: string, id: string): Promise<Session | null> {
 	return readSession(sessionPath(repoPath, id));
+}
+
+// ─── Reading sessions from a git ref ─────────────────────────────────────────
+// Sessions are committed into the branch (see the file header), so reviewing a
+// branch/PR read-only — without checking it out — means reading that ref's
+// committed manifests straight from git's object store rather than the working
+// tree on disk. This mirrors how the read-only diff reads file content from refs
+// (`git show <ref>:<path>`), so the Sessions tab matches the Branch diff for the
+// branch being viewed instead of leaking the checked-out branch's sessions.
+
+// Manifest filenames committed under `.super-review/sessions` at a ref, via
+// `git ls-tree`. A missing ref or missing sessions dir is just "no sessions".
+async function listSessionFilesAtRef(repoPath: string, ref: string): Promise<string[]> {
+	try {
+		const { stdout } = await execFileAsync(
+			'git',
+			['ls-tree', '--name-only', `${ref}:${SESSIONS_TREE_PATH}`],
+			{ cwd: repoPath }
+		);
+		return stdout.split('\n').filter((name) => name.endsWith('.json'));
+	} catch {
+		return [];
+	}
+}
+
+// One manifest read from a git ref. Missing path or malformed JSON yields null,
+// matching the disk reader's tolerance.
+async function readSessionAtRef(
+	repoPath: string,
+	ref: string,
+	name: string
+): Promise<Session | null> {
+	try {
+		const { stdout } = await execFileAsync(
+			'git',
+			['show', `${ref}:${SESSIONS_TREE_PATH}/${name}`],
+			{ cwd: repoPath, maxBuffer: MAX_MANIFEST_BYTES }
+		);
+		return JSON.parse(stdout) as Session;
+	} catch {
+		return null;
+	}
+}
+
+// All sessions committed at a git ref, newest-updated first — the read-only
+// counterpart of `listSessions`.
+export async function listSessionsAtRef(repoPath: string, ref: string): Promise<SessionSummary[]> {
+	const names = await listSessionFilesAtRef(repoPath, ref);
+	const sessions = await Promise.all(names.map((name) => readSessionAtRef(repoPath, ref, name)));
+	return sessions
+		.filter((s): s is Session => s !== null)
+		.map(toSummary)
+		.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+// A single session (full detail) committed at a git ref — the read-only
+// counterpart of `getSession`.
+export async function getSessionAtRef(
+	repoPath: string,
+	ref: string,
+	id: string
+): Promise<Session | null> {
+	return readSessionAtRef(repoPath, ref, `${id}.json`);
+}
+
+// Count of sessions committed at a git ref — the read-only counterpart of
+// `countSessions`, driving the tab badge while a branch/PR is viewed read-only.
+export async function countSessionsAtRef(repoPath: string, ref: string): Promise<number> {
+	return (await listSessionFilesAtRef(repoPath, ref)).length;
 }
 
 // Find a session by its upsert key (the harness conversation/run id). Used by

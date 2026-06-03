@@ -1262,6 +1262,17 @@ function applyContextTab(tab: ContextTab): void {
 	});
 }
 
+// The git ref whose committed sessions the UI should show, or null to read the
+// working-tree sessions on disk. Sessions are committed into the branch, so a
+// read-only view shows the viewed branch/PR's sessions (read from its ref) — the
+// same ref the Branch diff reads as its head. The checked-out branch returns null
+// so an agent's not-yet-committed CLI saves still show live from disk.
+function sessionRef(): string | null {
+	if (app.viewPR) return `pr/${app.viewPR.number}/head`;
+	if (app.viewBranch && app.viewBranch !== app.currentBranch) return app.viewBranch;
+	return null;
+}
+
 // Resolve which DiffContext the current tab should drive.
 function contextForTab(tab: ContextTab): DiffContext {
 	if (tab === 'branch') {
@@ -1275,7 +1286,9 @@ function contextForTab(tab: ContextTab): DiffContext {
 		return { kind: 'branch', base, head };
 	}
 	if (tab === 'sessions' && app.activeSessionId) {
-		return { kind: 'session', sessionId: app.activeSessionId };
+		// Read the open session from the viewed branch/PR's ref when reviewing
+		// read-only, so its frozen diff matches the branch's committed manifest.
+		return { kind: 'session', sessionId: app.activeSessionId, ref: sessionRef() ?? undefined };
 	}
 	// Sessions without an open session show the list, not a diff — fall back to
 	// the working tree context (unused while the list is shown).
@@ -1314,8 +1327,11 @@ async function refreshSessionCount(): Promise<void> {
 		return;
 	}
 	const repoId = app.activeRepo.id;
+	// Count the viewed branch/PR's sessions when reviewing read-only, so the badge
+	// matches the list shown; null follows the working tree.
+	const ref = sessionRef();
 	try {
-		const count = await window.api.sessions.count(repoId);
+		const count = await window.api.sessions.count(repoId, ref);
 		if (app.activeRepo?.id === repoId) app.sessionCount = count;
 	} catch {
 		// keep previous count
@@ -1806,7 +1822,9 @@ export const actions = {
 			return;
 		}
 		const repoId = app.activeRepo.id;
-		const sessions = await window.api.sessions.list(repoId);
+		// While a branch/PR is viewed read-only, list its committed sessions (read
+		// from the ref) instead of the checked-out branch's working-tree sessions.
+		const sessions = await window.api.sessions.list(repoId, sessionRef());
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 		app.sessions = sessions;
 		// Keep the badge in step with the freshly loaded list.
@@ -1824,8 +1842,11 @@ export const actions = {
 	// existing context machinery via a `session` DiffContext. Also loads the full
 	// session detail (incl. tour steps) so the tour can render.
 	async openSession(id: string): Promise<void> {
+		// The ref a read-only view reads sessions from; the diff handlers and the
+		// detail fetch below both honor it so the tour matches the viewed branch.
+		const ref = sessionRef();
 		app.activeSessionId = id;
-		app.diffContext = { kind: 'session', sessionId: id };
+		app.diffContext = { kind: 'session', sessionId: id, ref: ref ?? undefined };
 		app.activePR = null;
 		app.prComments = {};
 		app.pendingComposers = {};
@@ -1836,7 +1857,7 @@ export const actions = {
 		app.fileSearchQuery = '';
 		if (app.activeRepo) {
 			const repoId = app.activeRepo.id;
-			void window.api.sessions.get(repoId, id).then((detail) => {
+			void window.api.sessions.get(repoId, id, ref).then((detail) => {
 				// Guard against a slow fetch landing after the user moved on.
 				if (app.activeSessionId === id && app.activeRepo?.id === repoId) {
 					app.activeSessionDetail = detail;
@@ -2121,8 +2142,8 @@ export const actions = {
 	// in-progress work) on another branch is never disturbed. Files are read from
 	// git refs via the existing `branch` diff context. The Unstaged tab is hidden
 	// while a read-only view is active (no working tree to commit against), so we
-	// move off it onto the Branch tab. The Sessions tab is branch-independent and
-	// is left alone (including any open session).
+	// move off it onto the Branch tab. Sessions are committed into the branch, so
+	// the Sessions tab re-targets the viewed branch's committed sessions too.
 	async viewBranchReadOnly(branch: string): Promise<void> {
 		if (!app.activeRepo) return;
 		// Viewing the already-checked-out branch is just "return home".
@@ -2148,7 +2169,13 @@ export const actions = {
 			// loading state instead of the previous branch's stale diff.
 			if (!hydrateFilesFromCache()) showLoadingFiles();
 		}
-		if (app.contextTab !== 'sessions') {
+		// Sessions follow the viewed branch (read from its ref): refresh the badge
+		// always; reload the on-screen list, which re-opens the active session
+		// against the viewed ref or drops it when that branch doesn't have it.
+		void refreshSessionCount();
+		if (app.contextTab === 'sessions') {
+			await actions.loadSessions();
+		} else {
 			await refreshFiles();
 		}
 	},
@@ -2157,13 +2184,13 @@ export const actions = {
 	// fetch the PR's head ref (and base) into local refs and show it on the
 	// Branch tab against the default branch — the same diff a checkout would
 	// produce, but the working tree is untouched. Mirrors `viewBranchReadOnly`:
-	// the Unstaged tab hides and the Sessions tab is left alone.
+	// the Unstaged tab hides and the Sessions tab re-targets the PR's sessions.
 	async viewPRReadOnly(pr: PRSummary): Promise<void> {
 		if (!app.activeRepo) return;
 		if (app.viewPR?.number === pr.number) return;
 		// Show the loading state up front — fetching the PR ref is a network round
 		// trip, so without this the previous diff would sit there looking frozen
-		// for the whole fetch. (The Sessions tab keeps its open session instead.)
+		// for the whole fetch. (The Sessions tab reloads once the ref is fetched.)
 		if (app.contextTab !== 'sessions') showLoadingFiles();
 		try {
 			// `pr` is a $state proxy; snapshot so it survives the IPC structured
@@ -2181,7 +2208,12 @@ export const actions = {
 				app.diffContext = contextForTab('branch');
 				hydrateFilesFromCache();
 			}
-			if (app.contextTab !== 'sessions') {
+			// The PR's head ref is now fetched, so its committed sessions are
+			// readable: refresh the badge and reload the on-screen list.
+			void refreshSessionCount();
+			if (app.contextTab === 'sessions') {
+				await actions.loadSessions();
+			} else {
 				await refreshFiles();
 			}
 		} catch (err) {
@@ -2197,6 +2229,13 @@ export const actions = {
 		if (app.viewBranch == null && app.viewPR == null) return;
 		app.viewBranch = null;
 		app.viewPR = null;
+		// Sessions follow the checked-out branch (working tree) again now the view
+		// is dropped: refresh the badge always, reload the list when it's on screen.
+		void refreshSessionCount();
+		if (app.contextTab === 'sessions') {
+			await actions.loadSessions();
+			return;
+		}
 		// Dropping the read-only view may land us back on a plain default-branch
 		// checkout, where the Branch tab is empty and hidden — fall back to Unstaged.
 		if (app.contextTab === 'branch' && !canViewBranchTab()) {
@@ -2206,9 +2245,7 @@ export const actions = {
 		if (app.contextTab === 'branch') {
 			app.diffContext = contextForTab('branch');
 		}
-		if (app.contextTab !== 'sessions') {
-			await refreshFiles();
-		}
+		await refreshFiles();
 	},
 
 	// User-initiated branch switch (the branch picker). With a clean tree this is
