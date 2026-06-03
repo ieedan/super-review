@@ -25,6 +25,15 @@
 	let open = $state(false);
 	let filter = $state('');
 
+	// Refresh dirty markers on open and clear the filter on close. Keying off
+	// `open` (rather than the popover's onOpenChange) covers every close path:
+	// selecting a repo, the context-menu actions, and the dialogs all close the
+	// picker by setting `open` directly, which never fires onOpenChange.
+	$effect(() => {
+		if (open) void actions.refreshDirtyRepos();
+		else filter = '';
+	});
+
 	async function pick(id: string): Promise<void> {
 		open = false;
 		await actions.switchRepo(id);
@@ -159,13 +168,7 @@
 	);
 </script>
 
-<Popover.Root
-	bind:open
-	onOpenChange={(v) => {
-		if (v) void actions.refreshDirtyRepos();
-		else filter = '';
-	}}
->
+<Popover.Root bind:open>
 	<Popover.Trigger class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[260px]')}>
 		{#if app.activeRepo?.iconDataUrl}
 			<img src={app.activeRepo.iconDataUrl} alt="" class="size-4 rounded-sm object-contain" />
