@@ -58,6 +58,14 @@
 		prsRequested = false;
 	}
 
+	// Reset whenever the picker closes. Keying off `open` (rather than the
+	// popover's onOpenChange) covers every close path: checking out a branch,
+	// opening a PR, and the context-menu/dialog actions all close the picker by
+	// setting `open` directly, which never fires onOpenChange.
+	$effect(() => {
+		if (!open) reset();
+	});
+
 	function selectTab(value: string): void {
 		tab = value === 'prs' ? 'prs' : 'branches';
 		// The two lists filter different things; carrying the query across is
@@ -280,12 +288,7 @@
 	const triggerLabel = $derived(viewedPRLabel() ?? viewedBranch() ?? 'no branch');
 </script>
 
-<Popover.Root
-	bind:open
-	onOpenChange={(v) => {
-		if (!v) reset();
-	}}
->
+<Popover.Root bind:open>
 	<Popover.Trigger
 		disabled={!app.activeRepo}
 		class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'font-normal')}
