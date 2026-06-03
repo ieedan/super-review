@@ -168,8 +168,10 @@ export type DiffContext =
 	| { kind: 'workingTree' }
 	| { kind: 'pr'; prNumber: number }
 	// A frozen snapshot of changes documented by a coding agent. Files don't come
-	// from git — they're read back from the session manifest on disk.
-	| { kind: 'session'; sessionId: string }
+	// from git — they're read back from the session manifest. `ref` reads the
+	// manifest committed on a branch/PR viewed read-only (so a reviewer sees that
+	// branch's sessions without checking it out); omitted reads the working tree.
+	| { kind: 'session'; sessionId: string; ref?: string }
 	// A managed stash entry, addressed by its resolved commit SHA (`ref`). The
 	// stash commit's parents back the diff: `^1` HEAD parent, `^2` index, `^3`
 	// untracked tree. Index-shift-proof because we always resolve to a SHA.
@@ -978,13 +980,18 @@ export interface PreloadAPI {
 		setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
 	};
 	sessions: {
-		list(repoId: string): Promise<SessionSummary[]>;
-		get(repoId: string, id: string): Promise<Session | null>;
+		// A `ref` (a branch name or fetched PR head ref) reads the sessions
+		// committed on that ref — the branch/PR being reviewed read-only — instead
+		// of the working tree on disk. Null/omitted reads disk (the checked-out
+		// branch, picking up an agent's not-yet-committed CLI saves).
+		list(repoId: string, ref?: string | null): Promise<SessionSummary[]>;
+		get(repoId: string, id: string, ref?: string | null): Promise<Session | null>;
 		remove(repoId: string, id: string): Promise<void>;
 		// Delete every session for the repo (the pre-merge purge).
 		clear(repoId: string): Promise<void>;
-		// Cheap count of the repo's sessions (drives the tab badge).
-		count(repoId: string): Promise<number>;
+		// Cheap count of the repo's sessions (drives the tab badge). A `ref` counts
+		// the sessions committed on that ref (a read-only branch/PR view).
+		count(repoId: string, ref?: string | null): Promise<number>;
 		// Start/stop live updates for this window's active repo. The main process
 		// fs-watches the repo's .super-review/sessions dir and emits
 		// `onSessionsChanged`; pass null (or call unwatch) to stop.
