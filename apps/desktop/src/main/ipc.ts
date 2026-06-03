@@ -96,9 +96,12 @@ import * as gh from './github-service.js';
 import {
 	clearSessions,
 	countSessions,
+	countSessionsAtRef,
 	deleteSession,
 	getSession,
+	getSessionAtRef,
 	listSessions,
+	listSessionsAtRef,
 	watchSessionsDir
 } from '@super-review/core';
 import { installSkill, isSkillInstalled } from './skill-service.js';
@@ -487,10 +490,14 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:listChangedFiles',
 		async (_e, repoId: string, ctx: DiffContext): Promise<ChangedFile[]> => {
-			// Sessions are frozen snapshots on disk, not live git state — serve their
-			// file list straight from the manifest.
+			// Sessions are frozen snapshots, not live git state — serve their file
+			// list straight from the manifest. `ctx.ref` reads the manifest committed
+			// on a branch/PR viewed read-only; otherwise it's on disk.
 			if (ctx.kind === 'session') {
-				const session = await getSession(repoOrThrow(repoId).path, ctx.sessionId);
+				const repoPath = repoOrThrow(repoId).path;
+				const session = ctx.ref
+					? await getSessionAtRef(repoPath, ctx.ref, ctx.sessionId)
+					: await getSession(repoPath, ctx.sessionId);
 				return (session?.files ?? []).map((f) => ({
 					path: f.path,
 					oldPath: f.oldPath,
@@ -507,9 +514,13 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:getDiff',
 		async (_e, repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData> => {
-			// Session diffs come from the manifest, not git.
+			// Session diffs come from the manifest, not git. `ctx.ref` reads the
+			// manifest committed on a branch/PR viewed read-only; otherwise on disk.
 			if (ctx.kind === 'session') {
-				const session = await getSession(repoOrThrow(repoId).path, ctx.sessionId);
+				const repoPath = repoOrThrow(repoId).path;
+				const session = ctx.ref
+					? await getSessionAtRef(repoPath, ctx.ref, ctx.sessionId)
+					: await getSession(repoPath, ctx.sessionId);
 				const f = session?.files.find((x) => x.path === filePath);
 				if (!f) {
 					throw new Error(`File not in session ${ctx.sessionId}: ${filePath}`);
@@ -1433,15 +1444,23 @@ export function registerIpc(): void {
 		}
 	);
 
+	// A `ref` reads the sessions committed on that git ref (a branch/PR being
+	// reviewed read-only) rather than the working tree, so the list matches the
+	// branch being viewed instead of the checked-out one. Null/omitted = disk.
 	ipcMain.handle(
 		'sessions:list',
-		async (_e, repoId: string): Promise<SessionSummary[]> => listSessions(repoOrThrow(repoId).path)
+		async (_e, repoId: string, ref?: string | null): Promise<SessionSummary[]> => {
+			const repoPath = repoOrThrow(repoId).path;
+			return ref ? listSessionsAtRef(repoPath, ref) : listSessions(repoPath);
+		}
 	);
 
 	ipcMain.handle(
 		'sessions:get',
-		async (_e, repoId: string, id: string): Promise<Session | null> =>
-			getSession(repoOrThrow(repoId).path, id)
+		async (_e, repoId: string, id: string, ref?: string | null): Promise<Session | null> => {
+			const repoPath = repoOrThrow(repoId).path;
+			return ref ? getSessionAtRef(repoPath, ref, id) : getSession(repoPath, id);
+		}
 	);
 
 	ipcMain.handle(
@@ -1457,7 +1476,10 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'sessions:count',
-		async (_e, repoId: string): Promise<number> => countSessions(repoOrThrow(repoId).path)
+		async (_e, repoId: string, ref?: string | null): Promise<number> => {
+			const repoPath = repoOrThrow(repoId).path;
+			return ref ? countSessionsAtRef(repoPath, ref) : countSessions(repoPath);
+		}
 	);
 
 	// Start/stop live session updates for the calling window's active repo. A null

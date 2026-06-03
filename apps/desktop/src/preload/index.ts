@@ -275,11 +275,13 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('state:setCommitDraft', repoId, draft) as Promise<void>
 	},
 	sessions: {
-		list: (repoId) => ipcRenderer.invoke('sessions:list', repoId) as Promise<SessionSummary[]>,
-		get: (repoId, id) => ipcRenderer.invoke('sessions:get', repoId, id) as Promise<Session | null>,
+		list: (repoId, ref) =>
+			ipcRenderer.invoke('sessions:list', repoId, ref) as Promise<SessionSummary[]>,
+		get: (repoId, id, ref) =>
+			ipcRenderer.invoke('sessions:get', repoId, id, ref) as Promise<Session | null>,
 		remove: (repoId, id) => ipcRenderer.invoke('sessions:remove', repoId, id) as Promise<void>,
 		clear: (repoId) => ipcRenderer.invoke('sessions:clear', repoId) as Promise<void>,
-		count: (repoId) => ipcRenderer.invoke('sessions:count', repoId) as Promise<number>,
+		count: (repoId, ref) => ipcRenderer.invoke('sessions:count', repoId, ref) as Promise<number>,
 		watch: (repoId) => ipcRenderer.invoke('sessions:watch', repoId) as Promise<void>,
 		unwatch: () => ipcRenderer.invoke('sessions:unwatch') as Promise<void>
 	},
