@@ -14,4 +14,4 @@ super-review session save --key "<your conversation/run id>" --tour '<tour json>
 ```
 
 For the tour JSON shape, callouts, and all flags, see
-[.agent/skills/document-session/SKILL.md](.agent/skills/document-session/SKILL.md).
+[.agents/skills/document-session/SKILL.md](.agents/skills/document-session/SKILL.md).

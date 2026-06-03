@@ -2,14 +2,14 @@
 // into a review repo. This is the canonical copy shipped inside the app, so it
 // works in a packaged build without depending on any file on disk.
 //
-// Keep this in sync with `.claude/skills/document-session/SKILL.md` at the repo
-// root — that copy is this project dogfooding its own skill; this one is what
-// gets installed into the repos people review. (It is generated from that file.)
+// Keep this in sync with `.agents/skills/document-session/SKILL.md` at the repo
+// root — that copy is this project dogfooding its own skill. This bundled copy is
+// what gets installed into the repos people review.
 
-// Where a skill lives inside a repo. Agents (Claude Code et al.) discover a
-// skill by the presence of `<dir>/SKILL.md`, so this path is both what we
-// check for (detection) and what we write (install).
-export const DOCUMENT_SESSION_SKILL_DIR = '.claude/skills/document-session';
+// Where a skill lives inside a repo. Agents discover a skill by the presence of
+// `<dir>/SKILL.md`, so this path is both what we check for (detection) and write
+// (install).
+export const DOCUMENT_SESSION_SKILL_DIR = '.agents/skills/document-session';
 export const DOCUMENT_SESSION_SKILL_FILE = `${DOCUMENT_SESSION_SKILL_DIR}/SKILL.md`;
 
 export const DOCUMENT_SESSION_SKILL = `---
