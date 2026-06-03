@@ -7,7 +7,7 @@ import {
 } from './document-session-skill.js';
 
 // Whether the document-session skill is installed in `repoPath` — i.e. the repo
-// has a `.claude/skills/document-session/SKILL.md`. Its presence is what makes
+// has a `.agents/skills/document-session/SKILL.md`. Its presence is what makes
 // the skill discoverable to an agent, so that file existing is the whole test.
 export async function isSkillInstalled(repoPath: string): Promise<boolean> {
 	try {
@@ -19,7 +19,7 @@ export async function isSkillInstalled(repoPath: string): Promise<boolean> {
 }
 
 // Write the bundled document-session skill into the repo, creating the
-// `.claude/skills/document-session` directory as needed. Overwrites an existing
+// `.agents/skills/document-session` directory as needed. Overwrites an existing
 // SKILL.md so re-installing also upgrades a stale copy to the current version.
 export async function installSkill(repoPath: string): Promise<void> {
 	const dir = path.join(repoPath, DOCUMENT_SESSION_SKILL_DIR);

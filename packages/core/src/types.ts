@@ -993,7 +993,7 @@ export interface PreloadAPI {
 	};
 	skill: {
 		// Whether the document-session skill is installed in the repo
-		// (`.claude/skills/document-session/SKILL.md` exists).
+		// (`.agents/skills/document-session/SKILL.md` exists).
 		isInstalled(repoId: string): Promise<boolean>;
 		// Write the bundled document-session skill into the repo.
 		install(repoId: string): Promise<void>;

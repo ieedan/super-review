@@ -1871,7 +1871,7 @@ export const actions = {
 	},
 
 	// Re-check whether the document-session skill is installed in the active repo
-	// (e.g. after the repo's `.claude` dir may have changed on disk).
+	// (e.g. after the repo's `.agents/skills` dir may have changed on disk).
 	async refreshSkillInstalled(): Promise<void> {
 		await refreshSkillInstalled();
 	},

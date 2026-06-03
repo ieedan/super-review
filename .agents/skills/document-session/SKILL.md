@@ -13,8 +13,10 @@ walk the tour step by step, with your commentary above each group of diffs.
 
 ## How to author a tour
 
-1. Make sure your edits are saved (they don't need to be committed) - the diff
-   is captured from the current working tree.
+1. Make sure your edits are saved. By default the diff is captured from the
+   current working tree, so they don't need to be committed. To document changes
+   you've **already committed** on a branch, add `--committed` (see
+   "Documenting committed changes" below).
 2. Pass the tour as inline JSON to `--tour`:
 
 ```bash
@@ -86,3 +88,23 @@ rendered as a note right at that spot in the diff. Each callout has:
 
 A quick flat session (no tour) still works: pass `--name`/`--description`
 without `--tour`, and every changed file is listed ungrouped.
+
+### Documenting committed changes
+
+By default `save` captures the working tree, so it sees nothing once you've
+committed. To document a change **after committing it** (e.g. "document the
+changes on this branch"), pass `--committed`: it captures this branch diffed
+against its base — the auto-detected default branch (`main`/`master`), the same
+`base...head` diff the desktop app shows for a branch.
+
+```bash
+super-review session save --committed --key "<run id>" --tour '{ ... }'
+```
+
+- `--committed` - capture this branch's committed diff instead of the working tree.
+- `--base <ref>` - override the base to diff against (implies `--committed`).
+- `--head <ref>` - override the head (implies `--committed`); defaults to the
+  current branch.
+
+Tour `files`/`callouts` work the same way - they just refer to files in the
+committed diff instead of the working tree.

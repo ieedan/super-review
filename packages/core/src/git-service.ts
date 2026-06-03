@@ -683,10 +683,17 @@ async function refsForContext(
 // Whether `ref` resolves to a commit. A freshly-created repo (or any branch
 // with no commits yet) has no resolvable refs, so a base...head diff against it
 // throws "unknown revision"; callers use this to treat that as "no changes".
+//
+// `--quiet` makes git exit 1 with empty output for an unknown ref, and this
+// simple-git build resolves that as "" rather than throwing — so we can't rely
+// on the catch alone. A resolvable ref prints its SHA, so require non-empty
+// output. (Without this, an absent ref like `origin/main` in a remote-less repo
+// reads as existing, and preferRemoteBase rewrites the base to a ref git can't
+// resolve.)
 async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 	try {
-		await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-		return true;
+		const out = await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+		return out.trim().length > 0;
 	} catch {
 		return false;
 	}
