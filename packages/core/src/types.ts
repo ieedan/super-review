@@ -76,6 +76,14 @@ export interface ChangedFile {
 	additions: number;
 	deletions: number;
 	isBinary: boolean;
+	// A content-derived fingerprint of the file's current (head/worktree) state,
+	// used to detect when a file marked "seen" has actually changed since — even
+	// an in-place edit that keeps the same +/- counts. For committed contexts
+	// (branch/PR/commit/stash) it's the destination blob OID, which git already
+	// has; for the working tree it's the blob hash git computes for the diff. May
+	// be undefined when git can't supply one (e.g. a deleted file), in which case
+	// callers fall back to the stat-based signature.
+	contentSig?: string;
 }
 
 export interface DiffData {
@@ -698,6 +706,12 @@ export interface UserPrefs {
 	// delete the now-merged local branch automatically instead of prompting. Off
 	// by default — the user is asked each time via a dialog.
 	autoRemoveMergedBranch: boolean;
+	// When a file the user already marked "seen" picks up new changes (e.g. fresh
+	// commits pushed to the branch, or further working-tree edits), clear its seen
+	// mark so it resurfaces for re-review. On by default. Detected by comparing a
+	// per-file content signature captured at mark-seen time against the current
+	// one (see fileContentSig in the renderer store).
+	unmarkSeenOnChange: boolean;
 	// User-configurable keyboard shortcuts, keyed by action. See DEFAULT_HOTKEYS
 	// in @shared/hotkeys for the defaults and matching semantics.
 	hotkeys: Hotkeys;
@@ -937,7 +951,20 @@ export interface PreloadAPI {
 		getPrefs(): Promise<UserPrefs>;
 		setPrefs(patch: Partial<UserPrefs>): Promise<UserPrefs>;
 		getSeenFiles(repoId: string, contextKey: string): Promise<string[]>;
-		setFileSeen(repoId: string, contextKey: string, filePath: string, seen: boolean): Promise<void>;
+		// The content signatures captured when each file was marked seen, keyed by
+		// path. Drives the "unmark seen when a file changes" behavior — the renderer
+		// compares these against the current files' signatures on refresh. Paths
+		// marked seen before this was tracked map to an empty string.
+		getSeenSignatures(repoId: string, contextKey: string): Promise<Record<string, string>>;
+		// `sig` is the file's content signature at mark-seen time; stored alongside
+		// the seen mark so a later change can be detected. Omitted when un-seeing.
+		setFileSeen(
+			repoId: string,
+			contextKey: string,
+			filePath: string,
+			seen: boolean,
+			sig?: string
+		): Promise<void>;
 		clearSeen(repoId: string, contextKey: string): Promise<void>;
 		getCollapsedFiles(repoId: string, contextKey: string): Promise<string[]>;
 		setFileCollapsed(

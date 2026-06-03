@@ -111,6 +111,7 @@ import {
 	getPrefs,
 	getRepo,
 	getSeen,
+	getSeenSignatures,
 	listRepos,
 	removeRepo,
 	setCommitDraft,
@@ -1378,9 +1379,23 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle(
+		'state:getSeenSignatures',
+		async (_e, repoId: string, contextKey: string): Promise<Record<string, string>> => {
+			return getSeenSignatures(repoId, contextKey);
+		}
+	);
+
+	ipcMain.handle(
 		'state:setFileSeen',
-		async (_e, repoId: string, contextKey: string, filePath: string, seen: boolean) => {
-			setSeen(repoId, contextKey, filePath, seen);
+		async (
+			_e,
+			repoId: string,
+			contextKey: string,
+			filePath: string,
+			seen: boolean,
+			sig?: string
+		) => {
+			setSeen(repoId, contextKey, filePath, seen, sig);
 		}
 	);
 

@@ -242,8 +242,19 @@ const api: PreloadAPI = {
 		setPrefs: (patch) => ipcRenderer.invoke('state:setPrefs', patch) as Promise<UserPrefs>,
 		getSeenFiles: (repoId, contextKey) =>
 			ipcRenderer.invoke('state:getSeenFiles', repoId, contextKey) as Promise<string[]>,
-		setFileSeen: (repoId, contextKey, filePath, seen) =>
-			ipcRenderer.invoke('state:setFileSeen', repoId, contextKey, filePath, seen) as Promise<void>,
+		getSeenSignatures: (repoId, contextKey) =>
+			ipcRenderer.invoke('state:getSeenSignatures', repoId, contextKey) as Promise<
+				Record<string, string>
+			>,
+		setFileSeen: (repoId, contextKey, filePath, seen, sig) =>
+			ipcRenderer.invoke(
+				'state:setFileSeen',
+				repoId,
+				contextKey,
+				filePath,
+				seen,
+				sig
+			) as Promise<void>,
 		clearSeen: (repoId, contextKey) =>
 			ipcRenderer.invoke('state:clearSeen', repoId, contextKey) as Promise<void>,
 		getCollapsedFiles: (repoId, contextKey) =>
