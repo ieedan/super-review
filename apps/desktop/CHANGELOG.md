@@ -1,5 +1,26 @@
 # @super-review/desktop
 
+## 0.1.4
+
+### Patch Changes
+
+- fix: clear the repo and branch picker search filter on every close path (selecting an item, context-menu/dialog actions), not just interaction-driven closes ([#44](https://github.com/ieedan/super-review/pull/44))
+
+- feat: add a Diff theme setting to change the syntax-highlighting theme of diff code blocks, with a live per-theme preview in Appearance settings ([#43](https://github.com/ieedan/super-review/pull/43))
+
+- feat: add red-green-color-blind diff themes — "Pierre Deuteranopia" (blue/orange, CVD-safe) and "Pierre High Contrast" presets in Appearance settings ([#47](https://github.com/ieedan/super-review/pull/47))
+
+- fix: seed the find bar with the current text selection when opening it with Cmd/Ctrl+F, including selections inside the diff's shadow DOM ([#42](https://github.com/ieedan/super-review/pull/42))
+
+- fix: advance "Mark seen" along the tour's reading order in a session's Tour view, so it steps to the next file the reviewer is actually looking at instead of jumping around in the changes-view order ([#46](https://github.com/ieedan/super-review/pull/46))
+
+- fix: show the viewed branch's sessions when reviewing a branch or PR read-only, instead of the checked-out branch's working-tree sessions (read the sessions committed on the viewed branch's git ref) ([#45](https://github.com/ieedan/super-review/pull/45))
+
+- fix: show relative timestamps for dates older than a month (e.g. "1mo ago", "2y ago") instead of falling back to an absolute date ([#40](https://github.com/ieedan/super-review/pull/40))
+
+- Updated dependencies [[`b600a49`](https://github.com/ieedan/super-review/commit/b600a49be20ce62398feed785d605f39fa5cf1de), [`c19a885`](https://github.com/ieedan/super-review/commit/c19a885d161ba0a63c2de336a08d6eb98d09b901), [`e5d7f6c`](https://github.com/ieedan/super-review/commit/e5d7f6c5ce153f809935d1225c690206bd556833)]:
+  - @super-review/core@0.1.2
+
 ## 0.1.3
 
 ### Patch Changes
