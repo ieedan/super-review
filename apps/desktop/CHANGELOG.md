@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.1.5
+
+### Patch Changes
+
+- feat: badge `.super-review/sessions/*.json` files with the app logo instead of the generic JSON icon across the file list, diff headers, command palette, and session tour ([#48](https://github.com/ieedan/super-review/pull/48))
+
+- Stop the Sessions view from flashing and shifting on a no-op refresh. loadSessions now only swaps in the fetched list when it actually differs, and only re-opens an open session (which reloads its diff, resets the view to the tour and clears the file search) when that session was actually re-captured. ([#50](https://github.com/ieedan/super-review/pull/50))
+
 ## 0.1.4
 
 ### Patch Changes
