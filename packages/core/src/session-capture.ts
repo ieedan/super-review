@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { simpleGit } from 'simple-git';
 import { getCurrentBranch, getDiff, listChangedFiles, repoIdFromPath } from './git-service.js';
-import type { Session, SessionCallout, SessionFile, SessionStep } from './types.js';
+import type { DiffContext, Session, SessionCallout, SessionFile, SessionStep } from './types.js';
 
 // A line-range callout as authored by the caller, before validation.
 export interface TourCalloutInput {
@@ -22,7 +22,9 @@ export interface TourStepInput {
 }
 
 // Metadata supplied by the caller (CLI) when saving a session. Everything but
-// the diff itself — the diff is always re-captured from the live working tree.
+// the diff itself — the diff is re-captured fresh on every save, from the
+// working tree by default or from a base...head branch diff when the caller
+// passes a branch DiffContext (so changes can be documented after committing).
 export interface SessionMeta {
 	key?: string;
 	name?: string;
@@ -74,29 +76,41 @@ function buildSteps(input: TourStepInput[], knownPaths: Set<string>): SessionSte
 	return steps;
 }
 
-// Capture a frozen snapshot of the repo's current working-tree changes into a
-// Session. When `existing` is supplied this is an update: its id/createdAt (and
-// any metadata the caller didn't override) are preserved, but the file diffs
-// are re-captured fresh so the session reflects the latest cumulative changes.
+// Capture a frozen snapshot of the repo's changes into a Session. `ctx` selects
+// what's captured: the live working tree (default) or a base...head branch diff,
+// which lets a change be documented after it's been committed. When `existing`
+// is supplied this is an update: its id/createdAt (and any metadata the caller
+// didn't override) are preserved, but the file diffs are re-captured fresh so
+// the session reflects the latest changes.
 export async function captureSession(
 	repoPath: string,
 	meta: SessionMeta,
-	existing?: Session | null
+	existing?: Session | null,
+	ctx: DiffContext = { kind: 'workingTree' }
 ): Promise<Session> {
 	const repoId = repoIdFromPath(repoPath);
 	const git = simpleGit(repoPath);
-	const baseRef = await git.revparse(['HEAD']).then(
-		(sha) => sha.trim(),
-		() => undefined
-	);
+	// baseRef records the commit the diff was taken against, for the reviewer's
+	// context: HEAD for a working-tree capture, the resolved base tip for a
+	// branch capture (falling back to HEAD if it can't be resolved).
+	const baseSpec = ctx.kind === 'branch' ? ctx.base : 'HEAD';
+	const baseRef =
+		(await git.revparse([baseSpec]).then(
+			(sha) => sha.trim(),
+			() => undefined
+		)) ??
+		(await git.revparse(['HEAD']).then(
+			(sha) => sha.trim(),
+			() => undefined
+		));
 	const branch = (await getCurrentBranch(repoPath).catch(() => null)) ?? undefined;
 
-	const changed = await listChangedFiles(repoPath, { kind: 'workingTree' });
+	const changed = await listChangedFiles(repoPath, ctx);
 	const files: SessionFile[] = [];
 	let additions = 0;
 	let deletions = 0;
 	for (const file of changed) {
-		const diff = await getDiff(repoPath, file.path, { kind: 'workingTree' });
+		const diff = await getDiff(repoPath, file.path, ctx);
 		files.push({
 			path: diff.file.path,
 			oldPath: diff.file.oldPath ?? file.oldPath,

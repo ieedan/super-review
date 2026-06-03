@@ -3,8 +3,11 @@ import path from 'node:path';
 import {
 	captureSession,
 	findSessionByKey,
+	getCurrentBranch,
+	getDefaultBranch,
 	getSession,
 	writeSession,
+	type DiffContext,
 	type HarnessKind,
 	type SessionMeta,
 	type TourStepInput
@@ -41,7 +44,14 @@ reviewed as an isolated session in the super-review desktop app.
     ]
   }
 List files in reading order; any changed file you omit still shows, grouped
-under "Other changes" at the end.`;
+under "Other changes" at the end.
+
+Documenting committed changes:
+  By default the diff is the working tree (uncommitted edits). To document
+  changes you've already committed, pass --committed: it captures this branch
+  diffed against its base (auto-detected default branch, e.g. main). Override
+  with --base <ref> and/or --head <ref>. Passing --base or --head implies
+  --committed.`;
 
 interface SaveOptions {
 	key?: string;
@@ -53,6 +63,9 @@ interface SaveOptions {
 	harnessUrl?: string;
 	tour?: string;
 	cwd?: string;
+	committed?: boolean;
+	base?: string;
+	head?: string;
 }
 
 // Parse a `--tour` document from the inline JSON string passed on the command
@@ -141,14 +154,33 @@ async function runSave(opts: SaveOptions): Promise<void> {
 		steps: tour?.steps
 	};
 
-	const session = await captureSession(root, meta, existing);
-	if (session.fileCount === 0) {
-		fail('no working-tree changes to capture');
+	// Working tree by default; --committed (or supplying --base/--head) switches
+	// to a base...head branch diff so already-committed changes can be documented.
+	const committedMode = Boolean(opts.committed || opts.base || opts.head);
+	let ctx: DiffContext | undefined;
+	if (committedMode) {
+		const base = opts.base ?? (await getDefaultBranch(root));
+		if (!base) {
+			fail('could not determine a base branch to diff against; pass --base <ref>');
+		}
+		const head = opts.head ?? (await getCurrentBranch(root)) ?? 'HEAD';
+		ctx = { kind: 'branch', base, head };
 	}
 
-	// Warn about authored tour paths that didn't match any working-tree change
-	// (typo, or a file that's no longer modified) — they're silently dropped
-	// from the tour, so surface them rather than letting them vanish.
+	const session = await captureSession(root, meta, existing, ctx);
+	if (session.fileCount === 0) {
+		fail(
+			committedMode
+				? `no committed changes on ${ctx!.kind === 'branch' ? ctx!.head : 'HEAD'} vs ${
+						ctx!.kind === 'branch' ? ctx!.base : 'base'
+				  } to capture`
+				: 'no working-tree changes to capture'
+		);
+	}
+
+	// Warn about authored tour paths that didn't match any captured change (typo,
+	// or a file that's not part of this diff) — they're silently dropped from the
+	// tour, so surface them rather than letting them vanish.
 	if (tour?.steps) {
 		const captured = new Set(session.files.map((f) => f.path));
 		const missing = [
@@ -160,7 +192,7 @@ async function runSave(opts: SaveOptions): Promise<void> {
 		];
 		if (missing.length > 0) {
 			console.error(
-				`warning: ${missing.length} tour path(s) not in the working-tree changes (dropped):\n` +
+				`warning: ${missing.length} tour path(s) not in the captured changes (dropped):\n` +
 					missing.map((p) => `  - ${p}`).join('\n')
 			);
 		}
@@ -177,7 +209,9 @@ async function runSave(opts: SaveOptions): Promise<void> {
 }
 
 export const save = new Command('save')
-	.description("capture the working tree's current changes as a reviewable session")
+	.description(
+		"capture the working tree's current changes (or, with --committed, this branch's committed changes) as a reviewable session"
+	)
 	.option(
 		'--key <id>',
 		'Stable upsert key (your harness conversation/run id). Re-running with the same key UPDATES that session.'
@@ -188,6 +222,18 @@ export const save = new Command('save')
 	.option('--harness <kind>', `One of: ${HARNESSES.join(', ')} (default: other).`)
 	.option('--harness-label <text>', 'Freeform harness name (used when --harness other).')
 	.option('--harness-url <url>', 'Deep link back to this run (resume/permalink).')
+	.option(
+		'--committed',
+		'Capture this branch diffed against its base (auto-detected default branch) instead of the working tree, so already-committed changes can be documented.'
+	)
+	.option(
+		'--base <ref>',
+		'Base ref to diff against (implies --committed). Defaults to the auto-detected default branch.'
+	)
+	.option(
+		'--head <ref>',
+		'Head ref to diff (implies --committed). Defaults to the current branch.'
+	)
 	.option(
 		'--tour <json>',
 		"Inline JSON describing a guided tour: ordered steps that group related files with commentary, so the reviewer reads the change as a narrative. Flags override the document's top-level name/description/harness."
