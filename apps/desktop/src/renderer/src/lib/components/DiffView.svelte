@@ -5,7 +5,7 @@
 	import SessionStepHeader from './SessionStepHeader.svelte';
 	import NoChanges from './NoChanges.svelte';
 	import FindBar from './FindBar.svelte';
-	import { app } from '$lib/store.svelte';
+	import { app, actions } from '$lib/store.svelte';
 	import { find, openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
 	import { shortcut, type Options as ShortcutOptions } from '$lib/actions/shortcut.svelte';
 	import { matchesFileQuery } from '$lib/file-search';
@@ -241,9 +241,7 @@
 			}
 			// Scrolled above all sections — anchor to the first visible file.
 			if (!active) active = sections[0].getAttribute('data-file-path');
-			if (active && app.selectedFile !== active) {
-				app.selectedFile = active;
-			}
+			if (active) actions.setActiveFromScroll(active);
 		}
 
 		function schedule(): void {
