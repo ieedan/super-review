@@ -1998,6 +1998,19 @@ export const actions = {
 		app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
 	},
 
+	// The diff scroll handler calls this as file sections cross the viewport top.
+	// The active file always tracks the scroll. A single (or empty) selection is
+	// really just "the file you're looking at", so we keep it glued to the active
+	// file — that's what stops a plain click from leaving a stale second highlight
+	// once you scroll past it. A deliberate multi-selection (2+ files) is left
+	// alone so it stays put while you scroll through it; only the active marker
+	// (the left border) moves.
+	setActiveFromScroll(path: string): void {
+		if (app.selectedFile === path) return;
+		app.selectedFile = path;
+		if (app.selectedFiles.size <= 1) app.selectedFiles = new SvelteSet([path]);
+	},
+
 	// Scroll the diff view to a tour step's header (Sessions tab).
 	scrollToStep(stepId: string): void {
 		app.scrollRequest = { stepId, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
@@ -3563,10 +3576,15 @@ export const actions = {
 		// so the count alone decides single vs. bulk.
 		const selectedPaths = [...app.selectedFiles];
 		const isBulk = selectedPaths.length > 1 && app.selectedFiles.has(file.path);
+		// Seen marks are only surfaced where the seen indicator shows — i.e. not the
+		// Unstaged tab, which swaps it for commit-inclusion checkboxes (see
+		// `seenVisual` in FileList).
+		const canMarkSeen = !(app.contextTab === 'unstaged' && !app.stashView);
 		const action = await window.api.menu.showFileContextMenu({
 			filePath: file.path,
 			canDiscard: app.diffContext.kind === 'workingTree',
 			canInclude: app.contextTab === 'unstaged',
+			canMarkSeen,
 			selectedCount: isBulk ? selectedPaths.length : 1,
 			editorLabel: editor ? EDITOR_LABELS[editor] : null,
 			revealLabel
@@ -3590,6 +3608,12 @@ export const actions = {
 				break;
 			case 'excludeSelected':
 				actions.setFilesIncludedForCommit(selectedPaths, false);
+				break;
+			case 'markSelectedSeen':
+				for (const p of selectedPaths) await actions.toggleSeen(p, true);
+				break;
+			case 'markSelectedUnseen':
+				for (const p of selectedPaths) await actions.toggleSeen(p, false);
 				break;
 			case 'copyPath':
 				await actions.copyToClipboard(actions.resolveRepoPath(file.path) ?? file.path);
