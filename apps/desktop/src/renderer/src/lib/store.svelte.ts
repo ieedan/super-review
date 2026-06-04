@@ -13,6 +13,8 @@ import type {
 	FileListLayout,
 	GithubAccount,
 	LastCommit,
+	LocalComment,
+	LocalCommentAuthor,
 	ManagedStash,
 	PRChecksSummary,
 	PRReviewComment,
@@ -71,6 +73,18 @@ export interface PendingComposer {
 	// Optional comment id we're replying to. When set, posting will use the
 	// reply endpoint instead of creating a top-level comment.
 	replyTo?: number;
+	draft: string;
+	submitting: boolean;
+}
+
+// Pending local-comment compose box, keyed by `composerKey(file, side, line)` —
+// the working-tree counterpart of PendingComposer. Local comments are flat (no
+// replies), so there's no `replyTo`. Lives in `app.localComposers` and is
+// rendered inline by DiffFileSection in any non-PR context.
+export interface LocalComposer {
+	filePath: string;
+	line: number;
+	side: 'LEFT' | 'RIGHT';
 	draft: string;
 	submitting: boolean;
 }
@@ -292,6 +306,19 @@ interface AppState {
 	// At most one composer can be open per (file,line,side) at a time. Keyed
 	// by the same string the renderer uses to scope the annotation.
 	pendingComposers: Record<string, PendingComposer>;
+	// Local review comments for the active diff context, newest-updated first.
+	// Loaded whenever the context changes and kept live via the comments watcher.
+	localComments: LocalComment[];
+	// The diff-context key `localComments` was loaded for, so a context switch can
+	// tell whether the in-memory list (and any open composers) are stale.
+	localCommentsContextKey: string | null;
+	// Pending local-comment compose boxes, keyed like `pendingComposers`.
+	localComposers: Record<string, LocalComposer>;
+	// Whether the right-hand comments sidebar is open. Ephemeral (per launch).
+	commentsSidebarOpen: boolean;
+	// A comment the sidebar asked the diff view to scroll to, bumped on each
+	// request so repeated clicks on the same row re-trigger the scroll.
+	commentScrollTarget: { id: string; nonce: number } | null;
 	addRepoDialogOpen: boolean;
 	publishDialogOpen: boolean;
 	createBranchDialogOpen: boolean;
@@ -545,6 +572,11 @@ const initial: AppState = {
 	prComments: {},
 	loadingComments: false,
 	pendingComposers: {},
+	localComments: [],
+	localCommentsContextKey: null,
+	localComposers: {},
+	commentsSidebarOpen: false,
+	commentScrollTarget: null,
 	addRepoDialogOpen: false,
 	publishDialogOpen: false,
 	createBranchDialogOpen: false,
@@ -1373,6 +1405,99 @@ async function refreshSessionCount(): Promise<void> {
 	}
 }
 
+// ─── Local comments ──────────────────────────────────────────────────────────
+
+// The diff-context key the active view's comments are scoped to. Comments are
+// per-view (see LocalComment.contextKey), so this is the key we list/store under.
+function localCommentContextKey(): string {
+	return diffContextKey($state.snapshot(app.diffContext) as DiffContext);
+}
+
+// Who a comment authored in this app is attributed to: the active GitHub account
+// (its display name or handle) when signed in, else a generic "You". Always a
+// human — agents never author comments, only resolve them (via the CLI).
+function localAuthor(): LocalCommentAuthor {
+	const account = effectiveGithubAccount();
+	const name = account?.name?.trim() || account?.login?.trim() || 'You';
+	return { kind: 'human', name };
+}
+
+// Whether two comment lists are field-equal, so a no-op watcher/refresh doesn't
+// churn the reactive array (which would flash the sidebar and rebuild inline
+// annotations). Comments are immutable except on resolve, so comparing id +
+// updatedAt is enough to catch every change.
+function commentsEqual(a: LocalComment[], b: LocalComment[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i].id !== b[i].id || a[i].updatedAt !== b[i].updatedAt) return false;
+	}
+	return true;
+}
+
+// Load the active context's local comments into `app.localComments`. Reads the
+// viewed branch/PR's committed comments when reviewing read-only (via the ref),
+// else the working tree on disk. Clears any open composers when the context
+// changed out from under them.
+async function loadLocalComments(): Promise<void> {
+	if (!app.activeRepo) {
+		app.localComments = [];
+		app.localCommentsContextKey = null;
+		return;
+	}
+	const repoId = app.activeRepo.id;
+	const contextKey = localCommentContextKey();
+	const ref = sessionRef();
+	// A context switch invalidates composers anchored to the previous view.
+	if (app.localCommentsContextKey !== contextKey) {
+		app.localComposers = {};
+		app.localCommentsContextKey = contextKey;
+	}
+	let comments: LocalComment[];
+	try {
+		comments = await window.api.comments.list(repoId, contextKey, ref);
+	} catch {
+		return; // keep previous list on a transient failure
+	}
+	// Bail if the user moved on while we were fetching.
+	if (!app.activeRepo || app.activeRepo.id !== repoId) return;
+	if (localCommentContextKey() !== contextKey) return;
+	if (!commentsEqual(comments, app.localComments)) app.localComments = comments;
+}
+
+// Build a copy-ready prompt for a single comment: file, line range, side, and the
+// note, fenced so an agent can act on it directly.
+function formatCommentPrompt(c: LocalComment): string {
+	const range = c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
+	const sideLabel = c.side === 'LEFT' ? 'original' : 'new';
+	return `In \`${c.path}\` at ${range} (${sideLabel} side):\n\n${c.body.trim()}`;
+}
+
+// Build a markdown task list from several comments, grouped by file, for the
+// "copy all unresolved" header action.
+function formatCommentsPrompt(comments: LocalComment[]): string {
+	// Plain scratch Map in a pure function — not reactive state.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const byFile = new Map<string, LocalComment[]>();
+	for (const c of comments) {
+		const list = byFile.get(c.path) ?? [];
+		list.push(c);
+		byFile.set(c.path, list);
+	}
+	const sections: string[] = [
+		'Address the following review comments. Each item lists the file, the line range, and the feedback:\n'
+	];
+	for (const [path, list] of byFile) {
+		sections.push(`### ${path}`);
+		for (const c of list) {
+			const range = c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
+			const body = c.body.trim().replace(/\n/g, '\n  ');
+			sections.push(`- [ ] **${range}** — ${body}`);
+		}
+		sections.push('');
+	}
+	return sections.join('\n').trim();
+}
+
 // Check whether the document-session skill is installed in the active repo and
 // store the result. Failure-silent — leaves the answer unknown (null) so the
 // install prompts stay hidden rather than flashing on a transient error.
@@ -1413,6 +1538,8 @@ async function refreshFiles(): Promise<void> {
 	if (!app.activeRepo) {
 		app.changedFiles = [];
 		app.unstagedFileCount = 0;
+		app.localComments = [];
+		app.localCommentsContextKey = null;
 		return;
 	}
 	// The Sessions tab with no session open shows the sessions list, not a file
@@ -1420,6 +1547,9 @@ async function refreshFiles(): Promise<void> {
 	// with working-tree files behind it. Keep the Unstaged badge fresh, though.
 	if (app.contextTab === 'sessions' && !app.activeSessionId) {
 		app.changedFiles = [];
+		// The sessions list shows no diff, so there's nothing to anchor comments to.
+		app.localComments = [];
+		app.localCommentsContextKey = null;
 		void refreshUnstagedCount();
 		return;
 	}
@@ -1539,6 +1669,9 @@ async function refreshFiles(): Promise<void> {
 		}
 
 		app.lastRefreshAt = Date.now();
+		// Load the local comments pinned to this context's diff (cheap; reads the
+		// small per-comment JSON set). Fire-and-forget so it never blocks the files.
+		void loadLocalComments();
 	} catch (err) {
 		// On error, keep showing whatever cache we hydrated from. Only surface
 		// the error when we had nothing to show.
@@ -1902,6 +2035,7 @@ export const actions = {
 		app.activePR = null;
 		app.prComments = {};
 		app.pendingComposers = {};
+		app.localComposers = {};
 		app.activeSessionDetail = null;
 		// Land on the tour; the file search query carries no meaning into a fresh
 		// session, so clear it (the Changes tab re-enables search).
@@ -1935,6 +2069,9 @@ export const actions = {
 		app.selectedFile = null;
 		app.seenFiles = new SvelteSet();
 		app.collapsedFiles = new SvelteSet();
+		app.localComments = [];
+		app.localComposers = {};
+		app.localCommentsContextKey = null;
 		app.diffContext = { kind: 'workingTree' };
 	},
 
@@ -2771,6 +2908,160 @@ export const actions = {
 			app.prComments = prev;
 			setError(err instanceof Error ? err.message : String(err));
 		}
+	},
+
+	// ─── Local comments ──────────────────────────────────────────────────────
+
+	// Reload the active context's local comments (e.g. after the watcher fires).
+	async loadLocalComments(): Promise<void> {
+		await loadLocalComments();
+	},
+
+	// Fired by the fs watcher when a repo's comments change on disk (another
+	// window adding one, or an agent resolving one via the CLI).
+	async onCommentsChanged(repoId: string): Promise<void> {
+		if (app.activeRepo?.id !== repoId) return;
+		await loadLocalComments();
+	},
+
+	// Open an inline compose box for a new local comment at a line. No-op if one is
+	// already open there (matches the PR composer's single-open-per-line rule).
+	openLocalComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number): void {
+		const key = composerKey(filePath, side, line);
+		if (app.localComposers[key]) return;
+		app.localComposers = {
+			...app.localComposers,
+			[key]: { filePath, line, side, draft: '', submitting: false }
+		};
+	},
+
+	setLocalComposerDraft(key: string, draft: string): void {
+		const c = app.localComposers[key];
+		if (!c) return;
+		// Mutate in place — same focus-stability rationale as setComposerDraft.
+		c.draft = draft;
+	},
+
+	cancelLocalComposer(key: string): void {
+		if (!app.localComposers[key]) return;
+		const { [key]: _removed, ...rest } = app.localComposers;
+		void _removed;
+		app.localComposers = rest;
+	},
+
+	// Persist a new local comment from an open composer, then drop the composer and
+	// merge the saved record into the list.
+	async submitLocalComposer(key: string): Promise<void> {
+		if (!app.activeRepo) return;
+		const c = app.localComposers[key];
+		if (!c || !c.draft.trim() || c.submitting) return;
+		c.submitting = true;
+		try {
+			const created = await window.api.comments.add(app.activeRepo.id, {
+				contextKey: localCommentContextKey(),
+				path: c.filePath,
+				side: c.side,
+				startLine: c.line,
+				endLine: c.line,
+				body: c.draft.trim(),
+				author: localAuthor()
+			});
+			app.localComments = [created, ...app.localComments];
+			const { [key]: _done, ...rest } = app.localComposers;
+			void _done;
+			app.localComposers = rest;
+		} catch (err) {
+			c.submitting = false;
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Mark a local comment resolved by the current (human) user. Optimistic, with
+	// reconcile to the persisted record and rollback on failure.
+	async resolveLocalComment(id: string): Promise<void> {
+		if (!app.activeRepo) return;
+		const prev = app.localComments;
+		const resolver = localAuthor();
+		const now = Date.now();
+		app.localComments = prev.map((c) =>
+			c.id === id ? { ...c, resolvedAt: now, resolvedBy: resolver, updatedAt: now } : c
+		);
+		try {
+			const updated = await window.api.comments.resolve(app.activeRepo.id, id, resolver);
+			if (updated) app.localComments = app.localComments.map((c) => (c.id === id ? updated : c));
+		} catch (err) {
+			app.localComments = prev;
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	async unresolveLocalComment(id: string): Promise<void> {
+		if (!app.activeRepo) return;
+		const prev = app.localComments;
+		app.localComments = prev.map((c) =>
+			c.id === id
+				? { ...c, resolvedAt: undefined, resolvedBy: undefined, resolvedSessionId: undefined }
+				: c
+		);
+		try {
+			const updated = await window.api.comments.unresolve(app.activeRepo.id, id);
+			if (updated) app.localComments = app.localComments.map((c) => (c.id === id ? updated : c));
+		} catch (err) {
+			app.localComments = prev;
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	async deleteLocalComment(id: string): Promise<void> {
+		if (!app.activeRepo) return;
+		const prev = app.localComments;
+		app.localComments = prev.filter((c) => c.id !== id);
+		try {
+			await window.api.comments.remove(app.activeRepo.id, id);
+		} catch (err) {
+			app.localComments = prev;
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Copy a single comment as an agent-ready prompt.
+	async copyCommentPrompt(id: string): Promise<void> {
+		const comment = app.localComments.find((c) => c.id === id);
+		if (!comment) return;
+		await actions.copyToClipboard(formatCommentPrompt(comment));
+	},
+
+	// Copy every unresolved comment in the active context as one markdown task list.
+	async copyAllUnresolvedComments(): Promise<void> {
+		const open = app.localComments.filter((c) => !c.resolvedAt);
+		if (open.length === 0) return;
+		await actions.copyToClipboard(formatCommentsPrompt(open));
+	},
+
+	// Open the session a resolved comment links to, so the reviewer can see how the
+	// feedback was addressed. Switches to the Sessions tab and opens the tour.
+	async openLinkedSession(sessionId: string): Promise<void> {
+		applyContextTab('sessions');
+		await actions.loadSessions();
+		await actions.openSession(sessionId);
+	},
+
+	toggleCommentsSidebar(): void {
+		app.commentsSidebarOpen = !app.commentsSidebarOpen;
+	},
+
+	setCommentsSidebarOpen(open: boolean): void {
+		app.commentsSidebarOpen = open;
+	},
+
+	// Ask the diff view to scroll a comment's inline annotation into view, and make
+	// sure the sidebar is open so the two stay in step.
+	revealComment(id: string): void {
+		const comment = app.localComments.find((c) => c.id === id);
+		if (!comment) return;
+		app.selectedFile = comment.path;
+		const nonce = (app.commentScrollTarget?.nonce ?? 0) + 1;
+		app.commentScrollTarget = { id, nonce };
 	},
 
 	async refreshFiles(): Promise<void> {

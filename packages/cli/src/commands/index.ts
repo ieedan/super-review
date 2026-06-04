@@ -1,3 +1,4 @@
 import { session } from './session';
+import { comment } from './comment';
 
-export { session };
+export { session, comment };

@@ -53,6 +53,7 @@
 	} from '@shared/diff-staging';
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
+	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
 	import { calloutsForFile } from '$lib/session-tour';
 	import type {
@@ -60,15 +61,17 @@
 		DiffContext,
 		DiffData,
 		EditorKind,
+		LocalComment,
 		PRReviewComment,
 		SessionCallout
 	} from '@shared/types';
 
-	// Metadata Pierre carries on each line annotation. Review comments/composers
-	// use CommentMeta; agent tour callouts add a third variant. renderAnnotation
-	// branches on `kind` to mount the right component.
+	// Metadata Pierre carries on each line annotation. PR review comments/composers
+	// use CommentMeta; local review comments/composers use LocalCommentMeta; agent
+	// tour callouts add another variant. renderAnnotation branches on `kind` to
+	// mount the right component.
 	type CalloutMeta = { kind: 'callout'; callout: SessionCallout };
-	type AnnotationMeta = CommentMeta | CalloutMeta;
+	type AnnotationMeta = CommentMeta | LocalCommentMeta | CalloutMeta;
 
 	interface Props {
 		file: ChangedFile;
@@ -109,6 +112,10 @@
 	// imperative cache — intentionally a plain Map, not reactive state.
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const calloutContainers = new Map<string, HTMLElement>();
+	// Same, for local-comment annotations, so the right sidebar's "scroll to
+	// comment" can align a comment into view.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const commentContainers = new Map<string, HTMLElement>();
 	let cancelCalloutScroll: (() => void) | null = null;
 	let diffData = $state<DiffData | null>(null);
 	// Context key the current `diffData` was loaded for. When the user switches
@@ -211,6 +218,16 @@
 			(app.contextTab === 'branch' && app.branchPR != null && !isReadOnlyView())
 	);
 
+	// Local review comments apply in every context that isn't surfacing PR
+	// comments — the working tree, a branch diff with no PR, a session's changes,
+	// a stash. Their line numbers are anchored to whatever diff is on screen and
+	// stored under that context's key, so they never collide with PR comments.
+	const isLocalCommentContext = $derived(!isPRContext);
+
+	// Whether Pierre's gutter `+` affordance should be live: any context where a
+	// click produces a comment (PR or local).
+	const canComment = $derived(isPRContext || isLocalCommentContext);
+
 	// Memoize the `metadata` objects we hand Pierre — its annotation cache uses
 	// a reference check (`metadata === metadata`) to decide whether to re-render
 	// an annotation. If we hand it a fresh `{ kind: 'composer', … }` literal each
@@ -221,6 +238,8 @@
 	// confuse Pierre's `DiffLineAnnotation<T>` generic when we push.
 	type CommentMetaComment = Extract<CommentMeta, { kind: 'comment' }>;
 	type CommentMetaComposer = Extract<CommentMeta, { kind: 'composer' }>;
+	type LocalMetaComment = Extract<LocalCommentMeta, { kind: 'local-comment' }>;
+	type LocalMetaComposer = Extract<LocalCommentMeta, { kind: 'local-composer' }>;
 	// Instance-scoped memo caches keyed by stable identifiers — intentionally
 	// plain Maps: Pierre relies on reference-equality of these metadata objects
 	// (see above), and they aren't reactive state.
@@ -228,6 +247,11 @@
 	const commentMetaCache = new Map<number, CommentMetaComment>();
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const composerMetaCache = new Map<string, CommentMetaComposer>();
+	// Local-comment counterparts, keyed by comment id / composer key.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const localCommentMetaCache = new Map<string, LocalMetaComment>();
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const localComposerMetaCache = new Map<string, LocalMetaComposer>();
 	// Same reference-stability trick for tour callouts, keyed by callout id.
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const calloutMetaCache = new Map<string, CalloutMeta>();
@@ -249,11 +273,21 @@
 		const composers = isPRContext
 			? Object.values(app.pendingComposers).filter((composer) => composer.filePath === file.path)
 			: [];
+		const localComments: LocalComment[] = isLocalCommentContext
+			? app.localComments.filter((c) => c.path === file.path)
+			: [];
+		const localComposers = isLocalCommentContext
+			? Object.values(app.localComposers).filter((composer) => composer.filePath === file.path)
+			: [];
 		// Built functionally (no in-place mutation) so they stay ordinary,
 		// non-reactive Sets — scratch for the cache GC below, not reactive state.
 		const liveCommentIds = new Set(comments.filter((c) => c.line != null).map((c) => c.id));
 		const liveComposerKeys = new Set(
 			composers.map((composer) => composerKey(composer.filePath, composer.side, composer.line))
+		);
+		const liveLocalCommentIds = new Set(localComments.map((c) => c.id));
+		const liveLocalComposerKeys = new Set(
+			localComposers.map((composer) => composerKey(composer.filePath, composer.side, composer.line))
 		);
 		const liveCalloutIds = new Set(fileCallouts.map((callout) => callout.id));
 
@@ -293,6 +327,39 @@
 			});
 		}
 
+		for (const c of localComments) {
+			let meta = localCommentMetaCache.get(c.id);
+			// Invalidate when the comment object was replaced (e.g. resolved).
+			if (meta == null || meta.comment !== c) {
+				meta = { kind: 'local-comment', comment: c };
+				localCommentMetaCache.set(c.id, meta);
+			}
+			out.push({
+				side: c.side === 'LEFT' ? 'deletions' : 'additions',
+				lineNumber: c.startLine,
+				metadata: meta
+			});
+		}
+
+		for (const composer of localComposers) {
+			const key = composerKey(composer.filePath, composer.side, composer.line);
+			let meta = localComposerMetaCache.get(key);
+			if (meta == null) {
+				meta = {
+					kind: 'local-composer',
+					filePath: composer.filePath,
+					line: composer.line,
+					side: composer.side
+				};
+				localComposerMetaCache.set(key, meta);
+			}
+			out.push({
+				side: composer.side === 'LEFT' ? 'deletions' : 'additions',
+				lineNumber: composer.line,
+				metadata: meta
+			});
+		}
+
 		for (const callout of fileCallouts) {
 			let meta = calloutMetaCache.get(callout.id);
 			if (meta == null || meta.callout !== callout) {
@@ -313,6 +380,12 @@
 		}
 		for (const k of [...composerMetaCache.keys()]) {
 			if (!liveComposerKeys.has(k)) composerMetaCache.delete(k);
+		}
+		for (const id of [...localCommentMetaCache.keys()]) {
+			if (!liveLocalCommentIds.has(id)) localCommentMetaCache.delete(id);
+		}
+		for (const k of [...localComposerMetaCache.keys()]) {
+			if (!liveLocalComposerKeys.has(k)) localComposerMetaCache.delete(k);
 		}
 		for (const id of [...calloutMetaCache.keys()]) {
 			if (!liveCalloutIds.has(id)) calloutMetaCache.delete(id);
@@ -376,7 +449,11 @@
 	// triggers the lazy diff fetch/render), then center the note once it exists,
 	// re-aligning while the diff settles. Bounded; cancels if the user scrolls.
 	let lastCalloutScrollNonce = 0;
-	function scrollToCallout(id: string): void {
+	// Bring an annotation's DOM container (a callout note or a comment) into view,
+	// rendering the file first and re-centering while the diff settles. Bounded;
+	// cancels the moment the user scrolls. `getEl` is re-read each frame because the
+	// container is rebuilt on every Pierre render.
+	function scrollToAnnotation(getEl: () => HTMLElement | undefined): void {
 		cancelCalloutScroll?.();
 		section?.scrollIntoView({ behavior: 'auto', block: 'start' });
 		// Render synchronously from cache if possible; otherwise the in-view fetch
@@ -395,7 +472,7 @@
 			cancelCalloutScroll = null;
 		};
 		const tick = (): void => {
-			const el = calloutContainers.get(id);
+			const el = getEl();
 			if (el?.isConnected) {
 				el.scrollIntoView({ behavior: 'auto', block: 'center' });
 				// Stop once the note has held still for a few frames (diff settled).
@@ -425,7 +502,19 @@
 		// Only the section that owns this callout responds.
 		if (!fileCallouts.some((c) => c.id === req.calloutId)) return;
 		lastCalloutScrollNonce = req.nonce;
-		scrollToCallout(req.calloutId);
+		scrollToAnnotation(() => calloutContainers.get(req.calloutId!));
+	});
+
+	// Scroll to a local comment when the right sidebar asks (clicking a row). Only
+	// the section owning that comment responds.
+	let lastCommentScrollNonce = 0;
+	$effect(() => {
+		const req = app.commentScrollTarget;
+		if (!req || req.nonce === lastCommentScrollNonce) return;
+		const comment = app.localComments.find((c) => c.id === req.id);
+		if (!comment || comment.path !== file.path) return;
+		lastCommentScrollNonce = req.nonce;
+		scrollToAnnotation(() => commentContainers.get(req.id));
 	});
 
 	function unmountAll(): void {
@@ -444,6 +533,7 @@
 		// The callout nodes die with the instance; clear the map so the scroll
 		// handler waits for the fresh ones rather than a detached node.
 		calloutContainers.clear();
+		commentContainers.clear();
 		// The painted annotations die with the instance; clear the baseline so a
 		// fresh mount re-applies from scratch rather than comparing against stale.
 		appliedAnnotations = [];
@@ -526,6 +616,18 @@
 					props: { callout: meta.callout }
 				});
 				mountedComponents.set(key, cmp);
+			} else if (meta.kind === 'local-comment' || meta.kind === 'local-composer') {
+				// Stash the comment's container so the sidebar's "scroll to comment"
+				// can align it into view, mirroring callouts.
+				if (meta.kind === 'local-comment') {
+					container.dataset.commentId = meta.comment.id;
+					commentContainers.set(meta.comment.id, container);
+				}
+				const cmp = mount(LocalCommentAnnotation, {
+					target: container,
+					props: { meta }
+				});
+				mountedComponents.set(key, cmp);
 			} else {
 				const cmp = mount(CommentAnnotation, {
 					target: container,
@@ -538,9 +640,12 @@
 	}
 
 	function onDiffLineNumberClick(props: OnDiffLineClickProps): void {
-		if (!isPRContext) return;
 		const side = props.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT';
-		actions.openComposer(file.path, side, props.lineNumber);
+		if (isPRContext) {
+			actions.openComposer(file.path, side, props.lineNumber);
+		} else if (isLocalCommentContext) {
+			actions.openLocalComposer(file.path, side, props.lineNumber);
+		}
 	}
 
 	// Pierre's idiomatic gutter affordance: `enableGutterUtility: true` paints
@@ -548,12 +653,15 @@
 	// the selected line range when it's clicked. No custom DOM, no event
 	// wrestling — Pierre owns the whole interaction.
 	function onGutterClick(range: SelectedLineRange): void {
-		if (!isPRContext) return;
 		const sel = range.side ?? 'additions';
 		const side = sel === 'deletions' ? 'LEFT' : 'RIGHT';
 		// For a plain click `start === end`. Drag-select reports both ends; we
 		// attach the comment to the first (top) line for now.
-		actions.openComposer(file.path, side, range.start);
+		if (isPRContext) {
+			actions.openComposer(file.path, side, range.start);
+		} else if (isLocalCommentContext) {
+			actions.openLocalComposer(file.path, side, range.start);
+		}
 	}
 
 	// ----------------------------------------------------------------------
@@ -894,8 +1002,8 @@
 				onLineNumberClick: onDiffLineNumberClick,
 				// Built-in gutter `+` button (the one with `data-utility-button`).
 				// Only enable it where commenting is meaningful — toggled live below
-				// via setOptions + flushManagers when `isPRContext` changes.
-				enableGutterUtility: isPRContext,
+				// via setOptions + flushManagers when `canComment` changes.
+				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
@@ -1193,7 +1301,7 @@
 	// Same caveat as the annotations effect: read `isPRContext` first so the
 	// dependency is registered even when `instance` is null on first run.
 	$effect(() => {
-		const enabled = isPRContext;
+		const enabled = canComment;
 		if (!instance) return;
 		type WithOptions = { options: Record<string, unknown> };
 		const current = (instance as unknown as WithOptions).options;

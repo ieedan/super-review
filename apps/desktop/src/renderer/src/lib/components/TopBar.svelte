@@ -8,7 +8,7 @@
 	import TerminalButton from './TerminalButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
 	import * as Sidebar from './ui/sidebar';
-	import { CornerUpLeft } from 'lucide-svelte';
+	import { CornerUpLeft, MessageSquare } from 'lucide-svelte';
 	import { actions, app, isReadOnlyView } from '$lib/store.svelte';
 </script>
 
@@ -56,6 +56,26 @@
 				<TerminalButton />
 			{/if}
 			<PrimaryActionButton />
+			<!-- Toggle the right-hand local-comments sidebar. Highlighted while open
+			     or whenever the active context has comments, so they're discoverable. -->
+			<button
+				type="button"
+				onclick={() => actions.toggleCommentsSidebar()}
+				title="Comments"
+				aria-pressed={app.commentsSidebarOpen}
+				class={[
+					'relative grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground',
+					app.commentsSidebarOpen && 'bg-accent text-foreground'
+				]}
+			>
+				<MessageSquare class="size-4" />
+				{#if app.localComments.length > 0}
+					<span
+						class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full"
+						style="background: var(--color-primary);"
+					></span>
+				{/if}
+			</button>
 		{/if}
 		<GithubSignIn />
 	</div>

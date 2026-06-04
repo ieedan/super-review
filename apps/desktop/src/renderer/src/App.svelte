@@ -6,6 +6,7 @@
 	import FileList from '$lib/components/FileList.svelte';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
+	import CommentsPanel from '$lib/components/CommentsPanel.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
 	import ForkDialog from '$lib/components/ForkDialog.svelte';
 	import MergedSwitchDialog from '$lib/components/MergedSwitchDialog.svelte';
@@ -196,6 +197,13 @@
 		void actions.refreshSessionCount();
 	});
 
+	// Same live-watch for the repo's local comments, so a comment added in another
+	// window — or resolved by an agent via the CLI — shows up without a refresh.
+	$effect(() => {
+		const repoId = app.activeRepo?.id ?? null;
+		void window.api.comments.watch(repoId);
+	});
+
 	onMount(() => {
 		void actions.init();
 
@@ -224,6 +232,12 @@
 			void actions.onSessionsChanged(repoId);
 		});
 
+		// An agent's CLI (or another window) changed this repo's local comments on
+		// disk — reload the active context's list.
+		const offCommentsChanged = window.api.events.onCommentsChanged((repoId) => {
+			void actions.onCommentsChanged(repoId);
+		});
+
 		// Center the traffic lights once now; the resize binding handles every
 		// subsequent zoom change.
 		syncWindowControls();
@@ -247,6 +261,7 @@
 			offRepoChanged();
 			offTrashFailed();
 			offSessionsChanged();
+			offCommentsChanged();
 			stopPoll();
 			window.clearInterval(tickId);
 			window.clearInterval(checksId);
@@ -336,13 +351,19 @@
 					<FileList />
 				</Resizable.Pane>
 				<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
-				<Resizable.Pane defaultSize={78}>
+				<Resizable.Pane defaultSize={app.commentsSidebarOpen ? 56 : 78}>
 					{#if app.contextTab === 'sessions' && !app.activeSessionId}
 						<SessionsEmptyState />
 					{:else}
 						<DiffView />
 					{/if}
 				</Resizable.Pane>
+				{#if app.commentsSidebarOpen}
+					<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
+					<Resizable.Pane defaultSize={22} minSize={15} maxSize={40}>
+						<CommentsPanel />
+					</Resizable.Pane>
+				{/if}
 			</Resizable.PaneGroup>
 		{/if}
 	</main>
