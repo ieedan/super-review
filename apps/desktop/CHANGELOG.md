@@ -1,5 +1,11 @@
 # @super-review/desktop
 
+## 0.1.6
+
+### Patch Changes
+
+- feat: add a configurable Open settings shortcut, defaulting to Cmd/Ctrl+Comma (the macOS convention) ([#52](https://github.com/ieedan/super-review/pull/52))
+
 ## 0.1.5
 
 ### Patch Changes
