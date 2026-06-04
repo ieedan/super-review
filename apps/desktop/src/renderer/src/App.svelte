@@ -30,7 +30,8 @@
 	import { initDiffHighlighter } from '$lib/diff-highlighter';
 	import { initDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { setAnimations } from '$lib/hooks/use-animations.svelte';
-	import { matchesHotkey } from '@shared/hotkeys';
+	import { HOTKEY_ACTIONS, matchesHotkey, type HotkeyAction } from '@shared/hotkeys';
+	import { isEditableTarget } from '$lib/utils';
 	import { Agentation, type AnnotationProps } from 'sv-agentation';
 
 	// Dev-only in-app inspector for annotating elements to hand back as feedback.
@@ -63,6 +64,50 @@
 	// Imperative handle on the sidebar pane, used by Cmd+B and the
 	// SidebarTrigger button to collapse/expand without dragging.
 	let sidebarPane = $state<PaneAPI | undefined>();
+
+	// All configurable app-wide shortcuts dispatch from one place: each action
+	// maps to its handler here, and the single window keydown below (mounted via
+	// <svelte:window>, so Svelte tears it down for us) runs whichever binding
+	// matched. Adding a shortcut is one entry, not another addEventListener pair.
+	const hotkeyHandlers: Record<HotkeyAction, (e: KeyboardEvent) => void> = {
+		// Toggle the fuzzy file-search palette. No editable-target guard — the
+		// default (Cmd/Ctrl+P) is a deliberate combo that won't collide with typing.
+		searchFilesPalette: (e) => {
+			e.preventDefault();
+			actions.toggleCommandMenu();
+		},
+		// Jump focus to the sidebar's search box. A bare-key binding (default `/`)
+		// is skipped while typing in an editable target so it doesn't hijack the
+		// commit/comment composers; a modifier combo is deliberate and fires anywhere.
+		searchFilesSidebar: (e) => {
+			const hk = app.hotkeys.searchFilesSidebar;
+			if (!hk.mod && !hk.alt && isEditableTarget(e.target)) return;
+			e.preventDefault();
+			actions.focusSidebarSearch();
+		},
+		// Collapse/expand the sidebar by driving the pane handle directly, keeping
+		// the layout the single source of truth (onCollapse/onExpand sync back).
+		toggleSidebar: (e) => {
+			if (!app.activeRepo || !sidebarPane) return;
+			e.preventDefault();
+			if (app.sidebarCollapsed) sidebarPane.expand();
+			else sidebarPane.collapse();
+		},
+		// Open the settings dialog from anywhere (default Cmd/Ctrl+Comma).
+		openSettings: (e) => {
+			e.preventDefault();
+			actions.openSettingsDialog();
+		}
+	};
+
+	function onWindowKeydown(e: KeyboardEvent): void {
+		for (const action of HOTKEY_ACTIONS) {
+			if (matchesHotkey(e, app.hotkeys[action])) {
+				hotkeyHandlers[action](e);
+				return;
+			}
+		}
+	}
 
 	// PaneForge sizes panes in percentages, but we want a hard px floor on the
 	// sidebar so the combined header (tabs + totals + trigger) never overflows.
@@ -147,27 +192,6 @@
 		window.addEventListener('resize', syncWindowControls);
 		syncWindowControls();
 
-		// Configurable sidebar toggle (default Cmd/Ctrl+B). Driving the pane handle
-		// directly keeps the layout the single source of truth, same as the trigger
-		// buttons; onCollapse/onExpand then sync app.sidebarCollapsed back.
-		const onSidebarHotkey = (e: KeyboardEvent): void => {
-			if (!matchesHotkey(e, app.hotkeys.toggleSidebar)) return;
-			if (!app.activeRepo || !sidebarPane) return;
-			e.preventDefault();
-			if (app.sidebarCollapsed) sidebarPane.expand();
-			else sidebarPane.collapse();
-		};
-		window.addEventListener('keydown', onSidebarHotkey);
-
-		// Configurable settings shortcut (default Cmd/Ctrl+Comma, the macOS
-		// convention). Opens the settings dialog from anywhere in the app.
-		const onSettingsHotkey = (e: KeyboardEvent): void => {
-			if (!matchesHotkey(e, app.hotkeys.openSettings)) return;
-			e.preventDefault();
-			actions.openSettingsDialog();
-		};
-		window.addEventListener('keydown', onSettingsHotkey);
-
 		// Periodically fetch origin so branch base diffs and ahead/behind stay
 		// fresh. Only runs while the window is visible to avoid background work
 		// on minimized/hidden windows.
@@ -210,8 +234,6 @@
 			offSessionsChanged();
 			window.removeEventListener('focus', onFocus);
 			window.removeEventListener('resize', syncWindowControls);
-			window.removeEventListener('keydown', onSidebarHotkey);
-			window.removeEventListener('keydown', onSettingsHotkey);
 			document.removeEventListener('visibilitychange', onVisibility);
 			stopPoll();
 			window.clearInterval(tickId);
@@ -228,6 +250,8 @@
     open getter re-reads. The pane layout stays the single source of truth,
     so dragging the handle to collapse also stays in sync without looping.
 -->
+<svelte:window onkeydown={onWindowKeydown} />
+
 <Sidebar.Provider
 	open={!app.sidebarCollapsed}
 	onOpenChange={(open) => {

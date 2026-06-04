@@ -225,6 +225,9 @@ interface AppState {
 	// Cmd/Ctrl+K fuzzy file-search palette. Opened from the header search box or
 	// the global shortcut; selecting a file scrolls the diff to it.
 	commandMenuOpen: boolean;
+	// Bumped to ask the sidebar to focus its file-search input — driven by the
+	// global "search files (sidebar)" hotkey, which lives outside FileList.
+	focusSidebarSearchNonce: number;
 	githubSignInOpen: boolean;
 	pushStatus: PushStatus | null;
 	// Tip commit of the current branch, surfaced so the commit box can offer an
@@ -522,6 +525,7 @@ const initial: AppState = {
 	settingsDialogScrollNonce: 0,
 	repoSettingsDialogOpen: false,
 	commandMenuOpen: false,
+	focusSidebarSearchNonce: 0,
 	githubSignInOpen: false,
 	pushStatus: null,
 	lastCommit: null,
@@ -4017,6 +4021,11 @@ export const actions = {
 	},
 	toggleCommandMenu(): void {
 		app.commandMenuOpen = !app.commandMenuOpen;
+	},
+	// The sidebar owns its search input, so the global hotkey routes through a
+	// nonce the FileList watches rather than reaching across components.
+	focusSidebarSearch(): void {
+		app.focusSidebarSearchNonce++;
 	},
 
 	openGithubSignIn(): void {
