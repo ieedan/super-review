@@ -66,15 +66,22 @@
 		if (!open) reset();
 	});
 
+	// Kick off the PR fetch once per popover session, deduped via `prsRequested`.
+	// Shared by the tab click and the hover-to-preload handler so hovering the
+	// Pull Requests tab warms the list before you click it — SvelteKit-style
+	// preload-on-hover.
+	function preloadPRs(): void {
+		if (prsRequested || !app.activeRepo) return;
+		prsRequested = true;
+		void actions.loadPRs();
+	}
+
 	function selectTab(value: string): void {
 		tab = value === 'prs' ? 'prs' : 'branches';
 		// The two lists filter different things; carrying the query across is
 		// confusing, so start each tab fresh.
 		filter = '';
-		if (tab === 'prs' && !prsRequested) {
-			prsRequested = true;
-			void actions.loadPRs();
-		}
+		if (tab === 'prs') preloadPRs();
 	}
 
 	async function checkout(name: string): Promise<void> {
@@ -310,7 +317,11 @@
 				<Tabs.Trigger value="branches" class="h-full flex-none px-0 py-0 text-sm">
 					Branches
 				</Tabs.Trigger>
-				<Tabs.Trigger value="prs" class="h-full flex-none px-0 py-0 text-sm">
+				<Tabs.Trigger
+					value="prs"
+					class="h-full flex-none px-0 py-0 text-sm"
+					onmouseenter={preloadPRs}
+				>
 					Pull Requests
 				</Tabs.Trigger>
 			</Tabs.List>
