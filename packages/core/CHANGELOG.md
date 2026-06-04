@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.1.3
+
+### Patch Changes
+
+- feat: add a configurable "mark seen & next" shortcut, defaulting to Cmd/Ctrl+Enter, that marks the current change as seen and jumps to the next one ([#55](https://github.com/ieedan/super-review/pull/55))
+
 ## 0.1.2
 
 ### Patch Changes
