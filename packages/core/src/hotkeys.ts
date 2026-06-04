@@ -115,7 +115,7 @@ function keyLabel(key: string): string {
 		ArrowDown: '↓',
 		ArrowLeft: '←',
 		ArrowRight: '→',
-		Enter: 'Enter',
+		Enter: '⏎',
 		Escape: 'Esc',
 		Backspace: '⌫',
 		Tab: 'Tab'

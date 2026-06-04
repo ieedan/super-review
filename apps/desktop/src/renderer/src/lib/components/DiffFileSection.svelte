@@ -1443,11 +1443,7 @@
 					<Check class="size-3.5" /> Seen
 				{:else}
 					<Eye class="size-3.5" /> Mark seen
-					<span class="ml-1 flex items-center gap-0.5">
-						{#each markSeenHotkey as part (part)}
-							<Kbd variant="outline">{part}</Kbd>
-						{/each}
-					</span>
+					<Kbd variant="outline" class="ml-1">{markSeenHotkey.join('')}</Kbd>
 				{/if}
 			</Button>
 		</div>
