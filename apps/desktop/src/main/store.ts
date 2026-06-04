@@ -54,7 +54,6 @@ const defaults: Schema = {
 		unstagedFileListLayout: 'tree',
 		branchFileListLayout: 'tree',
 		showFileIcons: true,
-		openFileOnArrowNav: true,
 		codeFont: 'system',
 		uiFont: 'system',
 		maxDiffLines: 1500,

@@ -117,7 +117,6 @@
 	let draftDiffLayout = $state<DiffLayout>('scroll');
 	let draftShowFileIcons = $state<boolean>(true);
 	let draftAnimationsEnabled = $state<boolean>(false);
-	let draftOpenFileOnArrowNav = $state<boolean>(true);
 	let draftPrMergedBehavior = $state<PrMergedBehavior>('prompt');
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
 	let draftUnmarkSeenOnChange = $state<boolean>(true);
@@ -169,7 +168,6 @@
 			draftDiffLayout = app.diffLayout;
 			draftShowFileIcons = app.showFileIcons;
 			draftAnimationsEnabled = app.animationsEnabled;
-			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
 			draftPrMergedBehavior = app.prMergedBehavior;
 			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
 			draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
@@ -264,9 +262,6 @@
 		}
 		if (draftAnimationsEnabled !== app.animationsEnabled) {
 			promises.push(actions.setAnimationsEnabled(draftAnimationsEnabled));
-		}
-		if (draftOpenFileOnArrowNav !== app.openFileOnArrowNav) {
-			promises.push(actions.setOpenFileOnArrowNav(draftOpenFileOnArrowNav));
 		}
 		if (draftPrMergedBehavior !== app.prMergedBehavior) {
 			promises.push(actions.setPrMergedBehavior(draftPrMergedBehavior));
@@ -758,45 +753,6 @@
 			</section>
 		{:else if activeTab === 'behavior'}
 			<section class="space-y-6">
-				<div>
-					<h3 class="text-base font-semibold">Arrow-key navigation</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Choose what happens when you move the keyboard cursor onto a file with the arrow keys in
-						the sidebar.
-					</p>
-
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ value: true, label: 'Open on arrow', hint: 'Arrowing onto a file opens its diff immediately.' }, { value: false, label: 'Open on enter', hint: 'Arrows move the cursor only; Enter opens the file.' }] as opt (opt.label)}
-							{@const active = draftOpenFileOnArrowNav === opt.value}
-							<button
-								type="button"
-								onclick={() => (draftOpenFileOnArrowNav = opt.value)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
-							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
-								<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
-									{opt.hint}
-								</div>
-							</button>
-						{/each}
-					</div>
-				</div>
-
 				<div>
 					<h3 class="text-base font-semibold">Merged branches</h3>
 					<p class="mt-1 text-xs text-muted-foreground">

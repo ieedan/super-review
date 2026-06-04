@@ -171,7 +171,6 @@ interface AppState {
 	unstagedFileListLayout: FileListLayout;
 	branchFileListLayout: FileListLayout;
 	showFileIcons: boolean;
-	openFileOnArrowNav: boolean;
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
 	animationsEnabled: boolean;
@@ -474,7 +473,6 @@ const initial: AppState = {
 	unstagedFileListLayout: 'tree',
 	branchFileListLayout: 'tree',
 	showFileIcons: true,
-	openFileOnArrowNav: true,
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 	animationsEnabled: false,
@@ -1577,7 +1575,6 @@ export const actions = {
 		app.unstagedFileListLayout = app.prefs.unstagedFileListLayout;
 		app.branchFileListLayout = app.prefs.branchFileListLayout;
 		app.showFileIcons = app.prefs.showFileIcons;
-		app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
 		app.maxDiffLines = app.prefs.maxDiffLines;
 		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
 		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
@@ -3838,11 +3835,6 @@ export const actions = {
 	async setShowFileIcons(show: boolean): Promise<void> {
 		app.showFileIcons = show;
 		app.prefs = await window.api.state.setPrefs({ showFileIcons: show });
-	},
-
-	async setOpenFileOnArrowNav(value: boolean): Promise<void> {
-		app.openFileOnArrowNav = value;
-		app.prefs = await window.api.state.setPrefs({ openFileOnArrowNav: value });
 	},
 
 	async setMaxDiffLines(max: number): Promise<void> {

@@ -683,10 +683,6 @@ export interface UserPrefs {
 	unstagedFileListLayout: FileListLayout;
 	branchFileListLayout: FileListLayout;
 	showFileIcons: boolean;
-	// When true, moving the file-tree keyboard cursor onto a file opens its diff
-	// immediately. When false, arrows only move the focus ring and Enter/Space
-	// opens the focused file.
-	openFileOnArrowNav: boolean;
 	// Font family for the diff/code surface. "system" uses the built-in
 	// monospace stack; any other value is a family name installed on the
 	// user's machine.

@@ -373,10 +373,9 @@
 	}
 
 	// Keyboard cursor over the visible flat `nodes` list. Can point at a file OR a
-	// folder, independent of `app.selectedFile` (the open file). When
-	// `openFileOnArrowNav` is on, moving the cursor onto a file also opens it, so
-	// the two usually coincide; in "Enter to open" mode the ring moves freely and
-	// Enter/Space commits.
+	// folder, independent of `app.selectedFile` (the open file). Moving the cursor
+	// onto a file opens it, so the two usually coincide; folders only ever take the
+	// ring (Enter/Space toggles them).
 	let focusedPath = $state<string | null>(null);
 
 	// Resolve the cursor's row index, falling back to the open file's row, then
@@ -393,12 +392,12 @@
 		return 0;
 	}
 
-	// Move the cursor to a row. Landing on a file opens its diff when
-	// `openFileOnArrowNav` is enabled; folders only ever receive the ring.
+	// Move the cursor to a row. Landing on a file opens its diff; folders only ever
+	// receive the ring.
 	function focusNode(index: number): void {
 		const node = nodes[index];
 		if (!node) return;
-		if (node.kind === 'file' && app.openFileOnArrowNav) {
+		if (node.kind === 'file') {
 			pick(node.path);
 		} else {
 			focusedPath = node.path;
