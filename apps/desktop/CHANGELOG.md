@@ -1,5 +1,18 @@
 # @super-review/desktop
 
+## 0.1.7
+
+### Patch Changes
+
+- feat: add a configurable "mark seen & next" shortcut, defaulting to Cmd/Ctrl+Enter, that marks the current change as seen and jumps to the next one ([#55](https://github.com/ieedan/super-review/pull/55))
+
+- Preload the pull requests list when hovering the Pull Requests tab, so it's ready by the time you click into the tab. ([#57](https://github.com/ieedan/super-review/pull/57))
+
+- Fix the sidebar leaving a stale highlight when you click a file and scroll past it — a single selection now follows the scroll while a deliberate multi-selection stays put. Also add a bulk "Mark/Unmark Selected Files as Seen" action to the multi-file context menu. ([#56](https://github.com/ieedan/super-review/pull/56))
+
+- Updated dependencies [[`5784097`](https://github.com/ieedan/super-review/commit/578409721694aa0185b9e4248351a3ec43944656)]:
+  - @super-review/core@0.1.3
+
 ## 0.1.6
 
 ### Patch Changes
