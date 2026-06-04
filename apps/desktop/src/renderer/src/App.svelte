@@ -159,6 +159,15 @@
 		};
 		window.addEventListener('keydown', onSidebarHotkey);
 
+		// Configurable settings shortcut (default Cmd/Ctrl+Comma, the macOS
+		// convention). Opens the settings dialog from anywhere in the app.
+		const onSettingsHotkey = (e: KeyboardEvent): void => {
+			if (!matchesHotkey(e, app.hotkeys.openSettings)) return;
+			e.preventDefault();
+			actions.openSettingsDialog();
+		};
+		window.addEventListener('keydown', onSettingsHotkey);
+
 		// Periodically fetch origin so branch base diffs and ahead/behind stay
 		// fresh. Only runs while the window is visible to avoid background work
 		// on minimized/hidden windows.
@@ -202,6 +211,7 @@
 			window.removeEventListener('focus', onFocus);
 			window.removeEventListener('resize', syncWindowControls);
 			window.removeEventListener('keydown', onSidebarHotkey);
+			window.removeEventListener('keydown', onSettingsHotkey);
 			document.removeEventListener('visibilitychange', onVisibility);
 			stopPoll();
 			window.clearInterval(tickId);
