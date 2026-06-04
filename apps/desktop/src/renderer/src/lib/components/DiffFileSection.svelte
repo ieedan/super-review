@@ -31,7 +31,6 @@
 	} from '@pierre/diffs';
 	import { Button } from './ui/button';
 	import { Badge } from './ui/badge';
-	import { Kbd } from './ui/kbd';
 	import { formatHotkeyParts } from '@shared/hotkeys';
 	import {
 		actions,
@@ -1443,7 +1442,7 @@
 					<Check class="size-3.5" /> Seen
 				{:else}
 					<Eye class="size-3.5" /> Mark seen
-					<Kbd variant="outline" class="ml-1">{markSeenHotkey.join('')}</Kbd>
+					<span class="ml-1 text-muted-foreground">{markSeenHotkey.join('')}</span>
 				{/if}
 			</Button>
 		</div>
