@@ -5,6 +5,13 @@ export function cn(...inputs: ClassValue[]): string {
 	return twMerge(clsx(inputs));
 }
 
+// True when a keyboard event lands in a text-entry context (an input, textarea,
+// or contenteditable). Used to keep bare-key shortcuts from hijacking typing.
+export function isEditableTarget(target: EventTarget | null): boolean {
+	const el = target as HTMLElement | null;
+	return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+}
+
 // Helpers used by shadcn-svelte components when wrapping bits-ui primitives.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type WithoutChild<T> = T extends { child?: any } ? Omit<T, 'child'> : T;

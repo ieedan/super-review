@@ -17,7 +17,8 @@ export interface Hotkey {
 export const HOTKEY_ACTIONS = [
 	'searchFilesPalette',
 	'searchFilesSidebar',
-	'toggleSidebar'
+	'toggleSidebar',
+	'openSettings'
 ] as const;
 
 export type HotkeyAction = (typeof HOTKEY_ACTIONS)[number];
@@ -36,13 +37,18 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 	toggleSidebar: {
 		label: 'Toggle sidebar',
 		description: 'Collapse or expand the file-list sidebar.'
+	},
+	openSettings: {
+		label: 'Open settings',
+		description: 'Open the settings dialog.'
 	}
 };
 
 export const DEFAULT_HOTKEYS: Hotkeys = {
 	searchFilesPalette: { key: 'p', mod: true },
 	searchFilesSidebar: { key: '/' },
-	toggleSidebar: { key: 'b', mod: true }
+	toggleSidebar: { key: 'b', mod: true },
+	openSettings: { key: ',', mod: true }
 };
 
 // Collapse a KeyboardEvent.key into our canonical form: single characters are

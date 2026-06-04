@@ -3,7 +3,6 @@
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import * as Command from './ui/command';
 	import { actions, app } from '$lib/store.svelte';
-	import { matchesHotkey } from '@shared/hotkeys';
 	import { languageIconForPath } from '$lib/file-icons';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { cn } from '$lib/utils';
@@ -16,19 +15,8 @@
 		if (!app.commandMenuOpen) search = '';
 	});
 
-	// The configurable "search files (command palette)" shortcut toggles the
-	// palette from anywhere in the app. We don't skip editable targets here —
-	// the default (Cmd/Ctrl+P) is a deliberate modifier combo that shouldn't
-	// collide with normal typing.
-	$effect(() => {
-		function onKeydown(e: KeyboardEvent): void {
-			if (!matchesHotkey(e, app.hotkeys.searchFilesPalette)) return;
-			e.preventDefault();
-			actions.toggleCommandMenu();
-		}
-		window.addEventListener('keydown', onKeydown);
-		return () => window.removeEventListener('keydown', onKeydown);
-	});
+	// The "search files (command palette)" shortcut that toggles this palette is
+	// dispatched centrally from App.svelte's window keydown handler.
 
 	function choose(path: string): void {
 		actions.scrollToFile(path);

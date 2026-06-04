@@ -41,11 +41,10 @@
 		isReadOnlyView,
 		type ContextTab
 	} from '$lib/store.svelte';
-	import { cn } from '$lib/utils';
+	import { cn, isEditableTarget } from '$lib/utils';
 	import { languageIconForPath } from '$lib/file-icons';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { matchesFileQuery } from '$lib/file-search';
-	import { matchesHotkey } from '@shared/hotkeys';
 	import type { ChangedFile } from '@shared/types';
 
 	// Right-clicking a file row opens a native OS context menu (built in the main
@@ -420,13 +419,7 @@
 	// scrollRoot effect) so it only fires when the file list is focused and never
 	// steals arrow-scroll from the diff pane.
 	function onTreeKeydown(e: KeyboardEvent): void {
-		const target = e.target as HTMLElement | null;
-		if (
-			target &&
-			(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-		) {
-			return;
-		}
+		if (isEditableTarget(e.target)) return;
 		// Leave meta/ctrl combos to app/global shortcuts. Alt is handled below.
 		if (e.metaKey || e.ctrlKey) return;
 		if (nodes.length === 0) return;
@@ -664,32 +657,17 @@
 	// source of truth — flipping app.sidebarCollapsed alone wouldn't move the pane.
 	const sidebar = Sidebar.useSidebar();
 
-	// The configurable "search files (sidebar)" shortcut jumps focus to the
-	// search input from anywhere in the app. When the binding has no modifier
-	// (the default is `/`), it's skipped while the user is typing in an editable
-	// target so it doesn't hijack the commit composer, comment composer, or the
-	// search input itself. A modifier combo is deliberate and fires anywhere.
+	// The "search files (sidebar)" shortcut is matched centrally in App.svelte,
+	// which bumps focusSidebarSearchNonce to ask us to focus our own input (the
+	// sidebar owns the element). Watch the nonce and jump focus when it changes.
 	let searchInput = $state<HTMLInputElement | null>(null);
+	let lastFocusNonce = app.focusSidebarSearchNonce;
 	$effect(() => {
-		function onKeydown(e: KeyboardEvent): void {
-			const hk = app.hotkeys.searchFilesSidebar;
-			if (!matchesHotkey(e, hk)) return;
-			if (!hk.mod && !hk.alt) {
-				const target = e.target as HTMLElement | null;
-				if (
-					target &&
-					(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-				) {
-					return;
-				}
-			}
-			if (!searchInput) return;
-			e.preventDefault();
-			searchInput.focus();
-			searchInput.select();
-		}
-		window.addEventListener('keydown', onKeydown);
-		return () => window.removeEventListener('keydown', onKeydown);
+		const nonce = app.focusSidebarSearchNonce;
+		if (nonce === lastFocusNonce) return;
+		lastFocusNonce = nonce;
+		searchInput?.focus();
+		searchInput?.select();
 	});
 </script>
 
