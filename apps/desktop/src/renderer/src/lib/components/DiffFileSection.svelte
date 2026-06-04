@@ -31,6 +31,7 @@
 	} from '@pierre/diffs';
 	import { Button } from './ui/button';
 	import { Badge } from './ui/badge';
+	import { formatHotkeyParts } from '@shared/hotkeys';
 	import {
 		actions,
 		app,
@@ -53,7 +54,7 @@
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
-	import { calloutsForFile, tourFileOrder } from '$lib/session-tour';
+	import { calloutsForFile } from '$lib/session-tour';
 	import type {
 		ChangedFile,
 		DiffContext,
@@ -1297,6 +1298,11 @@
 	});
 
 	const isSeen = $derived(app.seenFiles.has(file.path));
+	// The configurable "mark seen & next" binding, rendered on the button as a
+	// discoverable hint for the keyboard path that does the same thing.
+	const markSeenHotkey = $derived(
+		formatHotkeyParts(app.hotkeys.markSeenNext, app.platform === 'darwin')
+	);
 	const commentCount = $derived(isPRContext ? (app.prComments[file.path] ?? []).length : 0);
 	const statusBadge = $derived.by(() => {
 		switch (file.status) {
@@ -1309,32 +1315,15 @@
 		}
 	});
 
-	// "Mark seen" doubles as a "next file" affordance: collapse this section
-	// so the next file's header slides up under the cursor, then trigger the
-	// existing scroll machinery to pin it at the top. Un-marking is a passive
-	// edit — leave layout alone.
+	// "Mark seen" doubles as a "next file" affordance: marking collapses this
+	// section and advances to the next change (shared with the Cmd/Ctrl+Enter
+	// hotkey via the store). Un-marking is a passive edit — leave layout alone.
 	function handleMarkSeen(): void {
-		const wasSeen = app.seenFiles.has(file.path);
-		void actions.toggleSeen(file.path);
-		if (wasSeen) return;
-		void actions.toggleFileCollapsed(file.path, true);
-		// Skip over files hidden by the search filter — jumping to a file that
-		// isn't rendered would leave the user staring at a blank section.
-		const q = app.fileSearchQuery.trim().toLowerCase();
-		const visible = q
-			? app.changedFiles.filter((f) => f.path.toLowerCase().includes(q))
-			: app.changedFiles;
-		// In a session's Tour view the diff renders files in the agent's reading
-		// order (tour groups), not the changes-view order. Advance along the order
-		// the user is actually looking at so "Mark seen" steps to the next visible
-		// section instead of jumping around the list.
-		const ordered =
-			app.sessionView === 'tour'
-				? (tourFileOrder(app.activeSessionDetail, visible) ?? visible)
-				: visible;
-		const idx = ordered.findIndex((f) => f.path === file.path);
-		const next = idx >= 0 ? ordered[idx + 1] : undefined;
-		if (next) actions.scrollToFile(next.path);
+		if (app.seenFiles.has(file.path)) {
+			void actions.toggleSeen(file.path, false);
+			return;
+		}
+		void actions.markSeenAndAdvance(file.path);
 	}
 
 	// Mirrors the toolbar's EditorButton, but opens this specific file rather
@@ -1453,6 +1442,7 @@
 					<Check class="size-3.5" /> Seen
 				{:else}
 					<Eye class="size-3.5" /> Mark seen
+					<span class="ml-1 text-muted-foreground">{markSeenHotkey.join('')}</span>
 				{/if}
 			</Button>
 		</div>
