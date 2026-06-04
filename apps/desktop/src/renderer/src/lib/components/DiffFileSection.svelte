@@ -31,6 +31,8 @@
 	} from '@pierre/diffs';
 	import { Button } from './ui/button';
 	import { Badge } from './ui/badge';
+	import { Kbd } from './ui/kbd';
+	import { formatHotkeyParts } from '@shared/hotkeys';
 	import {
 		actions,
 		app,
@@ -1297,6 +1299,11 @@
 	});
 
 	const isSeen = $derived(app.seenFiles.has(file.path));
+	// The configurable "mark seen & next" binding, rendered on the button as a
+	// discoverable hint for the keyboard path that does the same thing.
+	const markSeenHotkey = $derived(
+		formatHotkeyParts(app.hotkeys.markSeenNext, app.platform === 'darwin')
+	);
 	const commentCount = $derived(isPRContext ? (app.prComments[file.path] ?? []).length : 0);
 	const statusBadge = $derived.by(() => {
 		switch (file.status) {
@@ -1436,6 +1443,11 @@
 					<Check class="size-3.5" /> Seen
 				{:else}
 					<Eye class="size-3.5" /> Mark seen
+					<span class="ml-1 flex items-center gap-0.5">
+						{#each markSeenHotkey as part (part)}
+							<Kbd variant="outline">{part}</Kbd>
+						{/each}
+					</span>
 				{/if}
 			</Button>
 		</div>
