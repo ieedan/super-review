@@ -47,6 +47,7 @@ import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '$lib/repo-frecency.svelte';
+import { tourFileOrder } from '$lib/session-tour';
 import { SvelteSet } from 'svelte/reactivity';
 import {
 	upstreamChecked,
@@ -2060,6 +2061,36 @@ export const actions = {
 		const sig = next && file ? fileContentSig(file) : undefined;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
 		await window.api.state.setFileSeen(app.activeRepo.id, diffContextKey(ctx), filePath, next, sig);
+	},
+
+	// The changed files in the order the user is currently viewing them: filtered
+	// by the sidebar search, and in a session's Tour view reordered into the
+	// agent's reading order. Both "Mark seen" affordances step along this order so
+	// "next" matches what's actually on screen rather than the raw list.
+	displayedFiles(): ChangedFile[] {
+		const q = app.fileSearchQuery.trim().toLowerCase();
+		const visible = q
+			? app.changedFiles.filter((f) => f.path.toLowerCase().includes(q))
+			: app.changedFiles;
+		return app.sessionView === 'tour'
+			? (tourFileOrder(app.activeSessionDetail, visible) ?? visible)
+			: visible;
+	},
+
+	// Mark a file seen, collapse it, and open the next file in display order.
+	// Shared by the diff section's "Mark seen" button and the Cmd/Ctrl+Enter
+	// hotkey so both walk through changes identically. Marking is forced on (not
+	// toggled) so re-pressing the hotkey keeps advancing instead of un-marking.
+	async markSeenAndAdvance(filePath: string): Promise<void> {
+		if (!app.activeRepo) return;
+		void actions.toggleSeen(filePath, true);
+		// Collapse so the next file's header slides up under the cursor before the
+		// scroll request pins it at the top.
+		void actions.toggleFileCollapsed(filePath, true);
+		const ordered = actions.displayedFiles();
+		const idx = ordered.findIndex((f) => f.path === filePath);
+		const next = idx >= 0 ? ordered[idx + 1] : undefined;
+		if (next) actions.scrollToFile(next.path);
 	},
 
 	async clearSeen(): Promise<void> {

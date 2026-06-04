@@ -18,7 +18,8 @@ export const HOTKEY_ACTIONS = [
 	'searchFilesPalette',
 	'searchFilesSidebar',
 	'toggleSidebar',
-	'openSettings'
+	'openSettings',
+	'markSeenNext'
 ] as const;
 
 export type HotkeyAction = (typeof HOTKEY_ACTIONS)[number];
@@ -41,6 +42,10 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 	openSettings: {
 		label: 'Open settings',
 		description: 'Open the settings dialog.'
+	},
+	markSeenNext: {
+		label: 'Mark seen & next',
+		description: 'Mark the current change as seen and jump to the next change.'
 	}
 };
 
@@ -48,7 +53,8 @@ export const DEFAULT_HOTKEYS: Hotkeys = {
 	searchFilesPalette: { key: 'p', mod: true },
 	searchFilesSidebar: { key: '/' },
 	toggleSidebar: { key: 'b', mod: true },
-	openSettings: { key: ',', mod: true }
+	openSettings: { key: ',', mod: true },
+	markSeenNext: { key: 'Enter', mod: true }
 };
 
 // Collapse a KeyboardEvent.key into our canonical form: single characters are

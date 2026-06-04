@@ -97,6 +97,14 @@
 		openSettings: (e) => {
 			e.preventDefault();
 			actions.openSettingsDialog();
+		},
+		// Mark the open file seen and jump to the next change (default
+		// Cmd/Ctrl+Enter). Skipped while typing so it doesn't steal the same combo
+		// from the commit/comment composers, which use it to submit.
+		markSeenNext: (e) => {
+			if (isEditableTarget(e.target) || !app.selectedFile) return;
+			e.preventDefault();
+			void actions.markSeenAndAdvance(app.selectedFile);
 		}
 	};
 
