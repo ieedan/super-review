@@ -638,7 +638,9 @@
 	// (rows outside the visible window aren't mounted) — we set `scrollTop`
 	// directly using the known row index × ROW_HEIGHT layout. Reading
 	// `scrollRoot.scrollTop` / `.clientHeight` directly (not the reactive
-	// mirrors) keeps this effect from re-firing on every scroll tick.
+	// mirrors) keeps this effect from re-firing on every scroll tick. When the
+	// row falls outside the viewport we center it rather than nudging it just
+	// barely into view, which is hard to spot at the edges.
 	$effect(() => {
 		const path = focusedPath;
 		if (!path || !scrollRoot) return;
@@ -649,10 +651,10 @@
 		const itemBottom = itemTop + ROW_HEIGHT;
 		const viewTop = el.scrollTop;
 		const viewBottom = viewTop + el.clientHeight;
-		if (itemTop < viewTop) {
-			el.scrollTop = itemTop;
-		} else if (itemBottom > viewBottom) {
-			el.scrollTop = itemBottom - el.clientHeight;
+		if (itemTop < viewTop || itemBottom > viewBottom) {
+			const centered = itemTop - (el.clientHeight - ROW_HEIGHT) / 2;
+			const maxScroll = el.scrollHeight - el.clientHeight;
+			el.scrollTop = Math.max(0, Math.min(centered, maxScroll));
 		}
 	});
 
