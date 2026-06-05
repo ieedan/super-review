@@ -5,8 +5,15 @@ import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { comments, CREATE_COMMENTS_TABLE } from './comment-schema.js';
-import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from './types.js';
+import { comments, COMMENT_COLUMN_MIGRATIONS, CREATE_COMMENTS_TABLE } from './comment-schema.js';
+import { resolveAnchor, type Anchor } from './anchor.js';
+import { getFileAtRef } from './git-service.js';
+import type {
+	GithubCommentBinding,
+	LocalComment,
+	LocalCommentAuthor,
+	NewLocalCommentInput
+} from './types.js';
 
 // Local review comments live in ONE SQLite database for the whole application,
 // outside of any repo:
@@ -50,8 +57,19 @@ function getHandle(): Handle {
 		// libSQL wants a forward-slash file URL even on Windows.
 		const client = createClient({ url: `file:${appDbPath().replace(/\\/g, '/')}` });
 		const db = drizzle(client);
-		// `executeMultiple` runs the table + index DDL (two statements) in one call.
-		const ready = client.executeMultiple(CREATE_COMMENTS_TABLE).then(() => undefined);
+		// Ensure the table/indexes, then idempotently add any columns introduced
+		// after the original schema shipped (a plain ADD COLUMN errors if it
+		// already exists, so guard each against the live table_info).
+		const ready = client
+			.executeMultiple(CREATE_COMMENTS_TABLE)
+			.then(async () => {
+				const info = await client.execute('PRAGMA table_info(comments);');
+				const have = new Set(info.rows.map((r) => String(r.name)));
+				for (const { name, ddl } of COMMENT_COLUMN_MIGRATIONS) {
+					if (!have.has(name)) await client.execute(ddl);
+				}
+			})
+			.then(() => undefined);
 		handle = { client, db, ready };
 	}
 	return handle;
@@ -71,15 +89,17 @@ type Row = typeof comments.$inferSelect;
 function rowToComment(r: Row): LocalComment {
 	return {
 		id: r.id,
-		contextKey: r.contextKey,
+		...(r.contextKey ? { contextKey: r.contextKey } : {}),
 		path: r.path,
 		side: r.side,
 		startLine: r.startLine,
 		endLine: r.endLine,
+		...(r.fingerprint ? { fingerprint: r.fingerprint } : {}),
 		body: r.body,
 		author: r.author,
 		createdAt: r.createdAt,
 		updatedAt: r.updatedAt,
+		...(r.githubBinding != null ? { githubBinding: r.githubBinding } : {}),
 		...(r.resolvedAt != null ? { resolvedAt: r.resolvedAt } : {}),
 		...(r.resolvedBy != null ? { resolvedBy: r.resolvedBy } : {}),
 		...(r.resolvedSessionId != null ? { resolvedSessionId: r.resolvedSessionId } : {})
@@ -95,6 +115,47 @@ export async function listComments(repoPath: string): Promise<LocalComment[]> {
 		.where(eq(comments.repo, repoKey(repoPath)))
 		.orderBy(desc(comments.updatedAt));
 	return rows.map(rowToComment);
+}
+
+// The drift-following anchor a comment's hint + fingerprint describe. Used to
+// re-resolve the comment against live (or committed) content.
+export function commentAnchor(comment: LocalComment): Anchor {
+	return {
+		file: comment.path,
+		side: comment.side,
+		startLine: comment.startLine,
+		endLine: comment.endLine,
+		fingerprint: comment.fingerprint ?? ''
+	};
+}
+
+// Whether a comment can be posted to GitHub right now — i.e. its anchored line
+// lives in committed content (HEAD), not just the working tree. Derived live, not
+// stored (committed-ness changes as the agent commits). Deletions reference the
+// base side, which is always committed, so they're always postable.
+export async function isCommittable(repoPath: string, comment: LocalComment): Promise<boolean> {
+	if (comment.side === 'LEFT') return true;
+	const head = await getFileAtRef(repoPath, 'HEAD', comment.path);
+	if (!head) return false;
+	return resolveAnchor(commentAnchor(comment), head).state === 'anchored';
+}
+
+// Record that a comment has been posted to GitHub (sets its binding). Returns the
+// updated record, or null if the comment is gone.
+export async function bindCommentToGithub(
+	repoPath: string,
+	id: string,
+	binding: GithubCommentBinding
+): Promise<LocalComment | null> {
+	const existing = await getComment(repoPath, id);
+	if (!existing) return null;
+	const db = await getDb();
+	const now = Date.now();
+	await db
+		.update(comments)
+		.set({ githubBinding: binding, updatedAt: now })
+		.where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.id, id)));
+	return { ...existing, githubBinding: binding, updatedAt: now };
 }
 
 // Comments scoped to a single diff context (`diffContextKey(ctx)`) within a repo.
@@ -127,11 +188,12 @@ export function createComment(input: NewLocalCommentInput): LocalComment {
 	const now = Date.now();
 	return {
 		id: randomUUID(),
-		contextKey: input.contextKey,
+		...(input.contextKey ? { contextKey: input.contextKey } : {}),
 		path: input.path,
 		side: input.side,
 		startLine: input.startLine,
 		endLine: input.endLine,
+		...(input.fingerprint ? { fingerprint: input.fingerprint } : {}),
 		body: input.body,
 		author: input.author,
 		createdAt: now,
@@ -145,15 +207,18 @@ export async function writeComment(repoPath: string, comment: LocalComment): Pro
 	const values: Row = {
 		id: comment.id,
 		repo: repoKey(repoPath),
-		contextKey: comment.contextKey,
+		// Legacy column is NOT NULL; store '' when the comment has no bucket.
+		contextKey: comment.contextKey ?? '',
 		path: comment.path,
 		side: comment.side,
 		startLine: comment.startLine,
 		endLine: comment.endLine,
+		fingerprint: comment.fingerprint ?? null,
 		body: comment.body,
 		author: comment.author,
 		createdAt: comment.createdAt,
 		updatedAt: comment.updatedAt,
+		githubBinding: comment.githubBinding ?? null,
 		resolvedAt: comment.resolvedAt ?? null,
 		resolvedBy: comment.resolvedBy ?? null,
 		resolvedSessionId: comment.resolvedSessionId ?? null

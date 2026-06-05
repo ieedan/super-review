@@ -1186,6 +1186,17 @@ async function showFile(git: SimpleGit, ref: string, filePath: string): Promise<
 	}
 }
 
+// The text of a file at a git ref (e.g. "HEAD"), or "" when the path doesn't
+// exist there. Exported so callers (the comment store's committed-ness check)
+// can read committed content without reaching into git internals.
+export async function getFileAtRef(
+	repoPath: string,
+	ref: string,
+	filePath: string
+): Promise<string> {
+	return showFile(simpleGit(repoPath), ref, filePath);
+}
+
 async function readWorkingFile(repoPath: string, filePath: string): Promise<string> {
 	try {
 		const buf = await fs.readFile(path.join(repoPath, filePath));

@@ -428,32 +428,48 @@ export interface LocalCommentAuthor {
 	harness?: HarnessKind;
 }
 
-// A single local comment. Anchored GitHub-style by `side` + line range, so it
-// never drifts within a frozen ref but may go "outdated" if the working tree
-// changes under it (the UI keeps it, just unanchored).
+// Binding a local comment to a GitHub review comment, set ONLY once the comment
+// is actually posted to GitHub. Committed-ness for the UI is derived live (does
+// the anchored line exist in HEAD?), not stored — this records the real link
+// after posting so the comment isn't re-posted and can be threaded.
+export interface GithubCommentBinding {
+	commitSHA: string;
+	reviewCommentId?: number;
+}
+
+// A single local comment. Anchored by a drift-following fingerprint plus a
+// `side` + line-range *hint*: it floats on the live diff, re-resolving wherever
+// its line is visible, and goes "outdated" (kept, but unanchored) when its line
+// is edited away.
 export interface LocalComment {
 	id: string;
-	// Which diff view this comment was made in — `diffContextKey(ctx)` (e.g.
-	// "workingTree", "branch:main..feat", "pr:12", "session:<id>", "stash:<sha>").
-	// Comments are scoped per view: a comment only surfaces in the context it was
-	// authored in.
-	contextKey: string;
-	// File the comment is pinned to, repo-relative (posix), matching SessionFile.
+	// Legacy: the diff view the comment was authored in (`diffContextKey(ctx)`).
+	// No longer the identity — comments now project onto any view whose diff
+	// covers their anchor. Kept as a coarse fallback bucket for pure-working-tree
+	// comments with no resolvable anchor. Optional on new comments.
+	contextKey?: string;
+	// File the comment is pinned to, repo-relative (posix).
 	path: string;
 	// Which side the line numbers refer to, matching PRReviewComment: 'RIGHT' = the
 	// new file (additions), 'LEFT' = the original (deletions).
 	side: 'LEFT' | 'RIGHT';
-	// 1-based inclusive line range on `side`. A single-line comment has
-	// startLine === endLine.
+	// 1-based inclusive line range on `side` — the anchor *hint*. A single-line
+	// comment has startLine === endLine.
 	startLine: number;
 	endLine: number;
+	// Fingerprint of the anchored line text(s) at authoring time — the truth the
+	// anchor re-resolves against (see anchor.ts). Empty/absent on legacy comments,
+	// which then fall back to the line-range hint.
+	fingerprint?: string;
 	// The note itself (Markdown).
 	body: string;
 	author: LocalCommentAuthor;
 	createdAt: number;
 	updatedAt: number;
+	// Set only when the comment has been posted to GitHub (see the type).
+	githubBinding?: GithubCommentBinding;
 	// Resolution. Presence of `resolvedAt` ⇒ resolved. An agent that fixed the
-	// feedback can link the session documenting the fix via `resolvedSessionId`, so
+	// feedback can link the slice documenting the fix via `resolvedSessionId`, so
 	// the reviewer can jump straight to that guided tour.
 	resolvedAt?: number;
 	resolvedBy?: LocalCommentAuthor;
@@ -463,11 +479,16 @@ export interface LocalComment {
 // The fields a caller supplies to create a local comment; the store fills in the
 // id and timestamps.
 export interface NewLocalCommentInput {
-	contextKey: string;
+	// Legacy fallback bucket (see LocalComment.contextKey); optional now that the
+	// anchor is the identity.
+	contextKey?: string;
 	path: string;
 	side: 'LEFT' | 'RIGHT';
 	startLine: number;
 	endLine: number;
+	// Fingerprint of the anchored line text(s), computed by the caller from the
+	// diff side it commented on. Omitted ⇒ a hint-only (legacy-style) comment.
+	fingerprint?: string;
 	body: string;
 	author: LocalCommentAuthor;
 }
