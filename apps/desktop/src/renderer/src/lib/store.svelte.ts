@@ -1467,7 +1467,6 @@ async function loadLocalComments(): Promise<void> {
 	}
 	const repoId = app.activeRepo.id;
 	const contextKey = localCommentContextKey();
-	const ref = sessionRef();
 	// A context switch invalidates composers anchored to the previous view.
 	if (app.localCommentsContextKey !== contextKey) {
 		app.localComposers = {};
@@ -1475,7 +1474,7 @@ async function loadLocalComments(): Promise<void> {
 	}
 	let comments: LocalComment[];
 	try {
-		comments = await window.api.comments.list(repoId, contextKey, ref);
+		comments = await window.api.comments.list(repoId, contextKey);
 	} catch {
 		return; // keep previous list on a transient failure
 	}

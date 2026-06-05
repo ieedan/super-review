@@ -1075,11 +1075,9 @@ export interface PreloadAPI {
 		unwatch(): Promise<void>;
 	};
 	comments: {
-		// Local review comments for a single diff context (`diffContextKey(ctx)`).
-		// A `ref` reads the comments committed on that git ref — the branch/PR being
-		// reviewed read-only — instead of the working tree on disk, mirroring
-		// sessions. Null/omitted reads disk.
-		list(repoId: string, contextKey: string, ref?: string | null): Promise<LocalComment[]>;
+		// Local review comments for a single diff context (`diffContextKey(ctx)`),
+		// read from the repo's git-ignored SQLite database.
+		list(repoId: string, contextKey: string): Promise<LocalComment[]>;
 		// Create a comment (id + timestamps assigned by the main process) and return
 		// the persisted record.
 		add(repoId: string, input: NewLocalCommentInput): Promise<LocalComment>;

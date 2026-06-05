@@ -105,14 +105,12 @@ import {
 	watchSessionsDir
 } from '@super-review/core';
 import {
-	createComment,
-	deleteComment as deleteCommentFile,
+	addComment,
+	deleteComment as deleteCommentRecord,
 	listCommentsForContext,
-	listCommentsForContextAtRef,
 	resolveComment,
 	unresolveComment,
-	watchCommentsDir,
-	writeComment
+	watchCommentsDir
 } from '@super-review/core';
 import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from '@super-review/core';
 import { installSkill, isSkillInstalled } from './skill-service.js';
@@ -1557,31 +1555,19 @@ export function registerIpc(): void {
 	ipcMain.handle('sessions:unwatch', (e): void => clearSessionWatch(e.sender.id));
 
 	// ─── Local comments ──────────────────────────────────────────────────────
-	// A `ref` reads the comments committed on that git ref (a branch/PR being
-	// reviewed read-only) rather than the working tree on disk. Null/omitted = disk.
+	// Comments live in a git-ignored SQLite DB (.super-review/comments.db), so —
+	// unlike sessions — there's no committed-on-a-ref variant; they're always read
+	// from the local database for the given diff context.
 	ipcMain.handle(
 		'comments:list',
-		async (
-			_e,
-			repoId: string,
-			contextKey: string,
-			ref?: string | null
-		): Promise<LocalComment[]> => {
-			const repoPath = repoOrThrow(repoId).path;
-			return ref
-				? listCommentsForContextAtRef(repoPath, ref, contextKey)
-				: listCommentsForContext(repoPath, contextKey);
-		}
+		async (_e, repoId: string, contextKey: string): Promise<LocalComment[]> =>
+			listCommentsForContext(repoOrThrow(repoId).path, contextKey)
 	);
 
 	ipcMain.handle(
 		'comments:add',
-		async (_e, repoId: string, input: NewLocalCommentInput): Promise<LocalComment> => {
-			const repoPath = repoOrThrow(repoId).path;
-			const comment = createComment(input);
-			await writeComment(repoPath, comment);
-			return comment;
-		}
+		async (_e, repoId: string, input: NewLocalCommentInput): Promise<LocalComment> =>
+			addComment(repoOrThrow(repoId).path, input)
 	);
 
 	ipcMain.handle(
@@ -1605,7 +1591,7 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'comments:remove',
 		async (_e, repoId: string, id: string): Promise<void> =>
-			deleteCommentFile(repoOrThrow(repoId).path, id)
+			deleteCommentRecord(repoOrThrow(repoId).path, id)
 	);
 
 	ipcMain.handle('comments:watch', (e, repoId: string | null): void => {

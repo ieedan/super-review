@@ -289,8 +289,8 @@ const api: PreloadAPI = {
 		unwatch: () => ipcRenderer.invoke('sessions:unwatch') as Promise<void>
 	},
 	comments: {
-		list: (repoId, contextKey, ref) =>
-			ipcRenderer.invoke('comments:list', repoId, contextKey, ref) as Promise<LocalComment[]>,
+		list: (repoId, contextKey) =>
+			ipcRenderer.invoke('comments:list', repoId, contextKey) as Promise<LocalComment[]>,
 		add: (repoId, input: NewLocalCommentInput) =>
 			ipcRenderer.invoke('comments:add', repoId, input) as Promise<LocalComment>,
 		resolve: (repoId, id, resolver: LocalCommentAuthor, sessionId) =>
