@@ -215,6 +215,11 @@
 		// changes — tab switch, search filter, refresh. The scroll/resize
 		// listeners alone don't fire when the DOM is rebuilt at scrollTop 0.
 		void visibleFiles;
+		// Also re-run on collapse/expand: a toggle changes a section's height
+		// but not the scroll container's own size, so the ResizeObserver below
+		// never fires — yet which file is the first *expanded* one on screen can
+		// change, so the active highlight must be recomputed.
+		void app.collapsedFiles.size;
 		if (!scrollContainer) return;
 		const el = scrollContainer;
 		let ticking = false;
