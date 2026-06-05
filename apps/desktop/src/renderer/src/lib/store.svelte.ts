@@ -1843,6 +1843,9 @@ export const actions = {
 			app.pendingComposers = {};
 		}
 		await refreshFiles();
+		// Start the reviewer on real content, skipping any leading collapsed
+		// (already-seen) files this context restored from its saved state.
+		actions.scrollToFirstExpanded();
 	},
 
 	// Load the active repo's documented sessions into `app.sessions`. Called on
@@ -1997,6 +2000,15 @@ export const actions = {
 		// collapsed so the user isn't taken to a hidden body.
 		if (app.collapsedFiles.has(path)) void actions.toggleFileCollapsed(path, false);
 		app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
+	},
+
+	// Land the diff view on the first file with a visible (non-collapsed) diff.
+	// Called when opening a tab so the reviewer starts on real content instead of
+	// a run of collapsed, already-seen headers. No-op when the list is empty or
+	// every file is collapsed (nothing to read — stay put at the top).
+	scrollToFirstExpanded(): void {
+		const first = app.changedFiles.find((f) => !app.collapsedFiles.has(f.path));
+		if (first) actions.scrollToFile(first.path);
 	},
 
 	// The diff scroll handler calls this as file sections cross the viewport top.
