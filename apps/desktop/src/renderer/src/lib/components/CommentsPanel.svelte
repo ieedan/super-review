@@ -2,13 +2,18 @@
 	import { Check, ClipboardList, Copy, MoreHorizontal, RotateCcw, Trash2, X } from 'lucide-svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import HarnessLogo from './HarnessLogo.svelte';
-	import { actions, app } from '$lib/store.svelte';
+	import { actions, app, isPRCommentContext } from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
-	import type { LocalComment } from '@shared/types';
+	import type { LocalComment, PRReviewComment } from '@shared/types';
 
+	// In a PR view the sidebar lists GitHub review comments; everywhere else it
+	// lists local comments. The two share the same chrome but different rows.
+	const isPR = $derived(isPRCommentContext());
+
+	// ── Local comments ──
 	// Newest first, but always sink resolved comments below the open ones so the
 	// actionable feedback stays at the top.
-	const sorted = $derived(
+	const localSorted = $derived(
 		[...app.localComments].sort((a, b) => {
 			const ar = a.resolvedAt != null ? 1 : 0;
 			const br = b.resolvedAt != null ? 1 : 0;
@@ -16,7 +21,36 @@
 			return b.createdAt - a.createdAt;
 		})
 	);
-	const unresolvedCount = $derived(app.localComments.filter((c) => c.resolvedAt == null).length);
+
+	// ── PR comments ──
+	// Flatten the per-file map to root threads (a comment with no parent, pinned to
+	// a line), each with its reply count. Resolved threads sink to the bottom.
+	const prThreads = $derived.by(() => {
+		const all = Object.values(app.prComments).flat();
+		const roots = all.filter((c) => c.inReplyTo == null && c.line != null);
+		const withReplies = roots.map((root) => ({
+			root,
+			replies: all.filter((c) => c.inReplyTo === root.id).length
+		}));
+		return withReplies.sort((a, b) => {
+			const ar = a.root.isResolved ? 1 : 0;
+			const br = b.root.isResolved ? 1 : 0;
+			if (ar !== br) return ar - br;
+			return new Date(b.root.createdAt).getTime() - new Date(a.root.createdAt).getTime();
+		});
+	});
+
+	const totalCount = $derived(isPR ? prThreads.length : app.localComments.length);
+	const unresolvedCount = $derived(
+		isPR
+			? prThreads.filter((t) => !t.root.isResolved).length
+			: app.localComments.filter((c) => c.resolvedAt == null).length
+	);
+
+	function copyAll(): void {
+		if (isPR) void actions.copyAllUnresolvedPRComments();
+		else void actions.copyAllUnresolvedComments();
+	}
 
 	function lineLabel(c: LocalComment): string {
 		return c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
@@ -26,14 +60,22 @@
 		const parts = path.split('/');
 		return parts[parts.length - 1] || path;
 	}
+
+	function togglePRResolved(c: PRReviewComment): void {
+		if (!c.threadId) return;
+		void actions.setThreadResolved(c.threadId, !c.isResolved);
+	}
 </script>
 
 <div class="flex h-full flex-col border-l border-border bg-card/40">
 	<header class="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
 		<span class="text-sm font-semibold">Comments</span>
-		{#if app.localComments.length > 0}
+		{#if isPR}
+			<span class="rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">PR</span>
+		{/if}
+		{#if totalCount > 0}
 			<span class="rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-				{app.localComments.length}
+				{totalCount}
 			</span>
 		{/if}
 		<div class="flex-1"></div>
@@ -42,7 +84,7 @@
 			class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
 			title="Copy all unresolved comments as a prompt"
 			disabled={unresolvedCount === 0}
-			onclick={() => actions.copyAllUnresolvedComments()}
+			onclick={copyAll}
 		>
 			<ClipboardList class="size-4" />
 		</button>
@@ -57,18 +99,100 @@
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
-		{#if sorted.length === 0}
+		{#if totalCount === 0}
 			<div class="grid h-full place-items-center p-6 text-center">
 				<div>
 					<p class="text-sm text-muted-foreground">No comments yet</p>
 					<p class="mt-1 text-xs text-muted-foreground">
-						Click the <span class="font-medium">+</span> on a line in the diff to leave one.
+						{#if isPR}
+							Click the <span class="font-medium">+</span> on a line to leave a PR review comment.
+						{:else}
+							Click the <span class="font-medium">+</span> on a line in the diff to leave one.
+						{/if}
 					</p>
 				</div>
 			</div>
+		{:else if isPR}
+			<ul>
+				{#each prThreads as { root, replies } (root.id)}
+					<li class="border-b border-border">
+						<div
+							role="button"
+							tabindex="0"
+							class={[
+								'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
+								root.isResolved && 'opacity-60'
+							]}
+							onclick={() => actions.revealPRComment(root.path)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									actions.revealPRComment(root.path);
+								}
+							}}
+						>
+							<div class="flex items-center gap-2">
+								<img
+									class="size-4 shrink-0 rounded-full"
+									src={root.authorAvatarUrl}
+									alt={root.author}
+								/>
+								<span class="truncate text-xs font-medium">{root.author}</span>
+								<span class="shrink-0 text-[11px] text-muted-foreground">
+									{formatRelative(root.createdAt)}
+								</span>
+								{#if root.isResolved}
+									<span
+										class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+										style="background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success);"
+									>
+										<Check class="size-2.5" /> Resolved
+									</span>
+								{/if}
+								<div class="flex-1"></div>
+								{#if root.threadId}
+									<DropdownMenu.Root>
+										<DropdownMenu.Trigger
+											class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground data-[state=open]:opacity-100"
+											aria-label="Comment actions"
+											onclick={(e: MouseEvent) => e.stopPropagation()}
+										>
+											<MoreHorizontal class="size-4" />
+										</DropdownMenu.Trigger>
+										<DropdownMenu.Content align="end">
+											<DropdownMenu.Item onSelect={() => togglePRResolved(root)}>
+												{#if root.isResolved}
+													<RotateCcw class="size-3.5" /> Unresolve
+												{:else}
+													<Check class="size-3.5" /> Resolve
+												{/if}
+											</DropdownMenu.Item>
+											<DropdownMenu.Item
+												onSelect={() => actions.copyPRCommentPrompt(root.path, root.id)}
+											>
+												<Copy class="size-3.5" /> Copy as prompt
+											</DropdownMenu.Item>
+										</DropdownMenu.Content>
+									</DropdownMenu.Root>
+								{/if}
+							</div>
+							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+								<span class="truncate font-mono">{fileName(root.path)}</span>
+								<span class="shrink-0">·</span>
+								<span class="shrink-0 font-mono">L{root.line}</span>
+								{#if replies > 0}
+									<span class="shrink-0">·</span>
+									<span class="shrink-0">{replies} {replies === 1 ? 'reply' : 'replies'}</span>
+								{/if}
+							</div>
+							<p class="mt-1 line-clamp-3 text-[13px] whitespace-pre-wrap">{root.body}</p>
+						</div>
+					</li>
+				{/each}
+			</ul>
 		{:else}
 			<ul>
-				{#each sorted as c (c.id)}
+				{#each localSorted as c (c.id)}
 					{@const resolved = c.resolvedAt != null}
 					<li class="border-b border-border">
 						<div

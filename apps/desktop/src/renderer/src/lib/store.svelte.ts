@@ -410,6 +410,27 @@ export function isReadOnlyView(): boolean {
 	return isViewingOtherBranch() || app.viewPR != null;
 }
 
+// True when the diff on screen is a pull request's, so commenting surfaces GitHub
+// PR review comments rather than local ones. Mirrors DiffFileSection's gate: a
+// `pr` context, or the Branch tab with an open PR for the checked-out branch.
+// Drives the Comments sidebar's source (PR comments vs local comments).
+export function isPRCommentContext(): boolean {
+	return (
+		app.diffContext.kind === 'pr' ||
+		(app.contextTab === 'branch' && app.branchPR != null && !isReadOnlyView())
+	);
+}
+
+// Whether the Comments sidebar has anything to show in the current context —
+// PR review comments in a PR view, local comments otherwise. Drives the header
+// toggle's "has comments" dot.
+export function sidebarHasComments(): boolean {
+	if (isPRCommentContext()) {
+		return Object.values(app.prComments).some((list) => list.some((c) => c.line != null));
+	}
+	return app.localComments.length > 0;
+}
+
 // True when the Branch tab has something to show. The Branch diff compares the
 // default branch (base) against the viewed head. On a plain default-branch
 // checkout those are identical, so the diff is always empty — hide the tab. A
@@ -1490,6 +1511,39 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 		sections.push(`### ${path}`);
 		for (const c of list) {
 			const range = c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
+			const body = c.body.trim().replace(/\n/g, '\n  ');
+			sections.push(`- [ ] **${range}** — ${body}`);
+		}
+		sections.push('');
+	}
+	return sections.join('\n').trim();
+}
+
+// Copy-ready prompt for a single PR review comment — same shape as the local
+// formatter so an agent gets a consistent instruction regardless of source.
+function formatPRCommentPrompt(c: PRReviewComment): string {
+	const sideLabel = c.side === 'LEFT' ? 'original' : 'new';
+	const loc = c.line != null ? ` at L${c.line} (${sideLabel} side)` : '';
+	return `In \`${c.path}\`${loc}:\n\n${c.body.trim()}`;
+}
+
+// Markdown task list from several PR review comments, grouped by file.
+function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
+	// Plain scratch Map in a pure function — not reactive state.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const byFile = new Map<string, PRReviewComment[]>();
+	for (const c of comments) {
+		const list = byFile.get(c.path) ?? [];
+		list.push(c);
+		byFile.set(c.path, list);
+	}
+	const sections: string[] = [
+		'Address the following review comments. Each item lists the file, the line, and the feedback:\n'
+	];
+	for (const [path, list] of byFile) {
+		sections.push(`### ${path}`);
+		for (const c of list) {
+			const range = c.line != null ? `L${c.line}` : 'file';
 			const body = c.body.trim().replace(/\n/g, '\n  ');
 			sections.push(`- [ ] **${range}** — ${body}`);
 		}
@@ -3062,6 +3116,32 @@ export const actions = {
 		app.selectedFile = comment.path;
 		const nonce = (app.commentScrollTarget?.nonce ?? 0) + 1;
 		app.commentScrollTarget = { id, nonce };
+	},
+
+	// ─── PR comments in the sidebar ────────────────────────────────────────────
+	// When the diff on screen is a PR's, the Comments sidebar lists GitHub review
+	// comments instead of local ones (the data already lives in app.prComments).
+
+	// Copy a single PR review comment as an agent-ready prompt.
+	async copyPRCommentPrompt(path: string, id: number): Promise<void> {
+		const comment = (app.prComments[path] ?? []).find((c) => c.id === id);
+		if (!comment) return;
+		await actions.copyToClipboard(formatPRCommentPrompt(comment));
+	},
+
+	// Copy every unresolved PR review thread (one entry per root comment) as a
+	// markdown task list.
+	async copyAllUnresolvedPRComments(): Promise<void> {
+		const roots = Object.values(app.prComments)
+			.flat()
+			.filter((c) => c.inReplyTo == null && c.line != null && !c.isResolved);
+		if (roots.length === 0) return;
+		await actions.copyToClipboard(formatPRCommentsPrompt(roots));
+	},
+
+	// Select a PR comment's file so the inline thread comes into view.
+	revealPRComment(path: string): void {
+		app.selectedFile = path;
 	},
 
 	async refreshFiles(): Promise<void> {
