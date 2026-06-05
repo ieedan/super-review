@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { mount, unmount, onDestroy } from 'svelte';
+	import { mount, unmount, onDestroy, onMount } from 'svelte';
 	import {
 		Check,
 		ChevronDown,
@@ -17,6 +17,7 @@
 	import ZedIcon from './icons/ZedIcon.svelte';
 	import VisualStudioIcon from './icons/VisualStudioIcon.svelte';
 	import { languageIconForPath } from '$lib/file-icons';
+	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { isMarkdownPath, renderMarkdown } from '$lib/markdown';
 	import { isImagePath, isSvgPath } from '@shared/media';
 	import ImageDiff from './ImageDiff.svelte';
@@ -1239,6 +1240,38 @@
 	const pathBase = $derived(
 		file.path.includes('/') ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path
 	);
+	// Center-style path truncation for the sticky header label, matching the
+	// sidebar's changes list: keep the full filename and shrink only the
+	// directory prefix (so the most-significant part stays visible) instead of
+	// chopping the tail with a CSS ellipsis. We measure the label's available
+	// width (it's the sole flex-grow child of its wrapper, so its box width is
+	// decoupled from the truncated text — no measure/shrink feedback loop) and
+	// hand it to the same pretext-based helper the sidebar uses.
+	let pathEl = $state<HTMLElement | null>(null);
+	let pathWidth = $state(0);
+	let pathFont = $state('12px ui-monospace, monospace');
+	// The label is rendered unconditionally in the header, so its element exists
+	// for the whole life of the section: set the observer up once on mount and
+	// tear it down on destroy. The ResizeObserver handles width changes; we don't
+	// need an $effect to re-sync on reactive state.
+	onMount(() => {
+		const el = pathEl;
+		if (!el) return;
+		const measure = (): void => {
+			pathWidth = el.clientWidth;
+			const cs = window.getComputedStyle(el);
+			// text-xs is 12px in Tailwind; pair it with the label's resolved
+			// (monospace) family for a canvas-compatible font shorthand.
+			pathFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
+		};
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+	const displayPrefix = $derived(
+		pathDir ? truncatePathPrefix(pathDir, pathBase, pathWidth, pathFont) : ''
+	);
 	const isMarkdown = $derived(isMarkdownPath(file.path));
 	// Readable formats with a rendered view get a toggle button. Raster images
 	// have no source to toggle to, so they're excluded (they always show the
@@ -1375,23 +1408,34 @@
 			{/if}
 		</button>
 		<Icon icon={languageIconForPath(file.path)} class="size-3.5 shrink-0" />
-		<span
-			class={['truncate font-mono text-xs', isSeen && 'text-muted-foreground']}
-			title={file.path}
-			><span class={[!isSeen && 'text-muted-foreground']}>{pathDir}</span>{pathBase}</span
-		>
-		{#if statusBadge}
-			<Badge variant={statusBadge === 'deleted' ? 'destructive' : 'warning'}>
-				{statusBadge}
-			</Badge>
-		{/if}
-		{#if file.isBinary}
-			<Badge variant="muted">binary</Badge>
-		{/if}
-		{#if isPRContext && commentCount > 0}
-			<Badge variant="muted">{commentCount} comment{commentCount === 1 ? '' : 's'}</Badge>
-		{/if}
-		<div class="ml-auto flex items-center gap-2 text-[10px] tabular-nums">
+		<div class="flex min-w-0 flex-1 items-center gap-2">
+			<!-- Inline whitespace is intentional (see FileList.svelte): a newline
+			     between these flex children renders as a visible gap between the
+			     truncated prefix and the filename. `displayPrefix` is pre-fit by
+			     pretext, so the label only needs overflow-hidden as a guard. -->
+			<span
+				bind:this={pathEl}
+				class={[
+					'flex min-w-0 flex-1 items-center overflow-hidden font-mono text-xs whitespace-nowrap',
+					isSeen && 'text-muted-foreground'
+				]}
+				title={file.path}
+				>{#if displayPrefix}<span class={[!isSeen && 'text-muted-foreground']}>{displayPrefix}</span
+					>{/if}<span class="shrink-0">{pathBase}</span></span
+			>
+			{#if statusBadge}
+				<Badge variant={statusBadge === 'deleted' ? 'destructive' : 'warning'}>
+					{statusBadge}
+				</Badge>
+			{/if}
+			{#if file.isBinary}
+				<Badge variant="muted">binary</Badge>
+			{/if}
+			{#if isPRContext && commentCount > 0}
+				<Badge variant="muted">{commentCount} comment{commentCount === 1 ? '' : 's'}</Badge>
+			{/if}
+		</div>
+		<div class="flex items-center gap-2 text-[10px] tabular-nums">
 			{#if !file.isBinary}
 				{#if file.additions > 0}
 					<span class="text-success">+{file.additions}</span>
