@@ -27,6 +27,8 @@
 		FileDiff as FileDiffClass,
 		parseDiffFromFile,
 		type DiffLineAnnotation,
+		type FileDiffMetadata,
+		type HunkExpansionRegion,
 		type OnDiffLineClickProps,
 		type SelectedLineRange
 	} from '@pierre/diffs';
@@ -229,33 +231,103 @@
 	// click produces a comment (PR or local).
 	const canComment = $derived(isPRContext || isLocalCommentContext);
 
-	// True when a comment on THIS file is anchored to a line that isn't part of the
-	// changed hunks — it would otherwise land in a collapsed "unchanged lines"
-	// region and never render. We then tell Pierre to expand the unchanged lines so
-	// the comment shows. Only kicks in for comments outside the diff; comments on
-	// changed lines (the common case) keep the normal collapsed view.
-	const expandUnchangedForComments = $derived.by(() => {
-		const patch = diffData?.patch;
-		if (!patch) return false;
-		const anchors: Array<{ side: 'LEFT' | 'RIGHT'; line: number }> = [];
+	// Pierre's parsed diff metadata for the rendered file (set in renderDiff). Its
+	// `hunks` drive the targeted expansion of collapsed regions around comments.
+	let fileDiffMeta = $state<FileDiffMetadata | null>(null);
+
+	// Comment anchors (file-relative line + side) for this file in the current
+	// context. PR comments and local comments are mutually exclusive per context.
+	const commentAnchors = $derived.by<Array<{ side: 'LEFT' | 'RIGHT'; line: number }>>(() => {
+		const out: Array<{ side: 'LEFT' | 'RIGHT'; line: number }> = [];
 		if (isPRContext) {
 			for (const c of app.prComments[file.path] ?? []) {
-				if (c.line != null) anchors.push({ side: c.side, line: c.line });
+				if (c.line != null) out.push({ side: c.side, line: c.line });
 			}
 		} else if (isLocalCommentContext) {
 			for (const c of app.localComments) {
-				if (c.path === file.path) anchors.push({ side: c.side, line: c.startLine });
+				if (c.path === file.path) out.push({ side: c.side, line: c.startLine });
 			}
 		}
-		if (anchors.length === 0) return false;
-		const parsed = parseFilePatch(patch);
-		if (!parsed) return false;
-		const changed = new Set(changedLineKeys(file.path, parsed));
-		return anchors.some(
-			(a) =>
-				!changed.has(stagingLineKey(file.path, a.side === 'LEFT' ? 'deletion' : 'addition', a.line))
-		);
+		return out;
 	});
+
+	// Build the `expandedHunks` map that reveals JUST enough of each collapsed gap
+	// to show any comment anchored inside it — not the whole file. A comment on a
+	// line already inside a rendered hunk needs nothing. Otherwise we find the gap
+	// that contains the line (the collapsed region before some hunk, or the trailing
+	// region after the last hunk) and expand from the nearer edge up to that line.
+	// See @pierre/diffs `getExpandedRegion`: key `i` is the gap before hunk `i`
+	// (`hunks.length` = trailing gap); `fromStart` reveals the top, `fromEnd` the
+	// bottom (adjacent to the hunk).
+	function computeExpandedHunks(
+		meta: FileDiffMetadata | null,
+		anchors: Array<{ side: 'LEFT' | 'RIGHT'; line: number }>
+	): Map<number, HunkExpansionRegion> {
+		// Plain Map handed to Pierre as a render option — not reactive state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const map = new Map<number, HunkExpansionRegion>();
+		if (!meta || meta.hunks.length === 0 || anchors.length === 0) return map;
+		const hunks = meta.hunks;
+		const startOf = (h: (typeof hunks)[number], isNew: boolean): number =>
+			isNew ? h.additionStart : h.deletionStart;
+		const countOf = (h: (typeof hunks)[number], isNew: boolean): number =>
+			isNew ? h.additionCount : h.deletionCount;
+
+		for (const { side, line } of anchors) {
+			const isNew = side === 'RIGHT';
+			// Already inside a rendered hunk (incl. its shown context)? Nothing to do.
+			let inside = false;
+			for (const h of hunks) {
+				const s = startOf(h, isNew);
+				if (line >= s && line <= s + countOf(h, isNew) - 1) {
+					inside = true;
+					break;
+				}
+			}
+			if (inside) continue;
+
+			const i = hunks.findIndex((h) => startOf(h, isNew) > line);
+			if (i >= 0) {
+				const h = hunks[i];
+				const gapTop = startOf(h, isNew) - h.collapsedBefore;
+				if (line < gapTop) continue; // belongs to an earlier hunk's range
+				const fromEndNeeded = startOf(h, isNew) - line; // reveal up from the hunk
+				const fromStartNeeded = line - gapTop + 1; // reveal down from the top
+				const prev = map.get(i) ?? { fromStart: 0, fromEnd: 0 };
+				if (fromEndNeeded <= fromStartNeeded) {
+					map.set(i, { fromStart: prev.fromStart, fromEnd: Math.max(prev.fromEnd, fromEndNeeded) });
+				} else {
+					map.set(i, {
+						fromStart: Math.max(prev.fromStart, fromStartNeeded),
+						fromEnd: prev.fromEnd
+					});
+				}
+			} else {
+				// Past the last hunk → the trailing gap, keyed by `hunks.length`
+				// (`fromEnd` is ignored there, so reveal from the top).
+				const last = hunks[hunks.length - 1];
+				const trailingStart = startOf(last, isNew) + countOf(last, isNew);
+				const fromStartNeeded = line - trailingStart + 1;
+				if (fromStartNeeded <= 0) continue;
+				const key = hunks.length;
+				const prev = map.get(key) ?? { fromStart: 0, fromEnd: 0 };
+				map.set(key, { fromStart: Math.max(prev.fromStart, fromStartNeeded), fromEnd: 0 });
+			}
+		}
+		return map;
+	}
+
+	const expandedHunksForComments = $derived(computeExpandedHunks(fileDiffMeta, commentAnchors));
+
+	// Stable signature of an expandedHunks map, so the live effect only re-renders
+	// when the expansion actually changes.
+	function expandedHunksKey(m: Map<number, HunkExpansionRegion>): string {
+		return [...m.entries()]
+			.map(([k, v]) => `${k}:${v.fromStart},${v.fromEnd}`)
+			.sort()
+			.join('|');
+	}
+	let appliedExpandedKey = '';
 
 	// Memoize the `metadata` objects we hand Pierre — its annotation cache uses
 	// a reference check (`metadata === metadata`) to decide whether to re-render
@@ -566,6 +638,10 @@
 		// The painted annotations die with the instance; clear the baseline so a
 		// fresh mount re-applies from scratch rather than comparing against stale.
 		appliedAnnotations = [];
+		// Drop the parsed metadata + expansion baseline so the next render recomputes
+		// from scratch rather than against a previous file's hunks.
+		fileDiffMeta = null;
+		appliedExpandedKey = '';
 		if (instance) {
 			try {
 				instance.cleanUp();
@@ -1027,6 +1103,30 @@
 		// into this element, so the manual append is intentional.
 		// eslint-disable-next-line svelte/no-dom-manipulating
 		host.appendChild(diffContainer);
+
+		const namePair = {
+			old: diff.file.oldPath ?? diff.file.path,
+			new: diff.file.path
+		};
+		const oldFile = { name: namePair.old, contents: diff.oldContents };
+		const newFile = { name: namePair.new, contents: diff.newContents };
+
+		// Parse Pierre's own diff metadata up front: its hunks (not the git patch)
+		// are what `expandedHunks` keys into, and we need them before constructing
+		// the instance so collapsed regions around comments expand on the first paint
+		// (no flash).
+		let metadata: FileDiffMetadata | undefined | null;
+		try {
+			metadata = parseDiffFromFile(oldFile, newFile);
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : String(err);
+			return;
+		}
+		if (!metadata) return;
+		fileDiffMeta = metadata;
+		const initialExpanded = computeExpandedHunks(metadata, commentAnchors);
+		appliedExpandedKey = expandedHunksKey(initialExpanded);
+
 		instance = new FileDiffClass<AnnotationMeta>(
 			{
 				diffStyle: app.viewMode,
@@ -1039,10 +1139,10 @@
 				// via setOptions + flushManagers when `canComment` changes.
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
-				// Expand all unchanged lines when a comment sits outside the changed
-				// hunks, so it isn't hidden in a collapsed context region. Toggled live
-				// below when that condition changes.
-				expandUnchanged: expandUnchangedForComments,
+				// Reveal just enough of any collapsed region to show a comment anchored
+				// inside it (a comment "outside the diff"). Updated live below as
+				// comments come and go.
+				expandedHunks: initialExpanded.size > 0 ? initialExpanded : undefined,
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
 				// rerender, so re-apply each time.
@@ -1054,22 +1154,6 @@
 			// the main-thread highlighter when the pool is unavailable.
 			getDiffWorkerPool()
 		);
-
-		const namePair = {
-			old: diff.file.oldPath ?? diff.file.path,
-			new: diff.file.path
-		};
-		const oldFile = { name: namePair.old, contents: diff.oldContents };
-		const newFile = { name: namePair.new, contents: diff.newContents };
-
-		let metadata;
-		try {
-			metadata = parseDiffFromFile(oldFile, newFile);
-		} catch (err) {
-			loadError = err instanceof Error ? err.message : String(err);
-			return;
-		}
-		if (!metadata) return;
 
 		try {
 			instance.render({
@@ -1350,18 +1434,20 @@
 		instance.flushManagers();
 	});
 
-	// Expand/collapse the file's unchanged lines live as comments come and go, so a
-	// comment landing outside the changed hunks becomes visible without a manual
-	// expand. Changing `expandUnchanged` re-lays-out the diff, so `rerender` (not
-	// just `flushManagers`). Read the derived first so the dependency is registered
-	// even while `instance` is null on the first run.
+	// Reveal/hide the collapsed regions around comments live as comments come and
+	// go, so a comment landing outside the changed hunks becomes visible without a
+	// manual expand. Changing `expandedHunks` re-lays-out the diff, so `rerender`
+	// (not just `flushManagers`). Read the derived first so the dependency is
+	// registered even while `instance` is null on the first run.
 	$effect(() => {
-		const enabled = expandUnchangedForComments;
+		const map = expandedHunksForComments;
 		if (!instance) return;
+		const key = expandedHunksKey(map);
+		if (key === appliedExpandedKey) return;
+		appliedExpandedKey = key;
 		type WithOptions = { options: Record<string, unknown> };
 		const current = (instance as unknown as WithOptions).options;
-		if (current.expandUnchanged === enabled) return;
-		instance.setOptions({ ...current, expandUnchanged: enabled } as Parameters<
+		instance.setOptions({ ...current, expandedHunks: map.size > 0 ? map : undefined } as Parameters<
 			typeof instance.setOptions
 		>[0]);
 		instance.rerender();
