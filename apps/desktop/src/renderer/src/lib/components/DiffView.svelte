@@ -215,19 +215,33 @@
 		// changes — tab switch, search filter, refresh. The scroll/resize
 		// listeners alone don't fire when the DOM is rebuilt at scrollTop 0.
 		void visibleFiles;
+		// Also re-run on collapse/expand: a toggle changes a section's height
+		// but not the scroll container's own size, so the ResizeObserver below
+		// never fires — yet which file is the first *expanded* one on screen can
+		// change, so the active highlight must be recomputed.
+		void app.collapsedFiles.size;
 		if (!scrollContainer) return;
 		const el = scrollContainer;
 		let ticking = false;
 
 		function updateActiveFile(): void {
 			ticking = false;
-			const containerTop = el.getBoundingClientRect().top;
+			const containerRect = el.getBoundingClientRect();
+			const containerTop = containerRect.top;
+			const containerBottom = containerRect.bottom;
 			// Skip the off-screen pre-rendered neighbours (single layout) — they sit
 			// in the DOM but must never become the "active" file.
-			const sections = Array.from(
+			const allSections = Array.from(
 				el.querySelectorAll<HTMLElement>('section[data-file-path]')
 			).filter((s) => !s.closest('.diff-wrap--prerender'));
-			if (sections.length === 0) return;
+			if (allSections.length === 0) return;
+			// Prefer expanded sections: a collapsed file shows no content, so its
+			// pinned sticky header must not claim "active" while an expanded file
+			// below it is the one actually on screen. When everything is collapsed
+			// there's nothing to read, so fall back to all sections so the sidebar
+			// still tracks the pinned header.
+			const expandedSections = allSections.filter((s) => s.dataset.collapsed !== 'true');
+			const sections = expandedSections.length > 0 ? expandedSections : allSections;
 			let active: string | null = null;
 			let activeRelTop = -Infinity;
 			for (const section of sections) {
@@ -239,7 +253,20 @@
 					active = section.getAttribute('data-file-path');
 				}
 			}
-			// Scrolled above all sections — anchor to the first visible file.
+			// None has crossed the top edge yet — e.g. collapsed headers occupy the
+			// top while the first expanded file sits just below them. Anchor to the
+			// first change visible on the page (the topmost partially-visible section),
+			// which also covers being scrolled above all sections.
+			if (!active) {
+				for (const section of sections) {
+					const rect = section.getBoundingClientRect();
+					if (rect.bottom > containerTop && rect.top < containerBottom) {
+						active = section.getAttribute('data-file-path');
+						break;
+					}
+				}
+			}
+			// Still nothing visible — anchor to the first section.
 			if (!active) active = sections[0].getAttribute('data-file-path');
 			if (active) actions.setActiveFromScroll(active);
 		}
