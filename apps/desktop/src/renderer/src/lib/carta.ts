@@ -36,7 +36,10 @@ export const carta = new Carta({
 	// Dual Shiki theme so the preview's code blocks track light/dark mode. The
 	// `html.dark` selector in carta-theme.css flips to the dark variant.
 	theme: { light: 'github-light', dark: 'github-dark' },
-	extensions: [code(), emoji(), slash()]
+	// Pass the same dual theme to the code plugin explicitly. It otherwise
+	// inherits the instance theme, but being explicit keeps the preview's fenced
+	// code blocks on the identical light/dark pair as the editor.
+	extensions: [code({ theme: { light: 'github-light', dark: 'github-dark' } }), emoji(), slash()]
 });
 
 // CSS class Carta applies to the editor and the plugin popups when we pass

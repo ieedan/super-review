@@ -32,10 +32,15 @@
 	overflow: auto;
 }
 
+/* Both Carta's editing layers — the transparent <textarea> and the highlighted
+   <pre> it overlays — carry this class, so the font metrics MUST be identical
+   for the caret to track the rendered text. Critically, do NOT set `color`
+   here: Carta keeps the textarea text transparent so only the highlighted <pre>
+   shows; overriding it makes the textarea opaque and the two layers visibly
+   drift apart. Only the caret needs a color. */
 .carta-theme__github .carta-font-code {
 	font-family: var(--code-font);
 	caret-color: var(--color-foreground);
-	color: var(--color-foreground);
 	font-size: 0.85rem;
 	line-height: 1.5;
 	letter-spacing: normal;
@@ -220,9 +225,11 @@
 	text-overflow: ellipsis;
 }
 
-/* Dark mode: flip Shiki's dual-theme code colors to the dark variant. */
+/* Dark mode: flip Shiki's dual-theme code colors to the dark variant. Shiki
+   emits each token's light color inline plus a `--shiki-dark` custom property;
+   this swaps to it under `.dark` (which the app sets on <html>). Mirrors the
+   upstream GitHub example exactly — only the text color is swapped. */
 html.dark .carta-theme__github .shiki,
 html.dark .carta-theme__github .shiki span {
 	color: var(--shiki-dark) !important;
-	background-color: var(--shiki-dark-bg) !important;
 }
