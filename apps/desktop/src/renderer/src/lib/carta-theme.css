@@ -1,0 +1,228 @@
+/*
+ * Carta "github" theme — adapted from the upstream GitHubExample
+ * (docs/src/lib/styles/github.scss) but wired to this app's design tokens so the
+ * editor sits naturally in both light and dark mode instead of hardcoding
+ * GitHub's dark palette. Applied when <MarkdownEditor theme="github"> tags the
+ * editor (and the emoji/slash popups) with `.carta-theme__github`.
+ *
+ * Carta embeds its core layout (flex toolbar, tab switching) in its own
+ * components; this stylesheet only paints colors, borders, and sizing.
+ */
+
+.carta-theme__github.carta-editor {
+	background-color: var(--color-background);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius);
+}
+
+.carta-theme__github.carta-editor:focus-within {
+	outline: 2px solid var(--color-ring);
+	outline-offset: -1px;
+}
+
+.carta-theme__github .carta-wrapper {
+	padding: 0.75rem;
+	flex-grow: 1;
+}
+
+.carta-theme__github .carta-input,
+.carta-theme__github .carta-renderer {
+	min-height: 100px;
+	max-height: 320px;
+	overflow: auto;
+}
+
+.carta-theme__github .carta-font-code {
+	font-family: var(--code-font);
+	caret-color: var(--color-foreground);
+	color: var(--color-foreground);
+	font-size: 0.85rem;
+	line-height: 1.5;
+	letter-spacing: normal;
+}
+
+/* Toolbar (Write/Preview tabs on the left, formatting icons on the right). */
+.carta-theme__github .carta-toolbar {
+	height: 2.25rem;
+	background-color: var(--color-muted);
+	border-top-left-radius: var(--radius);
+	border-top-right-radius: var(--radius);
+}
+
+.carta-theme__github .carta-toolbar .carta-icon {
+	width: 1.75rem;
+	height: 1.75rem;
+	color: var(--color-muted-foreground);
+	border-radius: 0.25rem;
+}
+
+.carta-theme__github .carta-toolbar .carta-icon:hover {
+	color: var(--color-foreground);
+	background-color: var(--color-accent);
+}
+
+.carta-theme__github .carta-toolbar-left button,
+.carta-theme__github .carta-toolbar-right,
+.carta-theme__github .carta-filler {
+	border-bottom: 1px solid var(--color-border);
+}
+
+.carta-theme__github .carta-toolbar-left > *:first-child {
+	border-top-left-radius: var(--radius);
+}
+
+.carta-theme__github .carta-toolbar-left > * {
+	padding-left: 0.9rem;
+	padding-right: 0.9rem;
+	font-size: 0.8rem;
+	color: var(--color-muted-foreground);
+}
+
+.carta-theme__github .carta-toolbar-left button {
+	height: 100%;
+}
+
+/* Active tab — reads as a raised panel continuous with the editor body. */
+.carta-theme__github .carta-toolbar-left .carta-active {
+	background-color: var(--color-background);
+	color: var(--color-foreground);
+	border-right: 1px solid var(--color-border);
+	border-bottom: 1px solid var(--color-background);
+}
+
+.carta-theme__github .carta-toolbar-left .carta-active:not(:first-child) {
+	border-left: 1px solid var(--color-border);
+}
+
+.carta-theme__github .carta-toolbar-right {
+	padding-right: 0.5rem;
+}
+
+/* Overflow "..." menu for toolbar icons. */
+.carta-theme__github .carta-icons-menu {
+	padding: 0.5rem;
+	border: 1px solid var(--color-border);
+	border-radius: 0.375rem;
+	min-width: 180px;
+	background: var(--color-popover);
+	color: var(--color-popover-foreground);
+}
+
+.carta-theme__github .carta-icons-menu .carta-icon-full {
+	padding-left: 0.375rem;
+	padding-right: 0.375rem;
+	margin-top: 2px;
+	border-radius: 0.25rem;
+}
+
+.carta-theme__github .carta-icons-menu .carta-icon-full:first-child {
+	margin-top: 0;
+}
+
+.carta-theme__github .carta-icons-menu .carta-icon-full:hover {
+	color: var(--color-foreground);
+	background-color: var(--color-accent);
+}
+
+.carta-theme__github .carta-icons-menu .carta-icon-full span {
+	margin-left: 0.375rem;
+	font-size: 0.8rem;
+}
+
+/* Plugin: emoji picker popup. */
+.carta-theme__github.carta-emoji {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-start;
+	width: 19rem;
+	max-height: 14rem;
+	overflow-x: auto;
+	overflow-y: auto;
+	border: 1px solid var(--color-border);
+	border-radius: 0.375rem;
+	font-family: inherit;
+	background-color: var(--color-popover);
+	word-break: break-word;
+	scroll-padding: 6px;
+	padding: 0.25rem;
+}
+
+.carta-theme__github.carta-emoji button {
+	background: transparent;
+	cursor: pointer;
+	display: inline-block;
+	border-radius: 0.25rem;
+	border: 0;
+	padding: 0;
+	margin: 0.175rem;
+	min-width: 2rem;
+	height: 2rem;
+	font-size: 1.2rem;
+	line-height: 100%;
+	text-align: center;
+	white-space: nowrap;
+}
+
+.carta-theme__github.carta-emoji button:hover,
+.carta-theme__github.carta-emoji button.carta-active {
+	background: var(--color-accent);
+}
+
+/* Plugin: slash command menu popup. */
+.carta-theme__github.carta-slash {
+	width: 18rem;
+	max-height: 14rem;
+	overflow-y: auto;
+	border: 1px solid var(--color-border);
+	border-radius: 0.375rem;
+	font-family: inherit;
+	background-color: var(--color-popover);
+	color: var(--color-popover-foreground);
+	padding: 0.375rem;
+	scroll-padding: 6px;
+}
+
+.carta-theme__github.carta-slash span {
+	width: fit-content;
+}
+
+.carta-theme__github.carta-slash button {
+	background: none;
+	width: 100%;
+	padding: 0.625rem;
+	border: 0;
+	border-radius: 0.25rem;
+	color: inherit;
+	text-align: left;
+}
+
+.carta-theme__github.carta-slash .carta-slash-group {
+	padding: 0 0.25rem;
+	margin-bottom: 0.25rem;
+	font-size: 0.8rem;
+	color: var(--color-muted-foreground);
+}
+
+.carta-theme__github.carta-slash button.carta-active,
+.carta-theme__github.carta-slash button:hover {
+	background: var(--color-accent);
+	cursor: pointer;
+}
+
+.carta-theme__github.carta-slash .carta-snippet-title {
+	font-size: 0.85rem;
+	font-weight: 600;
+}
+
+.carta-theme__github.carta-slash .carta-snippet-description {
+	font-size: 0.8rem;
+	color: var(--color-muted-foreground);
+	text-overflow: ellipsis;
+}
+
+/* Dark mode: flip Shiki's dual-theme code colors to the dark variant. */
+html.dark .carta-theme__github .shiki,
+html.dark .carta-theme__github .shiki span {
+	color: var(--shiki-dark) !important;
+	background-color: var(--shiki-dark-bg) !important;
+}
