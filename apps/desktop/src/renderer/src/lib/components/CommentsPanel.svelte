@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, ClipboardList, Copy, MoreHorizontal, RotateCcw, Trash2, X } from 'lucide-svelte';
+	import { Check, Copy, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { actions, app, isPRCommentContext } from '$lib/store.svelte';
@@ -47,9 +47,29 @@
 			: app.localComments.filter((c) => c.resolvedAt == null).length
 	);
 
+	// Per-button "copied" feedback: the key of the button that was last copied,
+	// cleared after a beat so the icon flips back from a checkmark to the copy icon.
+	let copiedKey = $state<string | null>(null);
+	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+	function flashCopied(key: string): void {
+		copiedKey = key;
+		if (copiedTimer) clearTimeout(copiedTimer);
+		copiedTimer = setTimeout(() => (copiedKey = null), 1500);
+	}
+
 	function copyAll(): void {
 		if (isPR) void actions.copyAllUnresolvedPRComments();
 		else void actions.copyAllUnresolvedComments();
+		flashCopied('all');
+	}
+
+	function copyLocal(id: string): void {
+		void actions.copyCommentPrompt(id);
+		flashCopied(id);
+	}
+	function copyPR(path: string, id: number): void {
+		void actions.copyPRCommentPrompt(path, id);
+		flashCopied(`pr-${id}`);
 	}
 
 	function lineLabel(c: LocalComment): string {
@@ -86,15 +106,11 @@
 			disabled={unresolvedCount === 0}
 			onclick={copyAll}
 		>
-			<ClipboardList class="size-4" />
-		</button>
-		<button
-			type="button"
-			class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-			title="Close comments sidebar"
-			onclick={() => actions.setCommentsSidebarOpen(false)}
-		>
-			<X class="size-4" />
+			{#if copiedKey === 'all'}
+				<Check class="size-4" style="color: var(--color-success);" />
+			{:else}
+				<Copy class="size-4" />
+			{/if}
 		</button>
 	</header>
 
@@ -150,31 +166,40 @@
 									</span>
 								{/if}
 								<div class="flex-1"></div>
-								{#if root.threadId}
-									<DropdownMenu.Root>
-										<DropdownMenu.Trigger
-											class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground data-[state=open]:opacity-100"
-											aria-label="Comment actions"
-											onclick={(e: MouseEvent) => e.stopPropagation()}
+								<div class="flex shrink-0 items-center gap-0.5">
+									{#if root.threadId}
+										<button
+											type="button"
+											class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+											title={root.isResolved ? 'Unresolve' : 'Resolve'}
+											onclick={(e) => {
+												e.stopPropagation();
+												togglePRResolved(root);
+											}}
 										>
-											<MoreHorizontal class="size-4" />
-										</DropdownMenu.Trigger>
-										<DropdownMenu.Content align="end">
-											<DropdownMenu.Item onSelect={() => togglePRResolved(root)}>
-												{#if root.isResolved}
-													<RotateCcw class="size-3.5" /> Unresolve
-												{:else}
-													<Check class="size-3.5" /> Resolve
-												{/if}
-											</DropdownMenu.Item>
-											<DropdownMenu.Item
-												onSelect={() => actions.copyPRCommentPrompt(root.path, root.id)}
-											>
-												<Copy class="size-3.5" /> Copy as prompt
-											</DropdownMenu.Item>
-										</DropdownMenu.Content>
-									</DropdownMenu.Root>
-								{/if}
+											{#if root.isResolved}
+												<RotateCcw class="size-3.5" />
+											{:else}
+												<Check class="size-3.5" />
+											{/if}
+										</button>
+									{/if}
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+										title="Copy as prompt"
+										onclick={(e) => {
+											e.stopPropagation();
+											copyPR(root.path, root.id);
+										}}
+									>
+										{#if copiedKey === `pr-${root.id}`}
+											<Check class="size-3.5" style="color: var(--color-success);" />
+										{:else}
+											<Copy class="size-3.5" />
+										{/if}
+									</button>
+								</div>
 							</div>
 							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
 								<span class="truncate font-mono">{fileName(root.path)}</span>
@@ -224,36 +249,56 @@
 									</span>
 								{/if}
 								<div class="flex-1"></div>
-								<DropdownMenu.Root>
-									<DropdownMenu.Trigger
-										class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground data-[state=open]:opacity-100"
-										aria-label="Comment actions"
-										onclick={(e: MouseEvent) => e.stopPropagation()}
+								<div class="flex shrink-0 items-center gap-0.5">
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+										title={resolved ? 'Unresolve' : 'Resolve'}
+										onclick={(e) => {
+											e.stopPropagation();
+											if (resolved) actions.unresolveLocalComment(c.id);
+											else actions.resolveLocalComment(c.id);
+										}}
 									>
-										<MoreHorizontal class="size-4" />
-									</DropdownMenu.Trigger>
-									<DropdownMenu.Content align="end">
 										{#if resolved}
-											<DropdownMenu.Item onSelect={() => actions.unresolveLocalComment(c.id)}>
-												<RotateCcw class="size-3.5" /> Unresolve
-											</DropdownMenu.Item>
+											<RotateCcw class="size-3.5" />
 										{:else}
-											<DropdownMenu.Item onSelect={() => actions.resolveLocalComment(c.id)}>
-												<Check class="size-3.5" /> Resolve
-											</DropdownMenu.Item>
+											<Check class="size-3.5" />
 										{/if}
-										<DropdownMenu.Item onSelect={() => actions.copyCommentPrompt(c.id)}>
-											<Copy class="size-3.5" /> Copy as prompt
-										</DropdownMenu.Item>
-										<DropdownMenu.Separator />
-										<DropdownMenu.Item
-											variant="destructive"
-											onSelect={() => actions.deleteLocalComment(c.id)}
+									</button>
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+										title="Copy as prompt"
+										onclick={(e) => {
+											e.stopPropagation();
+											copyLocal(c.id);
+										}}
+									>
+										{#if copiedKey === c.id}
+											<Check class="size-3.5" style="color: var(--color-success);" />
+										{:else}
+											<Copy class="size-3.5" />
+										{/if}
+									</button>
+									<DropdownMenu.Root>
+										<DropdownMenu.Trigger
+											class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+											aria-label="More actions"
+											onclick={(e: MouseEvent) => e.stopPropagation()}
 										>
-											<Trash2 class="size-3.5" /> Delete
-										</DropdownMenu.Item>
-									</DropdownMenu.Content>
-								</DropdownMenu.Root>
+											<MoreHorizontal class="size-4" />
+										</DropdownMenu.Trigger>
+										<DropdownMenu.Content align="end">
+											<DropdownMenu.Item
+												variant="destructive"
+												onSelect={() => actions.deleteLocalComment(c.id)}
+											>
+												<Trash2 class="size-3.5" /> Delete
+											</DropdownMenu.Item>
+										</DropdownMenu.Content>
+									</DropdownMenu.Root>
+								</div>
 							</div>
 							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
 								<span class="truncate font-mono">{fileName(c.path)}</span>

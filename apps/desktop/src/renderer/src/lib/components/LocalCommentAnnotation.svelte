@@ -52,6 +52,16 @@
 			cancel();
 		}
 	}
+
+	// Copy-as-prompt with a brief checkmark confirmation on the button.
+	let copied = $state(false);
+	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+	function copyComment(id: string): void {
+		void actions.copyCommentPrompt(id);
+		copied = true;
+		if (copiedTimer) clearTimeout(copiedTimer);
+		copiedTimer = setTimeout(() => (copied = false), 1500);
+	}
 </script>
 
 <div class={['local-comment-annotation', resolved && 'is-resolved']}>
@@ -65,39 +75,50 @@
 					{#if resolved}
 						<span class="resolved-tag"><Check class="size-3" /> Resolved</span>
 					{/if}
-					<DropdownMenu.Root>
-						<DropdownMenu.Trigger
-							class="more-trigger ml-auto grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-							aria-label="Comment actions"
+					<div class="ml-auto flex shrink-0 items-center gap-0.5">
+						<button
+							type="button"
+							class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+							title={resolved ? 'Unresolve' : 'Resolve'}
+							onclick={() =>
+								resolved ? actions.unresolveLocalComment(c.id) : actions.resolveLocalComment(c.id)}
 						>
-							<MoreHorizontal class="size-4" />
-						</DropdownMenu.Trigger>
-						<DropdownMenu.Content align="end">
 							{#if resolved}
-								<DropdownMenu.Item onSelect={() => actions.unresolveLocalComment(c.id)}>
-									<RotateCcw class="size-3.5" />
-									Unresolve
-								</DropdownMenu.Item>
+								<RotateCcw class="size-3.5" />
 							{:else}
-								<DropdownMenu.Item onSelect={() => actions.resolveLocalComment(c.id)}>
-									<Check class="size-3.5" />
-									Resolve
-								</DropdownMenu.Item>
+								<Check class="size-3.5" />
 							{/if}
-							<DropdownMenu.Item onSelect={() => actions.copyCommentPrompt(c.id)}>
+						</button>
+						<button
+							type="button"
+							class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+							title="Copy as prompt"
+							onclick={() => copyComment(c.id)}
+						>
+							{#if copied}
+								<Check class="size-3.5" style="color: var(--color-success);" />
+							{:else}
 								<Copy class="size-3.5" />
-								Copy as prompt
-							</DropdownMenu.Item>
-							<DropdownMenu.Separator />
-							<DropdownMenu.Item
-								variant="destructive"
-								onSelect={() => actions.deleteLocalComment(c.id)}
+							{/if}
+						</button>
+						<DropdownMenu.Root>
+							<DropdownMenu.Trigger
+								class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+								aria-label="More actions"
 							>
-								<Trash2 class="size-3.5" />
-								Delete
-							</DropdownMenu.Item>
-						</DropdownMenu.Content>
-					</DropdownMenu.Root>
+								<MoreHorizontal class="size-4" />
+							</DropdownMenu.Trigger>
+							<DropdownMenu.Content align="end">
+								<DropdownMenu.Item
+									variant="destructive"
+									onSelect={() => actions.deleteLocalComment(c.id)}
+								>
+									<Trash2 class="size-3.5" />
+									Delete
+								</DropdownMenu.Item>
+							</DropdownMenu.Content>
+						</DropdownMenu.Root>
+					</div>
 				</header>
 				<p class="text">{c.body}</p>
 				{#if resolved && c.resolvedBy}

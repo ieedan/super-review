@@ -94,6 +94,12 @@
 			if (app.sidebarCollapsed) sidebarPane.expand();
 			else sidebarPane.collapse();
 		},
+		// Open/close the right-hand comments sidebar (default Cmd/Ctrl+L).
+		toggleCommentsSidebar: (e) => {
+			if (!app.activeRepo) return;
+			e.preventDefault();
+			actions.toggleCommentsSidebar();
+		},
 		// Open the settings dialog from anywhere (default Cmd/Ctrl+Comma).
 		openSettings: (e) => {
 			e.preventDefault();
