@@ -9,10 +9,13 @@
 // into its browser bundle.
 export * from './types.js';
 export * from './media.js';
+export * from './anchor.js';
 export * from './git-service.js';
 export * from './repo-templates.js';
 export * from './session-capture.js';
 export * from './session-store.js';
+export * from './slice-store.js';
+export * from './slice-capture.js';
 export * from './comment-store.js';
 
 // These result types are declared (identically) in both `types.js` — the shared

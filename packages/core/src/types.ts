@@ -1,4 +1,5 @@
 import type { Hotkeys } from './hotkeys.js';
+import type { Anchor } from './anchor.js';
 
 export interface RepoInfo {
 	id: string;
@@ -171,7 +172,22 @@ export type DiffContext =
 	// from git — they're read back from the session manifest. `ref` reads the
 	// manifest committed on a branch/PR viewed read-only (so a reviewer sees that
 	// branch's sessions without checking it out); omitted reads the working tree.
+	// Legacy: superseded by `slice` (which stores no content). Kept until the
+	// frozen path is fully removed (Phase 6).
 	| { kind: 'session'; sessionId: string; ref?: string }
+	// A slice: a live, content-free document of an agent's changes. Unlike
+	// `session`, nothing is frozen — the diff is computed live from the union
+	// context and filtered to the slice's files, with authored callouts overlaid
+	// by anchor. `ref` reads the slice manifest committed on a branch/PR viewed
+	// read-only; omitted reads the working tree.
+	| { kind: 'slice'; sliceId: string; ref?: string }
+	// "Branch + uncommitted vs fork point": old side = merge-base(base, head),
+	// new side = the working tree. The denominator a slice renders over — every
+	// change the branch makes against where it diverged, committed *and* not, so a
+	// slice doesn't go empty the moment its work is committed. `head` defaults to
+	// HEAD. This is a git-level context the slice IPC layer resolves into; it
+	// isn't surfaced as a sidebar tab.
+	| { kind: 'union'; base: string; head?: string }
 	// A managed stash entry, addressed by its resolved commit SHA (`ref`). The
 	// stash commit's parents back the diff: `^1` HEAD parent, `^2` index, `^3`
 	// untracked tree. Index-shift-proof because we always resolve to a SHA.
@@ -271,6 +287,84 @@ export interface Session extends SessionSummary {
 	// Ordered tour steps. Empty when saved without a tour; then `files` is shown
 	// as a flat list with no step headers.
 	steps: SessionStep[];
+}
+
+// ─── Slices ──────────────────────────────────────────────────────────────────
+// A slice is the content-free successor to a Session. It stores only *where to
+// look* (paths + drift-following anchors) and *what to say* (narrative), never
+// any code: the diff is computed live from the union context and filtered to the
+// slice's files at render time. See proposal-slices.html for the model.
+
+// A callout pins commentary to a line range via a drift-following Anchor (rather
+// than a frozen line number), so it follows the live diff and goes "outdated"
+// instead of pointing at the wrong place when its line is edited away. `body` is
+// Markdown.
+export interface SliceCallout {
+	// Stable id within the slice, assigned at capture.
+	id: string;
+	anchor: Anchor;
+	body: string;
+}
+
+// One stop on a slice's guided tour: a titled, explained group of related files
+// with optional line-range callouts. `body` is Markdown commentary; the files it
+// references come from the slice's `files`.
+export interface SliceStep {
+	// Stable id within the slice, assigned at capture.
+	id: string;
+	title: string;
+	body: string;
+	// Repo-relative paths this step walks through, in reading order. A subset of
+	// the slice's `files`.
+	paths: string[];
+	callouts: SliceCallout[];
+}
+
+// A slice: a live, partial, authored document of an agent's (or human's) changes.
+// It persists paths + narrative + anchors and *never* file content — the diff is
+// always recomputed live, so a slice never goes stale or lies about the code.
+export interface Slice {
+	id: string;
+	// Repo id (matches Session.repoId / repoIdFromPath).
+	repo: string;
+	// Branch the slice documents, recorded for context and for resolving the
+	// union diff's base when rendering.
+	branch?: string;
+	// Upsert key (the harness conversation/run id): re-saving with the same key
+	// updates the existing slice instead of creating a duplicate.
+	key?: string;
+	author: { kind: 'agent' | 'human'; name: string; harness?: HarnessKind };
+	title: string;
+	description: string;
+	// ONLY the files this author touched/documents — the slice's partial scope of
+	// the branch. Recomputed against the live union diff on every save.
+	files: string[];
+	steps: SliceStep[];
+	createdAt: number;
+	updatedAt: number;
+	// Cached card hints, recomputed on save from the live union diff. Optional
+	// because an old/migrated slice may not have them until its next save.
+	additions?: number;
+	deletions?: number;
+}
+
+// Listing-level view of a slice for the Slices tab — everything but the steps,
+// so the list renders cheaply. (Slices are already content-free, so unlike
+// SessionSummary this drops only the tour, not heavy file contents.)
+export interface SliceSummary {
+	id: string;
+	repo: string;
+	branch?: string;
+	key?: string;
+	author: { kind: 'agent' | 'human'; name: string; harness?: HarnessKind };
+	title: string;
+	description: string;
+	fileCount: number;
+	stepCount: number;
+	createdAt: number;
+	updatedAt: number;
+	additions?: number;
+	deletions?: number;
 }
 
 // A review comment attached to a specific line in a PR diff.

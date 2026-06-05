@@ -671,6 +671,17 @@ async function refsForContext(
 			// Sessions are frozen snapshots served from disk by the IPC layer; they
 			// never reach git-service. Guard the invariant rather than guess a ref.
 			throw new Error('session context is not backed by git');
+		case 'slice':
+			// Slices render live, but the IPC layer translates them into a `union`
+			// context (filtered to the slice's files) before calling git-service —
+			// the raw slice kind never reaches here.
+			throw new Error('slice context is resolved into a union context by the IPC layer');
+		case 'union':
+			// Old side = merge-base(base, head); new side = working tree. Handled by
+			// dedicated branches in listChangedFiles / getDiff (it needs a worktree
+			// read for the new side, which the base/head model can't express), so it
+			// never reaches refsForContext.
+			throw new Error('union context is handled by dedicated branches');
 		case 'stash':
 			// Stash diffs don't fit the base/head shape (they fan out across the
 			// commit's `^1`/`^2`/`^3` parents), so listChangedFiles / getDiff handle
@@ -711,8 +722,120 @@ async function preferRemoteBase(git: SimpleGit, base: string): Promise<string> {
 	return (await revExists(git, remote)) ? remote : base;
 }
 
+// Resolve the "old side" of a union diff: the fork point the branch diverged
+// from, i.e. merge-base(base, head). Prefers the remote base (so it matches how
+// GitHub computes the branch diff), and degrades gracefully: when the base ref
+// is missing (a brand-new repo with no default branch yet) it falls back to HEAD
+// so the union is just the uncommitted changes; when HEAD itself is missing
+// (no commits at all) it returns null and the caller reports no changes.
+async function resolveUnionOldRef(
+	git: SimpleGit,
+	ctx: { base: string; head?: string }
+): Promise<string | null> {
+	const head = ctx.head ?? 'HEAD';
+	if (!(await revExists(git, head))) return null;
+	const base = await preferRemoteBase(git, ctx.base);
+	if (!base || !(await revExists(git, base))) return 'HEAD';
+	const mergeBase = (await git.raw(['merge-base', base, head]).catch(() => '')).trim();
+	return mergeBase || base;
+}
+
+// File list for a union context: every file that differs between the fork point
+// and the working tree — tracked changes (committed on the branch *and* staged/
+// unstaged), plus untracked files. Mirrors the working-tree path's shape but
+// diffs against the merge-base instead of HEAD, so committing a change doesn't
+// drop it from the list.
+async function listUnionChangedFiles(
+	git: SimpleGit,
+	repoPath: string,
+	ctx: { base: string; head?: string }
+): Promise<ChangedFile[]> {
+	const files: ChangedFile[] = [];
+	const oldRef = await resolveUnionOldRef(git, ctx);
+	if (!oldRef) return files;
+
+	// Tracked changes: oldRef → working tree. `git diff <commit>` compares the
+	// commit's tree to the working tree (committed + staged + unstaged), so a
+	// change shows here whether or not it's been committed. Untracked files aren't
+	// included — git status supplies those below. The full patch rides along for
+	// its per-file `index` line (a content signature; see the working-tree path).
+	const [nameStatus, numstatRaw, patchRaw, status] = await Promise.all([
+		git.raw(['diff', '--name-status', '--find-renames', oldRef]).catch(() => ''),
+		git.raw(['diff', '--numstat', oldRef]).catch(() => ''),
+		git.raw(['diff', '--find-renames', oldRef]).catch(() => ''),
+		git.status()
+	]);
+	const numstatMap = parseNumstat(numstatRaw);
+	const oidMap = parsePatchOids(patchRaw);
+
+	for (const line of nameStatus.split('\n').filter(Boolean)) {
+		const parts = line.split('\t');
+		const code = parts[0];
+		let fileStatus: FileStatus = 'modified';
+		let oldPath: string | undefined;
+		let p = parts[1];
+		if (code.startsWith('A')) fileStatus = 'added';
+		else if (code.startsWith('D')) fileStatus = 'deleted';
+		else if (code.startsWith('M')) fileStatus = 'modified';
+		else if (code.startsWith('R')) {
+			fileStatus = 'renamed';
+			oldPath = parts[1];
+			p = parts[2];
+		} else if (code.startsWith('C')) {
+			fileStatus = 'copied';
+			oldPath = parts[1];
+			p = parts[2];
+		} else if (code.startsWith('T')) fileStatus = 'type-change';
+		const ns = numstatMap.get(p) ?? { additions: 0, deletions: 0, binary: false };
+		files.push({
+			path: p,
+			oldPath,
+			status: fileStatus,
+			additions: ns.additions,
+			deletions: ns.deletions,
+			isBinary: ns.binary,
+			contentSig: oidMap.get(p)
+		});
+	}
+
+	// Untracked files don't appear in `git diff <commit>`; pull them from status
+	// and count their lines from disk, exactly like the working-tree path.
+	const seen = new Set(files.map((f) => f.path));
+	const untrackedReadTasks: Array<{ index: number; filePath: string }> = [];
+	for (const f of status.files) {
+		if (mapStatus(f.index, f.working_dir) !== 'untracked') continue;
+		if (seen.has(f.path)) continue;
+		files.push({
+			path: f.path,
+			status: 'untracked',
+			additions: 0,
+			deletions: 0,
+			isBinary: false
+		});
+		untrackedReadTasks.push({ index: files.length - 1, filePath: f.path });
+	}
+	if (untrackedReadTasks.length > 0) {
+		await Promise.all(
+			untrackedReadTasks.map(async ({ index, filePath }) => {
+				const counted = await countWorkingLines(repoPath, filePath);
+				if (counted) {
+					files[index] = {
+						...files[index],
+						additions: counted.additions,
+						isBinary: counted.binary,
+						contentSig: counted.sig ?? files[index].contentSig
+					};
+				}
+			})
+		);
+	}
+	return files;
+}
+
 export async function listChangedFiles(repoPath: string, ctx: DiffContext): Promise<ChangedFile[]> {
 	const git = simpleGit(repoPath);
+
+	if (ctx.kind === 'union') return listUnionChangedFiles(git, repoPath, ctx);
 
 	// Stash diffs fan out across the stash commit's parents, so they don't go
 	// through refsForContext's base/head model. Tracked changes come from
@@ -987,6 +1110,23 @@ function parseNumstat(raw: string): Map<string, NumstatRow> {
 	return map;
 }
 
+// Numstat for a single ref → working tree (two-dot `git diff <ref> -- file`),
+// the union diff's old-side-to-worktree comparison. Distinct from `safeNumstat`,
+// which does a three-dot `base...head` range.
+async function safeNumstatRef(
+	git: SimpleGit,
+	ref: string,
+	filePath: string
+): Promise<NumstatRow> {
+	try {
+		const raw = await git.raw(['diff', '--numstat', ref, '--', filePath]);
+		const row = parseNumstat(raw).get(filePath);
+		return row ?? { additions: 0, deletions: 0, binary: false };
+	} catch {
+		return { additions: 0, deletions: 0, binary: false };
+	}
+}
+
 async function safeNumstat(
 	git: SimpleGit,
 	base: string | undefined,
@@ -1226,6 +1366,79 @@ async function getStashDiff(repoPath: string, filePath: string, ref: string): Pr
 	};
 }
 
+// One file's diff for a union context: fork point → working tree. The old side
+// comes from the merge-base, the new side from disk, so a file shows its full
+// branch change whether it's committed or only edited in the working tree.
+async function getUnionDiff(
+	repoPath: string,
+	filePath: string,
+	ctx: { base: string; head?: string }
+): Promise<DiffData> {
+	const git = simpleGit(repoPath);
+	const oldRef = await resolveUnionOldRef(git, ctx);
+
+	let patch = '';
+	let oldContents = '';
+	let newContents = '';
+	let isBinary = false;
+	let additions = 0;
+	let deletions = 0;
+
+	if (oldRef) {
+		const [patchOut, oldOut, newOut, ns] = await Promise.all([
+			git.raw(['diff', '--find-renames', oldRef, '--', filePath]).catch(() => ''),
+			showFile(git, oldRef, filePath),
+			readWorkingFile(repoPath, filePath),
+			safeNumstatRef(git, oldRef, filePath)
+		]);
+		patch = patchOut;
+		oldContents = oldOut;
+		newContents = newOut;
+		additions = ns.additions;
+		deletions = ns.deletions;
+		isBinary = ns.binary;
+	}
+
+	const imageMime = imageMimeForPath(filePath);
+	let oldImage: string | undefined;
+	let newImage: string | undefined;
+	if (imageMime) {
+		({ oldImage, newImage } = await imageDataUrls(
+			repoPath,
+			filePath,
+			imageMime,
+			oldRef ?? undefined,
+			undefined
+		));
+	}
+
+	const hasOld = oldContents.length > 0 || oldImage !== undefined;
+	const hasNew = newContents.length > 0 || newImage !== undefined;
+	let status: FileStatus;
+	if (hasNew && !hasOld) status = 'added';
+	else if (hasOld && !hasNew) status = 'deleted';
+	else status = 'modified';
+
+	const truncated = oldContents.length > MAX_FILE_BYTES || newContents.length > MAX_FILE_BYTES;
+	const dropTextContents = isBinary && imageMime !== null;
+
+	// Untracked/new files have no diff against the merge-base; synthesize an
+	// added-file patch from the working-tree contents so the gutters render.
+	if (!patch && status === 'added' && !isBinary && imageMime === null && !truncated && newContents) {
+		patch = synthesizeAddedFilePatch(filePath, newContents);
+	}
+
+	return {
+		file: { path: filePath, oldPath: undefined, status, additions, deletions, isBinary },
+		patch,
+		oldContents: truncated || dropTextContents ? '' : oldContents,
+		newContents: truncated || dropTextContents ? '' : newContents,
+		truncated,
+		oldImage,
+		newImage
+	};
+}
+
 export async function getDiff(
 	repoPath: string,
 	filePath: string,
@@ -1233,6 +1446,7 @@ export async function getDiff(
 ): Promise<DiffData> {
 	const git = simpleGit(repoPath);
 	if (ctx.kind === 'stash') return getStashDiff(repoPath, filePath, ctx.ref);
+	if (ctx.kind === 'union') return getUnionDiff(repoPath, filePath, ctx);
 	const refs = await refsForContext(git, ctx);
 
 	let patch = '';
