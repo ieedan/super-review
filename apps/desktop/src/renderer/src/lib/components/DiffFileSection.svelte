@@ -319,15 +319,34 @@
 
 	const expandedHunksForComments = $derived(computeExpandedHunks(fileDiffMeta, commentAnchors));
 
-	// Stable signature of an expandedHunks map, so the live effect only re-renders
-	// when the expansion actually changes.
-	function expandedHunksKey(m: Map<number, HunkExpansionRegion>): string {
-		return [...m.entries()]
-			.map(([k, v]) => `${k}:${v.fromStart},${v.fromEnd}`)
-			.sort()
-			.join('|');
+	// Pierre has no `expandedHunks` option — expansion is imperative and
+	// accumulative via `expandHunk(index, direction, count)`: 'up' adds to
+	// `fromStart` (reveals the gap top), 'down' adds to `fromEnd` (reveals the
+	// bottom, next to the hunk). We track the last-applied absolute regions and
+	// push only the delta (which may be negative to shrink when a comment is
+	// removed; Pierre clamps it).
+	let appliedExpanded = new Map<number, HunkExpansionRegion>();
+	function applyExpandedHunks(desired: Map<number, HunkExpansionRegion>, rerender: boolean): void {
+		if (!instance) return;
+		const indices = new Set<number>([...desired.keys(), ...appliedExpanded.keys()]);
+		let changed = false;
+		for (const i of indices) {
+			const d = desired.get(i) ?? { fromStart: 0, fromEnd: 0 };
+			const a = appliedExpanded.get(i) ?? { fromStart: 0, fromEnd: 0 };
+			const dStart = d.fromStart - a.fromStart;
+			const dEnd = d.fromEnd - a.fromEnd;
+			if (dStart !== 0) {
+				instance.expandHunk(i, 'up', dStart);
+				changed = true;
+			}
+			if (dEnd !== 0) {
+				instance.expandHunk(i, 'down', dEnd);
+				changed = true;
+			}
+		}
+		appliedExpanded = desired;
+		if (changed && rerender) instance.rerender();
 	}
-	let appliedExpandedKey = '';
 
 	// Memoize the `metadata` objects we hand Pierre — its annotation cache uses
 	// a reference check (`metadata === metadata`) to decide whether to re-render
@@ -639,9 +658,10 @@
 		// fresh mount re-applies from scratch rather than comparing against stale.
 		appliedAnnotations = [];
 		// Drop the parsed metadata + expansion baseline so the next render recomputes
-		// from scratch rather than against a previous file's hunks.
+		// from scratch rather than against a previous file's hunks. The new instance
+		// starts with no expansion applied.
 		fileDiffMeta = null;
-		appliedExpandedKey = '';
+		appliedExpanded = new Map();
 		if (instance) {
 			try {
 				instance.cleanUp();
@@ -1112,9 +1132,8 @@
 		const newFile = { name: namePair.new, contents: diff.newContents };
 
 		// Parse Pierre's own diff metadata up front: its hunks (not the git patch)
-		// are what `expandedHunks` keys into, and we need them before constructing
-		// the instance so collapsed regions around comments expand on the first paint
-		// (no flash).
+		// are what the expansion targets, and we need them before the first render so
+		// collapsed regions around comments expand on the first paint (no flash).
 		let metadata: FileDiffMetadata | undefined | null;
 		try {
 			metadata = parseDiffFromFile(oldFile, newFile);
@@ -1124,8 +1143,6 @@
 		}
 		if (!metadata) return;
 		fileDiffMeta = metadata;
-		const initialExpanded = computeExpandedHunks(metadata, commentAnchors);
-		appliedExpandedKey = expandedHunksKey(initialExpanded);
 
 		instance = new FileDiffClass<AnnotationMeta>(
 			{
@@ -1139,10 +1156,6 @@
 				// via setOptions + flushManagers when `canComment` changes.
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
-				// Reveal just enough of any collapsed region to show a comment anchored
-				// inside it (a comment "outside the diff"). Updated live below as
-				// comments come and go.
-				expandedHunks: initialExpanded.size > 0 ? initialExpanded : undefined,
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
 				// rerender, so re-apply each time.
@@ -1154,6 +1167,11 @@
 			// the main-thread highlighter when the pool is unavailable.
 			getDiffWorkerPool()
 		);
+
+		// Reveal just enough of any collapsed region to show a comment anchored
+		// outside the shown hunks, before the first paint (no rerender needed —
+		// render() below picks up the expanded state).
+		applyExpandedHunks(computeExpandedHunks(metadata, commentAnchors), false);
 
 		try {
 			instance.render({
@@ -1442,15 +1460,7 @@
 	$effect(() => {
 		const map = expandedHunksForComments;
 		if (!instance) return;
-		const key = expandedHunksKey(map);
-		if (key === appliedExpandedKey) return;
-		appliedExpandedKey = key;
-		type WithOptions = { options: Record<string, unknown> };
-		const current = (instance as unknown as WithOptions).options;
-		instance.setOptions({ ...current, expandedHunks: map.size > 0 ? map : undefined } as Parameters<
-			typeof instance.setOptions
-		>[0]);
-		instance.rerender();
+		applyExpandedHunks(map, true);
 	});
 
 	// Live-swap the diff theme when the app theme changes. `setThemeType` alone
