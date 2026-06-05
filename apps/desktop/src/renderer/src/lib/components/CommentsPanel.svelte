@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, Copy, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-svelte';
+	import { Check, Copy, Github, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-svelte';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import HarnessLogo from './HarnessLogo.svelte';
@@ -72,6 +72,12 @@
 	function copyPR(path: string, id: number): void {
 		void actions.copyPRCommentPrompt(path, id);
 		flashCopied(`pr-${id}`);
+	}
+
+	// Open a PR review comment on GitHub in the browser (`url` is its permalink).
+	function viewOnGithub(comment: PRReviewComment): void {
+		if (!comment.url) return;
+		void window.api.shell.openExternal(comment.url);
 	}
 
 	function lineLabel(c: LocalComment): string {
@@ -201,7 +207,7 @@
 											<Copy class="size-3.5" />
 										{/if}
 									</button>
-									{#if root.canDelete}
+									{#if root.url || root.canDelete}
 										<DropdownMenu.Root>
 											<DropdownMenu.Trigger
 												class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -210,13 +216,23 @@
 											>
 												<MoreHorizontal class="size-4" />
 											</DropdownMenu.Trigger>
-											<DropdownMenu.Content align="end">
-												<DropdownMenu.Item
-													variant="destructive"
-													onSelect={() => actions.deleteComment(root.id, root.path)}
-												>
-													<Trash2 class="size-3.5" /> Delete
-												</DropdownMenu.Item>
+											<DropdownMenu.Content align="end" class="w-auto!">
+												{#if root.url}
+													<DropdownMenu.Item onSelect={() => viewOnGithub(root)}>
+														<Github class="size-3.5" /> View on GitHub
+													</DropdownMenu.Item>
+												{/if}
+												{#if root.canDelete}
+													{#if root.url}
+														<DropdownMenu.Separator />
+													{/if}
+													<DropdownMenu.Item
+														variant="destructive"
+														onSelect={() => actions.deleteComment(root.id, root.path)}
+													>
+														<Trash2 class="size-3.5" /> Delete
+													</DropdownMenu.Item>
+												{/if}
 											</DropdownMenu.Content>
 										</DropdownMenu.Root>
 									{/if}

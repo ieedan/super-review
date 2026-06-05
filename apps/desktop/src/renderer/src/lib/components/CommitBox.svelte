@@ -54,11 +54,33 @@
 	const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
 	// Only the checked files get committed (see the Unstaged tab checkboxes).
 	// Everything is included unless explicitly excluded.
-	const fileCount = $derived(
-		app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path)).length
+	const includedFiles = $derived(
+		app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path))
 	);
+	const fileCount = $derived(includedFiles.length);
 	const branch = $derived(app.currentBranch ?? 'detached HEAD');
-	const canCommit = $derived(!busy && fileCount > 0 && summary.trim().length > 0);
+
+	// GitHub Desktop parity: for a single-file change, suggest a commit message
+	// ("Create/Update/Delete <file>") so the user can commit without typing one.
+	// It shows as the Summary placeholder and is used verbatim when Summary is left
+	// blank. Empty for multi-file changes — there's no sensible one-liner there.
+	const suggestedSummary = $derived.by(() => {
+		if (includedFiles.length !== 1) return '';
+		const file = includedFiles[0];
+		const name = file.path.split('/').pop() || file.path;
+		const verb =
+			file.status === 'added' || file.status === 'untracked'
+				? 'Create'
+				: file.status === 'deleted'
+					? 'Delete'
+					: 'Update';
+		return `${verb} ${name}`;
+	});
+
+	// What the commit actually uses: the typed Summary, or the suggestion when the
+	// user left Summary blank.
+	const effectiveSummary = $derived(summary.trim() || suggestedSummary);
+	const canCommit = $derived(!busy && fileCount > 0 && effectiveSummary.length > 0);
 
 	// No write access to origin — committing/pushing has to go through a fork
 	// first (GitHub Desktop parity). false only on a definitive "no" from the API.
@@ -67,14 +89,16 @@
 	async function submit(e?: Event): Promise<void> {
 		e?.preventDefault();
 		if (!canCommit) return;
+		// Falls back to the suggested message when Summary was left blank.
+		const finalSummary = effectiveSummary;
 		// Can't push to this repo — ask to fork first; the message rides along and
 		// the commit runs once the fork exists (see actions.confirmFork).
 		if (needsFork) {
-			actions.promptFork('commit', { summary, description });
+			actions.promptFork('commit', { summary: finalSummary, description });
 			return;
 		}
 		const repoId = app.activeRepo?.id;
-		const ok = await actions.commit(summary, description);
+		const ok = await actions.commit(finalSummary, description);
 		if (ok) {
 			summary = '';
 			description = '';
@@ -169,7 +193,7 @@
 			type="text"
 			bind:value={summary}
 			oninput={persistDraft}
-			placeholder="Summary (required)"
+			placeholder={suggestedSummary || 'Summary (required)'}
 			disabled={busy}
 			class="h-7 min-w-0 flex-1 text-xs"
 		/>

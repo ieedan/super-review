@@ -66,6 +66,25 @@
 	// SidebarTrigger button to collapse/expand without dragging.
 	let sidebarPane = $state<PaneAPI | undefined>();
 
+	// Restore the persisted collapsed state once the pane mounts. The pane layout
+	// is the source of truth (assigning app.sidebarCollapsed alone won't move it),
+	// so drive it imperatively; expand()/collapse() no-op when already in state.
+	// Deferred a frame so PaneForge has committed its initial layout first.
+	let sidebarRestored = false;
+	$effect(() => {
+		// Re-arm when the pane unmounts (e.g. closing the repo) so reopening
+		// restores the persisted state again.
+		if (!sidebarPane) {
+			sidebarRestored = false;
+			return;
+		}
+		if (sidebarRestored) return;
+		sidebarRestored = true;
+		const pane = sidebarPane;
+		const collapsed = app.sidebarCollapsed;
+		requestAnimationFrame(() => (collapsed ? pane.collapse() : pane.expand()));
+	});
+
 	// All configurable app-wide shortcuts dispatch from one place: each action
 	// maps to its handler here, and the single window keydown below (mounted via
 	// <svelte:window>, so Svelte tears it down for us) runs whichever binding
@@ -347,12 +366,8 @@
 					maxSize={50}
 					collapsible
 					collapsedSize={0}
-					onCollapse={() => {
-						app.sidebarCollapsed = true;
-					}}
-					onExpand={() => {
-						app.sidebarCollapsed = false;
-					}}
+					onCollapse={() => actions.setSidebarCollapsed(true)}
+					onExpand={() => actions.setSidebarCollapsed(false)}
 				>
 					<FileList />
 				</Resizable.Pane>

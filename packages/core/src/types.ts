@@ -801,6 +801,11 @@ export interface UserPrefs {
 	// When true, the window opens maximized. windowWidth/windowHeight still serve
 	// as the pre-maximize ("restore") bounds.
 	startMaximized: boolean;
+	// Persisted open/closed state of the two main sidebars, so the layout the user
+	// left survives a restart. `sidebarCollapsed` is the left file-list sidebar
+	// (true = collapsed); `commentsSidebarOpen` is the right comments panel.
+	sidebarCollapsed: boolean;
+	commentsSidebarOpen: boolean;
 }
 
 export interface DeviceFlowStart {

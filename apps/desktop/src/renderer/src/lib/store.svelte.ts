@@ -1810,6 +1810,8 @@ export const actions = {
 		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
 		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
 		app.startMaximized = app.prefs.startMaximized ?? false;
+		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
+		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
@@ -3158,11 +3160,25 @@ export const actions = {
 	},
 
 	toggleCommentsSidebar(): void {
-		app.commentsSidebarOpen = !app.commentsSidebarOpen;
+		actions.setCommentsSidebarOpen(!app.commentsSidebarOpen);
 	},
 
 	setCommentsSidebarOpen(open: boolean): void {
 		app.commentsSidebarOpen = open;
+		// Persist so the panel reopens (or stays closed) on the next launch.
+		void window.api.state.setPrefs({ commentsSidebarOpen: open }).then((prefs) => {
+			app.prefs = prefs;
+		});
+	},
+
+	// Left file-list sidebar collapse state. Routed through here (rather than
+	// assigning app.sidebarCollapsed directly) so every collapse/expand — button,
+	// hotkey, or dragging the handle shut — persists for the next launch.
+	setSidebarCollapsed(collapsed: boolean): void {
+		app.sidebarCollapsed = collapsed;
+		void window.api.state.setPrefs({ sidebarCollapsed: collapsed }).then((prefs) => {
+			app.prefs = prefs;
+		});
 	},
 
 	// Ask the diff view to scroll a comment's inline annotation into view, and make
