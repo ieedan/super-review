@@ -4,12 +4,12 @@
 	import { actions, app } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import { languageIconForPath } from '$lib/file-icons';
-	import { tourGroups, calloutsForFile } from '$lib/session-tour';
+	import { tourGroups, calloutsForFile } from '$lib/slice-tour';
 
-	// The open session's tour, grouped: each step's files (in reading order),
+	// The open slice's tour, grouped: each step's files (in reading order),
 	// then a trailing "Other changes" group. Clicking a step scrolls the diff to
 	// its header; clicking a file scrolls to that file's diff.
-	const groups = $derived(tourGroups(app.activeSessionDetail, app.changedFiles) ?? []);
+	const groups = $derived(tourGroups(app.activeSliceDetail, app.changedFiles) ?? []);
 
 	function basename(p: string): string {
 		const i = p.lastIndexOf('/');
@@ -74,7 +74,7 @@
 							{/if}
 						</span>
 					</button>
-					{#each calloutsForFile(app.activeSessionDetail, file.path) as callout (callout.id)}
+					{#each calloutsForFile(app.activeSliceDetail, file.path) as callout (callout.id)}
 						<button
 							type="button"
 							class="flex w-full items-center gap-1.5 py-0.5 pr-2 pl-8 text-left text-[10px] text-muted-foreground hover:text-foreground"
@@ -83,9 +83,9 @@
 						>
 							<span class="size-1 flex-none rounded-full bg-primary"></span>
 							<span class="flex-none text-primary tabular-nums">
-								{callout.startLine === callout.endLine
-									? `L${callout.startLine}`
-									: `L${callout.startLine}–${callout.endLine}`}
+								{callout.anchor.startLine === callout.anchor.endLine
+									? `L${callout.anchor.startLine}`
+									: `L${callout.anchor.startLine}–${callout.anchor.endLine}`}
 							</span>
 							<span class="truncate">{callout.body}</span>
 						</button>

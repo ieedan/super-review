@@ -24,8 +24,8 @@ import type {
 	PublishRepoOptions,
 	PushStatus,
 	RepoInfo,
-	Session,
-	SessionSummary,
+	Slice,
+	SliceSummary,
 	TerminalKind,
 	UserPrefs,
 	ViewMode
@@ -49,7 +49,7 @@ import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '$lib/repo-frecency.svelte';
-import { tourFileOrder } from '$lib/session-tour';
+import { tourFileOrder } from '$lib/slice-tour';
 import { SvelteSet } from 'svelte/reactivity';
 import {
 	upstreamChecked,
@@ -123,23 +123,23 @@ interface AppState {
 	prsSource: PRSource;
 	diffContext: DiffContext;
 	contextTab: ContextTab;
-	// Agent-documented sessions for the active repo, newest-updated first. Shown
-	// as a list on the Sessions tab; loaded on entering the tab / refresh.
-	sessions: SessionSummary[];
-	// Count of the active repo's sessions, kept in sync regardless of the active
-	// tab (via the fs watcher) so the Sessions tab can always show a badge.
-	sessionCount: number;
-	// The session whose frozen diff is currently open, or null when the Sessions
+	// Agent-documented slices for the active repo, newest-updated first. Shown
+	// as a list on the Slices tab; loaded on entering the tab / refresh.
+	slices: SliceSummary[];
+	// Count of the active repo's slices, kept in sync regardless of the active
+	// tab (via the fs watcher) so the Slices tab can always show a badge.
+	sliceCount: number;
+	// The slice whose live diff is currently open, or null when the Slices
 	// tab is showing the list. Ephemeral — not persisted across launches.
-	activeSessionId: string | null;
-	// Full detail (incl. tour steps) of the open session, loaded alongside its
-	// files so the diff view and sidebar can render the tour. null when no
-	// session is open or while it's loading.
-	activeSessionDetail: Session | null;
-	// Which view an open session shows: the narrated "tour" (grouped steps +
+	activeSliceId: string | null;
+	// Full detail (incl. tour steps + callout anchors) of the open slice, loaded
+	// alongside its files so the diff view and sidebar can render the tour. null
+	// when no slice is open or while it's loading.
+	activeSliceDetail: Slice | null;
+	// Which view an open slice shows: the narrated "tour" (grouped steps +
 	// callouts) or "changes" (the plain file-by-file review, with search and
-	// tree/list toggle). Only meaningful while a session with steps is open.
-	sessionView: 'tour' | 'changes';
+	// tree/list toggle). Only meaningful while a slice with steps is open.
+	sliceView: 'tour' | 'changes';
 	// Whether the document-session skill is installed in the active repo. null
 	// while unknown (no active repo, or the check hasn't returned yet); false
 	// drives the "Install skill" prompts in the header and sessions empty state.
@@ -512,11 +512,11 @@ const initial: AppState = {
 	prsSource: 'fork',
 	diffContext: { kind: 'workingTree' },
 	contextTab: 'unstaged',
-	sessions: [],
-	sessionCount: 0,
-	activeSessionId: null,
-	activeSessionDetail: null,
-	sessionView: 'tour',
+	slices: [],
+	sliceCount: 0,
+	activeSliceId: null,
+	activeSliceDetail: null,
+	sliceView: 'tour',
 	skillInstalled: null,
 	changedFiles: [],
 	fileSearchQuery: '',
@@ -996,10 +996,10 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.selectedFiles = new SvelteSet();
 	app.excludedFromCommit = new SvelteSet();
 	app.stagingLineExclusions = new SvelteSet();
-	app.activeSessionId = null;
-	app.activeSessionDetail = null;
-	app.sessions = [];
-	app.sessionCount = 0;
+	app.activeSliceId = null;
+	app.activeSliceDetail = null;
+	app.slices = [];
+	app.sliceCount = 0;
 	app.branchPR = null;
 	app.switchBranchPrompt = null;
 	await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
@@ -1321,12 +1321,12 @@ function applyContextTab(tab: ContextTab): void {
 	});
 }
 
-// The git ref whose committed sessions the UI should show, or null to read the
-// working-tree sessions on disk. Sessions are committed into the branch, so a
-// read-only view shows the viewed branch/PR's sessions (read from its ref) — the
+// The git ref whose committed slices the UI should show, or null to read the
+// working-tree slices on disk. Slices are committed into the branch, so a
+// read-only view shows the viewed branch/PR's slices (read from its ref) — the
 // same ref the Branch diff reads as its head. The checked-out branch returns null
 // so an agent's not-yet-committed CLI saves still show live from disk.
-function sessionRef(): string | null {
+function sliceRef(): string | null {
 	if (app.viewPR) return `pr/${app.viewPR.number}/head`;
 	if (app.viewBranch && app.viewBranch !== app.currentBranch) return app.viewBranch;
 	return null;
@@ -1344,30 +1344,29 @@ function contextForTab(tab: ContextTab): DiffContext {
 			: (app.viewBranch ?? app.currentBranch ?? 'HEAD');
 		return { kind: 'branch', base, head };
 	}
-	if (tab === 'sessions' && app.activeSessionId) {
-		// Read the open session from the viewed branch/PR's ref when reviewing
-		// read-only, so its frozen diff matches the branch's committed manifest.
-		return { kind: 'session', sessionId: app.activeSessionId, ref: sessionRef() ?? undefined };
+	if (tab === 'slices' && app.activeSliceId) {
+		// Read the open slice from the viewed branch/PR's ref when reviewing
+		// read-only, so its live diff renders against the branch's content.
+		return { kind: 'slice', sliceId: app.activeSliceId, ref: sliceRef() ?? undefined };
 	}
-	// Sessions without an open session show the list, not a diff — fall back to
+	// Slices without an open slice show the list, not a diff — fall back to
 	// the working tree context (unused while the list is shown).
 	return { kind: 'workingTree' };
 }
 
-// Structural equality for two session summaries. Covers every field the UI
+// Structural equality for two slice summaries. Covers every field the UI
 // renders, so an unchanged refresh compares equal and we can skip the churn.
-function sessionSummaryEqual(x: SessionSummary, y: SessionSummary): boolean {
+function sliceSummaryEqual(x: SliceSummary, y: SliceSummary): boolean {
 	return (
 		x.id === y.id &&
-		x.repoId === y.repoId &&
+		x.repo === y.repo &&
 		x.key === y.key &&
-		x.name === y.name &&
+		x.title === y.title &&
 		x.description === y.description &&
-		x.harness === y.harness &&
-		x.harnessLabel === y.harnessLabel &&
-		x.harnessUrl === y.harnessUrl &&
+		x.author.kind === y.author.kind &&
+		x.author.name === y.author.name &&
+		x.author.harness === y.author.harness &&
 		x.branch === y.branch &&
-		x.baseRef === y.baseRef &&
 		x.createdAt === y.createdAt &&
 		x.updatedAt === y.updatedAt &&
 		x.fileCount === y.fileCount &&
@@ -1377,15 +1376,15 @@ function sessionSummaryEqual(x: SessionSummary, y: SessionSummary): boolean {
 	);
 }
 
-// Structural equality for two session lists. A focus/poll refresh re-fetches
-// the sessions even when nothing on disk moved; reassigning `app.sessions` with
+// Structural equality for two slice lists. A focus/poll refresh re-fetches
+// the slices even when nothing on disk moved; reassigning `app.slices` with
 // the fresh (deeply-proxied) array there re-runs every keyed row's reactive
-// reads and child subtrees, flashing and shifting the sessions list for no
+// reads and child subtrees, flashing and shifting the slices list for no
 // reason. We compare field-by-field so a genuine no-op refresh stays a no-op.
-function sessionsEqual(a: SessionSummary[], b: SessionSummary[]): boolean {
+function slicesEqual(a: SliceSummary[], b: SliceSummary[]): boolean {
 	if (a.length !== b.length) return false;
 	for (let i = 0; i < a.length; i++) {
-		if (!sessionSummaryEqual(a[i], b[i])) return false;
+		if (!sliceSummaryEqual(a[i], b[i])) return false;
 	}
 	return true;
 }
@@ -1412,22 +1411,22 @@ async function refreshUnstagedCount(): Promise<void> {
 	}
 }
 
-// Fetch the active repo's session count and store it on `app.sessionCount` so
-// the Sessions tab badge stays accurate regardless of the active tab. Cheap
+// Fetch the active repo's slice count and store it on `app.sliceCount` so
+// the Slices tab badge stays accurate regardless of the active tab. Cheap
 // (counts manifest files without parsing) and failure-silent like the count
 // above.
-async function refreshSessionCount(): Promise<void> {
+async function refreshSliceCount(): Promise<void> {
 	if (!app.activeRepo) {
-		app.sessionCount = 0;
+		app.sliceCount = 0;
 		return;
 	}
 	const repoId = app.activeRepo.id;
-	// Count the viewed branch/PR's sessions when reviewing read-only, so the badge
+	// Count the viewed branch/PR's slices when reviewing read-only, so the badge
 	// matches the list shown; null follows the working tree.
-	const ref = sessionRef();
+	const ref = sliceRef();
 	try {
-		const count = await window.api.sessions.count(repoId, ref);
-		if (app.activeRepo?.id === repoId) app.sessionCount = count;
+		const count = await window.api.slices.count(repoId, ref);
+		if (app.activeRepo?.id === repoId) app.sliceCount = count;
 	} catch {
 		// keep previous count
 	}
@@ -1627,12 +1626,12 @@ async function refreshFiles(): Promise<void> {
 		app.localCommentsContextKey = null;
 		return;
 	}
-	// The Sessions tab with no session open shows the sessions list, not a file
+	// The Slices tab with no slice open shows the slices list, not a file
 	// list — don't let a background refresh (focus/poll) repopulate the sidebar
 	// with working-tree files behind it. Keep the Unstaged badge fresh, though.
-	if (app.contextTab === 'sessions' && !app.activeSessionId) {
+	if (app.contextTab === 'slices' && !app.activeSliceId) {
 		app.changedFiles = [];
-		// The sessions list shows no diff, so there's nothing to anchor comments to.
+		// The slices list shows no diff, so there's nothing to anchor comments to.
 		app.localComments = [];
 		app.localCommentsContextKey = null;
 		void refreshUnstagedCount();
@@ -1835,8 +1834,12 @@ export const actions = {
 		if (app.activeRepo) {
 			repoFrecency.use(app.activeRepo.id);
 			// Restore the last tab. The 'branch' tab needs `currentBranch` to build
-			// its DiffContext, so refresh branches first when restoring it.
-			const savedTab = app.prefs.contextTab;
+			// its DiffContext, so refresh branches first when restoring it. A
+			// persisted legacy 'sessions' tab is normalized to the renamed 'slices'.
+			const savedTab: ContextTab =
+				(app.prefs.contextTab as string) === 'sessions'
+					? 'slices'
+					: (app.prefs.contextTab ?? 'unstaged');
 			if (savedTab === 'branch') {
 				// The Branch tab needs branches resolved before it can build its diff
 				// context (and before we can tell whether it's empty on this branch).
@@ -1851,16 +1854,16 @@ export const actions = {
 					app.diffContext = { kind: 'workingTree' };
 				}
 				await Promise.all([refreshFiles(), refreshPushStatus()]);
-			} else if (savedTab === 'sessions') {
-				app.contextTab = 'sessions';
-				// The Sessions tab shows the documented-sessions list (in the sidebar),
-				// not a working-tree file list — load the sessions. Still fetch the
+			} else if (savedTab === 'slices') {
+				app.contextTab = 'slices';
+				// The Slices tab shows the documented-slices list (in the sidebar),
+				// not a working-tree file list — load the slices. Still fetch the
 				// Unstaged badge count so it's accurate on launch.
 				await Promise.all([
 					refreshBranches(),
 					refreshPushStatus(),
 					refreshUnstagedCount(),
-					actions.loadSessions()
+					actions.loadSlices()
 				]);
 			} else {
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
@@ -1961,10 +1964,10 @@ export const actions = {
 			app.changedFiles = [];
 			app.selectedFile = null;
 			app.selectedFiles = new SvelteSet();
-			app.activeSessionId = null;
-			app.activeSessionDetail = null;
-			app.sessions = [];
-			app.sessionCount = 0;
+			app.activeSliceId = null;
+			app.activeSliceDetail = null;
+			app.slices = [];
+			app.sliceCount = 0;
 			app.skillInstalled = null;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
@@ -2028,17 +2031,17 @@ export const actions = {
 	async setContextTab(tab: ContextTab): Promise<void> {
 		if (app.contextTab === tab) return;
 		applyContextTab(tab);
-		if (tab === 'sessions') {
-			// Show the sessions list: clear the file list and load the manifests.
-			// Selecting a session (openSession) is what populates the diff view.
-			app.activeSessionId = null;
-			app.activeSessionDetail = null;
+		if (tab === 'slices') {
+			// Show the slices list: clear the file list and load the manifests.
+			// Selecting a slice (openSlice) is what populates the diff view.
+			app.activeSliceId = null;
+			app.activeSliceDetail = null;
 			app.changedFiles = [];
 			app.selectedFile = null;
 			app.seenFiles = new SvelteSet();
 			app.collapsedFiles = new SvelteSet();
 			app.diffContext = { kind: 'workingTree' };
-			void actions.loadSessions();
+			void actions.loadSlices();
 			return;
 		}
 		app.diffContext = contextForTab(tab);
@@ -2068,93 +2071,94 @@ export const actions = {
 		actions.scrollToFirstExpanded();
 	},
 
-	// Load the active repo's documented sessions into `app.sessions`. Called on
-	// entering the Sessions tab and on refresh, so an agent's CLI update is
-	// picked up. If a session is open, re-open it so its diff reflects the latest
+	// Load the active repo's documented slices into `app.slices`. Called on
+	// entering the Slices tab and on refresh, so an agent's CLI update is
+	// picked up. If a slice is open, re-open it so its diff reflects the latest
 	// re-capture; if it has since been removed, fall back to the list.
-	async loadSessions(): Promise<void> {
+	async loadSlices(): Promise<void> {
 		if (!app.activeRepo) {
-			app.sessions = [];
-			app.sessionCount = 0;
+			app.slices = [];
+			app.sliceCount = 0;
 			return;
 		}
 		const repoId = app.activeRepo.id;
-		// While a branch/PR is viewed read-only, list its committed sessions (read
-		// from the ref) instead of the checked-out branch's working-tree sessions.
-		const sessions = await window.api.sessions.list(repoId, sessionRef());
+		// While a branch/PR is viewed read-only, list its committed slices (read
+		// from the ref) instead of the checked-out branch's working-tree slices.
+		const slices = await window.api.slices.list(repoId, sliceRef());
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 
-		// Grab the open session's previous + next summary before swapping the list
+		// Grab the open slice's previous + next summary before swapping the list
 		// in, so we can tell a real re-capture apart from a no-op refresh.
-		const openId = app.activeSessionId;
-		const prevOpen = openId ? app.sessions.find((s) => s.id === openId) : undefined;
-		const nextOpen = openId ? sessions.find((s) => s.id === openId) : undefined;
+		const openId = app.activeSliceId;
+		const prevOpen = openId ? app.slices.find((s) => s.id === openId) : undefined;
+		const nextOpen = openId ? slices.find((s) => s.id === openId) : undefined;
 
 		// Only swap in the fresh list when it actually differs — a focus/poll
 		// refresh that finds nothing changed must not churn the keyed list (it
-		// flashes and shifts the sessions view).
-		if (!sessionsEqual(sessions, app.sessions)) {
-			app.sessions = sessions;
+		// flashes and shifts the slices view).
+		if (!slicesEqual(slices, app.slices)) {
+			app.slices = slices;
 			// Keep the badge in step with the freshly loaded list.
-			app.sessionCount = sessions.length;
+			app.sliceCount = slices.length;
 		}
 
 		if (openId) {
 			if (!nextOpen) {
-				// The open session was removed on disk — fall back to the list.
-				actions.closeSession();
-			} else if (!prevOpen || !sessionSummaryEqual(prevOpen, nextOpen)) {
-				// A re-capture landed (its summary moved) — re-open so the frozen diff
+				// The open slice was removed on disk — fall back to the list.
+				actions.closeSlice();
+			} else if (!prevOpen || !sliceSummaryEqual(prevOpen, nextOpen)) {
+				// A re-capture landed (its summary moved) — re-open so the live diff
 				// and tour reflect the update. Skipped when nothing changed, otherwise
 				// every refresh would reset the view to the tour, drop the file search,
-				// and reload the diff, flashing and shifting the open session.
-				await actions.openSession(openId);
+				// and reload the diff, flashing and shifting the open slice.
+				await actions.openSlice(openId);
 			}
 		}
 	},
 
-	// Open a session's frozen diff: drives the file list + diff view through the
-	// existing context machinery via a `session` DiffContext. Also loads the full
-	// session detail (incl. tour steps) so the tour can render.
-	async openSession(id: string): Promise<void> {
-		// The ref a read-only view reads sessions from; the diff handlers and the
+	// Open a slice's live diff: drives the file list + diff view through the
+	// existing context machinery via a `slice` DiffContext (resolved to a live
+	// union/branch diff filtered to the slice's files). Also loads the full slice
+	// detail (incl. tour steps + callout anchors) so the tour can render.
+	async openSlice(id: string): Promise<void> {
+		// The ref a read-only view reads slices from; the diff handlers and the
 		// detail fetch below both honor it so the tour matches the viewed branch.
-		const ref = sessionRef();
-		app.activeSessionId = id;
-		app.diffContext = { kind: 'session', sessionId: id, ref: ref ?? undefined };
+		const ref = sliceRef();
+		app.activeSliceId = id;
+		app.diffContext = { kind: 'slice', sliceId: id, ref: ref ?? undefined };
 		app.activePR = null;
 		app.prComments = {};
 		app.pendingComposers = {};
 		app.localComposers = {};
-		app.activeSessionDetail = null;
+		app.activeSliceDetail = null;
 		// Land on the tour; the file search query carries no meaning into a fresh
-		// session, so clear it (the Changes tab re-enables search).
-		app.sessionView = 'tour';
+		// slice, so clear it (the Changes tab re-enables search).
+		app.sliceView = 'tour';
 		app.fileSearchQuery = '';
 		if (app.activeRepo) {
 			const repoId = app.activeRepo.id;
-			void window.api.sessions.get(repoId, id, ref).then((detail) => {
+			void window.api.slices.get(repoId, id, ref).then((detail) => {
 				// Guard against a slow fetch landing after the user moved on.
-				if (app.activeSessionId === id && app.activeRepo?.id === repoId) {
-					app.activeSessionDetail = detail;
+				if (app.activeSliceId === id && app.activeRepo?.id === repoId) {
+					app.activeSliceDetail = detail;
 				}
 			});
 		}
 		await refreshFiles();
 	},
 
-	// Switch an open session between its tour and the plain changes view. Moving
+	// Switch an open slice between its tour and the plain changes view. Moving
 	// to the tour drops any file-search filter (the tour has no search box).
-	setSessionView(view: 'tour' | 'changes'): void {
-		if (app.sessionView === view) return;
-		app.sessionView = view;
+	setSliceView(view: 'tour' | 'changes'): void {
+		if (app.sliceView === view) return;
+		app.sliceView = view;
 		if (view === 'tour') app.fileSearchQuery = '';
 	},
 
-	// Leave an open session and return to the sessions list.
-	closeSession(): void {
-		app.activeSessionId = null;
-		app.activeSessionDetail = null;
+	// Leave an open slice and return to the slices list.
+	closeSlice(): void {
+		app.activeSliceId = null;
+		app.activeSliceDetail = null;
 		app.changedFiles = [];
 		app.selectedFile = null;
 		app.seenFiles = new SvelteSet();
@@ -2165,35 +2169,35 @@ export const actions = {
 		app.diffContext = { kind: 'workingTree' };
 	},
 
-	async deleteSession(id: string): Promise<void> {
+	async deleteSlice(id: string): Promise<void> {
 		if (!app.activeRepo) return;
-		await window.api.sessions.remove(app.activeRepo.id, id);
-		if (app.activeSessionId === id) actions.closeSession();
-		await actions.loadSessions();
+		await window.api.slices.remove(app.activeRepo.id, id);
+		if (app.activeSliceId === id) actions.closeSlice();
+		await actions.loadSlices();
 	},
 
-	// Remove every session for the active repo — the "clear before merging" purge.
-	// Sessions now live in the repo's .super-review/ folder, so this also clears
+	// Remove every slice for the active repo — the "clear before merging" purge.
+	// Slices live in the repo's .super-review/ folder, so this also clears
 	// them from the working tree (git sees the committed manifests as deleted).
-	async clearSessions(): Promise<void> {
+	async clearSlices(): Promise<void> {
 		if (!app.activeRepo) return;
-		await window.api.sessions.clear(app.activeRepo.id);
-		actions.closeSession();
-		await actions.loadSessions();
+		await window.api.slices.clear(app.activeRepo.id);
+		actions.closeSlice();
+		await actions.loadSlices();
 	},
 
-	// Refresh the active repo's session-count badge (cheap, tab-independent).
-	async refreshSessionCount(): Promise<void> {
-		await refreshSessionCount();
+	// Refresh the active repo's slice-count badge (cheap, tab-independent).
+	async refreshSliceCount(): Promise<void> {
+		await refreshSliceCount();
 	},
 
-	// Fired by the fs watcher when a repo's sessions change on disk (an agent's
+	// Fired by the fs watcher when a repo's slices change on disk (an agent's
 	// CLI save, a purge, or another window). Keeps the badge live always, and
-	// reloads the full list when the Sessions tab is the one on screen.
-	async onSessionsChanged(repoId: string): Promise<void> {
+	// reloads the full list when the Slices tab is the one on screen.
+	async onSlicesChanged(repoId: string): Promise<void> {
 		if (app.activeRepo?.id !== repoId) return;
-		await refreshSessionCount();
-		if (app.contextTab === 'sessions') await actions.loadSessions();
+		await refreshSliceCount();
+		if (app.contextTab === 'slices') await actions.loadSlices();
 	},
 
 	// Re-check whether the document-session skill is installed in the active repo
@@ -2313,7 +2317,7 @@ export const actions = {
 	},
 
 	// The changed files in the order the user is currently viewing them: filtered
-	// by the sidebar search, and in a session's Tour view reordered into the
+	// by the sidebar search, and in a slice's Tour view reordered into the
 	// agent's reading order. Both "Mark seen" affordances step along this order so
 	// "next" matches what's actually on screen rather than the raw list.
 	displayedFiles(): ChangedFile[] {
@@ -2321,8 +2325,8 @@ export const actions = {
 		const visible = q
 			? app.changedFiles.filter((f) => f.path.toLowerCase().includes(q))
 			: app.changedFiles;
-		return app.sessionView === 'tour'
-			? (tourFileOrder(app.activeSessionDetail, visible) ?? visible)
+		return app.sliceView === 'tour'
+			? (tourFileOrder(app.activeSliceDetail, visible) ?? visible)
 			: visible;
 	},
 
@@ -2509,9 +2513,9 @@ export const actions = {
 		// Sessions follow the viewed branch (read from its ref): refresh the badge
 		// always; reload the on-screen list, which re-opens the active session
 		// against the viewed ref or drops it when that branch doesn't have it.
-		void refreshSessionCount();
-		if (app.contextTab === 'sessions') {
-			await actions.loadSessions();
+		void refreshSliceCount();
+		if (app.contextTab === 'slices') {
+			await actions.loadSlices();
 		} else {
 			await refreshFiles();
 		}
@@ -2528,7 +2532,7 @@ export const actions = {
 		// Show the loading state up front — fetching the PR ref is a network round
 		// trip, so without this the previous diff would sit there looking frozen
 		// for the whole fetch. (The Sessions tab reloads once the ref is fetched.)
-		if (app.contextTab !== 'sessions') showLoadingFiles();
+		if (app.contextTab !== 'slices') showLoadingFiles();
 		try {
 			// `pr` is a $state proxy; snapshot so it survives the IPC structured
 			// clone and so the stored value is a plain object.
@@ -2547,9 +2551,9 @@ export const actions = {
 			}
 			// The PR's head ref is now fetched, so its committed sessions are
 			// readable: refresh the badge and reload the on-screen list.
-			void refreshSessionCount();
-			if (app.contextTab === 'sessions') {
-				await actions.loadSessions();
+			void refreshSliceCount();
+			if (app.contextTab === 'slices') {
+				await actions.loadSlices();
 			} else {
 				await refreshFiles();
 			}
@@ -2568,9 +2572,9 @@ export const actions = {
 		app.viewPR = null;
 		// Sessions follow the checked-out branch (working tree) again now the view
 		// is dropped: refresh the badge always, reload the list when it's on screen.
-		void refreshSessionCount();
-		if (app.contextTab === 'sessions') {
-			await actions.loadSessions();
+		void refreshSliceCount();
+		if (app.contextTab === 'slices') {
+			await actions.loadSlices();
 			return;
 		}
 		// Dropping the read-only view may land us back on a plain default-branch
@@ -3151,12 +3155,12 @@ export const actions = {
 		await actions.copyToClipboard(formatCommentsPrompt(open));
 	},
 
-	// Open the session a resolved comment links to, so the reviewer can see how the
-	// feedback was addressed. Switches to the Sessions tab and opens the tour.
-	async openLinkedSession(sessionId: string): Promise<void> {
-		applyContextTab('sessions');
-		await actions.loadSessions();
-		await actions.openSession(sessionId);
+	// Open the slice a resolved comment links to, so the reviewer can see how the
+	// feedback was addressed. Switches to the Slices tab and opens the tour.
+	async openLinkedSlice(sliceId: string): Promise<void> {
+		applyContextTab('slices');
+		await actions.loadSlices();
+		await actions.openSlice(sliceId);
 	},
 
 	toggleCommentsSidebar(): void {
@@ -3241,8 +3245,8 @@ export const actions = {
 		// the list but change its contents — nudge open diffs to re-validate.
 		bumpDiffRevalidate();
 		// On the Sessions tab, reload the manifests so an agent's CLI update lands
-		// (loadSessions re-opens the active session if one is showing).
-		if (app.contextTab === 'sessions') await actions.loadSessions();
+		// (loadSlices re-opens the active slice if one is showing).
+		if (app.contextTab === 'slices') await actions.loadSlices();
 		await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 		await refreshBranchPR();
 	},
@@ -3261,8 +3265,8 @@ export const actions = {
 				console.warn('fetchOrigin failed:', result.error);
 			}
 			// Mirror refresh(): on the Sessions tab, reload the manifests so an
-			// agent's CLI update lands (loadSessions re-opens the active session).
-			if (app.contextTab === 'sessions') await actions.loadSessions();
+			// agent's CLI update lands (loadSlices re-opens the active slice).
+			if (app.contextTab === 'slices') await actions.loadSlices();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
 		} finally {
@@ -4330,7 +4334,7 @@ export const actions = {
 	},
 
 	// Set the file list layout for the active sidebar tab. Unstaged and branch
-	// each persist their own layout; the 'sessions' tab has no file list so it
+	// each persist their own layout; the 'slices' tab has no file list so it
 	// falls through to the unstaged setting harmlessly.
 	async setFileListLayout(layout: FileListLayout): Promise<void> {
 		if (app.contextTab === 'branch') {

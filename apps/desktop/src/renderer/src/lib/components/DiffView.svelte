@@ -2,14 +2,14 @@
 	import { onDestroy } from 'svelte';
 	import { Inbox } from 'lucide-svelte';
 	import DiffFileSection from './DiffFileSection.svelte';
-	import SessionStepHeader from './SessionStepHeader.svelte';
+	import SliceStepHeader from './SliceStepHeader.svelte';
 	import NoChanges from './NoChanges.svelte';
 	import FindBar from './FindBar.svelte';
 	import { app, actions } from '$lib/store.svelte';
 	import { find, openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
 	import { shortcut, type Options as ShortcutOptions } from '$lib/actions/shortcut.svelte';
 	import { matchesFileQuery } from '$lib/file-search';
-	import { tourGroups } from '$lib/session-tour';
+	import { tourGroups } from '$lib/slice-tour';
 	import type { ChangedFile } from '@shared/types';
 
 	// Mirror the sidebar's path filter so hidden files don't render a diff
@@ -30,10 +30,10 @@
 		// layout) so navigating to it is instant — see displayPlan below.
 		| { kind: 'file'; file: ChangedFile; prerender?: boolean };
 	const renderPlan = $derived.by<PlanItem[]>(() => {
-		// Step grouping only in a session's Tour view; the Changes view (and every
-		// non-session context) renders the files flat.
+		// Step grouping only in a slice's Tour view; the Changes view (and every
+		// non-slice context) renders the files flat.
 		const groups =
-			app.sessionView === 'tour' ? tourGroups(app.activeSessionDetail, visibleFiles) : null;
+			app.sliceView === 'tour' ? tourGroups(app.activeSliceDetail, visibleFiles) : null;
 		if (!groups) return visibleFiles.map((f) => ({ kind: 'file', file: f }));
 		const total = groups.filter((g) => !g.synthetic).length;
 		let stepIndex = 0;
@@ -365,7 +365,7 @@
 
 		{#each displayPlan as item, i (item.kind === 'step' ? `step:${item.id}` : `file:${item.file.path}`)}
 			{#if item.kind === 'step'}
-				<SessionStepHeader
+				<SliceStepHeader
 					id={item.id}
 					title={item.title}
 					body={item.body}

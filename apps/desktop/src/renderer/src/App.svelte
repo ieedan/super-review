@@ -5,7 +5,7 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import FileList from '$lib/components/FileList.svelte';
 	import DiffView from '$lib/components/DiffView.svelte';
-	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
+	import SlicesEmptyState from '$lib/components/SlicesEmptyState.svelte';
 	import CommentsPanel from '$lib/components/CommentsPanel.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
 	import ForkDialog from '$lib/components/ForkDialog.svelte';
@@ -212,14 +212,14 @@
 		return () => ro.disconnect();
 	});
 
-	// Point the main-process fs watcher at the active repo so session changes
+	// Point the main-process fs watcher at the active repo so slice changes
 	// (an agent's CLI save, a purge, another window) push live updates, and
 	// re-seed the badge count whenever the repo changes. watch() replaces any
 	// prior subscription for this window, so no explicit teardown is needed.
 	$effect(() => {
 		const repoId = app.activeRepo?.id ?? null;
-		void window.api.sessions.watch(repoId);
-		void actions.refreshSessionCount();
+		void window.api.slices.watch(repoId);
+		void actions.refreshSliceCount();
 	});
 
 	// Same live-watch for the repo's local comments, so a comment added in another
@@ -251,10 +251,10 @@
 			setError(`Couldn't move "${name}" to the trash. Its files are still on disk.`);
 		});
 
-		// An agent's CLI (or another window) changed this repo's sessions on disk —
-		// keep the badge live and reload the list if the Sessions tab is showing.
-		const offSessionsChanged = window.api.events.onSessionsChanged((repoId) => {
-			void actions.onSessionsChanged(repoId);
+		// An agent's CLI (or another window) changed this repo's slices on disk —
+		// keep the badge live and reload the list if the Slices tab is showing.
+		const offSlicesChanged = window.api.events.onSlicesChanged((repoId) => {
+			void actions.onSlicesChanged(repoId);
 		});
 
 		// An agent's CLI (or another window) changed this repo's local comments on
@@ -285,7 +285,7 @@
 		return () => {
 			offRepoChanged();
 			offTrashFailed();
-			offSessionsChanged();
+			offSlicesChanged();
 			offCommentsChanged();
 			stopPoll();
 			window.clearInterval(tickId);
@@ -373,8 +373,8 @@
 				</Resizable.Pane>
 				<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
 				<Resizable.Pane defaultSize={app.commentsSidebarOpen ? 56 : 78}>
-					{#if app.contextTab === 'sessions' && !app.activeSessionId}
-						<SessionsEmptyState />
+					{#if app.contextTab === 'slices' && !app.activeSliceId}
+						<SlicesEmptyState />
 					{:else}
 						<DiffView />
 					{/if}

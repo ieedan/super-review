@@ -249,11 +249,15 @@ function ensureAvailable(icon: string): string {
 export function languageIconForPath(path: string): string {
 	const lower = path.toLowerCase();
 
-	// Super Review's own session manifests live under `.super-review/sessions/`
-	// as `<id>.json`. They're our files, so badge them with the app logo instead
-	// of the generic JSON icon. Match on the full path so unrelated JSON named
-	// like a UUID elsewhere in the tree keeps its normal icon.
-	if (lower.includes('.super-review/sessions/') && lower.endsWith('.json')) {
+	// Super Review's own slice (and legacy session) manifests live under
+	// `.super-review/slices/` (or `.super-review/sessions/`) as `<id>.json`.
+	// They're our files, so badge them with the app logo instead of the generic
+	// JSON icon. Match on the full path so unrelated JSON named like a UUID
+	// elsewhere in the tree keeps its normal icon.
+	if (
+		(lower.includes('.super-review/slices/') || lower.includes('.super-review/sessions/')) &&
+		lower.endsWith('.json')
+	) {
 		return SUPER_REVIEW_ICON;
 	}
 

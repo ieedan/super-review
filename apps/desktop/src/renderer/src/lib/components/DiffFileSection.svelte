@@ -58,22 +58,21 @@
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
-	import { calloutsForFile } from '$lib/session-tour';
+	import { calloutsForFile, resolveCallouts, type ResolvedCallout } from '$lib/slice-tour';
 	import type {
 		ChangedFile,
 		DiffContext,
 		DiffData,
 		EditorKind,
 		LocalComment,
-		PRReviewComment,
-		SessionCallout
+		PRReviewComment
 	} from '@shared/types';
 
 	// Metadata Pierre carries on each line annotation. PR review comments/composers
 	// use CommentMeta; local review comments/composers use LocalCommentMeta; agent
 	// tour callouts add another variant. renderAnnotation branches on `kind` to
 	// mount the right component.
-	type CalloutMeta = { kind: 'callout'; callout: SessionCallout };
+	type CalloutMeta = { kind: 'callout'; callout: ResolvedCallout };
 	type AnnotationMeta = CommentMeta | LocalCommentMeta | CalloutMeta;
 
 	interface Props {
@@ -376,10 +375,15 @@
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const calloutMetaCache = new Map<string, CalloutMeta>();
 
-	// Session tour callouts pinned to this file (empty outside a session). Read
-	// reactively so the annotation list rebuilds when the open session changes.
+	// Slice tour callouts pinned to this file (empty outside a slice), resolved
+	// against the live diff so each one lands at its anchor's current line (or is
+	// flagged outdated). Resolution needs the loaded diff content, so callouts
+	// surface once `diffData` is available. Read reactively so the annotation list
+	// rebuilds when the open slice or the diff changes.
 	const fileCallouts = $derived(
-		app.diffContext.kind === 'session' ? calloutsForFile(app.activeSessionDetail, file.path) : []
+		app.diffContext.kind === 'slice'
+			? resolveCallouts(calloutsForFile(app.activeSliceDetail, file.path), diffData)
+			: []
 	);
 
 	// Build the annotation list FileDiff renders: PR comments + pending composers

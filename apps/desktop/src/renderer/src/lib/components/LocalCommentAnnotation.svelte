@@ -131,9 +131,9 @@
 							<button
 								type="button"
 								class="session-link"
-								onclick={() => actions.openLinkedSession(c.resolvedSessionId!)}
+								onclick={() => actions.openLinkedSlice(c.resolvedSessionId!)}
 							>
-								View session
+								View slice
 							</button>
 						{/if}
 					</footer>

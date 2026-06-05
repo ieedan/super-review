@@ -510,8 +510,9 @@ export type FileListLayout = 'tree' | 'list';
 export type PrMergedBehavior = 'prompt' | 'switch' | 'nothing';
 
 // Which tab in the file list drives `DiffContext`. Persisted so the app
-// restores the last tab on launch.
-export type ContextTab = 'unstaged' | 'branch' | 'sessions';
+// restores the last tab on launch. (`sessions` was the previous name for the
+// `slices` tab; a persisted `sessions` is normalized to `slices` on load.)
+export type ContextTab = 'unstaged' | 'branch' | 'slices';
 
 // Which GitHub repo a PR listing/checkout targets: the repo's own remote
 // ("fork") or, when the repo is a fork, its parent ("upstream").

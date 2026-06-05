@@ -30,8 +30,8 @@
 	import * as Tabs from './ui/tabs';
 	import * as Sidebar from './ui/sidebar';
 	import CommitBox from './CommitBox.svelte';
-	import SessionsList from './SessionsList.svelte';
-	import SessionTour from './SessionTour.svelte';
+	import SlicesList from './SlicesList.svelte';
+	import SliceTour from './SliceTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { harnessLabel } from '$lib/harness-logos';
 	import {
@@ -108,24 +108,24 @@
 
 	// The list/tree layout is tracked per sidebar tab, so the active tab decides
 	// which persisted setting drives the node layout (and the toggle below).
-	// 'sessions' has no file list; it falls back to the unstaged layout.
+	// 'slices' has no file list; it falls back to the unstaged layout.
 	const fileListLayout = $derived(
 		app.contextTab === 'branch' ? app.branchFileListLayout : app.unstagedFileListLayout
 	);
 	const isTreeLayout = $derived(fileListLayout === 'tree');
 
-	// An open session with a tour offers Tour / Changes sub-tabs. Without steps
+	// An open slice with a tour offers Tour / Changes sub-tabs. Without steps
 	// there's no tour, so it behaves like a plain changes review.
-	const sessionHasSteps = $derived((app.activeSessionDetail?.steps?.length ?? 0) > 0);
+	const sliceHasSteps = $derived((app.activeSliceDetail?.steps?.length ?? 0) > 0);
 	// The Tour view owns its own navigation; everything else (normal tabs, a
-	// session's Changes view, a stepless session) gets the file search + the
+	// slice's Changes view, a stepless slice) gets the file search + the
 	// tree/list toggle.
 	const showFileControls = $derived(
-		app.contextTab !== 'sessions' ||
-			(app.activeSessionId != null && (!sessionHasSteps || app.sessionView === 'changes'))
+		app.contextTab !== 'slices' ||
+			(app.activeSliceId != null && (!sliceHasSteps || app.sliceView === 'changes'))
 	);
-	const showSessionTour = $derived(
-		app.activeSessionId != null && sessionHasSteps && app.sessionView === 'tour'
+	const showSliceTour = $derived(
+		app.activeSliceId != null && sliceHasSteps && app.sliceView === 'tour'
 	);
 
 	// Build the visible flat list of nodes from the changed files. In 'tree'
@@ -535,10 +535,10 @@
 		void actions.setContextTab(v as ContextTab);
 	}
 
-	// The session whose diff is currently open (Sessions tab). When set, the
-	// header swaps its tab strip for a back button + session name.
-	const activeSession = $derived(
-		app.activeSessionId ? app.sessions.find((s) => s.id === app.activeSessionId) : undefined
+	// The slice whose diff is currently open (Slices tab). When set, the
+	// header swaps its tab strip for a back button + slice title.
+	const activeSlice = $derived(
+		app.activeSliceId ? app.slices.find((s) => s.id === app.activeSliceId) : undefined
 	);
 
 	// Virtualizer state — wired up to the Sidebar.Content scroll container
@@ -701,20 +701,20 @@
 					<Archive class="size-4 shrink-0 text-muted-foreground" />
 					Stashed Changes
 				</span>
-			{:else if app.activeSessionId}
-				<!-- A session's diff is open: the tab strip is replaced with a back
-             button and a muted "Sessions" label naming where it returns to.
-             The session's own logo/name/description live in the row below. -->
+			{:else if app.activeSliceId}
+				<!-- A slice's diff is open: the tab strip is replaced with a back
+             button and a muted "Slices" label naming where it returns to.
+             The slice's own logo/title/description live in the row below. -->
 				<Button
 					variant="ghost"
 					size="icon"
 					class="size-7 flex-none"
-					title="Back to sessions"
-					onclick={() => actions.closeSession()}
+					title="Back to slices"
+					onclick={() => actions.closeSlice()}
 				>
 					<ArrowLeft class="size-4" />
 				</Button>
-				<span class="min-w-0 flex-1 truncate text-sm text-muted-foreground"> Sessions </span>
+				<span class="min-w-0 flex-1 truncate text-sm text-muted-foreground"> Slices </span>
 			{:else}
 				<!-- Tab strip: drives which diff context fuels the file list. -->
 				<Tabs.Root value={app.contextTab} onValueChange={setTab} class="min-w-0 flex-1 gap-0">
@@ -752,15 +752,15 @@
 							</Tabs.Trigger>
 						{/if}
 						<Tabs.Trigger
-							value="sessions"
+							value="slices"
 							class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
 						>
-							Sessions
-							{#if app.sessionCount > 0}
+							Slices
+							{#if app.sliceCount > 0}
 								<span
 									class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
 								>
-									{app.sessionCount > 99 ? '99+' : app.sessionCount}
+									{app.sliceCount > 99 ? '99+' : app.sliceCount}
 								</span>
 							{/if}
 						</Tabs.Trigger>
@@ -832,41 +832,41 @@
 			</div>
 		{/if}
 
-		{#if app.activeSessionId}
-			<!-- The open session's identity, on its own row so the top header isn't
+		{#if app.activeSliceId}
+			<!-- The open slice's identity, on its own row so the top header isn't
            cramming the title in beside the back button and totals. -->
 			<div class="flex items-start gap-2.5 border-b border-border px-2 py-2">
 				<div
 					class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card"
-					title={harnessLabel(activeSession?.harness ?? 'other', activeSession?.harnessLabel)}
+					title={harnessLabel(activeSlice?.author.harness ?? 'other', activeSlice?.author.name)}
 				>
-					<HarnessLogo harness={activeSession?.harness ?? 'other'} size={16} />
+					<HarnessLogo harness={activeSlice?.author.harness ?? 'other'} size={16} />
 				</div>
 				<div class="min-w-0 flex-1">
 					<div class="truncate text-sm font-medium">
-						{activeSession?.name ?? 'Session'}
+						{activeSlice?.title ?? 'Slice'}
 					</div>
-					{#if activeSession?.description}
+					{#if activeSlice?.description}
 						<p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-							{activeSession.description}
+							{activeSlice.description}
 						</p>
 					{/if}
 				</div>
 			</div>
 		{/if}
 
-		{#if app.activeSessionId && sessionHasSteps}
+		{#if app.activeSliceId && sliceHasSteps}
 			<!-- Toggle between the narrated tour and the plain file-by-file review. -->
 			<div class="flex items-center gap-1 border-b border-border px-2 py-1.5">
 				<button
 					type="button"
 					class={cn(
 						'h-7 rounded-md px-3 text-xs font-medium',
-						app.sessionView === 'tour'
+						app.sliceView === 'tour'
 							? 'bg-muted text-foreground'
 							: 'text-muted-foreground hover:text-foreground'
 					)}
-					onclick={() => actions.setSessionView('tour')}
+					onclick={() => actions.setSliceView('tour')}
 				>
 					Tour
 				</button>
@@ -874,11 +874,11 @@
 					type="button"
 					class={cn(
 						'h-7 rounded-md px-3 text-xs font-medium',
-						app.sessionView === 'changes'
+						app.sliceView === 'changes'
 							? 'bg-muted text-foreground'
 							: 'text-muted-foreground hover:text-foreground'
 					)}
-					onclick={() => actions.setSessionView('changes')}
+					onclick={() => actions.setSliceView('changes')}
 				>
 					Changes
 				</button>
@@ -967,13 +967,13 @@
 	</Sidebar.Header>
 
 	<Sidebar.Content bind:ref={scrollRoot}>
-		{#if app.contextTab === 'sessions' && !app.activeSessionId}
-			<!-- Sessions tab with no session open: list the documented sessions. -->
-			<SessionsList />
-		{:else if showSessionTour}
-			<!-- An open session's Tour view: grouped step-by-step navigation. The
-             Changes view (and stepless sessions) fall through to the file list. -->
-			<SessionTour />
+		{#if app.contextTab === 'slices' && !app.activeSliceId}
+			<!-- Slices tab with no slice open: list the documented slices. -->
+			<SlicesList />
+		{:else if showSliceTour}
+			<!-- An open slice's Tour view: grouped step-by-step navigation. The
+             Changes view (and stepless slices) fall through to the file list. -->
+			<SliceTour />
 		{:else if app.loading.files && app.changedFiles.length === 0}
 			<div class="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</div>
 		{:else if app.changedFiles.length === 0}

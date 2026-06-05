@@ -3,12 +3,12 @@
 	import { app } from '$lib/store.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import '$lib/markdown.css';
-	import type { SessionCallout } from '@shared/types';
+	import type { ResolvedCallout } from '$lib/slice-tour';
 
 	// Inline agent callout, mounted by DiffFileSection at the start line of a
-	// callout's range. Styled distinctly from review comments — this is the
-	// agent narrating the code, not a review thread.
-	let { callout }: { callout: SessionCallout } = $props();
+	// callout's (resolved) range. Styled distinctly from review comments — this is
+	// the agent narrating the code, not a review thread.
+	let { callout }: { callout: ResolvedCallout } = $props();
 
 	const rangeLabel = $derived(
 		callout.startLine === callout.endLine
@@ -45,6 +45,14 @@
 		<MessageSquareText class="size-3.5" />
 		<span>{rangeLabel}</span>
 		<span class="text-muted-foreground">· {callout.side === 'old' ? 'original' : 'new'}</span>
+		{#if callout.outdated}
+			<span
+				class="rounded bg-amber-500/15 px-1 py-px text-[10px] font-medium text-amber-600 dark:text-amber-400"
+				title="The line this note was anchored to has changed — the position shown is approximate."
+			>
+				outdated
+			</span>
+		{/if}
 	</div>
 	{#if html}
 		<!-- html is sanitized with DOMPurify in markdown.ts (renderMarkdown) before it reaches here -->

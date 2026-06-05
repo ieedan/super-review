@@ -362,10 +362,10 @@
 											style="color: var(--color-primary);"
 											onclick={(e) => {
 												e.stopPropagation();
-												actions.openLinkedSession(c.resolvedSessionId!);
+												actions.openLinkedSlice(c.resolvedSessionId!);
 											}}
 										>
-											View session
+											View slice
 										</button>
 									{/if}
 								</div>
