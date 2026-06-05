@@ -2927,6 +2927,11 @@ export const actions = {
 			const { [key]: _done, ...rest } = app.pendingComposers;
 			void _done;
 			app.pendingComposers = rest;
+			// The REST create response has no GraphQL `threadId`, so the new comment
+			// isn't resolvable until we refetch the thread metadata. Do it in the
+			// background so the comment shows instantly but becomes resolvable without
+			// a manual refresh.
+			void actions.refreshPRComments();
 		} catch (err) {
 			c.submitting = false;
 			setError(err instanceof Error ? err.message : String(err));
@@ -2957,6 +2962,9 @@ export const actions = {
 				...app.prComments,
 				[filePath]: [...existing, created]
 			};
+			// Refetch so the reply (and its thread) pick up the GraphQL `threadId`,
+			// keeping the thread resolvable without a manual refresh.
+			void actions.refreshPRComments();
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -3163,6 +3171,9 @@ export const actions = {
 		const comment = app.localComments.find((c) => c.id === id);
 		if (!comment) return;
 		app.selectedFile = comment.path;
+		// Expand the file if it's collapsed, otherwise the diff (and the comment) is
+		// hidden and scrolling lands on a collapsed header.
+		if (app.collapsedFiles.has(comment.path)) void actions.toggleFileCollapsed(comment.path, false);
 		const nonce = (app.commentScrollTarget?.nonce ?? 0) + 1;
 		app.commentScrollTarget = { key: id, path: comment.path, nonce };
 	},
@@ -3192,6 +3203,8 @@ export const actions = {
 	// container is keyed `pr-<id>` in the diff).
 	revealPRComment(path: string, id: number): void {
 		app.selectedFile = path;
+		// Expand the file if collapsed so the inline thread is actually visible.
+		if (app.collapsedFiles.has(path)) void actions.toggleFileCollapsed(path, false);
 		const nonce = (app.commentScrollTarget?.nonce ?? 0) + 1;
 		app.commentScrollTarget = { key: `pr-${id}`, path, nonce };
 	},

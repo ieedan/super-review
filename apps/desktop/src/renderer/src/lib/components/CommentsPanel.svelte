@@ -201,6 +201,25 @@
 											<Copy class="size-3.5" />
 										{/if}
 									</button>
+									{#if root.canDelete}
+										<DropdownMenu.Root>
+											<DropdownMenu.Trigger
+												class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+												aria-label="More actions"
+												onclick={(e: MouseEvent) => e.stopPropagation()}
+											>
+												<MoreHorizontal class="size-4" />
+											</DropdownMenu.Trigger>
+											<DropdownMenu.Content align="end">
+												<DropdownMenu.Item
+													variant="destructive"
+													onSelect={() => actions.deleteComment(root.id, root.path)}
+												>
+													<Trash2 class="size-3.5" /> Delete
+												</DropdownMenu.Item>
+											</DropdownMenu.Content>
+										</DropdownMenu.Root>
+									{/if}
 								</div>
 							</div>
 							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
