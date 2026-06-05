@@ -1654,9 +1654,12 @@
 			'sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
 		]}
 	>
+		<!-- The visible chevron stays size-5, but a transparent ::before stretches the
+		     click target to the header's top/bottom edges, out to the left edge
+		     (through px-3) and into the gap toward the icon — easier to hit. -->
 		<button
 			type="button"
-			class="grid size-5 shrink-0 place-items-center rounded hover:bg-accent"
+			class="relative grid size-5 shrink-0 place-items-center rounded hover:bg-accent before:absolute before:-inset-y-3 before:-left-3 before:-right-2 before:content-['']"
 			onclick={() => actions.toggleFileCollapsed(file.path)}
 			aria-label={expanded ? 'Collapse' : 'Expand'}
 		>
