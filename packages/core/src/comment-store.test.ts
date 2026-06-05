@@ -31,7 +31,10 @@ beforeAll(async () => {
 	await git('config', 'user.email', 't@e.com');
 	await git('config', 'user.name', 'T');
 	await git('config', 'commit.gpgsign', 'false');
-	await fs.writeFile(path.join(repo, 'file.ts'), ['committed one', 'committed two'].join('\n') + '\n');
+	await fs.writeFile(
+		path.join(repo, 'file.ts'),
+		['committed one', 'committed two'].join('\n') + '\n'
+	);
 	await git('add', '.');
 	await git('commit', '--no-gpg-sign', '-m', 'init');
 	// Add a working-tree-only line on top.

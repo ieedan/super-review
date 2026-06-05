@@ -291,8 +291,10 @@ const api: PreloadAPI = {
 		unwatch: () => ipcRenderer.invoke('sessions:unwatch') as Promise<void>
 	},
 	slices: {
-		list: (repoId, ref) => ipcRenderer.invoke('slices:list', repoId, ref) as Promise<SliceSummary[]>,
-		get: (repoId, id, ref) => ipcRenderer.invoke('slices:get', repoId, id, ref) as Promise<Slice | null>,
+		list: (repoId, ref) =>
+			ipcRenderer.invoke('slices:list', repoId, ref) as Promise<SliceSummary[]>,
+		get: (repoId, id, ref) =>
+			ipcRenderer.invoke('slices:get', repoId, id, ref) as Promise<Slice | null>,
 		remove: (repoId, id) => ipcRenderer.invoke('slices:remove', repoId, id) as Promise<void>,
 		clear: (repoId) => ipcRenderer.invoke('slices:clear', repoId) as Promise<void>,
 		count: (repoId, ref) => ipcRenderer.invoke('slices:count', repoId, ref) as Promise<number>,

@@ -27,7 +27,10 @@ beforeAll(async () => {
 	await git('commit', '--no-gpg-sign', '-m', 'fork point');
 
 	await git('checkout', '-b', 'feature');
-	await fs.writeFile(path.join(repo, 'feature.ts'), ['one', 'two', 'three', 'four'].join('\n') + '\n');
+	await fs.writeFile(
+		path.join(repo, 'feature.ts'),
+		['one', 'two', 'three', 'four'].join('\n') + '\n'
+	);
 	await git('add', '.');
 	await git('commit', '--no-gpg-sign', '-m', 'add feature');
 });
@@ -48,7 +51,9 @@ describe('captureSlice + slice-store round trip', () => {
 					title: 'The feature',
 					body: 'look here',
 					files: ['feature.ts'],
-					callouts: [{ file: 'feature.ts', startLine: 2, endLine: 2, side: 'new', body: 'this line' }]
+					callouts: [
+						{ file: 'feature.ts', startLine: 2, endLine: 2, side: 'new', body: 'this line' }
+					]
 				}
 			]
 		});
@@ -80,11 +85,7 @@ describe('captureSlice + slice-store round trip', () => {
 	it('upserts by key instead of duplicating', async () => {
 		const existing = await findSliceByKey(repo, 'run-1');
 		expect(existing).not.toBeNull();
-		const updated = await captureSlice(
-			repo,
-			{ key: 'run-1', title: 'Renamed slice' },
-			existing
-		);
+		const updated = await captureSlice(repo, { key: 'run-1', title: 'Renamed slice' }, existing);
 		await writeSlice(repo, updated);
 		expect(updated.id).toBe(existing!.id);
 

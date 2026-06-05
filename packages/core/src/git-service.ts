@@ -1113,11 +1113,7 @@ function parseNumstat(raw: string): Map<string, NumstatRow> {
 // Numstat for a single ref → working tree (two-dot `git diff <ref> -- file`),
 // the union diff's old-side-to-worktree comparison. Distinct from `safeNumstat`,
 // which does a three-dot `base...head` range.
-async function safeNumstatRef(
-	git: SimpleGit,
-	ref: string,
-	filePath: string
-): Promise<NumstatRow> {
+async function safeNumstatRef(git: SimpleGit, ref: string, filePath: string): Promise<NumstatRow> {
 	try {
 		const raw = await git.raw(['diff', '--numstat', ref, '--', filePath]);
 		const row = parseNumstat(raw).get(filePath);
@@ -1435,7 +1431,14 @@ async function getUnionDiff(
 
 	// Untracked/new files have no diff against the merge-base; synthesize an
 	// added-file patch from the working-tree contents so the gutters render.
-	if (!patch && status === 'added' && !isBinary && imageMime === null && !truncated && newContents) {
+	if (
+		!patch &&
+		status === 'added' &&
+		!isBinary &&
+		imageMime === null &&
+		!truncated &&
+		newContents
+	) {
 		patch = synthesizeAddedFilePatch(filePath, newContents);
 	}
 

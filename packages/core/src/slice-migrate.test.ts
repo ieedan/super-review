@@ -27,7 +27,9 @@ const legacySession: Session = {
 			title: 'A step',
 			body: 'body',
 			paths: ['a.ts'],
-			callouts: [{ id: 'step-1-c1', file: 'a.ts', startLine: 3, endLine: 4, side: 'new', body: 'see here' }]
+			callouts: [
+				{ id: 'step-1-c1', file: 'a.ts', startLine: 3, endLine: 4, side: 'new', body: 'see here' }
+			]
 		}
 	],
 	files: [

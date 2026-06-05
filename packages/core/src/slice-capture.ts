@@ -80,9 +80,7 @@ export async function captureSlice(
 	// Resolve the slice's file scope: an explicit list (intersected with what the
 	// diff actually shows, so we never reference a phantom file), else everything
 	// the union diff changed.
-	const scope = files
-		? files.filter((p) => changedPaths.has(p))
-		: changed.map((f) => f.path);
+	const scope = files ? files.filter((p) => changedPaths.has(p)) : changed.map((f) => f.path);
 	const scopeSet = new Set(scope);
 
 	// Fetch each scoped file's live diff once, so callout anchoring and the
@@ -123,8 +121,7 @@ export async function captureSlice(
 		repo,
 		branch,
 		key: meta.key ?? existing?.key,
-		author: meta.author ??
-			existing?.author ?? { kind: 'agent', name: 'unknown', harness: 'other' },
+		author: meta.author ?? existing?.author ?? { kind: 'agent', name: 'unknown', harness: 'other' },
 		title: meta.title ?? existing?.title ?? 'Untitled slice',
 		description: meta.description ?? existing?.description ?? '',
 		files: scope,
@@ -160,8 +157,7 @@ function buildSteps(
 			if (!Number.isFinite(start)) continue;
 			const side: Anchor['side'] = c.side === 'old' ? 'LEFT' : 'RIGHT';
 			const diff = diffs.get(c.file);
-			const sideContents =
-				side === 'LEFT' ? (diff?.oldContents ?? '') : (diff?.newContents ?? '');
+			const sideContents = side === 'LEFT' ? (diff?.oldContents ?? '') : (diff?.newContents ?? '');
 			const anchor =
 				makeAnchor(c.file, side, start, end, sideContents) ??
 				({ file: c.file, side, startLine: start, endLine: end, fingerprint: '' } as Anchor);
