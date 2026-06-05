@@ -506,16 +506,16 @@
 		scrollToAnnotation(() => calloutContainers.get(req.calloutId!));
 	});
 
-	// Scroll to a local comment when the right sidebar asks (clicking a row). Only
-	// the section owning that comment responds.
+	// Scroll to a comment (local or PR) when the right sidebar asks. Only the
+	// section that owns the file responds; the annotation's container is keyed by
+	// `req.key` (a local comment id, or `pr-<id>`).
 	let lastCommentScrollNonce = 0;
 	$effect(() => {
 		const req = app.commentScrollTarget;
 		if (!req || req.nonce === lastCommentScrollNonce) return;
-		const comment = app.localComments.find((c) => c.id === req.id);
-		if (!comment || comment.path !== file.path) return;
+		if (req.path !== file.path) return;
 		lastCommentScrollNonce = req.nonce;
-		scrollToAnnotation(() => commentContainers.get(req.id));
+		scrollToAnnotation(() => commentContainers.get(req.key));
 	});
 
 	function unmountAll(): void {
@@ -630,6 +630,11 @@
 				});
 				mountedComponents.set(key, cmp);
 			} else {
+				// PR review comment / composer. Track the comment's container under a
+				// `pr-<id>` key so the sidebar's "scroll to comment" can reach it too.
+				if (meta.kind === 'comment') {
+					commentContainers.set(`pr-${meta.comment.id}`, container);
+				}
 				const cmp = mount(CommentAnnotation, {
 					target: container,
 					props: { meta }

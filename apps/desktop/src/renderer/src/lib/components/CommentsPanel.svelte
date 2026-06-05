@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { Check, Copy, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { actions, app, isPRCommentContext } from '$lib/store.svelte';
+	import { languageIconForPath } from '$lib/file-icons';
 	import { formatRelative } from '$lib/utils';
 	import type { LocalComment, PRReviewComment } from '@shared/types';
 
@@ -139,11 +141,11 @@
 								'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
 								root.isResolved && 'opacity-60'
 							]}
-							onclick={() => actions.revealPRComment(root.path)}
+							onclick={() => actions.revealPRComment(root.path, root.id)}
 							onkeydown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
-									actions.revealPRComment(root.path);
+									actions.revealPRComment(root.path, root.id);
 								}
 							}}
 						>
@@ -202,6 +204,9 @@
 								</div>
 							</div>
 							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+								{#if app.showFileIcons}
+									<Icon icon={languageIconForPath(root.path)} class="size-3.5 shrink-0" />
+								{/if}
 								<span class="truncate font-mono">{fileName(root.path)}</span>
 								<span class="shrink-0">·</span>
 								<span class="shrink-0 font-mono">L{root.line}</span>
@@ -301,6 +306,9 @@
 								</div>
 							</div>
 							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+								{#if app.showFileIcons}
+									<Icon icon={languageIconForPath(c.path)} class="size-3.5 shrink-0" />
+								{/if}
 								<span class="truncate font-mono">{fileName(c.path)}</span>
 								<span class="shrink-0">·</span>
 								<span class="shrink-0 font-mono">{lineLabel(c)}</span>

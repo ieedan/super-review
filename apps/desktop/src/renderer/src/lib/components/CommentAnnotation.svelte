@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, MessageSquare, MoreHorizontal, Trash2 } from 'lucide-svelte';
+	import { Check, Copy, MessageSquare, MoreHorizontal, Trash2 } from 'lucide-svelte';
 	import { Button } from './ui/button';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Textarea } from './ui/textarea';
@@ -91,6 +91,16 @@
 		void actions.deleteComment(comment.id, comment.path);
 	}
 
+	// Copy this comment as an agent-ready prompt, with a brief checkmark confirm.
+	let copied = $state(false);
+	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+	function copy(comment: PRReviewComment): void {
+		void actions.copyPRCommentPrompt(comment.path, comment.id);
+		copied = true;
+		if (copiedTimer) clearTimeout(copiedTimer);
+		copiedTimer = setTimeout(() => (copied = false), 1500);
+	}
+
 	function toggleResolved(comment: PRReviewComment): void {
 		// No threadId means GraphQL didn't map this comment to a thread (e.g. a
 		// freshly created comment not yet refetched) — nothing to toggle.
@@ -125,24 +135,38 @@
 					{#if c.isResolved && isRoot}
 						<span class="resolved-tag"><Check class="size-3" /> Resolved</span>
 					{/if}
-					{#if c.canDelete}
-						<!-- Overflow menu, top-right. Keeps the destructive Delete action
-                 tucked away rather than sitting prominently in the footer. -->
-						<DropdownMenu.Root>
-							<DropdownMenu.Trigger
-								class="more-trigger ml-auto grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-								aria-label="Comment actions"
-							>
-								<MoreHorizontal class="size-4" />
-							</DropdownMenu.Trigger>
-							<DropdownMenu.Content align="end">
-								<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
-									<Trash2 class="size-3.5" />
-									Delete
-								</DropdownMenu.Item>
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
-					{/if}
+					<!-- Copy is always available; Delete stays tucked in an overflow menu
+                 (shown only when the viewer can delete the comment). -->
+					<div class="ml-auto flex shrink-0 items-center gap-0.5">
+						<button
+							type="button"
+							class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+							title="Copy as prompt"
+							onclick={() => copy(c)}
+						>
+							{#if copied}
+								<Check class="size-3.5" style="color: var(--color-success);" />
+							{:else}
+								<Copy class="size-3.5" />
+							{/if}
+						</button>
+						{#if c.canDelete}
+							<DropdownMenu.Root>
+								<DropdownMenu.Trigger
+									class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+									aria-label="Comment actions"
+								>
+									<MoreHorizontal class="size-4" />
+								</DropdownMenu.Trigger>
+								<DropdownMenu.Content align="end">
+									<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
+										<Trash2 class="size-3.5" />
+										Delete
+									</DropdownMenu.Item>
+								</DropdownMenu.Content>
+							</DropdownMenu.Root>
+						{/if}
+					</div>
 				</header>
 				<p class="text">{c.body}</p>
 			</div>

@@ -318,7 +318,11 @@ interface AppState {
 	commentsSidebarOpen: boolean;
 	// A comment the sidebar asked the diff view to scroll to, bumped on each
 	// request so repeated clicks on the same row re-trigger the scroll.
-	commentScrollTarget: { id: string; nonce: number } | null;
+	// A comment the sidebar asked the diff to scroll to. `key` matches the
+	// annotation container key in DiffFileSection (a local comment id, or
+	// `pr-<id>` for a PR review comment); `path` is the file that owns it. Bumped
+	// nonce re-triggers the scroll on repeated clicks.
+	commentScrollTarget: { key: string; path: string; nonce: number } | null;
 	addRepoDialogOpen: boolean;
 	publishDialogOpen: boolean;
 	createBranchDialogOpen: boolean;
@@ -3139,7 +3143,7 @@ export const actions = {
 		if (!comment) return;
 		app.selectedFile = comment.path;
 		const nonce = (app.commentScrollTarget?.nonce ?? 0) + 1;
-		app.commentScrollTarget = { id, nonce };
+		app.commentScrollTarget = { key: id, path: comment.path, nonce };
 	},
 
 	// ─── PR comments in the sidebar ────────────────────────────────────────────
@@ -3163,9 +3167,12 @@ export const actions = {
 		await actions.copyToClipboard(formatPRCommentsPrompt(roots));
 	},
 
-	// Select a PR comment's file so the inline thread comes into view.
-	revealPRComment(path: string): void {
+	// Scroll a PR review comment's inline thread into view (its annotation
+	// container is keyed `pr-<id>` in the diff).
+	revealPRComment(path: string, id: number): void {
 		app.selectedFile = path;
+		const nonce = (app.commentScrollTarget?.nonce ?? 0) + 1;
+		app.commentScrollTarget = { key: `pr-${id}`, path, nonce };
 	},
 
 	async refreshFiles(): Promise<void> {

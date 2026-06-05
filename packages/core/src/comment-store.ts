@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
@@ -7,61 +8,65 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { comments, CREATE_COMMENTS_TABLE } from './comment-schema.js';
 import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from './types.js';
 
-// Local review comments live in a single SQLite database inside the repo:
+// Local review comments live in ONE SQLite database for the whole application,
+// outside of any repo:
 //
-//   <repoPath>/.super-review/comments.db
+//   ~/.super-review/comments.db
 //
-// Unlike sessions, this file is git-ignored (see the repo .gitignore) — comments
-// are a personal, per-clone review aid, so they never pollute `git status` or get
-// committed. Both the desktop app and the standalone CLI open the same file
-// through this module (libSQL's driver is N-API, so it loads in plain Node and in
-// Electron without a rebuild), which is what lets an agent read/resolve a
-// reviewer's comments from the CLI.
-const COMMENTS_DB_NAME = 'comments.db';
-
-function superDir(repoPath: string): string {
-	return path.join(repoPath, '.super-review');
+// They're a personal, per-machine review aid, so they're deliberately NOT stored
+// in (or committed to) the repo — unlike sessions, which travel with a branch.
+// Each row carries the `repo` it belongs to, so a single database serves every
+// repo you review. Both the desktop app and the standalone CLI open this same
+// file (libSQL's driver is N-API, so it loads in plain Node and in Electron
+// without a rebuild), which is what lets an agent read/resolve a reviewer's
+// comments from the CLI.
+function appDir(): string {
+	return path.join(homedir(), '.super-review');
 }
 
-function commentsDbPath(repoPath: string): string {
-	return path.join(superDir(repoPath), COMMENTS_DB_NAME);
+function appDbPath(): string {
+	return path.join(appDir(), 'comments.db');
 }
 
-// One libSQL client + Drizzle handle per database file, created lazily and
-// reused. `ready` resolves once the schema has been ensured, so every call
-// awaits it before touching the table.
+// Canonical key for a repo: its absolute, resolved path. The desktop app passes
+// its RepoInfo.path and the CLI passes the git toplevel — both resolve to the
+// same string, so app-written and CLI-written comments line up.
+function repoKey(repoPath: string): string {
+	return path.resolve(repoPath);
+}
+
+// One libSQL client + Drizzle handle for the application database, created lazily
+// and reused. `ready` resolves once the schema has been ensured.
 interface Handle {
 	client: Client;
 	db: LibSQLDatabase;
 	ready: Promise<void>;
 }
-// Plain module-level cache (node-only module; not reactive state).
-const handles = new Map<string, Handle>();
+let handle: Handle | null = null;
 
-function getHandle(repoPath: string): Handle {
-	const dbPath = commentsDbPath(repoPath);
-	let handle = handles.get(dbPath);
+function getHandle(): Handle {
 	if (!handle) {
-		mkdirSync(superDir(repoPath), { recursive: true });
+		mkdirSync(appDir(), { recursive: true });
 		// libSQL wants a forward-slash file URL even on Windows.
-		const client = createClient({ url: `file:${dbPath.replace(/\\/g, '/')}` });
+		const client = createClient({ url: `file:${appDbPath().replace(/\\/g, '/')}` });
 		const db = drizzle(client);
-		const ready = client.execute(CREATE_COMMENTS_TABLE).then(() => undefined);
+		// `executeMultiple` runs the table + index DDL (two statements) in one call.
+		const ready = client.executeMultiple(CREATE_COMMENTS_TABLE).then(() => undefined);
 		handle = { client, db, ready };
-		handles.set(dbPath, handle);
 	}
 	return handle;
 }
 
-async function getDb(repoPath: string): Promise<LibSQLDatabase> {
-	const handle = getHandle(repoPath);
-	await handle.ready;
-	return handle.db;
+async function getDb(): Promise<LibSQLDatabase> {
+	const h = getHandle();
+	await h.ready;
+	return h.db;
 }
 
-// A queried row carries every column (nullable ones as null); map it back to the
-// `LocalComment` shape, dropping absent optional fields so resolved/unresolved is
-// expressed by presence (matching the JSON shape the rest of the app expects).
+// A queried row carries every column; map it back to the `LocalComment` shape,
+// dropping the storage-only `repo` column and absent optional fields so
+// resolved/unresolved is expressed by presence (matching the shape the rest of
+// the app expects).
 type Row = typeof comments.$inferSelect;
 function rowToComment(r: Row): LocalComment {
 	return {
@@ -83,28 +88,36 @@ function rowToComment(r: Row): LocalComment {
 
 // All comments for a repo (every context), newest-updated first.
 export async function listComments(repoPath: string): Promise<LocalComment[]> {
-	const db = await getDb(repoPath);
-	const rows = await db.select().from(comments).orderBy(desc(comments.updatedAt));
+	const db = await getDb();
+	const rows = await db
+		.select()
+		.from(comments)
+		.where(eq(comments.repo, repoKey(repoPath)))
+		.orderBy(desc(comments.updatedAt));
 	return rows.map(rowToComment);
 }
 
-// Comments scoped to a single diff context (`diffContextKey(ctx)`).
+// Comments scoped to a single diff context (`diffContextKey(ctx)`) within a repo.
 export async function listCommentsForContext(
 	repoPath: string,
 	contextKey: string
 ): Promise<LocalComment[]> {
-	const db = await getDb(repoPath);
+	const db = await getDb();
 	const rows = await db
 		.select()
 		.from(comments)
-		.where(eq(comments.contextKey, contextKey))
+		.where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.contextKey, contextKey)))
 		.orderBy(desc(comments.updatedAt));
 	return rows.map(rowToComment);
 }
 
 export async function getComment(repoPath: string, id: string): Promise<LocalComment | null> {
-	const db = await getDb(repoPath);
-	const rows = await db.select().from(comments).where(eq(comments.id, id)).limit(1);
+	const db = await getDb();
+	const rows = await db
+		.select()
+		.from(comments)
+		.where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.id, id)))
+		.limit(1);
 	return rows[0] ? rowToComment(rows[0]) : null;
 }
 
@@ -126,11 +139,12 @@ export function createComment(input: NewLocalCommentInput): LocalComment {
 	};
 }
 
-// Upsert a comment (insert, or replace an existing row with the same id).
+// Upsert a comment for a repo (insert, or replace an existing row with the same id).
 export async function writeComment(repoPath: string, comment: LocalComment): Promise<void> {
-	const db = await getDb(repoPath);
+	const db = await getDb();
 	const values: Row = {
 		id: comment.id,
+		repo: repoKey(repoPath),
 		contextKey: comment.contextKey,
 		path: comment.path,
 		side: comment.side,
@@ -158,20 +172,23 @@ export async function addComment(
 }
 
 export async function deleteComment(repoPath: string, id: string): Promise<void> {
-	const db = await getDb(repoPath);
-	await db.delete(comments).where(eq(comments.id, id));
+	const db = await getDb();
+	await db.delete(comments).where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.id, id)));
 }
 
 // Remove every comment for a repo (a pre-merge purge, mirroring clearSessions).
 export async function clearComments(repoPath: string): Promise<void> {
-	const db = await getDb(repoPath);
-	await db.delete(comments);
+	const db = await getDb();
+	await db.delete(comments).where(eq(comments.repo, repoKey(repoPath)));
 }
 
-// Cheap count of the repo's comments.
+// Cheap count of a repo's comments.
 export async function countComments(repoPath: string): Promise<number> {
-	const db = await getDb(repoPath);
-	const rows = await db.select({ n: sql<number>`count(*)` }).from(comments);
+	const db = await getDb();
+	const rows = await db
+		.select({ n: sql<number>`count(*)` })
+		.from(comments)
+		.where(eq(comments.repo, repoKey(repoPath)));
 	return Number(rows[0]?.n ?? 0);
 }
 
@@ -185,7 +202,7 @@ export async function resolveComment(
 ): Promise<LocalComment | null> {
 	const existing = await getComment(repoPath, id);
 	if (!existing) return null;
-	const db = await getDb(repoPath);
+	const db = await getDb();
 	const now = Date.now();
 	await db
 		.update(comments)
@@ -195,7 +212,7 @@ export async function resolveComment(
 			resolvedSessionId: sessionId ?? null,
 			updatedAt: now
 		})
-		.where(eq(comments.id, id));
+		.where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.id, id)));
 	return {
 		...existing,
 		resolvedAt: now,
@@ -209,12 +226,12 @@ export async function resolveComment(
 export async function unresolveComment(repoPath: string, id: string): Promise<LocalComment | null> {
 	const existing = await getComment(repoPath, id);
 	if (!existing) return null;
-	const db = await getDb(repoPath);
+	const db = await getDb();
 	const now = Date.now();
 	await db
 		.update(comments)
 		.set({ resolvedAt: null, resolvedBy: null, resolvedSessionId: null, updatedAt: now })
-		.where(eq(comments.id, id));
+		.where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.id, id)));
 	const { resolvedAt: _a, resolvedBy: _b, resolvedSessionId: _c, ...rest } = existing;
 	void _a;
 	void _b;
@@ -222,39 +239,15 @@ export async function unresolveComment(repoPath: string, id: string): Promise<Lo
 	return { ...rest, updatedAt: now };
 }
 
-// Find a comment by a (contextKey, line, side) anchor — handy for the CLI. Unused
-// internally but kept alongside the other lookups for symmetry.
-export async function findCommentAt(
-	repoPath: string,
-	contextKey: string,
-	filePath: string,
-	startLine: number,
-	side: 'LEFT' | 'RIGHT'
-): Promise<LocalComment | null> {
-	const db = await getDb(repoPath);
-	const rows = await db
-		.select()
-		.from(comments)
-		.where(
-			and(
-				eq(comments.contextKey, contextKey),
-				eq(comments.path, filePath),
-				eq(comments.startLine, startLine),
-				eq(comments.side, side)
-			)
-		)
-		.limit(1);
-	return rows[0] ? rowToComment(rows[0]) : null;
-}
-
-// Watch the repo's comments database for changes and call `onChange` (debounced)
-// whenever it's written — so an agent's CLI resolve (or another window's edit)
-// shows up live. Mirrors `watchSessionsDir`: we watch `.super-review` recursively
-// (also catching the dir/db appearing) and switch onto it the moment it exists.
-// libSQL writes touch `comments.db` plus its `-wal`/`-shm` sidecars, so we match
-// any path starting with the db name. Returns a teardown function.
-export function watchCommentsDir(repoPath: string, onChange: () => void): () => void {
-	const dir = superDir(repoPath);
+// Watch the application comments database for changes and call `onChange`
+// (debounced) whenever it's written — so an agent's CLI resolve (or another
+// window's edit) shows up live. The DB is app-wide, so this watches
+// ~/.super-review (libSQL writes touch comments.db plus its `-wal`/`-shm`
+// sidecars). The `repoPath` parameter is accepted for call-site symmetry with
+// the session watcher but isn't used — every window watches the same file.
+// Returns a teardown function.
+export function watchCommentsDir(_repoPath: string, onChange: () => void): () => void {
+	const dir = appDir();
 	let watcher: FSWatcher | null = null;
 	let debounce: ReturnType<typeof setTimeout> | null = null;
 	let rearmTimer: ReturnType<typeof setTimeout> | null = null;
@@ -274,12 +267,11 @@ export function watchCommentsDir(repoPath: string, onChange: () => void): () => 
 	const arm = (): void => {
 		if (closed) return;
 		const target = deepestExisting();
-		const watchingSuper = target === dir;
+		const watchingApp = target === dir;
 		try {
-			watcher = watch(target, watchingSuper ? { recursive: true } : undefined, (_event, file) => {
-				if (watchingSuper) {
-					// `file` is relative to `.super-review` (e.g. "comments.db-wal").
-					if (!file || path.basename(file).startsWith(COMMENTS_DB_NAME)) notify();
+			watcher = watch(target, (_event, file) => {
+				if (watchingApp) {
+					if (!file || path.basename(file).startsWith('comments.db')) notify();
 				} else if (existsSync(dir)) {
 					rearm();
 				}

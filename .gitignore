@@ -13,7 +13,3 @@ build/icon.*
 # SvelteKit (apps/docs)
 .svelte-kit
 apps/docs/build
-
-# Local review comments DB - per-clone, never committed (sessions ARE committed)
-.super-review/comments.db
-.super-review/comments.db-*
