@@ -1485,12 +1485,41 @@ async function loadLocalComments(): Promise<void> {
 	if (!commentsEqual(comments, app.localComments)) app.localComments = comments;
 }
 
-// Build a copy-ready prompt for a single comment: file, line range, side, and the
-// note, fenced so an agent can act on it directly.
+// ── Copy-to-prompt formatting ──
+// Comments are pinned to a line of a *diff*, so a copied prompt has to say so —
+// "new/original side" is meaningless without the diff in front of the reader.
+// These helpers spell out that it's a diff and what each side refers to.
+
+// "line 5" / "lines 5–7" for a 1-based inclusive span.
+function lineRangeLabel(start: number, end: number): string {
+	return start === end ? `line ${start}` : `lines ${start}–${end}`;
+}
+
+// Full clause naming the diff side, for the single-comment prompt.
+function diffSideClause(side: 'LEFT' | 'RIGHT'): string {
+	return side === 'LEFT'
+		? 'the original side of the diff (the code before the change)'
+		: 'the new side of the diff (the code after the change)';
+}
+
+// Short side tag for the dense task-list rows.
+function diffSideShort(side: 'LEFT' | 'RIGHT'): string {
+	return side === 'LEFT' ? 'original side' : 'new side';
+}
+
+// A header line for the "copy all" task lists, naming what the list is.
+const COMMENTS_PROMPT_INTRO =
+	'Address the following review comments left on a diff (the code changes under review). ' +
+	'Each item gives the file, the line(s), which side of the diff (new = after the change, ' +
+	'original = before the change), and the feedback:\n';
+
+// Build a copy-ready prompt for a single comment: makes the diff context and the
+// side explicit so an agent can act on it without the diff in front of them.
 function formatCommentPrompt(c: LocalComment): string {
-	const range = c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
-	const sideLabel = c.side === 'LEFT' ? 'original' : 'new';
-	return `In \`${c.path}\` at ${range} (${sideLabel} side):\n\n${c.body.trim()}`;
+	return (
+		`Review comment on the diff of \`${c.path}\`, at ${lineRangeLabel(c.startLine, c.endLine)} ` +
+		`on ${diffSideClause(c.side)}:\n\n${c.body.trim()}`
+	);
 }
 
 // Build a markdown task list from several comments, grouped by file, for the
@@ -1504,15 +1533,13 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 		list.push(c);
 		byFile.set(c.path, list);
 	}
-	const sections: string[] = [
-		'Address the following review comments. Each item lists the file, the line range, and the feedback:\n'
-	];
+	const sections: string[] = [COMMENTS_PROMPT_INTRO];
 	for (const [path, list] of byFile) {
 		sections.push(`### ${path}`);
 		for (const c of list) {
-			const range = c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
+			const where = `${lineRangeLabel(c.startLine, c.endLine)}, ${diffSideShort(c.side)}`;
 			const body = c.body.trim().replace(/\n/g, '\n  ');
-			sections.push(`- [ ] **${range}** — ${body}`);
+			sections.push(`- [ ] **${where}** — ${body}`);
 		}
 		sections.push('');
 	}
@@ -1522,9 +1549,9 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 // Copy-ready prompt for a single PR review comment — same shape as the local
 // formatter so an agent gets a consistent instruction regardless of source.
 function formatPRCommentPrompt(c: PRReviewComment): string {
-	const sideLabel = c.side === 'LEFT' ? 'original' : 'new';
-	const loc = c.line != null ? ` at L${c.line} (${sideLabel} side)` : '';
-	return `In \`${c.path}\`${loc}:\n\n${c.body.trim()}`;
+	const loc =
+		c.line != null ? `, at line ${c.line} on ${diffSideClause(c.side)}` : ' (file-level comment)';
+	return `Review comment on the diff of \`${c.path}\`${loc}:\n\n${c.body.trim()}`;
 }
 
 // Markdown task list from several PR review comments, grouped by file.
@@ -1537,15 +1564,13 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 		list.push(c);
 		byFile.set(c.path, list);
 	}
-	const sections: string[] = [
-		'Address the following review comments. Each item lists the file, the line, and the feedback:\n'
-	];
+	const sections: string[] = [COMMENTS_PROMPT_INTRO];
 	for (const [path, list] of byFile) {
 		sections.push(`### ${path}`);
 		for (const c of list) {
-			const range = c.line != null ? `L${c.line}` : 'file';
+			const where = c.line != null ? `line ${c.line}, ${diffSideShort(c.side)}` : 'file-level';
 			const body = c.body.trim().replace(/\n/g, '\n  ');
-			sections.push(`- [ ] **${range}** — ${body}`);
+			sections.push(`- [ ] **${where}** — ${body}`);
 		}
 		sections.push('');
 	}
