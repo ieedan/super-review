@@ -41,6 +41,8 @@ import type {
 	RepoInfo,
 	Session,
 	SessionSummary,
+	Slice,
+	SliceSummary,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -288,6 +290,15 @@ const api: PreloadAPI = {
 		watch: (repoId) => ipcRenderer.invoke('sessions:watch', repoId) as Promise<void>,
 		unwatch: () => ipcRenderer.invoke('sessions:unwatch') as Promise<void>
 	},
+	slices: {
+		list: (repoId, ref) => ipcRenderer.invoke('slices:list', repoId, ref) as Promise<SliceSummary[]>,
+		get: (repoId, id, ref) => ipcRenderer.invoke('slices:get', repoId, id, ref) as Promise<Slice | null>,
+		remove: (repoId, id) => ipcRenderer.invoke('slices:remove', repoId, id) as Promise<void>,
+		clear: (repoId) => ipcRenderer.invoke('slices:clear', repoId) as Promise<void>,
+		count: (repoId, ref) => ipcRenderer.invoke('slices:count', repoId, ref) as Promise<number>,
+		watch: (repoId) => ipcRenderer.invoke('slices:watch', repoId) as Promise<void>,
+		unwatch: () => ipcRenderer.invoke('slices:unwatch') as Promise<void>
+	},
 	comments: {
 		list: (repoId, contextKey) =>
 			ipcRenderer.invoke('comments:list', repoId, contextKey) as Promise<LocalComment[]>,
@@ -381,6 +392,11 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
 			ipcRenderer.on('sessions:changed', listener);
 			return () => ipcRenderer.off('sessions:changed', listener);
+		},
+		onSlicesChanged(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
+			ipcRenderer.on('slices:changed', listener);
+			return () => ipcRenderer.off('slices:changed', listener);
 		},
 		onCommentsChanged(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);

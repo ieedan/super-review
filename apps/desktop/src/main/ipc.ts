@@ -41,6 +41,8 @@ import type {
 	RepoInfo,
 	Session,
 	SessionSummary,
+	Slice,
+	SliceSummary,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -105,6 +107,17 @@ import {
 	watchSessionsDir
 } from '@super-review/core';
 import {
+	clearSlices,
+	countSlices,
+	countSlicesAtRef,
+	deleteSlice,
+	getSlice,
+	getSliceAtRef,
+	listSlices,
+	listSlicesAtRef,
+	watchSlicesDir
+} from '@super-review/core';
+import {
 	addComment,
 	deleteComment as deleteCommentRecord,
 	listCommentsForContext,
@@ -142,6 +155,29 @@ function repoOrThrow(id: string): RepoInfo {
 	const repo = getRepo(id);
 	if (!repo) throw new Error(`Repo not found: ${id}`);
 	return repo;
+}
+
+// Resolve a `slice` DiffContext into the live git context its diff renders over,
+// plus the set of files the slice is scoped to. A slice stores no content, so
+// rendering = a live diff filtered to its files:
+//   - checked out (no ref): the union context — branch + uncommitted vs the fork
+//     point — so committed and uncommitted changes both show.
+//   - read-only (a ref): a base...head branch diff against that ref's content, so
+//     a reviewer sees the slice on a pulled branch/PR without checking it out.
+// Returns null when the slice can't be found (deleted out from under the view).
+async function resolveSliceContext(
+	repo: RepoInfo,
+	ctx: { sliceId: string; ref?: string }
+): Promise<{ gitCtx: DiffContext; files: Set<string> } | null> {
+	const slice = ctx.ref
+		? await getSliceAtRef(repo.path, ctx.ref, ctx.sliceId)
+		: await getSlice(repo.path, ctx.sliceId);
+	if (!slice) return null;
+	const base = repo.defaultBranch ?? (await getDefaultBranch(repo.path)) ?? 'HEAD';
+	const gitCtx: DiffContext = ctx.ref
+		? { kind: 'branch', base, head: ctx.ref }
+		: { kind: 'union', base, head: 'HEAD' };
+	return { gitCtx, files: new Set(slice.files) };
 }
 
 // A git-fetchable URL for this fork's `owner/name` counterpart. Derived by
@@ -228,6 +264,52 @@ function clearSessionWatch(senderId: number): void {
 	if (prev) releaseSessionWatch(prev);
 	sessionWatchByContents.delete(senderId);
 	sessionWatchHooked.delete(senderId);
+}
+
+// ─── Slices file watcher ────────────────────────────────────────────────────
+// The same reference-counted, per-repo fs.watch machinery as the session watcher
+// above, pointed at .super-review/slices and broadcasting `slices:changed`.
+const sliceWatchers = new Map<string, { close: () => void; refs: number }>();
+const sliceWatchByContents = new Map<number, string>();
+const sliceWatchHooked = new Set<number>();
+
+function releaseSliceWatch(repoPath: string): void {
+	const entry = sliceWatchers.get(repoPath);
+	if (!entry) return;
+	entry.refs -= 1;
+	if (entry.refs <= 0) {
+		entry.close();
+		sliceWatchers.delete(repoPath);
+	}
+}
+
+function setSliceWatch(sender: Electron.WebContents, repoId: string): void {
+	const repo = getRepo(repoId);
+	if (!repo) return;
+	const prev = sliceWatchByContents.get(sender.id);
+	if (prev === repo.path) return;
+	if (prev) releaseSliceWatch(prev);
+	sliceWatchByContents.set(sender.id, repo.path);
+
+	const entry = sliceWatchers.get(repo.path);
+	if (entry) {
+		entry.refs += 1;
+	} else {
+		const close = watchSlicesDir(repo.path, () => broadcast('slices:changed', repoId));
+		sliceWatchers.set(repo.path, { close, refs: 1 });
+	}
+
+	if (!sliceWatchHooked.has(sender.id)) {
+		sliceWatchHooked.add(sender.id);
+		sender.once('destroyed', () => clearSliceWatch(sender.id));
+	}
+}
+
+function clearSliceWatch(senderId: number): void {
+	const prev = sliceWatchByContents.get(senderId);
+	if (prev) releaseSliceWatch(prev);
+	sliceWatchByContents.delete(senderId);
+	sliceWatchHooked.delete(senderId);
 }
 
 // ─── Comments file watcher ──────────────────────────────────────────────────
@@ -564,6 +646,15 @@ export function registerIpc(): void {
 					isBinary: f.isBinary
 				}));
 			}
+			// Slices render live: resolve to a union (or branch, read-only) context
+			// and filter the changed files to the slice's documented scope.
+			if (ctx.kind === 'slice') {
+				const repo = repoOrThrow(repoId);
+				const resolved = await resolveSliceContext(repo, ctx);
+				if (!resolved) return [];
+				const all = await listChangedFiles(repo.path, resolved.gitCtx);
+				return all.filter((f) => resolved.files.has(f.path));
+			}
 			return listChangedFiles(repoOrThrow(repoId).path, ctx);
 		}
 	);
@@ -598,6 +689,14 @@ export function registerIpc(): void {
 					oldImage: f.oldImage,
 					newImage: f.newImage
 				};
+			}
+			// Slices render the live diff (no manifest content): resolve to the
+			// underlying union/branch context and serve that file's diff.
+			if (ctx.kind === 'slice') {
+				const repo = repoOrThrow(repoId);
+				const resolved = await resolveSliceContext(repo, ctx);
+				if (!resolved) throw new Error(`Slice not found: ${ctx.sliceId}`);
+				return getDiff(repo.path, filePath, resolved.gitCtx);
 			}
 			return getDiff(repoOrThrow(repoId).path, filePath, ctx);
 		}
@@ -1553,6 +1652,51 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('sessions:unwatch', (e): void => clearSessionWatch(e.sender.id));
+
+	// ─── Slices ──────────────────────────────────────────────────────────────
+	// Content-free successor to sessions. A `ref` reads the slices committed on
+	// that git ref (a branch/PR reviewed read-only); null/omitted = disk.
+	ipcMain.handle(
+		'slices:list',
+		async (_e, repoId: string, ref?: string | null): Promise<SliceSummary[]> => {
+			const repoPath = repoOrThrow(repoId).path;
+			return ref ? listSlicesAtRef(repoPath, ref) : listSlices(repoPath);
+		}
+	);
+
+	ipcMain.handle(
+		'slices:get',
+		async (_e, repoId: string, id: string, ref?: string | null): Promise<Slice | null> => {
+			const repoPath = repoOrThrow(repoId).path;
+			return ref ? getSliceAtRef(repoPath, ref, id) : getSlice(repoPath, id);
+		}
+	);
+
+	ipcMain.handle(
+		'slices:remove',
+		async (_e, repoId: string, id: string): Promise<void> =>
+			deleteSlice(repoOrThrow(repoId).path, id)
+	);
+
+	ipcMain.handle(
+		'slices:clear',
+		async (_e, repoId: string): Promise<void> => clearSlices(repoOrThrow(repoId).path)
+	);
+
+	ipcMain.handle(
+		'slices:count',
+		async (_e, repoId: string, ref?: string | null): Promise<number> => {
+			const repoPath = repoOrThrow(repoId).path;
+			return ref ? countSlicesAtRef(repoPath, ref) : countSlices(repoPath);
+		}
+	);
+
+	ipcMain.handle('slices:watch', (e, repoId: string | null): void => {
+		if (repoId) setSliceWatch(e.sender, repoId);
+		else clearSliceWatch(e.sender.id);
+	});
+
+	ipcMain.handle('slices:unwatch', (e): void => clearSliceWatch(e.sender.id));
 
 	// ─── Local comments ──────────────────────────────────────────────────────
 	// Comments live in a git-ignored SQLite DB (.super-review/comments.db), so —

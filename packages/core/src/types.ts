@@ -1173,6 +1173,24 @@ export interface PreloadAPI {
 		watch(repoId: string | null): Promise<void>;
 		unwatch(): Promise<void>;
 	};
+	slices: {
+		// Content-free successor to sessions. A `ref` (branch name or fetched PR
+		// head ref) reads the slices committed on that ref — the branch/PR being
+		// reviewed read-only — instead of the working tree on disk. Null/omitted
+		// reads disk (the checked-out branch, picking up not-yet-committed saves).
+		list(repoId: string, ref?: string | null): Promise<SliceSummary[]>;
+		get(repoId: string, id: string, ref?: string | null): Promise<Slice | null>;
+		remove(repoId: string, id: string): Promise<void>;
+		// Delete every slice for the repo (the pre-merge purge).
+		clear(repoId: string): Promise<void>;
+		// Cheap count of the repo's slices (drives the tab badge). A `ref` counts
+		// the slices committed on that ref (a read-only branch/PR view).
+		count(repoId: string, ref?: string | null): Promise<number>;
+		// Start/stop live updates: the main process fs-watches the repo's
+		// .super-review/slices dir and emits `onSlicesChanged`.
+		watch(repoId: string | null): Promise<void>;
+		unwatch(): Promise<void>;
+	};
 	comments: {
 		// Local review comments for a single diff context (`diffContextKey(ctx)`),
 		// read from the repo's git-ignored SQLite database.
@@ -1251,6 +1269,9 @@ export interface PreloadAPI {
 		// A repo's sessions changed on disk (manifest written/removed by the CLI or
 		// another window). Payload is the repo id. Returns an unsubscribe fn.
 		onSessionsChanged(handler: (repoId: string) => void): () => void;
+		// A repo's slices changed on disk (manifest written/removed by the CLI or
+		// another window). Payload is the repo id. Returns an unsubscribe fn.
+		onSlicesChanged(handler: (repoId: string) => void): () => void;
 		// A repo's local comments changed on disk (added in another window, or an
 		// agent resolved one via the CLI). Payload is the repo id. Returns an
 		// unsubscribe fn.

@@ -10,6 +10,10 @@ export function diffContextKey(ctx: DiffContext): string {
 			return `pr:${ctx.prNumber}`;
 		case 'session':
 			return `session:${ctx.sessionId}`;
+		case 'slice':
+			return `slice:${ctx.sliceId}`;
+		case 'union':
+			return `union:${ctx.base}..${ctx.head ?? 'HEAD'}`;
 		case 'stash':
 			return `stash:${ctx.ref}`;
 	}
