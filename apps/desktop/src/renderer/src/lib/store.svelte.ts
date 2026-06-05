@@ -1490,9 +1490,9 @@ async function loadLocalComments(): Promise<void> {
 // "new/original side" is meaningless without the diff in front of the reader.
 // These helpers spell out that it's a diff and what each side refers to.
 
-// "line 5" / "lines 5–7" for a 1-based inclusive span.
+// "line 5" / "lines 5-7" for a 1-based inclusive span.
 function lineRangeLabel(start: number, end: number): string {
-	return start === end ? `line ${start}` : `lines ${start}–${end}`;
+	return start === end ? `line ${start}` : `lines ${start}-${end}`;
 }
 
 // Full clause naming the diff side, for the single-comment prompt.
