@@ -2058,6 +2058,9 @@ export const actions = {
 			app.pendingComposers = {};
 		}
 		await refreshFiles();
+		// Start the reviewer on real content, skipping any leading collapsed
+		// (already-seen) files this context restored from its saved state.
+		actions.scrollToFirstExpanded();
 	},
 
 	// Load the active repo's documented sessions into `app.sessions`. Called on
@@ -2218,6 +2221,15 @@ export const actions = {
 		app.scrollRequest = { path, nonce: (app.scrollRequest?.nonce ?? 0) + 1 };
 	},
 
+	// Land the diff view on the first file with a visible (non-collapsed) diff.
+	// Called when opening a tab so the reviewer starts on real content instead of
+	// a run of collapsed, already-seen headers. No-op when the list is empty or
+	// every file is collapsed (nothing to read — stay put at the top).
+	scrollToFirstExpanded(): void {
+		const first = app.changedFiles.find((f) => !app.collapsedFiles.has(f.path));
+		if (first) actions.scrollToFile(first.path);
+	},
+
 	// The diff scroll handler calls this as file sections cross the viewport top.
 	// The active file always tracks the scroll. A single (or empty) selection is
 	// really just "the file you're looking at", so we keep it glued to the active
@@ -2309,19 +2321,25 @@ export const actions = {
 			: visible;
 	},
 
-	// Mark a file seen, collapse it, and open the next file in display order.
-	// Shared by the diff section's "Mark seen" button and the Cmd/Ctrl+Enter
-	// hotkey so both walk through changes identically. Marking is forced on (not
-	// toggled) so re-pressing the hotkey keeps advancing instead of un-marking.
+	// Mark a file seen, collapse it, and open the next unseen file in display
+	// order. Shared by the diff section's "Mark seen" button and the
+	// Cmd/Ctrl+Enter hotkey so both walk through changes identically. Marking is
+	// forced on (not toggled) so re-pressing the hotkey keeps advancing instead
+	// of un-marking. Already-seen files are skipped so the walk lands on the next
+	// thing that still needs review rather than re-opening a file the user (or
+	// agent) has already cleared.
 	async markSeenAndAdvance(filePath: string): Promise<void> {
 		if (!app.activeRepo) return;
+		// toggleSeen mutates app.seenFiles synchronously before its first await, so
+		// the just-marked file is already in the set when we scan for the next one.
 		void actions.toggleSeen(filePath, true);
 		// Collapse so the next file's header slides up under the cursor before the
 		// scroll request pins it at the top.
 		void actions.toggleFileCollapsed(filePath, true);
 		const ordered = actions.displayedFiles();
 		const idx = ordered.findIndex((f) => f.path === filePath);
-		const next = idx >= 0 ? ordered[idx + 1] : undefined;
+		const next =
+			idx >= 0 ? ordered.slice(idx + 1).find((f) => !app.seenFiles.has(f.path)) : undefined;
 		if (next) actions.scrollToFile(next.path);
 	},
 

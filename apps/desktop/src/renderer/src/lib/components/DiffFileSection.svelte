@@ -1501,6 +1501,7 @@
 <section
 	bind:this={section}
 	data-file-path={file.path}
+	data-collapsed={!expanded}
 	class={['border-b border-border', isLast && 'min-h-full']}
 >
 	<header

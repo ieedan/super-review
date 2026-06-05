@@ -20,6 +20,9 @@
 		"typecheck": "pnpm typecheck:node && pnpm typecheck:web"
 	},
 	"dependencies": {
+		"@cartamd/plugin-code": "^4.2.0",
+		"@cartamd/plugin-emoji": "^4.3.0",
+		"@cartamd/plugin-slash": "^4.2.0",
 		"@chenglou/pretext": "^0.0.7",
 		"@iconify-json/material-icon-theme": "^1.2.66",
 		"@iconify/svelte": "^5.2.1",
@@ -28,6 +31,7 @@
 		"@octokit/rest": "^21.0.2",
 		"@pierre/diffs": "^1.2.3",
 		"@super-review/core": "workspace:*",
+		"carta-md": "^4.11.2",
 		"dompurify": "^3.4.7",
 		"drizzle-orm": "^0.45.2",
 		"electron-store": "^10.0.1",

@@ -1,0 +1,55 @@
+<script lang="ts">
+	import { MarkdownEditor } from 'carta-md';
+	import { carta, CARTA_THEME } from '$lib/carta';
+	import 'carta-md/default.css';
+	import '$lib/carta-theme.css';
+
+	// GitHub-style markdown editor for PR comments — a thin wrapper over Carta's
+	// <MarkdownEditor> wired to this app's shared `carta` instance and "github"
+	// theme. Defaults to `tabs` mode (Write/Preview), matching GitHub's composer.
+	interface Props {
+		value: string;
+		placeholder?: string;
+		disabled?: boolean;
+		autofocus?: boolean;
+		// Bubbled-up keydown from the editor so callers can wire ⌘⏎ submit / Esc
+		// cancel, mirroring the previous plain-textarea behavior.
+		onkeydown?: (e: KeyboardEvent) => void;
+	}
+
+	let {
+		value = $bindable(''),
+		placeholder = '',
+		disabled = false,
+		autofocus = false,
+		onkeydown
+	}: Props = $props();
+</script>
+
+<!-- Keydown bubbles from Carta's internal <textarea>; the slash/emoji popups
+     stop propagation when they handle a key, so shortcuts here don't fire while
+     a menu is open. -->
+<div class="markdown-composer" {onkeydown} role="presentation">
+	<MarkdownEditor
+		{carta}
+		bind:value
+		theme={CARTA_THEME}
+		mode="tabs"
+		{placeholder}
+		textarea={{ disabled, autoFocus: autofocus }}
+	/>
+</div>
+
+<style>
+	/* Carta lays the editor out internally; the wrapper just owns the width so the
+	   composer fills the annotation row. */
+	.markdown-composer {
+		width: 100%;
+	}
+	/* The editor body is greyed while disabled (submitting) to echo the old
+	   textarea's disabled affordance. `:global` because the textarea lives inside
+	   Carta's component, out of reach of this component's scoped styles. */
+	:global(.markdown-composer:has(textarea:disabled)) {
+		opacity: 0.6;
+	}
+</style>
