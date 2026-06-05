@@ -229,6 +229,34 @@
 	// click produces a comment (PR or local).
 	const canComment = $derived(isPRContext || isLocalCommentContext);
 
+	// True when a comment on THIS file is anchored to a line that isn't part of the
+	// changed hunks — it would otherwise land in a collapsed "unchanged lines"
+	// region and never render. We then tell Pierre to expand the unchanged lines so
+	// the comment shows. Only kicks in for comments outside the diff; comments on
+	// changed lines (the common case) keep the normal collapsed view.
+	const expandUnchangedForComments = $derived.by(() => {
+		const patch = diffData?.patch;
+		if (!patch) return false;
+		const anchors: Array<{ side: 'LEFT' | 'RIGHT'; line: number }> = [];
+		if (isPRContext) {
+			for (const c of app.prComments[file.path] ?? []) {
+				if (c.line != null) anchors.push({ side: c.side, line: c.line });
+			}
+		} else if (isLocalCommentContext) {
+			for (const c of app.localComments) {
+				if (c.path === file.path) anchors.push({ side: c.side, line: c.startLine });
+			}
+		}
+		if (anchors.length === 0) return false;
+		const parsed = parseFilePatch(patch);
+		if (!parsed) return false;
+		const changed = new Set(changedLineKeys(file.path, parsed));
+		return anchors.some(
+			(a) =>
+				!changed.has(stagingLineKey(file.path, a.side === 'LEFT' ? 'deletion' : 'addition', a.line))
+		);
+	});
+
 	// Memoize the `metadata` objects we hand Pierre — its annotation cache uses
 	// a reference check (`metadata === metadata`) to decide whether to re-render
 	// an annotation. If we hand it a fresh `{ kind: 'composer', … }` literal each
@@ -1011,6 +1039,10 @@
 				// via setOptions + flushManagers when `canComment` changes.
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
+				// Expand all unchanged lines when a comment sits outside the changed
+				// hunks, so it isn't hidden in a collapsed context region. Toggled live
+				// below when that condition changes.
+				expandUnchanged: expandUnchangedForComments,
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
 				// rerender, so re-apply each time.
@@ -1316,6 +1348,23 @@
 			typeof instance.setOptions
 		>[0]);
 		instance.flushManagers();
+	});
+
+	// Expand/collapse the file's unchanged lines live as comments come and go, so a
+	// comment landing outside the changed hunks becomes visible without a manual
+	// expand. Changing `expandUnchanged` re-lays-out the diff, so `rerender` (not
+	// just `flushManagers`). Read the derived first so the dependency is registered
+	// even while `instance` is null on the first run.
+	$effect(() => {
+		const enabled = expandUnchangedForComments;
+		if (!instance) return;
+		type WithOptions = { options: Record<string, unknown> };
+		const current = (instance as unknown as WithOptions).options;
+		if (current.expandUnchanged === enabled) return;
+		instance.setOptions({ ...current, expandUnchanged: enabled } as Parameters<
+			typeof instance.setOptions
+		>[0]);
+		instance.rerender();
 	});
 
 	// Live-swap the diff theme when the app theme changes. `setThemeType` alone
