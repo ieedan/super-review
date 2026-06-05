@@ -1512,7 +1512,7 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 		for (const c of list) {
 			const range = c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
 			const body = c.body.trim().replace(/\n/g, '\n  ');
-			sections.push(`- [ ] **${range}** — ${body}`);
+			sections.push(`- [ ] **${range}** - ${body}`);
 		}
 		sections.push('');
 	}
@@ -1545,7 +1545,7 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 		for (const c of list) {
 			const range = c.line != null ? `L${c.line}` : 'file';
 			const body = c.body.trim().replace(/\n/g, '\n  ');
-			sections.push(`- [ ] **${range}** — ${body}`);
+			sections.push(`- [ ] **${range}** - ${body}`);
 		}
 		sections.push('');
 	}
