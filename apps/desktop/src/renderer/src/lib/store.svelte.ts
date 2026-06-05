@@ -2090,19 +2090,25 @@ export const actions = {
 			: visible;
 	},
 
-	// Mark a file seen, collapse it, and open the next file in display order.
-	// Shared by the diff section's "Mark seen" button and the Cmd/Ctrl+Enter
-	// hotkey so both walk through changes identically. Marking is forced on (not
-	// toggled) so re-pressing the hotkey keeps advancing instead of un-marking.
+	// Mark a file seen, collapse it, and open the next unseen file in display
+	// order. Shared by the diff section's "Mark seen" button and the
+	// Cmd/Ctrl+Enter hotkey so both walk through changes identically. Marking is
+	// forced on (not toggled) so re-pressing the hotkey keeps advancing instead
+	// of un-marking. Already-seen files are skipped so the walk lands on the next
+	// thing that still needs review rather than re-opening a file the user (or
+	// agent) has already cleared.
 	async markSeenAndAdvance(filePath: string): Promise<void> {
 		if (!app.activeRepo) return;
+		// toggleSeen mutates app.seenFiles synchronously before its first await, so
+		// the just-marked file is already in the set when we scan for the next one.
 		void actions.toggleSeen(filePath, true);
 		// Collapse so the next file's header slides up under the cursor before the
 		// scroll request pins it at the top.
 		void actions.toggleFileCollapsed(filePath, true);
 		const ordered = actions.displayedFiles();
 		const idx = ordered.findIndex((f) => f.path === filePath);
-		const next = idx >= 0 ? ordered[idx + 1] : undefined;
+		const next =
+			idx >= 0 ? ordered.slice(idx + 1).find((f) => !app.seenFiles.has(f.path)) : undefined;
 		if (next) actions.scrollToFile(next.path);
 	},
 
