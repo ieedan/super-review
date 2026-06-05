@@ -2054,11 +2054,41 @@ export interface CommitResult {
 	error?: string;
 }
 
+// True when `files` already accounts for every change git sees — i.e. the user
+// hasn't unchecked anything. The commit pathspec exists only to exclude unchecked
+// files, so when nothing is excluded we can commit the whole index instead.
+// Compares against a live `git status` rather than trusting the caller's
+// (possibly stale) view, and matches on the post-rename path a commit records.
+async function selectionCoversAllChanges(
+	git: SimpleGit,
+	files: CommitFileSelection[]
+): Promise<boolean> {
+	const selected = new Set(files.map((f) => f.path));
+	const status = await git.status();
+	for (const f of status.files) {
+		// simple-git encodes a rename as "old -> new"; the new path is what the
+		// commit records, matching the selection's `path`.
+		const renameMatch = f.path.match(/^(.+) -> (.+)$/);
+		const p = renameMatch ? renameMatch[2] : f.path;
+		if (!selected.has(p)) return false;
+	}
+	return true;
+}
+
 // Stages and commits the selected files. Whole-file selections stage the file's
 // full working-tree version; partial selections carry a unified diff (HEAD ->
-// the kept subset) for line/hunk staging. When nothing is partial we take the
-// original fast path (`git add` + a pathspec-pinned `git commit`); otherwise we
-// build the commit through a scratch index so only the selected lines land.
+// the kept subset) for line/hunk staging. When nothing is partial we `git add`
+// the selections and `git commit`; otherwise we build the commit through a
+// scratch index so only the selected lines land.
+//
+// The commit is pinned to the selected pathspecs *only* to exclude changes the
+// user unchecked. When the selection already covers every change there's nothing
+// to leave out, so we commit the whole index with no pathspec — that records all
+// staged work and is the only commit form git permits during a merge (git
+// rejects any path-scoped "partial" commit mid-merge, even one whose paths cover
+// every file). A merge in progress therefore always commits the whole index,
+// recording both parents and clearing MERGE_HEAD; line-level selection is
+// impossible there, so the UI warns that exclusions don't apply.
 export async function commit(
 	repoPath: string,
 	message: string,
@@ -2071,49 +2101,37 @@ export async function commit(
 		if (!trimmed) throw new Error('Commit message is required.');
 		if (files.length === 0) throw new Error('No files selected to commit.');
 
-		// During a merge git forbids partial commits entirely: the merge commit must
-		// record the *whole* index and both parents, so neither the pathspec-pinned
-		// fast path nor `commitPartial`'s single-parent `commit-tree` is valid (the
-		// former errors with "cannot do a partial commit during a merge", the latter
-		// would silently drop the second parent and orphan MERGE_HEAD). Stage the
-		// selected files, then commit the entire index in one merge commit. Per-file
-		// and line-level selection can't be honored here — everything staged lands
-		// together — so the UI warns the user before they get here.
-		if (await hasMergeHead(git)) {
-			const identityArgs = identity
-				? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`]
-				: [];
-			const paths: string[] = [];
-			for (const f of files) {
-				paths.push(f.path);
-				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
-			}
-			// Stage the selected working-tree files (partial patches are ignored — a
-			// merge commit can't carry a line subset), then commit the whole index
-			// with no pathspec so git records both parents and clears MERGE_HEAD.
-			await git.raw(['add', '-A', '--', ...paths]);
-			await git.raw([...identityArgs, 'commit', '-m', trimmed]);
-			return { ok: true };
-		}
+		// `-c` sets config for this invocation only, overriding both author and
+		// committer without touching the repo's git config.
+		const identityArgs = identity
+			? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`]
+			: [];
 
+		const merging = await hasMergeHead(git);
 		const hasPartial = files.some((f) => f.patch != null && f.patch.trim() !== '');
-		if (!hasPartial) {
-			// Whole-file fast path. For renames we stage both sides so git records
-			// the move rather than an add + orphaned delete.
+
+		// Whole-file path: taken when nothing is partial, or when a merge forces a
+		// whole-index commit (a merge can't carry a line subset — patches are
+		// ignored and everything staged is committed together).
+		if (merging || !hasPartial) {
+			// For renames we stage both sides so git records the move rather than an
+			// add + orphaned delete.
 			const paths: string[] = [];
 			for (const f of files) {
 				paths.push(f.path);
 				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
 			}
 			await git.raw(['add', '-A', '--', ...paths]);
-			// `-c` sets config for this invocation only, overriding both author and
-			// committer without touching the repo's git config.
-			const identityArgs = identity
-				? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`]
-				: [];
-			// Pin the commit to the selected pathspecs so anything else that may be
-			// staged in the index is left out — only the checked files are committed.
-			await git.raw([...identityArgs, 'commit', '-m', trimmed, '--', ...paths]);
+			// Drop the pathspec — committing the whole index — when a merge is in
+			// progress (git allows nothing else) or the selection already accounts for
+			// every change. Otherwise pin to the selected paths so unchecked changes
+			// staged in the index are left out.
+			const wholeIndex = merging || (await selectionCoversAllChanges(git, files));
+			await git.raw(
+				wholeIndex
+					? [...identityArgs, 'commit', '-m', trimmed]
+					: [...identityArgs, 'commit', '-m', trimmed, '--', ...paths]
+			);
 			return { ok: true };
 		}
 
