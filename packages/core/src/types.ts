@@ -537,6 +537,10 @@ export interface PushStatus {
 	// Usually "origin", but a checked-out PR branch tracks the PR's head repo
 	// remote. Undefined when there's no upstream. Drives accurate push labels.
 	pushRemote?: string;
+	// True when a merge is in progress (MERGE_HEAD exists). Git can only finish a
+	// merge with a whole-index commit, so the commit UI drops per-file/line
+	// selection and warns that every staged change is committed together.
+	mergeInProgress: boolean;
 }
 
 export interface PullPushResult {

@@ -3006,13 +3006,26 @@ export const actions = {
 		const repoId = app.activeRepo.id;
 		const trimmedSummary = summary.trim();
 		if (!trimmedSummary) return false;
-		// Everything not explicitly unchecked is included. For renames we stage
-		// both sides so git records the move rather than an add + orphaned delete.
-		const included = app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path));
-		if (included.length === 0) return false;
-		const ctx = $state.snapshot(app.diffContext) as DiffContext;
-		const selections = await buildCommitSelections(repoId, ctx, included);
-		if (selections.length === 0) return false;
+		// During a merge git can only finish with a whole-index commit, so per-file
+		// exclusions and line-level staging don't apply — everything staged is
+		// committed together (the backend ignores patches and pathspec scoping in
+		// this case, and the CommitBox warns the user). Include every changed file
+		// as a plain whole-file selection so the backend stages and commits the
+		// full merge.
+		const mergeInProgress = app.pushStatus?.mergeInProgress ?? false;
+		let selections: CommitFileSelection[];
+		if (mergeInProgress) {
+			if (app.changedFiles.length === 0) return false;
+			selections = app.changedFiles.map((f) => ({ path: f.path, oldPath: f.oldPath }));
+		} else {
+			// Everything not explicitly unchecked is included. For renames we stage
+			// both sides so git records the move rather than an add + orphaned delete.
+			const included = app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path));
+			if (included.length === 0) return false;
+			const ctx = $state.snapshot(app.diffContext) as DiffContext;
+			selections = await buildCommitSelections(repoId, ctx, included);
+			if (selections.length === 0) return false;
+		}
 		const trimmedDescription = description?.trim() ?? '';
 		const message = trimmedDescription
 			? `${trimmedSummary}\n\n${trimmedDescription}`

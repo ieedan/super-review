@@ -1,6 +1,13 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { ChevronDown, GitPullRequest, Loader2, TriangleAlert, User } from 'lucide-svelte';
+	import {
+		ChevronDown,
+		GitMerge,
+		GitPullRequest,
+		Loader2,
+		TriangleAlert,
+		User
+	} from 'lucide-svelte';
 	import { Button } from './ui/button';
 	import * as Avatar from './ui/avatar';
 	import { Input } from './ui/input';
@@ -58,7 +65,15 @@
 		app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path)).length
 	);
 	const branch = $derived(app.currentBranch ?? 'detached HEAD');
-	const canCommit = $derived(!busy && fileCount > 0 && summary.trim().length > 0);
+	// A merge in progress can only be concluded with a whole-index commit: git
+	// rejects the per-file pathspec commit we normally build. The file selection
+	// and line-level staging don't apply — every staged change is committed
+	// together as the merge commit — so we relax the "files checked" gate (the
+	// merge itself is always something to commit) and warn the user below.
+	const mergeInProgress = $derived(app.pushStatus?.mergeInProgress ?? false);
+	const canCommit = $derived(
+		!busy && (mergeInProgress || fileCount > 0) && summary.trim().length > 0
+	);
 
 	// No write access to origin — committing/pushing has to go through a fork
 	// first (GitHub Desktop parity). false only on a definitive "no" from the API.
@@ -185,6 +200,19 @@
 		class="min-h-0 resize-none px-2 py-1.5 text-xs"
 	/>
 
+	{#if mergeInProgress}
+		<div
+			class="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] text-muted-foreground"
+		>
+			<GitMerge class="mt-0.5 size-3.5 shrink-0 text-warning" />
+			<span>
+				A merge is in progress. Git commits the whole merge at once, so <span
+					class="font-medium text-foreground">all staged changes are committed together</span
+				> — the per-file and line selections don't apply here.
+			</span>
+		</div>
+	{/if}
+
 	{#if needsFork}
 		<div
 			class="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] text-muted-foreground"
@@ -230,6 +258,10 @@
 		{#if busy}
 			<Loader2 class="size-3.5 animate-spin" />
 			<span class="text-xs">Committing…</span>
+		{:else if mergeInProgress}
+			<span class="truncate text-xs">
+				Commit merge to <span class="font-semibold">{branch}</span>
+			</span>
 		{:else}
 			<span class="truncate text-xs">
 				Commit

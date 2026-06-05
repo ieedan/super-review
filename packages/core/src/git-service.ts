@@ -1356,6 +1356,10 @@ export interface PushStatus {
 	aheadOfDefault: number;
 	behindDefault: number;
 	pushRemote?: string;
+	// True when a merge is in progress (MERGE_HEAD exists). Git can only finish a
+	// merge with a whole-index commit, so the commit UI drops per-file/line
+	// selection and warns that every staged change is committed together.
+	mergeInProgress: boolean;
 }
 
 // Detect the repo's default branch from local refs. origin/HEAD is only set at
@@ -1459,6 +1463,7 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 	}
 	const remotes = await git.getRemotes(true).catch(() => []);
 	const hasRemote = remotes.some((r) => r.name === 'origin');
+	const mergeInProgress = await hasMergeHead(git);
 	// The caller passes the repo's cached default branch, but that's computed once
 	// at repo-add time and persisted — it can be undefined for repos added before
 	// detection improved, or stale. Resolve live when it's missing so the ahead/
@@ -1479,7 +1484,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 			hasUpstream: false,
 			hasRemote,
 			aheadOfDefault,
-			behindDefault
+			behindDefault,
+			mergeInProgress
 		};
 	}
 	let upstream: string | null;
@@ -1498,7 +1504,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 			hasUpstream: false,
 			hasRemote,
 			aheadOfDefault,
-			behindDefault
+			behindDefault,
+			mergeInProgress
 		};
 	}
 	let ahead = 0;
@@ -1528,7 +1535,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 		hasRemote,
 		aheadOfDefault,
 		behindDefault,
-		pushRemote
+		pushRemote,
+		mergeInProgress
 	};
 }
 
@@ -2062,6 +2070,31 @@ export async function commit(
 		const trimmed = message.trim();
 		if (!trimmed) throw new Error('Commit message is required.');
 		if (files.length === 0) throw new Error('No files selected to commit.');
+
+		// During a merge git forbids partial commits entirely: the merge commit must
+		// record the *whole* index and both parents, so neither the pathspec-pinned
+		// fast path nor `commitPartial`'s single-parent `commit-tree` is valid (the
+		// former errors with "cannot do a partial commit during a merge", the latter
+		// would silently drop the second parent and orphan MERGE_HEAD). Stage the
+		// selected files, then commit the entire index in one merge commit. Per-file
+		// and line-level selection can't be honored here — everything staged lands
+		// together — so the UI warns the user before they get here.
+		if (await hasMergeHead(git)) {
+			const identityArgs = identity
+				? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`]
+				: [];
+			const paths: string[] = [];
+			for (const f of files) {
+				paths.push(f.path);
+				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
+			}
+			// Stage the selected working-tree files (partial patches are ignored — a
+			// merge commit can't carry a line subset), then commit the whole index
+			// with no pathspec so git records both parents and clears MERGE_HEAD.
+			await git.raw(['add', '-A', '--', ...paths]);
+			await git.raw([...identityArgs, 'commit', '-m', trimmed]);
+			return { ok: true };
+		}
 
 		const hasPartial = files.some((f) => f.patch != null && f.patch.trim() !== '');
 		if (!hasPartial) {
