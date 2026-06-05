@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { save } from './save';
 import { clear } from './clear';
+import { migrate } from './migrate';
 
 const SLICE_HELP = `
 Slices are stored in the repo under .super-review/slices/, so they can be
@@ -12,4 +13,5 @@ export const slice = new Command('slice')
 	.description('create and manage review slices')
 	.addHelpText('after', SLICE_HELP)
 	.addCommand(save)
-	.addCommand(clear);
+	.addCommand(clear)
+	.addCommand(migrate);

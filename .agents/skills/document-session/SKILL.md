@@ -1,30 +1,36 @@
 ---
 name: document-session
-description: Document changes you made in your session in a Super Review tour to make them easier for users to parse and understand.
+description: Document changes you made in your session as a Super Review slice (a live, content-free guided tour) to make them easier for users to parse and understand.
 ---
 
-# Document a Super Review session
+# Document a Super Review slice
 
-A **session** is a guided **tour** of the changes you made, written for a human
+A **slice** is a guided **tour** of the changes you made, written for a human
 reviewer. You group related files into ordered **steps**, each with a short
 explanation, so the reviewer reads your change as a narrative instead of an
 alphabetical pile of diffs. They open it in the Super Review desktop app and
 walk the tour step by step, with your commentary above each group of diffs.
 
+A slice stores **no code** — only where to look (paths + line callouts) and what
+to say. The diff is always recomputed live from your branch's changes (committed
+**and** uncommitted, versus the branch's fork point) and filtered to the slice's
+files, so a slice never goes stale or drifts: callouts are auto-anchored to the
+line text and follow edits, or surface as "outdated" if the line is gone.
+
+> `session save` still works as a deprecated alias for `slice save` (one
+> release), so older scripts keep running. Prefer `slice save`.
+
 ## How to author a tour
 
-1. Make sure your edits are saved. By default the diff is captured from the
-   current working tree, so they don't need to be committed. To document changes
-   you've **already committed** on a branch, add `--committed` (see
-   "Documenting committed changes" below).
+1. Make your edits — they don't need to be committed (a slice always renders the
+   branch's changes, committed or not, against its fork point).
 2. Pass the tour as inline JSON to `--tour`:
 
 ```bash
-npx super-review session save --key "<your conversation/run id>" --tour '{
-	"name": "Short title for the whole change",
+npx super-review slice save --key "<your conversation/run id>" --tour '{
+	"title": "Short title for the whole change",
 	"description": "One or two sentences of overview.",
 	"harness": "claude-code",
-	"harnessUrl": "<optional resume/permalink to this run>",
 	"steps": [
 		{
 			"title": "Data model",
@@ -56,6 +62,9 @@ rendered as a note right at that spot in the diff. Each callout has:
 
 - `file` - one of the step's files.
 - `startLine`, `endLine` - 1-based inclusive range (omit `endLine` for one line).
+  These are **hints**: they're auto-fingerprinted against the current diff and
+  re-resolved on every render, so they follow drift instead of pointing at the
+  wrong line.
 - `side` - `"new"` (added/current lines, the default) or `"old"` (the original).
 - `body` - Markdown commentary.
 
@@ -66,45 +75,32 @@ rendered as a note right at that spot in the diff. Each callout has:
 - **Order for reading.** Lead with the step that makes the rest make sense
   (often the data model / types); end with tests or cleanup.
 - **Explain the why.** The diff already shows _what_ changed - the body should
-  say _why_. Similarly don't say _what_ the code does say _why_ it does it.
+  say _why_.
 - **List files in reading order** within a step.
 - Any changed file you don't place in a step still shows, grouped under
-  **"Other changes"** at the end nothing is hidden, but anything worth the
+  **"Other changes"** at the end — nothing is hidden, but anything worth the
   reviewer's attention should be in a step.
 
 ### Arguments
 
 - `--key` - **Always pass the same stable id for the same conversation** (your
   harness's conversation/run id). This is what makes re-runs update the same
-  session instead of piling up duplicates.
+  slice instead of piling up duplicates.
 - `--tour <json>` - the tour as inline JSON, passed directly as the argument.
-- `--name`, `--description` - the overview. Required on first save unless the
+- `--title`, `--description` - the overview. Required on first save unless the
   tour supplies them. Flags override the tour's values.
 - `--harness` - one of: `claude-code`, `cursor`, `codex`, `opencode`,
-  `copilot`, `other`. Drives the logo on the session card. Use
-  `--harness-label "<name>"` with `--harness other` to label an unlisted tool.
-- `--harness-url` - Optional. A link back to this run (resume URL or permalink).
+  `copilot`, `other`. Drives the logo on the slice card.
+- `--author <name>` - your display name (defaults to the harness).
+- `--files <a,b,c>` - scope the slice to just these paths (defaults to every file
+  the branch changed). List files in reading order.
 - `--cwd` - Optional. The repo path; defaults to the current directory.
 
-A quick flat session (no tour) still works: pass `--name`/`--description`
-without `--tour`, and every changed file is listed ungrouped.
+A quick flat slice (no tour) still works: pass `--title`/`--description` without
+`--tour`, and every changed file is listed ungrouped.
 
-### Documenting committed changes
+### Migrating old sessions
 
-By default `save` captures the working tree, so it sees nothing once you've
-committed. To document a change **after committing it** (e.g. "document the
-changes on this branch"), pass `--committed`: it captures this branch diffed
-against its base — the auto-detected default branch (`main`/`master`), the same
-`base...head` diff the desktop app shows for a branch.
-
-```bash
-super-review session save --committed --key "<run id>" --tour '{ ... }'
-```
-
-- `--committed` - capture this branch's committed diff instead of the working tree.
-- `--base <ref>` - override the base to diff against (implies `--committed`).
-- `--head <ref>` - override the head (implies `--committed`); defaults to the
-  current branch.
-
-Tour `files`/`callouts` work the same way - they just refer to files in the
-committed diff instead of the working tree.
+If a repo still has legacy `.super-review/sessions/*.json` manifests, convert
+them to content-free slices with `super-review slice migrate` (originals are
+moved aside, not deleted).

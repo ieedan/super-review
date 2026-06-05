@@ -14,37 +14,43 @@ export const DOCUMENT_SESSION_SKILL_FILE = `${DOCUMENT_SESSION_SKILL_DIR}/SKILL.
 
 export const DOCUMENT_SESSION_SKILL = `---
 name: document-session
-description: Document the changes you made as a guided super-review session — a tour that groups related files into explained steps — when you finish (or reach a checkpoint in) a coding task, so a human can review them in the super-review desktop app. Use after completing edits in a repo that the user reviews with super-review.
+description: Document the changes you made as a guided super-review slice — a live, content-free tour that groups related files into explained steps — when you finish (or reach a checkpoint in) a coding task, so a human can review them in the super-review desktop app. Use after completing edits in a repo that the user reviews with super-review.
 ---
 
-# Document a super-review session
+# Document a super-review slice
 
-A **session** is a guided **tour** of the changes you made, written for a human
+A **slice** is a guided **tour** of the changes you made, written for a human
 reviewer. You group related files into ordered **steps**, each with a short
 explanation, so the reviewer reads your change as a narrative instead of an
 alphabetical pile of diffs. They open it in the super-review desktop app and
 walk the tour step by step, with your commentary above each group of diffs.
 
+A slice stores **no code** — only where to look (paths + line callouts) and what
+to say. The diff is always recomputed live from your branch's changes (committed
+**and** uncommitted, versus the branch's fork point) and filtered to the slice's
+files, so it never goes stale. Callouts auto-anchor to the line text and follow
+edits, or surface as "outdated" if the line is gone.
+
+> \`session save\` still works as a deprecated alias for \`slice save\` (one
+> release). Prefer \`slice save\`.
+
 ## When to run
 
 Run this when you finish a task, or at a meaningful checkpoint. It's safe to run
-repeatedly — re-running with the same \`--key\` **updates** the existing session
+repeatedly — re-running with the same \`--key\` **updates** the existing slice
 with your latest changes (and tour) rather than creating a duplicate.
 
 ## How: author a tour
 
-1. Make sure your edits are saved. By default the diff is captured from the
-   current working tree, so they don't need to be committed. To document changes
-   you've **already committed** on a branch, add \`--committed\` (see
-   "Documenting committed changes" below).
+1. Make your edits — they don't need to be committed (a slice always renders the
+   branch's changes, committed or not, against its fork point).
 2. Pass the tour as inline JSON to \`--tour\`:
 
 \`\`\`bash
-super-review session save --key "<your conversation/run id>" --tour '{
-  "name": "Short title for the whole change",
+super-review slice save --key "<your conversation/run id>" --tour '{
+  "title": "Short title for the whole change",
   "description": "One or two sentences of overview.",
   "harness": "claude-code",
-  "harnessUrl": "<optional resume/permalink to this run>",
   "steps": [
     {
       "title": "Data model",
@@ -80,6 +86,9 @@ rendered as a note right at that spot in the diff — for when "look at lines
 
 - \`file\` — one of the step's files.
 - \`startLine\`, \`endLine\` — 1-based inclusive range (omit \`endLine\` for one line).
+  These are **hints**: they're auto-fingerprinted against the current diff and
+  re-resolved on every render, so they follow drift instead of pointing at the
+  wrong line.
 - \`side\` — \`"new"\` (added/current lines, the default) or \`"old"\` (the original).
 - \`body\` — Markdown commentary.
 
@@ -103,38 +112,19 @@ the overview. Don't annotate every line — callouts are for what's easy to miss
 
 - \`--key\` — **Always pass the same stable id for the same conversation** (your
   harness's conversation/run id). This is what makes re-runs update the same
-  session instead of piling up duplicates.
+  slice instead of piling up duplicates.
 - \`--tour <json>\` — the tour as inline JSON, passed directly as the argument.
-- \`--name\`, \`--description\` — the overview. Required on first save unless the
+- \`--title\`, \`--description\` — the overview. Required on first save unless the
   tour supplies them. Flags override the tour's values.
 - \`--harness\` — one of: \`claude-code\`, \`cursor\`, \`codex\`, \`opencode\`,
-  \`copilot\`, \`other\`. Drives the logo on the session card. Use
-  \`--harness-label "<name>"\` with \`--harness other\` to label an unlisted tool.
-- \`--harness-url\` — Optional. A link back to this run (resume URL or permalink).
+  \`copilot\`, \`other\`. Drives the logo on the slice card.
+- \`--author <name>\` — your display name (defaults to the harness).
+- \`--files <a,b,c>\` — scope the slice to just these paths (defaults to every file
+  the branch changed). List files in reading order.
 - \`--cwd\` — Optional. The repo path; defaults to the current directory.
 
-A quick flat session (no tour) still works: pass \`--name\`/\`--description\`
+A quick flat slice (no tour) still works: pass \`--title\`/\`--description\`
 without \`--tour\`, and every changed file is listed ungrouped.
-
-### Documenting committed changes
-
-By default \`save\` captures the working tree, so it sees nothing once you've
-committed. To document a change **after committing it** (e.g. "document the
-changes on this branch"), pass \`--committed\`: it captures this branch diffed
-against its base — the auto-detected default branch (\`main\`/\`master\`), the
-same \`base...head\` diff the desktop app shows for a branch.
-
-\`\`\`bash
-super-review session save --committed --key "<run id>" --tour '{ ... }'
-\`\`\`
-
-- \`--committed\` — capture this branch's committed diff instead of the working tree.
-- \`--base <ref>\` — override the base to diff against (implies \`--committed\`).
-- \`--head <ref>\` — override the head (implies \`--committed\`); defaults to the
-  current branch.
-
-Tour \`files\`/\`callouts\` work the same way — they just refer to files in the
-committed diff instead of the working tree.
 
 For a large tour, write the JSON to a temp file and expand it inline with your
 shell (e.g. \`--tour "$(cat tour.json)"\`) — the CLI itself only accepts the
@@ -142,13 +132,16 @@ JSON, not a path.
 
 ## Notes
 
-- The session is a frozen snapshot: it keeps the diff as it was at save time,
-  even if the working tree changes afterward. Re-run \`save\` to refresh it.
+- A slice is **live**, not a snapshot: it always renders the current diff of its
+  files, so you don't need to re-save after every edit (though re-saving with the
+  same \`--key\` refreshes the file scope, tour, and callout fingerprints).
 - If the \`super-review\` command isn't on \`PATH\`, run it with \`npx super-review\` (once
   published), or build the CLI locally with \`pnpm --filter super-review build\` and invoke
   the bundle directly:
-  \`node /path/to/super-review/packages/cli/dist/bin.mjs session save ...\`
+  \`node /path/to/super-review/packages/cli/dist/bin.mjs slice save ...\`
 - The CLI exits non-zero (with a message) if there are no changes to capture or
   the directory isn't a git repository, and warns if the tour lists a path that
-  isn't among the captured changes.
+  isn't among the branch's changes.
+- Legacy \`.super-review/sessions/*.json\` can be converted with
+  \`super-review slice migrate\` (originals are moved aside, not deleted).
 `;

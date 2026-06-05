@@ -16,6 +16,7 @@ export * from './session-capture.js';
 export * from './session-store.js';
 export * from './slice-store.js';
 export * from './slice-capture.js';
+export * from './slice-migrate.js';
 export * from './comment-store.js';
 
 // These result types are declared (identically) in both `types.js` — the shared
