@@ -9,7 +9,7 @@
 	import RefreshButton from './RefreshButton.svelte';
 	import { useSidebar } from './ui/sidebar';
 	import { CornerUpLeft, FileDiff, MessageSquare } from 'lucide-svelte';
-	import { actions, app, isReadOnlyView, sidebarHasComments } from '$lib/store.svelte';
+	import { actions, app, isReadOnlyView, sidebarHasUnresolvedComments } from '$lib/store.svelte';
 
 	// The left (changes / file list) sidebar's open state lives in the shared
 	// Sidebar context provided in App.svelte; the center toggle reads + flips it.
@@ -75,7 +75,7 @@
 				]}
 			>
 				<MessageSquare class="size-4" />
-				{#if sidebarHasComments()}
+				{#if sidebarHasUnresolvedComments()}
 					<span
 						class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full"
 						style="background: var(--color-primary);"

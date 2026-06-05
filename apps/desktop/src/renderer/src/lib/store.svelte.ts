@@ -425,14 +425,17 @@ export function isPRCommentContext(): boolean {
 	);
 }
 
-// Whether the Comments sidebar has anything to show in the current context —
+// Whether the Comments sidebar has UNRESOLVED comments in the current context —
 // PR review comments in a PR view, local comments otherwise. Drives the header
-// toggle's "has comments" dot.
-export function sidebarHasComments(): boolean {
+// toggle's notification dot, which should only show when there's something left
+// to act on (resolved-only threads don't light it).
+export function sidebarHasUnresolvedComments(): boolean {
 	if (isPRCommentContext()) {
-		return Object.values(app.prComments).some((list) => list.some((c) => c.line != null));
+		return Object.values(app.prComments).some((list) =>
+			list.some((c) => c.line != null && c.inReplyTo == null && !c.isResolved)
+		);
 	}
-	return app.localComments.length > 0;
+	return app.localComments.some((c) => c.resolvedAt == null);
 }
 
 // True when the Branch tab has something to show. The Branch diff compares the
