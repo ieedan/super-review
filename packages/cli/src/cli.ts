@@ -10,6 +10,7 @@ const cli = program
 	.description(pkg.description)
 	.version(pkg.version)
 	.showHelpAfterError()
+	.addCommand(commands.slice)
 	.addCommand(commands.session)
 	.addCommand(commands.comment);
 
