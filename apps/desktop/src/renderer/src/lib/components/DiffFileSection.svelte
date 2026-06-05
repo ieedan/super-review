@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { mount, unmount, onDestroy } from 'svelte';
+	import { mount, unmount, onDestroy, onMount } from 'svelte';
 	import {
 		Check,
 		ChevronDown,
@@ -1250,7 +1250,11 @@
 	let pathEl = $state<HTMLElement | null>(null);
 	let pathWidth = $state(0);
 	let pathFont = $state('12px ui-monospace, monospace');
-	$effect(() => {
+	// The label is rendered unconditionally in the header, so its element exists
+	// for the whole life of the section: set the observer up once on mount and
+	// tear it down on destroy. The ResizeObserver handles width changes; we don't
+	// need an $effect to re-sync on reactive state.
+	onMount(() => {
 		const el = pathEl;
 		if (!el) return;
 		const measure = (): void => {
