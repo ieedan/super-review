@@ -2,9 +2,11 @@
 	import { Check, MessageSquare, MoreHorizontal, Trash2 } from 'lucide-svelte';
 	import { Button } from './ui/button';
 	import * as DropdownMenu from './ui/dropdown-menu';
-	import { Textarea } from './ui/textarea';
+	import MarkdownComposer from './MarkdownComposer.svelte';
 	import { actions, app, composerKey, effectiveGithubAccount } from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
+	import { renderMarkdown } from '$lib/markdown';
+	import '$lib/markdown.css';
 	import type { PRReviewComment } from '@shared/types';
 
 	// Metadata stamped onto every DiffLineAnnotation we feed @pierre/diffs.
@@ -26,11 +28,32 @@
 
 	let { meta }: Props = $props();
 
-	let textareaEl = $state<HTMLTextAreaElement | null>(null);
-
-	// Focus the textarea as soon as the composer mounts.
+	// Render the comment body as GitHub-Flavored Markdown (sanitized in
+	// markdown.ts) so comments display formatted text, links, and code — matching
+	// how the same markdown reads on GitHub — rather than as a raw string.
+	let bodyHtml = $state('');
 	$effect(() => {
-		textareaEl?.focus();
+		if (meta.kind !== 'comment') {
+			bodyHtml = '';
+			return;
+		}
+		const src = meta.comment.body;
+		const theme = app.theme;
+		if (!src.trim()) {
+			bodyHtml = '';
+			return;
+		}
+		let cancelled = false;
+		void renderMarkdown(src, theme)
+			.then((h) => {
+				if (!cancelled) bodyHtml = h;
+			})
+			.catch(() => {
+				if (!cancelled) bodyHtml = '';
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	const composerState = $derived.by(() => {
@@ -144,7 +167,13 @@
 						</DropdownMenu.Root>
 					{/if}
 				</header>
-				<p class="text">{c.body}</p>
+				{#if bodyHtml}
+					<!-- bodyHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
+					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+					<div class="markdown-body text">{@html bodyHtml}</div>
+				{:else}
+					<p class="text">{c.body}</p>
+				{/if}
 			</div>
 		</article>
 		{#if isThreadTail}
@@ -195,16 +224,12 @@
 				<MessageSquare class="size-3.5 text-muted-foreground" />
 				<span>{composer.replyTo ? 'Reply' : 'New comment'}</span>
 			</div>
-			<Textarea
-				bind:ref={textareaEl}
-				class="resize-y"
+			<MarkdownComposer
+				bind:value={composer.draft}
 				placeholder={composer.replyTo ? 'Write a reply…' : 'Leave a comment on this line…'}
-				value={composer.draft}
-				oninput={(e) =>
-					actions.setComposerDraft(composerState!.key, (e.target as HTMLTextAreaElement).value)}
-				onkeydown={onKeydown}
 				disabled={composer.submitting}
-				rows={3}
+				autofocus
+				onkeydown={onKeydown}
 			/>
 			<div class="composer-footer">
 				<div class="actions">
