@@ -62,6 +62,7 @@ interface SaveOptions {
 	authorKind?: string;
 	files?: string;
 	branch?: string;
+	base?: string;
 	tour?: string;
 	cwd?: string;
 }
@@ -149,6 +150,7 @@ export async function runSliceSave(opts: SaveOptions): Promise<void> {
 		title,
 		description,
 		branch: opts.branch,
+		base: opts.base,
 		author:
 			authorName || harnessRaw
 				? {
@@ -218,6 +220,10 @@ export const save = new Command('save')
 		"Comma-separated paths to scope the slice to (default: all of the branch's changed files)."
 	)
 	.option('--branch <name>', 'Branch this slice documents (default: the current branch).')
+	.option(
+		'--base <ref>',
+		"Fork-point base the diff is computed against (default: the repo's detected default branch)."
+	)
 	.option(
 		'--tour <json>',
 		"Inline JSON describing a guided tour: ordered steps that group related files with commentary and line-range callouts. Flags override the document's top-level fields."

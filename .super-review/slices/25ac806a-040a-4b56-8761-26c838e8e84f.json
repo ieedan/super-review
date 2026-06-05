@@ -1,0 +1,142 @@
+{
+  "id": "25ac806a-040a-4b56-8761-26c838e8e84f",
+  "repo": "0d80e4bd1103",
+  "branch": "claude/dreamy-cerf-epfpA",
+  "key": "session_01NJMWGK9Sa8LcbfALEbQgnP",
+  "author": {
+    "kind": "agent",
+    "name": "claude-code",
+    "harness": "claude-code"
+  },
+  "title": "Slices: content-free, live-rendering review model",
+  "description": "Rebuilds the review model so it stores no code — only where to look and what to say. Adds the anchor engine, union diff, slice model/store/capture, CLI slice commands, comment anchoring, desktop IPC/preload live rendering, and session→slice migration.",
+  "files": [
+    ".agents/skills/document-session/SKILL.md",
+    ".changeset/slices-model.md",
+    "AGENTS.md",
+    "apps/desktop/src/main/document-session-skill.ts",
+    "apps/desktop/src/main/ipc.ts",
+    "apps/desktop/src/preload/index.ts",
+    "apps/desktop/src/shared/diff-context.ts",
+    "packages/cli/src/cli.ts",
+    "packages/cli/src/commands/index.ts",
+    "packages/cli/src/commands/session/clear.ts",
+    "packages/cli/src/commands/session/save.ts",
+    "packages/cli/src/commands/slice/clear.ts",
+    "packages/cli/src/commands/slice/index.ts",
+    "packages/cli/src/commands/slice/migrate.ts",
+    "packages/cli/src/commands/slice/save.ts",
+    "packages/core/package.json",
+    "packages/core/src/anchor.test.ts",
+    "packages/core/src/anchor.ts",
+    "packages/core/src/comment-schema.ts",
+    "packages/core/src/comment-store.test.ts",
+    "packages/core/src/comment-store.ts",
+    "packages/core/src/git-service.ts",
+    "packages/core/src/git-service.union.test.ts",
+    "packages/core/src/index.ts",
+    "packages/core/src/slice-capture.test.ts",
+    "packages/core/src/slice-capture.ts",
+    "packages/core/src/slice-migrate.test.ts",
+    "packages/core/src/slice-migrate.ts",
+    "packages/core/src/slice-store.ts",
+    "packages/core/src/types.ts",
+    "packages/core/vitest.config.ts",
+    "pnpm-lock.yaml"
+  ],
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "Anchor engine (the foundation)",
+      "body": "Drift-following anchors: a line-range hint plus a fingerprint of the line text (the truth). resolveAnchor re-finds the text in live content, following inserts/removals or going outdated. Pure-JS so it runs in node and the renderer.",
+      "paths": [
+        "packages/core/src/anchor.ts",
+        "packages/core/src/anchor.test.ts"
+      ],
+      "callouts": [
+        {
+          "id": "step-1-c1",
+          "anchor": {
+            "file": "packages/core/src/anchor.ts",
+            "side": "RIGHT",
+            "startLine": 76,
+            "endLine": 105,
+            "fingerprint": "092d367628583f"
+          },
+          "body": "The resolver: try the hint, then scan outward for an exact content match, else outdated."
+        }
+      ]
+    },
+    {
+      "id": "step-2",
+      "title": "Union diff mode",
+      "body": "old side = merge-base(base, HEAD), new side = the working tree, so a slice renders every branch change vs its fork point, committed AND uncommitted, in one call.",
+      "paths": [
+        "packages/core/src/git-service.ts",
+        "packages/core/src/git-service.union.test.ts"
+      ],
+      "callouts": []
+    },
+    {
+      "id": "step-3",
+      "title": "Slice model, store & capture",
+      "body": "The content-free model. captureSlice resolves the file scope from the union diff and fingerprints each callout against live content — no diff content is ever stored.",
+      "paths": [
+        "packages/core/src/types.ts",
+        "packages/core/src/slice-store.ts",
+        "packages/core/src/slice-capture.ts",
+        "packages/core/src/slice-capture.test.ts"
+      ],
+      "callouts": []
+    },
+    {
+      "id": "step-4",
+      "title": "CLI: slice commands + deprecated session alias",
+      "body": "slice save/clear/migrate; session save delegates with a deprecation notice so existing agent scripts keep working.",
+      "paths": [
+        "packages/cli/src/commands/slice/save.ts",
+        "packages/cli/src/commands/slice/index.ts",
+        "packages/cli/src/commands/session/save.ts"
+      ],
+      "callouts": []
+    },
+    {
+      "id": "step-5",
+      "title": "Comments: anchor + derived committability",
+      "body": "Comments gain a fingerprint anchor and a posted-binding column; isCommittable derives GitHub-postability live from HEAD.",
+      "paths": [
+        "packages/core/src/comment-schema.ts",
+        "packages/core/src/comment-store.ts",
+        "packages/core/src/comment-store.test.ts"
+      ],
+      "callouts": []
+    },
+    {
+      "id": "step-6",
+      "title": "Desktop: live slice rendering (IPC + preload)",
+      "body": "git:listChangedFiles/getDiff resolve a slice to a live union (or branch, read-only) context filtered to its files; slices:* CRUD + watcher; preload api.slices.",
+      "paths": [
+        "apps/desktop/src/main/ipc.ts",
+        "apps/desktop/src/preload/index.ts",
+        "apps/desktop/src/shared/diff-context.ts"
+      ],
+      "callouts": []
+    },
+    {
+      "id": "step-7",
+      "title": "Migration + docs",
+      "body": "slice-migrate converts legacy frozen sessions (content dropped, callouts to fingerprint-less anchors), moving originals aside. Docs/skill updated to slices.",
+      "paths": [
+        "packages/core/src/slice-migrate.ts",
+        "packages/core/src/slice-migrate.test.ts",
+        "AGENTS.md",
+        ".agents/skills/document-session/SKILL.md"
+      ],
+      "callouts": []
+    }
+  ],
+  "createdAt": 1780688306843,
+  "updatedAt": 1780688306843,
+  "additions": 2478,
+  "deletions": 331
+}

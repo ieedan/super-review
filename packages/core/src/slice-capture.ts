@@ -43,15 +43,19 @@ export interface SliceMeta {
 	steps?: SliceStepInput[];
 	// The branch this slice documents. Defaults to the current branch.
 	branch?: string;
+	// The fork-point base the union diff is computed against. Defaults to the
+	// repo's detected default branch; pass this when there's no detectable default
+	// (e.g. a checkout without a local `main`).
+	base?: string;
 }
 
 // Build the union DiffContext a slice renders over: everything the branch changes
 // against its fork point (committed + uncommitted). The base is the repo's
 // detected default branch; when none can be detected the union degrades to the
 // working tree (see resolveUnionOldRef).
-async function unionContextFor(repoPath: string): Promise<DiffContext> {
+async function unionContextFor(repoPath: string, baseOverride?: string): Promise<DiffContext> {
 	const git = simpleGit(repoPath);
-	const base = (await detectDefaultBranch(git).catch(() => undefined)) ?? 'HEAD';
+	const base = baseOverride ?? (await detectDefaultBranch(git).catch(() => undefined)) ?? 'HEAD';
 	return { kind: 'union', base, head: 'HEAD' };
 }
 
@@ -73,7 +77,7 @@ export async function captureSlice(
 		(await getCurrentBranch(repoPath).catch(() => null)) ??
 		undefined;
 
-	const ctx = await unionContextFor(repoPath);
+	const ctx = await unionContextFor(repoPath, meta.base);
 	const changed = await listChangedFiles(repoPath, ctx);
 	const changedPaths = new Set(changed.map((f) => f.path));
 
