@@ -30,6 +30,82 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024;
 // bounded — past this we leave the side unrendered rather than balloon memory.
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+// --- Remote authentication -------------------------------------------------
+//
+// Git transport (push/pull/fetch/clone) shells out to the system `git`, which
+// authenticates HTTPS remotes through the OS credential helper — entirely
+// separate from the GitHub account signed into the app. For a private repo that
+// leaves git effectively unauthenticated, so GitHub answers the generic
+// "Repository not found". To bridge the app's OAuth token to git, the host app
+// registers a credential provider; for each HTTPS remote we then pass the token
+// as an `http.<origin>.extraHeader` via simple-git's `config` option (i.e.
+// `git -c …`). That keeps the credential host-scoped, ephemeral (never written
+// into the repo config), and applied only to that host's requests.
+
+export interface GitCredentials {
+	username: string;
+	password: string;
+}
+
+// Resolve credentials for a remote URL, or return null to defer to the system
+// credential helper (the previous behaviour). Registered by the host app.
+export type GitCredentialProvider = (remoteUrl: string) => GitCredentials | null;
+
+let credentialProvider: GitCredentialProvider | null = null;
+
+export function setGitCredentialProvider(provider: GitCredentialProvider | null): void {
+	credentialProvider = provider;
+}
+
+// `-c` config entries attaching the credential as an Authorization header,
+// scoped to the remote's origin (e.g. https://github.com/). Empty when there's
+// no provider, the provider declines, or the remote isn't an HTTPS URL we can
+// scope to (e.g. scp-style `git@github.com:…`, which uses SSH keys anyway).
+function authConfig(remoteUrl: string | null | undefined): string[] {
+	if (!remoteUrl || !credentialProvider) return [];
+	let origin: string;
+	try {
+		const u = new URL(remoteUrl);
+		if (u.protocol !== 'https:') return [];
+		origin = u.origin; // strips any embedded user:pass and the path
+	} catch {
+		return [];
+	}
+	const creds = credentialProvider(remoteUrl);
+	if (!creds) return [];
+	const basic = Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
+	// Everything after the first `=` is the header value, so the colons/spaces in
+	// it are fine — it travels as a single argv entry, never through a shell.
+	return [`http.${origin}/.extraHeader=Authorization: Basic ${basic}`];
+}
+
+// A simple-git instance for `repoPath` with credentials wired in for
+// `remoteUrl` when a provider supplies them; a plain instance otherwise. Pass a
+// null `repoPath` for repo-less operations like clone.
+function authedGit(repoPath: string | null, remoteUrl: string | null | undefined): SimpleGit {
+	const config = authConfig(remoteUrl);
+	const options = config.length ? { config } : undefined;
+	if (repoPath) return simpleGit(repoPath, options);
+	return options ? simpleGit(options) : simpleGit();
+}
+
+// The push (or fetch) URL of `origin`, or null when there's no origin remote.
+async function originRemoteUrl(git: SimpleGit): Promise<string | null> {
+	const remotes = await git.getRemotes(true).catch(() => []);
+	const origin = remotes.find((r) => r.name === 'origin');
+	return origin?.refs.push ?? origin?.refs.fetch ?? null;
+}
+
+// Resolve a `remote` argument — either a configured remote name or a bare URL —
+// to the URL we should authenticate against. Unknown names fall through as-is so
+// authConfig can decide (a non-URL simply yields no credentials).
+async function resolveRemoteUrl(git: SimpleGit, remote: string): Promise<string | null> {
+	const remotes = await git.getRemotes(true).catch(() => []);
+	const named = remotes.find((r) => r.name === remote);
+	if (named) return named.refs.push ?? named.refs.fetch ?? null;
+	return remote;
+}
+
 export function repoIdFromPath(p: string): string {
 	return createHash('sha1').update(path.resolve(p)).digest('hex').slice(0, 12);
 }
@@ -626,7 +702,8 @@ export async function deleteBranch(
 			if (slash > 0) {
 				const remote = opts.upstream.slice(0, slash);
 				const ref = opts.upstream.slice(slash + 1);
-				await git.push([remote, '--delete', ref]);
+				const remoteUrl = await resolveRemoteUrl(git, remote);
+				await authedGit(repoPath, remoteUrl).push([remote, '--delete', ref]);
 			}
 		}
 		return { ok: true };
@@ -1568,7 +1645,8 @@ function parseOverwriteBlocked(message: string): string[] | null {
 }
 
 export async function pull(repoPath: string): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+	const remoteUrl = await originRemoteUrl(simpleGit(repoPath));
+	const git = authedGit(repoPath, remoteUrl);
 	try {
 		await git.raw(['pull', '--no-rebase', '--no-edit']);
 		return { ok: true, conflicts: [] };
@@ -1680,7 +1758,7 @@ export async function updateFromUpstream(
 	upstreamUrl: string,
 	branch: string
 ): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+	const git = authedGit(repoPath, upstreamUrl);
 	try {
 		await ensureUpstreamRemote(git, upstreamUrl);
 		await git.fetch(['upstream', branch]);
@@ -1695,11 +1773,12 @@ export async function updateFromUpstream(
 }
 
 export async function push(repoPath: string): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
 	try {
 		const status = await getPushStatus(repoPath);
 		if (!status.branch) throw new Error('Not on a branch (detached HEAD).');
 		if (!status.hasRemote) throw new Error("No 'origin' remote configured.");
+		const remoteUrl = await originRemoteUrl(simpleGit(repoPath));
+		const git = authedGit(repoPath, remoteUrl);
 		const args = ['push'];
 		if (!status.hasUpstream) args.push('--set-upstream', 'origin', status.branch);
 		await git.raw(args);
@@ -2262,7 +2341,7 @@ export async function cloneRepo(url: string, parentDir: string): Promise<CloneRe
 		if (exists) {
 			return { ok: false, error: `Destination already exists: ${target}` };
 		}
-		await simpleGit().clone(trimmed, target);
+		await authedGit(null, trimmed).clone(trimmed, target);
 		return { ok: true, path: target };
 	} catch (err) {
 		return {
@@ -2404,13 +2483,14 @@ export async function ensureInitialCommit(
 
 // Point 'origin' at `remoteUrl` and push the current branch, setting it as the
 // upstream. Used by the "Publish to GitHub" flow after the remote repo has been
-// created via the API. Auth follows the same path as cloneRepo/push: the user's
-// system git credential helper — we never write a token into the repo config.
+// created via the API. Auth follows the same path as cloneRepo/push: a
+// registered credential provider supplies the token per request (see
+// authConfig) — we never write a token into the repo config.
 export async function setOriginAndPush(
 	repoPath: string,
 	remoteUrl: string
 ): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+	const git = authedGit(repoPath, remoteUrl);
 	try {
 		const branch = await getCurrentBranch(repoPath);
 		if (!branch) throw new Error('Not on a branch (detached HEAD).');
@@ -2453,7 +2533,8 @@ export async function convertToForkRemotes(
 
 export async function fetchOrigin(repoPath: string): Promise<{ ok: boolean; error?: string }> {
 	try {
-		const git = simpleGit(repoPath);
+		const remoteUrl = await originRemoteUrl(simpleGit(repoPath));
+		const git = authedGit(repoPath, remoteUrl);
 		await git.fetch(['origin', '--prune']);
 		return { ok: true };
 	} catch (err) {
@@ -2472,7 +2553,9 @@ export async function fetchPRRef(
 	// origin, so the caller passes the parent's URL.
 	remote = 'origin'
 ): Promise<{ headRef: string; baseRef: string }> {
-	const git = simpleGit(repoPath);
+	const base = simpleGit(repoPath);
+	const remoteUrl = await resolveRemoteUrl(base, remote);
+	const git = authedGit(repoPath, remoteUrl);
 	await git.fetch([remote, `pull/${prNumber}/head:refs/pr/${prNumber}/head`]).catch(() => {});
 	// base ref is whatever the PR base branch's tip is — we fetch and pin locally
 	// The actual base branch name comes from the GitHub API and is resolved by the caller.
@@ -2519,14 +2602,16 @@ export async function checkoutPR(repoPath: string, opts: CheckoutPROptions): Pro
 	if (!headRepoUrl || !headRepoOwner) {
 		const local = await git.branchLocal();
 		if (!local.all.includes(headRef)) {
-			await git.fetch([opts.fallbackRemote ?? 'origin', `pull/${prNumber}/head:${headRef}`]);
+			const fallback = opts.fallbackRemote ?? 'origin';
+			const fallbackUrl = await resolveRemoteUrl(git, fallback);
+			await authedGit(repoPath, fallbackUrl).fetch([fallback, `pull/${prNumber}/head:${headRef}`]);
 		}
 		await git.checkout(headRef);
 		return;
 	}
 
 	const remote = await ensureRemoteForUrl(git, headRepoOwner, headRepoUrl, opts.originUrl);
-	await git.fetch([remote, headRef]);
+	await authedGit(repoPath, headRepoUrl).fetch([remote, headRef]);
 
 	const local = await git.branchLocal();
 	if (local.all.includes(headRef)) {
@@ -2588,7 +2673,9 @@ export async function pinPRBaseRef(
 	// repo's URL for an upstream PR on a fork. See fetchPRRef.
 	remote = 'origin'
 ): Promise<void> {
-	const git = simpleGit(repoPath);
+	const base = simpleGit(repoPath);
+	const remoteUrl = await resolveRemoteUrl(base, remote);
+	const git = authedGit(repoPath, remoteUrl);
 	// Fetch the base branch's current tip straight into the pinned ref. Writing
 	// the refspec directly (rather than fetching a tracking ref then resolving
 	// it) means this works whether `remote` is a named remote ("origin") or a

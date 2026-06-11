@@ -2180,6 +2180,7 @@ export const actions = {
 		await window.api.sessions.clear(app.activeRepo.id);
 		actions.closeSession();
 		await actions.loadSessions();
+		await actions.setContextTab('unstaged');
 	},
 
 	// Refresh the active repo's session-count badge (cheap, tab-independent).

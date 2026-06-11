@@ -14,6 +14,7 @@ import type {
 	PRReviewComment,
 	PRSummary
 } from '@shared/types.js';
+import { setGitCredentialProvider, type GitCredentials } from '@super-review/core';
 import {
 	clearLegacyGithubToken,
 	getActiveGithubAccount,
@@ -180,6 +181,28 @@ function resolveAccount(accountId?: string | null): StoredGithubAccount {
 
 function octokit(account: StoredGithubAccount): Octokit {
 	return new Octokit({ auth: account.token });
+}
+
+// Bridge the signed-in GitHub OAuth token to git transport. git authenticates
+// HTTPS remotes through the OS credential helper, independent of the app's
+// sign-in, so a private repo otherwise fails with "Repository not found" even
+// though our token has access. For github.com HTTPS remotes we hand git the
+// active account's token as an `x-access-token` basic credential. Resolved per
+// call so sign-in/out is picked up live, and so the token is never cached
+// anywhere git could persist it. Call once after the app is ready.
+export function registerGitCredentials(): void {
+	setGitCredentialProvider((remoteUrl: string): GitCredentials | null => {
+		let host: string;
+		try {
+			host = new URL(remoteUrl).hostname.toLowerCase();
+		} catch {
+			return null;
+		}
+		if (host !== 'github.com') return null;
+		const account = getActiveGithubAccount();
+		if (!account?.token) return null;
+		return { username: 'x-access-token', password: account.token };
+	});
 }
 
 // The author/committer identity for commits made under a given account. Uses

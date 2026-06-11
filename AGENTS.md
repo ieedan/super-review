@@ -10,7 +10,7 @@ Run (use the same `--key` for the whole conversation so re-runs update the same
 session instead of creating duplicates):
 
 ```bash
-super-review session save --key "<your conversation/run id>" --tour '<tour json>'
+pnpx super-review session save --key "<your conversation/run id>" --tour '<tour json>'
 ```
 
 For the tour JSON shape, callouts, and all flags, see

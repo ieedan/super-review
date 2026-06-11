@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fixPath from 'fix-path';
 import { registerIpc } from './ipc.js';
+import { registerGitCredentials } from './github-service.js';
 import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
 import { getPrefs } from './store.js';
@@ -155,6 +156,7 @@ void app.whenReady().then(() => {
 		if (!img.isEmpty()) app.dock?.setIcon(img);
 	}
 	setupPermissions();
+	registerGitCredentials();
 	registerIpc();
 	setupAppMenu();
 	createWindow();

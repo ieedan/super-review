@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { FolderOpen, FolderSearch, X } from 'lucide-svelte';
+	import { FolderOpen, FolderSearch, TriangleAlert, Copy, Check, X } from 'lucide-svelte';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { Badge } from '$lib/components/ui/badge';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import FileList from '$lib/components/FileList.svelte';
@@ -65,6 +66,26 @@
 	// Imperative handle on the sidebar pane, used by Cmd+B and the
 	// SidebarTrigger button to collapse/expand without dragging.
 	let sidebarPane = $state<PaneAPI | undefined>();
+
+	// Error toast state. `errorDetailsOpen` toggles the raw-message <pre>;
+	// `errorCopied` flips the copy button to a checkmark for a beat. Both reset
+	// whenever the error changes so a new toast always opens collapsed.
+	let errorDetailsOpen = $state(false);
+	let errorCopied = $state(false);
+	let copyResetId: number | undefined;
+	$effect(() => {
+		// Re-runs on every new (or cleared) error message.
+		void app.error;
+		errorDetailsOpen = false;
+		errorCopied = false;
+	});
+	function copyError(): void {
+		if (!app.error) return;
+		void navigator.clipboard.writeText(app.error);
+		errorCopied = true;
+		clearTimeout(copyResetId);
+		copyResetId = window.setTimeout(() => (errorCopied = false), 1500);
+	}
 
 	// Restore the persisted collapsed state once the pane mounts. The pane layout
 	// is the source of truth (assigning app.sidebarCollapsed alone won't move it),
@@ -391,17 +412,60 @@
 
 	{#if app.error}
 		<div
-			role="status"
-			class="fixed right-4 bottom-4 z-50 flex max-w-sm items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive shadow-lg backdrop-blur"
+			role="alert"
+			class="fixed right-4 bottom-4 z-50 flex w-full max-w-sm flex-col gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive shadow-lg backdrop-blur"
 		>
-			<span class="flex-1">{app.error}</span>
-			<button
-				class="rounded p-0.5 hover:bg-destructive/20"
-				onclick={() => setError(null)}
-				aria-label="Dismiss"
-			>
-				<X class="size-3.5" />
-			</button>
+			<div class="flex items-start gap-2">
+				<TriangleAlert class="size-5 shrink-0" />
+				<span class="flex-1 pt-0.5 font-medium">An error occurred</span>
+				<button
+					class="rounded p-0.5 hover:bg-destructive/20"
+					onclick={() => setError(null)}
+					aria-label="Dismiss"
+				>
+					<X class="size-3.5" />
+				</button>
+			</div>
+			<div class="flex items-center gap-1.5 pl-7">
+				<button
+					class="rounded border border-destructive/50 px-2 py-1 text-xs hover:bg-destructive/20"
+					onclick={() => (errorDetailsOpen = !errorDetailsOpen)}
+					aria-expanded={errorDetailsOpen}
+				>
+					{errorDetailsOpen ? 'Hide Details' : 'Show Details'}
+				</button>
+				<Tooltip.Provider delayDuration={150}>
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									class="rounded border border-destructive/50 p-1 hover:bg-destructive/20"
+									onclick={copyError}
+									aria-label="Copy error"
+								>
+									{#if errorCopied}
+										<Check class="size-3.5" />
+									{:else}
+										<Copy class="size-3.5" />
+									{/if}
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Content
+							side="top"
+							class="border border-border bg-popover text-popover-foreground shadow-md"
+							arrowClasses="bg-popover fill-popover"
+						>
+							{errorCopied ? 'Copied' : 'Copy error'}
+						</Tooltip.Content>
+					</Tooltip.Root>
+				</Tooltip.Provider>
+			</div>
+			{#if errorDetailsOpen}
+				<pre
+					class="ml-7 max-h-48 overflow-auto rounded-md border border-destructive/30 bg-destructive/5 p-2 font-mono text-xs whitespace-pre-wrap">{app.error}</pre>
+			{/if}
 		</div>
 	{/if}
 </Sidebar.Provider>

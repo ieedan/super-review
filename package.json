@@ -1,5 +1,5 @@
 {
-	"name": "super-review",
+	"name": "@super-review/monorepo",
 	"version": "0.0.1",
 	"description": "A faster, saner desktop UI for reviewing agent-written code",
 	"type": "module",
