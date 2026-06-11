@@ -38,6 +38,7 @@
 		actions,
 		app,
 		canViewBranchTab,
+		isPRCommentContext,
 		isReadOnlyView,
 		type ContextTab
 	} from '$lib/store.svelte';
@@ -1064,7 +1065,12 @@
 						{@const isActive = app.selectedFile === node.file.path}
 						{@const isSelected = app.selectedFiles.has(node.file.path)}
 						{@const isFocused = focusedPath === node.file.path}
-						{@const threads = (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo)}
+						<!-- PR review-comment thread count, only in a PR context. `prComments`
+                 can linger from the branch's PR while on the Unstaged/working-tree
+                 tab, where those comments don't apply — so don't surface them there. -->
+						{@const threads = isPRCommentContext()
+							? (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo)
+							: []}
 						{@const threadCount = threads.length}
 						<!-- Every thread on the file resolved → swap the icon for a checked
                    variant so the sidebar reads "comments handled" at a glance. -->

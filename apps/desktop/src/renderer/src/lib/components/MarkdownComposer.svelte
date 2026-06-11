@@ -24,12 +24,24 @@
 		autofocus = false,
 		onkeydown
 	}: Props = $props();
+
+	// Carta's `autoFocus` only fires on initial page load, so it misses an editor
+	// that's mounted dynamically (e.g. expanding a reply prompt). Focus the
+	// internal <textarea> imperatively once it exists — on the next frame, since
+	// Carta renders the textarea during its own mount.
+	let wrapper = $state<HTMLDivElement | null>(null);
+	$effect(() => {
+		if (!autofocus || !wrapper) return;
+		const el = wrapper;
+		const id = requestAnimationFrame(() => el.querySelector('textarea')?.focus());
+		return () => cancelAnimationFrame(id);
+	});
 </script>
 
 <!-- Keydown bubbles from Carta's internal <textarea>; the slash/emoji popups
      stop propagation when they handle a key, so shortcuts here don't fire while
      a menu is open. -->
-<div class="markdown-composer" {onkeydown} role="presentation">
+<div class="markdown-composer" bind:this={wrapper} {onkeydown} role="presentation">
 	<MarkdownEditor
 		{carta}
 		bind:value

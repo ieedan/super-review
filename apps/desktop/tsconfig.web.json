@@ -14,10 +14,9 @@
 		"noEmit": true,
 		"allowSyntheticDefaultImports": true,
 		"forceConsistentCasingInFileNames": true,
-		"baseUrl": ".",
 		"paths": {
-			"$lib/*": ["src/renderer/src/lib/*"],
-			"@shared/*": ["src/shared/*"]
+			"$lib/*": ["./src/renderer/src/lib/*"],
+			"@shared/*": ["./src/shared/*"]
 		}
 	},
 	"include": ["src/renderer/**/*.ts", "src/renderer/**/*.svelte", "src/shared/**/*.ts"]

@@ -40,7 +40,9 @@
 		"prepublishOnly": "pnpm build"
 	},
 	"dependencies": {
+		"@libsql/client": "^0.17.3",
 		"commander": "^13.1.0",
+		"drizzle-orm": "^0.45.2",
 		"simple-git": "^3.27.0"
 	},
 	"devDependencies": {

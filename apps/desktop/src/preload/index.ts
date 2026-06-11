@@ -23,7 +23,10 @@ import type {
 	GithubAccount,
 	GithubOrg,
 	LastCommit,
+	LocalComment,
+	LocalCommentAuthor,
 	LocalOnlyBranch,
+	NewLocalCommentInput,
 	ManagedStash,
 	NewReviewCommentInput,
 	PRChecksSummary,
@@ -285,6 +288,25 @@ const api: PreloadAPI = {
 		watch: (repoId) => ipcRenderer.invoke('sessions:watch', repoId) as Promise<void>,
 		unwatch: () => ipcRenderer.invoke('sessions:unwatch') as Promise<void>
 	},
+	comments: {
+		list: (repoId, contextKey) =>
+			ipcRenderer.invoke('comments:list', repoId, contextKey) as Promise<LocalComment[]>,
+		add: (repoId, input: NewLocalCommentInput) =>
+			ipcRenderer.invoke('comments:add', repoId, input) as Promise<LocalComment>,
+		resolve: (repoId, id, resolver: LocalCommentAuthor, sessionId) =>
+			ipcRenderer.invoke(
+				'comments:resolve',
+				repoId,
+				id,
+				resolver,
+				sessionId
+			) as Promise<LocalComment | null>,
+		unresolve: (repoId, id) =>
+			ipcRenderer.invoke('comments:unresolve', repoId, id) as Promise<LocalComment | null>,
+		remove: (repoId, id) => ipcRenderer.invoke('comments:remove', repoId, id) as Promise<void>,
+		watch: (repoId) => ipcRenderer.invoke('comments:watch', repoId) as Promise<void>,
+		unwatch: () => ipcRenderer.invoke('comments:unwatch') as Promise<void>
+	},
 	skill: {
 		isInstalled: (repoId) => ipcRenderer.invoke('skill:isInstalled', repoId) as Promise<boolean>,
 		install: (repoId) => ipcRenderer.invoke('skill:install', repoId) as Promise<void>
@@ -359,6 +381,11 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
 			ipcRenderer.on('sessions:changed', listener);
 			return () => ipcRenderer.off('sessions:changed', listener);
+		},
+		onCommentsChanged(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
+			ipcRenderer.on('comments:changed', listener);
+			return () => ipcRenderer.off('comments:changed', listener);
 		}
 	}
 };

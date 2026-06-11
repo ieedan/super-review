@@ -13,6 +13,7 @@ export * from './git-service.js';
 export * from './repo-templates.js';
 export * from './session-capture.js';
 export * from './session-store.js';
+export * from './comment-store.js';
 
 // These result types are declared (identically) in both `types.js` — the shared
 // IPC/renderer contract — and `git-service.js`, the node implementation that

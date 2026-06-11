@@ -27,6 +27,8 @@
 		FileDiff as FileDiffClass,
 		parseDiffFromFile,
 		type DiffLineAnnotation,
+		type FileDiffMetadata,
+		type HunkExpansionRegion,
 		type OnDiffLineClickProps,
 		type SelectedLineRange
 	} from '@pierre/diffs';
@@ -54,6 +56,7 @@
 	} from '@shared/diff-staging';
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
+	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
 	import { calloutsForFile } from '$lib/session-tour';
 	import type {
@@ -61,15 +64,17 @@
 		DiffContext,
 		DiffData,
 		EditorKind,
+		LocalComment,
 		PRReviewComment,
 		SessionCallout
 	} from '@shared/types';
 
-	// Metadata Pierre carries on each line annotation. Review comments/composers
-	// use CommentMeta; agent tour callouts add a third variant. renderAnnotation
-	// branches on `kind` to mount the right component.
+	// Metadata Pierre carries on each line annotation. PR review comments/composers
+	// use CommentMeta; local review comments/composers use LocalCommentMeta; agent
+	// tour callouts add another variant. renderAnnotation branches on `kind` to
+	// mount the right component.
 	type CalloutMeta = { kind: 'callout'; callout: SessionCallout };
-	type AnnotationMeta = CommentMeta | CalloutMeta;
+	type AnnotationMeta = CommentMeta | LocalCommentMeta | CalloutMeta;
 
 	interface Props {
 		file: ChangedFile;
@@ -110,6 +115,10 @@
 	// imperative cache — intentionally a plain Map, not reactive state.
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const calloutContainers = new Map<string, HTMLElement>();
+	// Same, for local-comment annotations, so the right sidebar's "scroll to
+	// comment" can align a comment into view.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const commentContainers = new Map<string, HTMLElement>();
 	let cancelCalloutScroll: (() => void) | null = null;
 	let diffData = $state<DiffData | null>(null);
 	// Context key the current `diffData` was loaded for. When the user switches
@@ -212,6 +221,133 @@
 			(app.contextTab === 'branch' && app.branchPR != null && !isReadOnlyView())
 	);
 
+	// Local review comments apply in every context that isn't surfacing PR
+	// comments — the working tree, a branch diff with no PR, a session's changes,
+	// a stash. Their line numbers are anchored to whatever diff is on screen and
+	// stored under that context's key, so they never collide with PR comments.
+	const isLocalCommentContext = $derived(!isPRContext);
+
+	// Whether Pierre's gutter `+` affordance should be live: any context where a
+	// click produces a comment (PR or local).
+	const canComment = $derived(isPRContext || isLocalCommentContext);
+
+	// Pierre's parsed diff metadata for the rendered file (set in renderDiff). Its
+	// `hunks` drive the targeted expansion of collapsed regions around comments.
+	let fileDiffMeta = $state<FileDiffMetadata | null>(null);
+
+	// Comment anchors (file-relative line + side) for this file in the current
+	// context. PR comments and local comments are mutually exclusive per context.
+	const commentAnchors = $derived.by<Array<{ side: 'LEFT' | 'RIGHT'; line: number }>>(() => {
+		const out: Array<{ side: 'LEFT' | 'RIGHT'; line: number }> = [];
+		if (isPRContext) {
+			for (const c of app.prComments[file.path] ?? []) {
+				if (c.line != null) out.push({ side: c.side, line: c.line });
+			}
+		} else if (isLocalCommentContext) {
+			for (const c of app.localComments) {
+				if (c.path === file.path) out.push({ side: c.side, line: c.startLine });
+			}
+		}
+		return out;
+	});
+
+	// Build the `expandedHunks` map that reveals JUST enough of each collapsed gap
+	// to show any comment anchored inside it — not the whole file. A comment on a
+	// line already inside a rendered hunk needs nothing. Otherwise we find the gap
+	// that contains the line (the collapsed region before some hunk, or the trailing
+	// region after the last hunk) and expand from the nearer edge up to that line.
+	// See @pierre/diffs `getExpandedRegion`: key `i` is the gap before hunk `i`
+	// (`hunks.length` = trailing gap); `fromStart` reveals the top, `fromEnd` the
+	// bottom (adjacent to the hunk).
+	function computeExpandedHunks(
+		meta: FileDiffMetadata | null,
+		anchors: Array<{ side: 'LEFT' | 'RIGHT'; line: number }>
+	): Map<number, HunkExpansionRegion> {
+		// Plain Map handed to Pierre as a render option — not reactive state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const map = new Map<number, HunkExpansionRegion>();
+		if (!meta || meta.hunks.length === 0 || anchors.length === 0) return map;
+		const hunks = meta.hunks;
+		const startOf = (h: (typeof hunks)[number], isNew: boolean): number =>
+			isNew ? h.additionStart : h.deletionStart;
+		const countOf = (h: (typeof hunks)[number], isNew: boolean): number =>
+			isNew ? h.additionCount : h.deletionCount;
+
+		for (const { side, line } of anchors) {
+			const isNew = side === 'RIGHT';
+			// Already inside a rendered hunk (incl. its shown context)? Nothing to do.
+			let inside = false;
+			for (const h of hunks) {
+				const s = startOf(h, isNew);
+				if (line >= s && line <= s + countOf(h, isNew) - 1) {
+					inside = true;
+					break;
+				}
+			}
+			if (inside) continue;
+
+			const i = hunks.findIndex((h) => startOf(h, isNew) > line);
+			if (i >= 0) {
+				const h = hunks[i];
+				const gapTop = startOf(h, isNew) - h.collapsedBefore;
+				if (line < gapTop) continue; // belongs to an earlier hunk's range
+				const fromEndNeeded = startOf(h, isNew) - line; // reveal up from the hunk
+				const fromStartNeeded = line - gapTop + 1; // reveal down from the top
+				const prev = map.get(i) ?? { fromStart: 0, fromEnd: 0 };
+				if (fromEndNeeded <= fromStartNeeded) {
+					map.set(i, { fromStart: prev.fromStart, fromEnd: Math.max(prev.fromEnd, fromEndNeeded) });
+				} else {
+					map.set(i, {
+						fromStart: Math.max(prev.fromStart, fromStartNeeded),
+						fromEnd: prev.fromEnd
+					});
+				}
+			} else {
+				// Past the last hunk → the trailing gap, keyed by `hunks.length`
+				// (`fromEnd` is ignored there, so reveal from the top).
+				const last = hunks[hunks.length - 1];
+				const trailingStart = startOf(last, isNew) + countOf(last, isNew);
+				const fromStartNeeded = line - trailingStart + 1;
+				if (fromStartNeeded <= 0) continue;
+				const key = hunks.length;
+				const prev = map.get(key) ?? { fromStart: 0, fromEnd: 0 };
+				map.set(key, { fromStart: Math.max(prev.fromStart, fromStartNeeded), fromEnd: 0 });
+			}
+		}
+		return map;
+	}
+
+	const expandedHunksForComments = $derived(computeExpandedHunks(fileDiffMeta, commentAnchors));
+
+	// Pierre has no `expandedHunks` option — expansion is imperative and
+	// accumulative via `expandHunk(index, direction, count)`: 'up' adds to
+	// `fromStart` (reveals the gap top), 'down' adds to `fromEnd` (reveals the
+	// bottom, next to the hunk). We track the last-applied absolute regions and
+	// push only the delta (which may be negative to shrink when a comment is
+	// removed; Pierre clamps it).
+	let appliedExpanded = new Map<number, HunkExpansionRegion>();
+	function applyExpandedHunks(desired: Map<number, HunkExpansionRegion>, rerender: boolean): void {
+		if (!instance) return;
+		const indices = new Set<number>([...desired.keys(), ...appliedExpanded.keys()]);
+		let changed = false;
+		for (const i of indices) {
+			const d = desired.get(i) ?? { fromStart: 0, fromEnd: 0 };
+			const a = appliedExpanded.get(i) ?? { fromStart: 0, fromEnd: 0 };
+			const dStart = d.fromStart - a.fromStart;
+			const dEnd = d.fromEnd - a.fromEnd;
+			if (dStart !== 0) {
+				instance.expandHunk(i, 'up', dStart);
+				changed = true;
+			}
+			if (dEnd !== 0) {
+				instance.expandHunk(i, 'down', dEnd);
+				changed = true;
+			}
+		}
+		appliedExpanded = desired;
+		if (changed && rerender) instance.rerender();
+	}
+
 	// Memoize the `metadata` objects we hand Pierre — its annotation cache uses
 	// a reference check (`metadata === metadata`) to decide whether to re-render
 	// an annotation. If we hand it a fresh `{ kind: 'composer', … }` literal each
@@ -222,6 +358,8 @@
 	// confuse Pierre's `DiffLineAnnotation<T>` generic when we push.
 	type CommentMetaComment = Extract<CommentMeta, { kind: 'comment' }>;
 	type CommentMetaComposer = Extract<CommentMeta, { kind: 'composer' }>;
+	type LocalMetaComment = Extract<LocalCommentMeta, { kind: 'local-comment' }>;
+	type LocalMetaComposer = Extract<LocalCommentMeta, { kind: 'local-composer' }>;
 	// Instance-scoped memo caches keyed by stable identifiers — intentionally
 	// plain Maps: Pierre relies on reference-equality of these metadata objects
 	// (see above), and they aren't reactive state.
@@ -229,6 +367,11 @@
 	const commentMetaCache = new Map<number, CommentMetaComment>();
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const composerMetaCache = new Map<string, CommentMetaComposer>();
+	// Local-comment counterparts, keyed by comment id / composer key.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const localCommentMetaCache = new Map<string, LocalMetaComment>();
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const localComposerMetaCache = new Map<string, LocalMetaComposer>();
 	// Same reference-stability trick for tour callouts, keyed by callout id.
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const calloutMetaCache = new Map<string, CalloutMeta>();
@@ -250,11 +393,21 @@
 		const composers = isPRContext
 			? Object.values(app.pendingComposers).filter((composer) => composer.filePath === file.path)
 			: [];
+		const localComments: LocalComment[] = isLocalCommentContext
+			? app.localComments.filter((c) => c.path === file.path)
+			: [];
+		const localComposers = isLocalCommentContext
+			? Object.values(app.localComposers).filter((composer) => composer.filePath === file.path)
+			: [];
 		// Built functionally (no in-place mutation) so they stay ordinary,
 		// non-reactive Sets — scratch for the cache GC below, not reactive state.
 		const liveCommentIds = new Set(comments.filter((c) => c.line != null).map((c) => c.id));
 		const liveComposerKeys = new Set(
 			composers.map((composer) => composerKey(composer.filePath, composer.side, composer.line))
+		);
+		const liveLocalCommentIds = new Set(localComments.map((c) => c.id));
+		const liveLocalComposerKeys = new Set(
+			localComposers.map((composer) => composerKey(composer.filePath, composer.side, composer.line))
 		);
 		const liveCalloutIds = new Set(fileCallouts.map((callout) => callout.id));
 
@@ -294,6 +447,39 @@
 			});
 		}
 
+		for (const c of localComments) {
+			let meta = localCommentMetaCache.get(c.id);
+			// Invalidate when the comment object was replaced (e.g. resolved).
+			if (meta == null || meta.comment !== c) {
+				meta = { kind: 'local-comment', comment: c };
+				localCommentMetaCache.set(c.id, meta);
+			}
+			out.push({
+				side: c.side === 'LEFT' ? 'deletions' : 'additions',
+				lineNumber: c.startLine,
+				metadata: meta
+			});
+		}
+
+		for (const composer of localComposers) {
+			const key = composerKey(composer.filePath, composer.side, composer.line);
+			let meta = localComposerMetaCache.get(key);
+			if (meta == null) {
+				meta = {
+					kind: 'local-composer',
+					filePath: composer.filePath,
+					line: composer.line,
+					side: composer.side
+				};
+				localComposerMetaCache.set(key, meta);
+			}
+			out.push({
+				side: composer.side === 'LEFT' ? 'deletions' : 'additions',
+				lineNumber: composer.line,
+				metadata: meta
+			});
+		}
+
 		for (const callout of fileCallouts) {
 			let meta = calloutMetaCache.get(callout.id);
 			if (meta == null || meta.callout !== callout) {
@@ -314,6 +500,12 @@
 		}
 		for (const k of [...composerMetaCache.keys()]) {
 			if (!liveComposerKeys.has(k)) composerMetaCache.delete(k);
+		}
+		for (const id of [...localCommentMetaCache.keys()]) {
+			if (!liveLocalCommentIds.has(id)) localCommentMetaCache.delete(id);
+		}
+		for (const k of [...localComposerMetaCache.keys()]) {
+			if (!liveLocalComposerKeys.has(k)) localComposerMetaCache.delete(k);
 		}
 		for (const id of [...calloutMetaCache.keys()]) {
 			if (!liveCalloutIds.has(id)) calloutMetaCache.delete(id);
@@ -377,7 +569,11 @@
 	// triggers the lazy diff fetch/render), then center the note once it exists,
 	// re-aligning while the diff settles. Bounded; cancels if the user scrolls.
 	let lastCalloutScrollNonce = 0;
-	function scrollToCallout(id: string): void {
+	// Bring an annotation's DOM container (a callout note or a comment) into view,
+	// rendering the file first and re-centering while the diff settles. Bounded;
+	// cancels the moment the user scrolls. `getEl` is re-read each frame because the
+	// container is rebuilt on every Pierre render.
+	function scrollToAnnotation(getEl: () => HTMLElement | undefined): void {
 		cancelCalloutScroll?.();
 		section?.scrollIntoView({ behavior: 'auto', block: 'start' });
 		// Render synchronously from cache if possible; otherwise the in-view fetch
@@ -396,7 +592,7 @@
 			cancelCalloutScroll = null;
 		};
 		const tick = (): void => {
-			const el = calloutContainers.get(id);
+			const el = getEl();
 			if (el?.isConnected) {
 				el.scrollIntoView({ behavior: 'auto', block: 'center' });
 				// Stop once the note has held still for a few frames (diff settled).
@@ -426,7 +622,19 @@
 		// Only the section that owns this callout responds.
 		if (!fileCallouts.some((c) => c.id === req.calloutId)) return;
 		lastCalloutScrollNonce = req.nonce;
-		scrollToCallout(req.calloutId);
+		scrollToAnnotation(() => calloutContainers.get(req.calloutId!));
+	});
+
+	// Scroll to a comment (local or PR) when the right sidebar asks. Only the
+	// section that owns the file responds; the annotation's container is keyed by
+	// `req.key` (a local comment id, or `pr-<id>`).
+	let lastCommentScrollNonce = 0;
+	$effect(() => {
+		const req = app.commentScrollTarget;
+		if (!req || req.nonce === lastCommentScrollNonce) return;
+		if (req.path !== file.path) return;
+		lastCommentScrollNonce = req.nonce;
+		scrollToAnnotation(() => commentContainers.get(req.key));
 	});
 
 	function unmountAll(): void {
@@ -445,9 +653,15 @@
 		// The callout nodes die with the instance; clear the map so the scroll
 		// handler waits for the fresh ones rather than a detached node.
 		calloutContainers.clear();
+		commentContainers.clear();
 		// The painted annotations die with the instance; clear the baseline so a
 		// fresh mount re-applies from scratch rather than comparing against stale.
 		appliedAnnotations = [];
+		// Drop the parsed metadata + expansion baseline so the next render recomputes
+		// from scratch rather than against a previous file's hunks. The new instance
+		// starts with no expansion applied.
+		fileDiffMeta = null;
+		appliedExpanded = new Map();
 		if (instance) {
 			try {
 				instance.cleanUp();
@@ -527,7 +741,24 @@
 					props: { callout: meta.callout }
 				});
 				mountedComponents.set(key, cmp);
+			} else if (meta.kind === 'local-comment' || meta.kind === 'local-composer') {
+				// Stash the comment's container so the sidebar's "scroll to comment"
+				// can align it into view, mirroring callouts.
+				if (meta.kind === 'local-comment') {
+					container.dataset.commentId = meta.comment.id;
+					commentContainers.set(meta.comment.id, container);
+				}
+				const cmp = mount(LocalCommentAnnotation, {
+					target: container,
+					props: { meta }
+				});
+				mountedComponents.set(key, cmp);
 			} else {
+				// PR review comment / composer. Track the comment's container under a
+				// `pr-<id>` key so the sidebar's "scroll to comment" can reach it too.
+				if (meta.kind === 'comment') {
+					commentContainers.set(`pr-${meta.comment.id}`, container);
+				}
 				const cmp = mount(CommentAnnotation, {
 					target: container,
 					props: { meta }
@@ -539,9 +770,12 @@
 	}
 
 	function onDiffLineNumberClick(props: OnDiffLineClickProps): void {
-		if (!isPRContext) return;
 		const side = props.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT';
-		actions.openComposer(file.path, side, props.lineNumber);
+		if (isPRContext) {
+			actions.openComposer(file.path, side, props.lineNumber);
+		} else if (isLocalCommentContext) {
+			actions.openLocalComposer(file.path, side, props.lineNumber);
+		}
 	}
 
 	// Pierre's idiomatic gutter affordance: `enableGutterUtility: true` paints
@@ -549,12 +783,15 @@
 	// the selected line range when it's clicked. No custom DOM, no event
 	// wrestling — Pierre owns the whole interaction.
 	function onGutterClick(range: SelectedLineRange): void {
-		if (!isPRContext) return;
 		const sel = range.side ?? 'additions';
 		const side = sel === 'deletions' ? 'LEFT' : 'RIGHT';
 		// For a plain click `start === end`. Drag-select reports both ends; we
 		// attach the comment to the first (top) line for now.
-		actions.openComposer(file.path, side, range.start);
+		if (isPRContext) {
+			actions.openComposer(file.path, side, range.start);
+		} else if (isLocalCommentContext) {
+			actions.openLocalComposer(file.path, side, range.start);
+		}
 	}
 
 	// ----------------------------------------------------------------------
@@ -886,6 +1123,27 @@
 		// into this element, so the manual append is intentional.
 		// eslint-disable-next-line svelte/no-dom-manipulating
 		host.appendChild(diffContainer);
+
+		const namePair = {
+			old: diff.file.oldPath ?? diff.file.path,
+			new: diff.file.path
+		};
+		const oldFile = { name: namePair.old, contents: diff.oldContents };
+		const newFile = { name: namePair.new, contents: diff.newContents };
+
+		// Parse Pierre's own diff metadata up front: its hunks (not the git patch)
+		// are what the expansion targets, and we need them before the first render so
+		// collapsed regions around comments expand on the first paint (no flash).
+		let metadata: FileDiffMetadata | undefined | null;
+		try {
+			metadata = parseDiffFromFile(oldFile, newFile);
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : String(err);
+			return;
+		}
+		if (!metadata) return;
+		fileDiffMeta = metadata;
+
 		instance = new FileDiffClass<AnnotationMeta>(
 			{
 				diffStyle: app.viewMode,
@@ -895,8 +1153,8 @@
 				onLineNumberClick: onDiffLineNumberClick,
 				// Built-in gutter `+` button (the one with `data-utility-button`).
 				// Only enable it where commenting is meaningful — toggled live below
-				// via setOptions + flushManagers when `isPRContext` changes.
-				enableGutterUtility: isPRContext,
+				// via setOptions + flushManagers when `canComment` changes.
+				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
@@ -910,21 +1168,10 @@
 			getDiffWorkerPool()
 		);
 
-		const namePair = {
-			old: diff.file.oldPath ?? diff.file.path,
-			new: diff.file.path
-		};
-		const oldFile = { name: namePair.old, contents: diff.oldContents };
-		const newFile = { name: namePair.new, contents: diff.newContents };
-
-		let metadata;
-		try {
-			metadata = parseDiffFromFile(oldFile, newFile);
-		} catch (err) {
-			loadError = err instanceof Error ? err.message : String(err);
-			return;
-		}
-		if (!metadata) return;
+		// Reveal just enough of any collapsed region to show a comment anchored
+		// outside the shown hunks, before the first paint (no rerender needed —
+		// render() below picks up the expanded state).
+		applyExpandedHunks(computeExpandedHunks(metadata, commentAnchors), false);
 
 		try {
 			instance.render({
@@ -1194,7 +1441,7 @@
 	// Same caveat as the annotations effect: read `isPRContext` first so the
 	// dependency is registered even when `instance` is null on first run.
 	$effect(() => {
-		const enabled = isPRContext;
+		const enabled = canComment;
 		if (!instance) return;
 		type WithOptions = { options: Record<string, unknown> };
 		const current = (instance as unknown as WithOptions).options;
@@ -1203,6 +1450,17 @@
 			typeof instance.setOptions
 		>[0]);
 		instance.flushManagers();
+	});
+
+	// Reveal/hide the collapsed regions around comments live as comments come and
+	// go, so a comment landing outside the changed hunks becomes visible without a
+	// manual expand. Changing `expandedHunks` re-lays-out the diff, so `rerender`
+	// (not just `flushManagers`). Read the derived first so the dependency is
+	// registered even while `instance` is null on the first run.
+	$effect(() => {
+		const map = expandedHunksForComments;
+		if (!instance) return;
+		applyExpandedHunks(map, true);
 	});
 
 	// Live-swap the diff theme when the app theme changes. `setThemeType` alone
@@ -1396,9 +1654,12 @@
 			'sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
 		]}
 	>
+		<!-- The visible chevron stays size-5, but a transparent ::before stretches the
+		     click target to the header's top/bottom edges, out to the left edge
+		     (through px-3) and into the gap toward the icon — easier to hit. -->
 		<button
 			type="button"
-			class="grid size-5 shrink-0 place-items-center rounded hover:bg-accent"
+			class="relative grid size-5 shrink-0 place-items-center rounded hover:bg-accent before:absolute before:-inset-y-3 before:-left-3 before:-right-2 before:content-['']"
 			onclick={() => actions.toggleFileCollapsed(file.path)}
 			aria-label={expanded ? 'Collapse' : 'Expand'}
 		>
