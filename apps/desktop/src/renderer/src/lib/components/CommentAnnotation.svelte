@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, MessageSquare, MoreHorizontal, Trash2 } from 'lucide-svelte';
+	import { Check, Copy, Github, MessageSquare, MoreHorizontal, Trash2 } from 'lucide-svelte';
 	import { Button } from './ui/button';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import MarkdownComposer from './MarkdownComposer.svelte';
@@ -83,10 +83,32 @@
 	// The viewer's avatar for the GitHub-style reply prompt.
 	const viewerAvatar = $derived(effectiveGithubAccount()?.avatarUrl ?? '');
 
-	// Inline reply state. Kept local (not in pendingComposers) so the box stays
-	// an input in place — no swap to a separate composer row, no layout shift.
+	// Inline reply state. Kept local (not in pendingComposers). The prompt starts
+	// as a slim one-line input; clicking it expands into the full MarkdownComposer
+	// (Write/Preview + toolbar), GitHub-style, with Cancel/Reply actions.
 	let replyDraft = $state('');
 	let replySubmitting = $state(false);
+	let replyExpanded = $state(false);
+
+	function expandReply(): void {
+		replyExpanded = true;
+	}
+
+	// Collapse back to the slim prompt and drop the draft. Used by Cancel and Esc.
+	function collapseReply(): void {
+		replyExpanded = false;
+		replyDraft = '';
+	}
+
+	function onReplyKeydown(e: KeyboardEvent): void {
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			e.preventDefault();
+			void submitReply();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			collapseReply();
+		}
+	}
 
 	function submit(): void {
 		if (composerState) void actions.submitComposer(composerState.key);
@@ -107,11 +129,31 @@
 		replySubmitting = true;
 		const ok = await actions.submitReply(c.path, root.id, body);
 		replySubmitting = false;
-		if (ok) replyDraft = '';
+		if (ok) {
+			replyDraft = '';
+			replyExpanded = false;
+		}
 	}
 
 	function remove(comment: PRReviewComment): void {
 		void actions.deleteComment(comment.id, comment.path);
+	}
+
+	// Open this comment on GitHub in the user's browser. `url` is the API-provided
+	// permalink to the review comment.
+	function viewOnGithub(comment: PRReviewComment): void {
+		if (!comment.url) return;
+		void window.api.shell.openExternal(comment.url);
+	}
+
+	// Copy this comment as an agent-ready prompt, with a brief checkmark confirm.
+	let copied = $state(false);
+	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+	function copy(comment: PRReviewComment): void {
+		void actions.copyPRCommentPrompt(comment.path, comment.id);
+		copied = true;
+		if (copiedTimer) clearTimeout(copiedTimer);
+		copiedTimer = setTimeout(() => (copied = false), 1500);
 	}
 
 	function toggleResolved(comment: PRReviewComment): void {
@@ -148,24 +190,49 @@
 					{#if c.isResolved && isRoot}
 						<span class="resolved-tag"><Check class="size-3" /> Resolved</span>
 					{/if}
-					{#if c.canDelete}
-						<!-- Overflow menu, top-right. Keeps the destructive Delete action
-                 tucked away rather than sitting prominently in the footer. -->
-						<DropdownMenu.Root>
-							<DropdownMenu.Trigger
-								class="more-trigger ml-auto grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-								aria-label="Comment actions"
-							>
-								<MoreHorizontal class="size-4" />
-							</DropdownMenu.Trigger>
-							<DropdownMenu.Content align="end">
-								<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
-									<Trash2 class="size-3.5" />
-									Delete
-								</DropdownMenu.Item>
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
-					{/if}
+					<!-- Copy is always available; Delete stays tucked in an overflow menu
+                 (shown only when the viewer can delete the comment). -->
+					<div class="ml-auto flex shrink-0 items-center gap-0.5">
+						<button
+							type="button"
+							class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+							title="Copy as prompt"
+							onclick={() => copy(c)}
+						>
+							{#if copied}
+								<Check class="size-3.5" style="color: var(--color-success);" />
+							{:else}
+								<Copy class="size-3.5" />
+							{/if}
+						</button>
+						{#if c.url || c.canDelete}
+							<DropdownMenu.Root>
+								<DropdownMenu.Trigger
+									class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+									aria-label="Comment actions"
+								>
+									<MoreHorizontal class="size-4" />
+								</DropdownMenu.Trigger>
+								<DropdownMenu.Content align="end" class="w-auto!">
+									{#if c.url}
+										<DropdownMenu.Item onSelect={() => viewOnGithub(c)}>
+											<Github class="size-3.5" />
+											View on GitHub
+										</DropdownMenu.Item>
+									{/if}
+									{#if c.canDelete}
+										{#if c.url}
+											<DropdownMenu.Separator />
+										{/if}
+										<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
+											<Trash2 class="size-3.5" />
+											Delete
+										</DropdownMenu.Item>
+									{/if}
+								</DropdownMenu.Content>
+							</DropdownMenu.Root>
+						{/if}
+					</div>
 				</header>
 				{#if bodyHtml}
 					<!-- bodyHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
@@ -177,27 +244,57 @@
 			</div>
 		</article>
 		{#if isThreadTail}
-			<!-- GitHub-style reply affordance: the viewer's avatar next to an inline
-           input. Stays an input in place (no swap to a textarea) — submit on
-           Enter. -->
-			<form
-				class="reply-prompt"
-				onsubmit={(e) => {
-					e.preventDefault();
-					void submitReply();
-				}}
-			>
-				{#if viewerAvatar}
-					<img class="reply-avatar" src={viewerAvatar} alt="" width="20" height="20" />
-				{/if}
-				<input
-					class="reply-box"
-					type="text"
-					placeholder="Reply…"
-					bind:value={replyDraft}
-					disabled={replySubmitting}
-				/>
-			</form>
+			{#if replyExpanded}
+				<!-- Expanded reply: the same MarkdownComposer the new-comment composer
+             uses, so a reply gets the full Write/Preview editor and toolbar. -->
+				<form
+					class="composer reply-composer"
+					onsubmit={(e) => {
+						e.preventDefault();
+						void submitReply();
+					}}
+				>
+					<MarkdownComposer
+						bind:value={replyDraft}
+						placeholder="Write a reply…"
+						disabled={replySubmitting}
+						autofocus
+						onkeydown={onReplyKeydown}
+					/>
+					<div class="composer-footer">
+						<div class="actions">
+							<Button variant="ghost" size="sm" type="button" onclick={collapseReply}>
+								Cancel <kbd class="kbd">esc</kbd>
+							</Button>
+							<Button
+								variant="default"
+								size="sm"
+								type="submit"
+								disabled={!replyDraft.trim() || replySubmitting}
+							>
+								{replySubmitting ? 'Posting…' : 'Reply'}
+								<kbd class="kbd">⌘⏎</kbd>
+							</Button>
+						</div>
+					</div>
+				</form>
+			{:else}
+				<!-- GitHub-style reply affordance: the viewer's avatar next to a slim
+             one-line prompt. Clicking (or focusing) it expands the full editor. -->
+				<div class="reply-prompt">
+					{#if viewerAvatar}
+						<img class="reply-avatar" src={viewerAvatar} alt="" width="20" height="20" />
+					{/if}
+					<input
+						class="reply-box"
+						type="text"
+						placeholder="Reply…"
+						readonly
+						onfocus={expandReply}
+						onclick={expandReply}
+					/>
+				</div>
+			{/if}
 		{/if}
 		{#if isThreadTail && c.threadId}
 			<!-- Thread-level control: renders below the last comment so it sits
@@ -270,14 +367,19 @@
 		gap: 10px;
 		align-items: start;
 	}
-	/* GitHub-style reply affordance: avatar + an inline input that posts a reply
-     directly (no swap to a separate composer). */
+	/* GitHub-style reply affordance: avatar + a slim one-line prompt that expands
+     into the full MarkdownComposer when clicked. */
 	.reply-prompt {
 		display: flex;
 		align-items: center;
 		gap: 10px;
 		width: 100%;
-		margin-top: 10px;
+		margin-top: 4px;
+	}
+	/* Expanded reply editor — same composer as a new comment, with a little space
+     above to set it off from the comment it replies to. */
+	.reply-composer {
+		margin-top: 8px;
 	}
 	.reply-avatar {
 		border-radius: 999px;
@@ -294,6 +396,7 @@
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		outline: none;
+		cursor: text;
 	}
 	.reply-box::placeholder {
 		color: var(--color-muted-foreground);
@@ -310,8 +413,8 @@
      resolved (and its comments are dimmed). */
 	.thread-actions {
 		display: flex;
-		margin-top: 10px;
-		padding-top: 8px;
+		margin-top: 6px;
+		padding-top: 6px;
 		border-top: 1px solid var(--color-border);
 	}
 	.resolved-tag {

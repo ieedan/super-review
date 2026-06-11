@@ -2,6 +2,10 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+allowBuilds:
+  electron: true
+  esbuild: true
+
 # Shared version for sv-agentation across all apps. To test a local checkout,
 # redirect it with a pnpm.overrides "link:" entry in the root package.json
 # (catalogs don't support the link: protocol yet).

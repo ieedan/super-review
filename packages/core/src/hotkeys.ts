@@ -18,6 +18,7 @@ export const HOTKEY_ACTIONS = [
 	'searchFilesPalette',
 	'searchFilesSidebar',
 	'toggleSidebar',
+	'toggleCommentsSidebar',
 	'openSettings',
 	'markSeenNext'
 ] as const;
@@ -39,6 +40,10 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 		label: 'Toggle sidebar',
 		description: 'Collapse or expand the file-list sidebar.'
 	},
+	toggleCommentsSidebar: {
+		label: 'Toggle comments sidebar',
+		description: 'Open or close the comments sidebar.'
+	},
 	openSettings: {
 		label: 'Open settings',
 		description: 'Open the settings dialog.'
@@ -53,6 +58,7 @@ export const DEFAULT_HOTKEYS: Hotkeys = {
 	searchFilesPalette: { key: 'p', mod: true },
 	searchFilesSidebar: { key: '/' },
 	toggleSidebar: { key: 'b', mod: true },
+	toggleCommentsSidebar: { key: 'l', mod: true },
 	openSettings: { key: ',', mod: true },
 	markSeenNext: { key: 'Enter', mod: true }
 };

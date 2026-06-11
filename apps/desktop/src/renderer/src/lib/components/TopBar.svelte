@@ -7,9 +7,13 @@
 	import EditorButton from './EditorButton.svelte';
 	import TerminalButton from './TerminalButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
-	import * as Sidebar from './ui/sidebar';
-	import { CornerUpLeft } from 'lucide-svelte';
-	import { actions, app, isReadOnlyView } from '$lib/store.svelte';
+	import { useSidebar } from './ui/sidebar';
+	import { CornerUpLeft, FileDiff, MessageSquare } from 'lucide-svelte';
+	import { actions, app, isReadOnlyView, sidebarHasUnresolvedComments } from '$lib/store.svelte';
+
+	// The left (changes / file list) sidebar's open state lives in the shared
+	// Sidebar context provided in App.svelte; the center toggle reads + flips it.
+	const sidebar = useSidebar();
 </script>
 
 <header
@@ -18,9 +22,6 @@
 >
 	<!-- Pad past the macOS traffic-light buttons (titleBarStyle: hiddenInset). -->
 	<div class="flex items-center gap-1 pl-20" style="-webkit-app-region: no-drag">
-		{#if app.activeRepo}
-			<Sidebar.Trigger class="size-6" />
-		{/if}
 		<RepoSwitcher />
 		{#if app.activeRepo}
 			<span class="text-muted-foreground">/</span>
@@ -42,6 +43,47 @@
 		{/if}
 	</div>
 	<div class="flex-1"></div>
+
+	<!-- Sidebar toggles, centered in the header: the changes (file list) sidebar
+	     on the left, the comments sidebar on the right. Each is a toggle that takes
+	     the selected-tab background while its sidebar is open. -->
+	{#if app.activeRepo}
+		<div
+			class="absolute top-0 bottom-0 left-1/2 flex -translate-x-1/2 items-center gap-1"
+			style="-webkit-app-region: no-drag"
+		>
+			<button
+				type="button"
+				onclick={() => sidebar.toggle()}
+				title="Changes"
+				aria-pressed={sidebar.open}
+				class={[
+					'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground',
+					sidebar.open && 'bg-muted text-foreground hover:bg-muted'
+				]}
+			>
+				<FileDiff class="size-4" />
+			</button>
+			<button
+				type="button"
+				onclick={() => actions.toggleCommentsSidebar()}
+				title="Comments"
+				aria-pressed={app.commentsSidebarOpen}
+				class={[
+					'relative grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground',
+					app.commentsSidebarOpen && 'bg-muted text-foreground hover:bg-muted'
+				]}
+			>
+				<MessageSquare class="size-4" />
+				{#if sidebarHasUnresolvedComments()}
+					<span
+						class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full"
+						style="background: var(--color-primary);"
+					></span>
+				{/if}
+			</button>
+		</div>
+	{/if}
 
 	<div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
 		{#if app.activeRepo}

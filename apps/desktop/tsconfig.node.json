@@ -13,9 +13,8 @@
 		"noEmit": true,
 		"allowSyntheticDefaultImports": true,
 		"forceConsistentCasingInFileNames": true,
-		"baseUrl": ".",
 		"paths": {
-			"@shared/*": ["src/shared/*"]
+			"@shared/*": ["./src/shared/*"]
 		}
 	},
 	"include": [

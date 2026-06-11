@@ -104,6 +104,15 @@ import {
 	listSessionsAtRef,
 	watchSessionsDir
 } from '@super-review/core';
+import {
+	addComment,
+	deleteComment as deleteCommentRecord,
+	listCommentsForContext,
+	resolveComment,
+	unresolveComment,
+	watchCommentsDir
+} from '@super-review/core';
+import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from '@super-review/core';
 import { installSkill, isSkillInstalled } from './skill-service.js';
 import { listTemplates } from '@super-review/core';
 import {
@@ -219,6 +228,54 @@ function clearSessionWatch(senderId: number): void {
 	if (prev) releaseSessionWatch(prev);
 	sessionWatchByContents.delete(senderId);
 	sessionWatchHooked.delete(senderId);
+}
+
+// ─── Comments file watcher ──────────────────────────────────────────────────
+// The exact same reference-counted, per-repo fs.watch machinery as the session
+// watcher above, pointed at .super-review/comments and broadcasting
+// `comments:changed`. Kept as a parallel set rather than folded into the session
+// watcher so a window can subscribe to either independently.
+const commentWatchers = new Map<string, { close: () => void; refs: number }>();
+const commentWatchByContents = new Map<number, string>();
+const commentWatchHooked = new Set<number>();
+
+function releaseCommentWatch(repoPath: string): void {
+	const entry = commentWatchers.get(repoPath);
+	if (!entry) return;
+	entry.refs -= 1;
+	if (entry.refs <= 0) {
+		entry.close();
+		commentWatchers.delete(repoPath);
+	}
+}
+
+function setCommentWatch(sender: Electron.WebContents, repoId: string): void {
+	const repo = getRepo(repoId);
+	if (!repo) return;
+	const prev = commentWatchByContents.get(sender.id);
+	if (prev === repo.path) return; // Already watching this repo for this window.
+	if (prev) releaseCommentWatch(prev);
+	commentWatchByContents.set(sender.id, repo.path);
+
+	const entry = commentWatchers.get(repo.path);
+	if (entry) {
+		entry.refs += 1;
+	} else {
+		const close = watchCommentsDir(repo.path, () => broadcast('comments:changed', repoId));
+		commentWatchers.set(repo.path, { close, refs: 1 });
+	}
+
+	if (!commentWatchHooked.has(sender.id)) {
+		commentWatchHooked.add(sender.id);
+		sender.once('destroyed', () => clearCommentWatch(sender.id));
+	}
+}
+
+function clearCommentWatch(senderId: number): void {
+	const prev = commentWatchByContents.get(senderId);
+	if (prev) releaseCommentWatch(prev);
+	commentWatchByContents.delete(senderId);
+	commentWatchHooked.delete(senderId);
 }
 
 // Re-run buildRepoInfo off the critical path. If anything moved (favicon
@@ -1496,6 +1553,53 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('sessions:unwatch', (e): void => clearSessionWatch(e.sender.id));
+
+	// ─── Local comments ──────────────────────────────────────────────────────
+	// Comments live in a git-ignored SQLite DB (.super-review/comments.db), so —
+	// unlike sessions — there's no committed-on-a-ref variant; they're always read
+	// from the local database for the given diff context.
+	ipcMain.handle(
+		'comments:list',
+		async (_e, repoId: string, contextKey: string): Promise<LocalComment[]> =>
+			listCommentsForContext(repoOrThrow(repoId).path, contextKey)
+	);
+
+	ipcMain.handle(
+		'comments:add',
+		async (_e, repoId: string, input: NewLocalCommentInput): Promise<LocalComment> =>
+			addComment(repoOrThrow(repoId).path, input)
+	);
+
+	ipcMain.handle(
+		'comments:resolve',
+		async (
+			_e,
+			repoId: string,
+			id: string,
+			resolver: LocalCommentAuthor,
+			sessionId?: string | null
+		): Promise<LocalComment | null> =>
+			resolveComment(repoOrThrow(repoId).path, id, resolver, sessionId ?? null)
+	);
+
+	ipcMain.handle(
+		'comments:unresolve',
+		async (_e, repoId: string, id: string): Promise<LocalComment | null> =>
+			unresolveComment(repoOrThrow(repoId).path, id)
+	);
+
+	ipcMain.handle(
+		'comments:remove',
+		async (_e, repoId: string, id: string): Promise<void> =>
+			deleteCommentRecord(repoOrThrow(repoId).path, id)
+	);
+
+	ipcMain.handle('comments:watch', (e, repoId: string | null): void => {
+		if (repoId) setCommentWatch(e.sender, repoId);
+		else clearCommentWatch(e.sender.id);
+	});
+
+	ipcMain.handle('comments:unwatch', (e): void => clearCommentWatch(e.sender.id));
 
 	// ─── Skill ─────────────────────────────────────────────────────────────
 	// The document-session skill teaches an agent how/when to record a session.

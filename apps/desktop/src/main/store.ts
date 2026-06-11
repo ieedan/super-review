@@ -66,7 +66,9 @@ const defaults: Schema = {
 		hotkeys: DEFAULT_HOTKEYS,
 		windowWidth: WINDOW_BOUNDS.defaultWidth,
 		windowHeight: WINDOW_BOUNDS.defaultHeight,
-		startMaximized: false
+		startMaximized: false,
+		sidebarCollapsed: false,
+		commentsSidebarOpen: false
 	},
 	seen: {},
 	collapsedFiles: {},
