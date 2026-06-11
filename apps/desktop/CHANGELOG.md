@@ -1,5 +1,22 @@
 # @super-review/desktop
 
+## 0.1.8
+
+### Patch Changes
+
+- fix: select the first expanded change visible on the page in the sidebar, so a collapsed file's pinned header no longer claims active while an expanded file below it is the one on screen ([#64](https://github.com/ieedan/super-review/pull/64))
+
+- feat: GitHub-style markdown editor for PR comments via carta-md — Write/Preview tabs, formatting toolbar, slash commands, emoji picker, and a syntax-highlighted preview, plus comment bodies now render as GitHub-Flavored Markdown ([#61](https://github.com/ieedan/super-review/pull/61))
+
+- fix: center-truncate the diff sticky header file path so the filename stays visible on long paths, matching the sidebar changes list ([#60](https://github.com/ieedan/super-review/pull/60))
+
+- feat: add local review comments — per-line notes kept in a local, app-wide SQLite database (`~/.super-review/comments.db`), never committed to the repo. Author and resolve them in a new right-hand Comments sidebar (and inline in the diff), copy them as agent-ready prompts, and let agents read (`super-review comment list`) and resolve (`super-review comment resolve`) them, optionally linking the session that addressed the feedback. The sidebar also surfaces PR review comments when reviewing a pull request. ([#59](https://github.com/ieedan/super-review/pull/59))
+
+- fix: skip already-seen files when advancing after marking a file seen so the walk lands on the next change that still needs review instead of re-opening a cleared file ([#63](https://github.com/ieedan/super-review/pull/63))
+
+- Updated dependencies [[`f05d1a1`](https://github.com/ieedan/super-review/commit/f05d1a160a489041c347371ac1174418f449049a)]:
+  - @super-review/core@0.1.4
+
 ## 0.1.7
 
 ### Patch Changes
