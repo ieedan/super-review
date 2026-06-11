@@ -7,6 +7,7 @@
 	import FileList from '$lib/components/FileList.svelte';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
+	import CommentsPanel from '$lib/components/CommentsPanel.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
 	import ForkDialog from '$lib/components/ForkDialog.svelte';
 	import MergedSwitchDialog from '$lib/components/MergedSwitchDialog.svelte';
@@ -86,6 +87,25 @@
 		copyResetId = window.setTimeout(() => (errorCopied = false), 1500);
 	}
 
+	// Restore the persisted collapsed state once the pane mounts. The pane layout
+	// is the source of truth (assigning app.sidebarCollapsed alone won't move it),
+	// so drive it imperatively; expand()/collapse() no-op when already in state.
+	// Deferred a frame so PaneForge has committed its initial layout first.
+	let sidebarRestored = false;
+	$effect(() => {
+		// Re-arm when the pane unmounts (e.g. closing the repo) so reopening
+		// restores the persisted state again.
+		if (!sidebarPane) {
+			sidebarRestored = false;
+			return;
+		}
+		if (sidebarRestored) return;
+		sidebarRestored = true;
+		const pane = sidebarPane;
+		const collapsed = app.sidebarCollapsed;
+		requestAnimationFrame(() => (collapsed ? pane.collapse() : pane.expand()));
+	});
+
 	// All configurable app-wide shortcuts dispatch from one place: each action
 	// maps to its handler here, and the single window keydown below (mounted via
 	// <svelte:window>, so Svelte tears it down for us) runs whichever binding
@@ -113,6 +133,12 @@
 			e.preventDefault();
 			if (app.sidebarCollapsed) sidebarPane.expand();
 			else sidebarPane.collapse();
+		},
+		// Open/close the right-hand comments sidebar (default Cmd/Ctrl+L).
+		toggleCommentsSidebar: (e) => {
+			if (!app.activeRepo) return;
+			e.preventDefault();
+			actions.toggleCommentsSidebar();
 		},
 		// Open the settings dialog from anywhere (default Cmd/Ctrl+Comma).
 		openSettings: (e) => {
@@ -217,6 +243,13 @@
 		void actions.refreshSessionCount();
 	});
 
+	// Same live-watch for the repo's local comments, so a comment added in another
+	// window — or resolved by an agent via the CLI — shows up without a refresh.
+	$effect(() => {
+		const repoId = app.activeRepo?.id ?? null;
+		void window.api.comments.watch(repoId);
+	});
+
 	onMount(() => {
 		void actions.init();
 
@@ -245,6 +278,12 @@
 			void actions.onSessionsChanged(repoId);
 		});
 
+		// An agent's CLI (or another window) changed this repo's local comments on
+		// disk — reload the active context's list.
+		const offCommentsChanged = window.api.events.onCommentsChanged((repoId) => {
+			void actions.onCommentsChanged(repoId);
+		});
+
 		// Center the traffic lights once now; the resize binding handles every
 		// subsequent zoom change.
 		syncWindowControls();
@@ -268,6 +307,7 @@
 			offRepoChanged();
 			offTrashFailed();
 			offSessionsChanged();
+			offCommentsChanged();
 			stopPoll();
 			window.clearInterval(tickId);
 			window.clearInterval(checksId);
@@ -347,23 +387,25 @@
 					maxSize={50}
 					collapsible
 					collapsedSize={0}
-					onCollapse={() => {
-						app.sidebarCollapsed = true;
-					}}
-					onExpand={() => {
-						app.sidebarCollapsed = false;
-					}}
+					onCollapse={() => actions.setSidebarCollapsed(true)}
+					onExpand={() => actions.setSidebarCollapsed(false)}
 				>
 					<FileList />
 				</Resizable.Pane>
 				<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
-				<Resizable.Pane defaultSize={78}>
+				<Resizable.Pane defaultSize={app.commentsSidebarOpen ? 56 : 78}>
 					{#if app.contextTab === 'sessions' && !app.activeSessionId}
 						<SessionsEmptyState />
 					{:else}
 						<DiffView />
 					{/if}
 				</Resizable.Pane>
+				{#if app.commentsSidebarOpen}
+					<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
+					<Resizable.Pane defaultSize={22} minSize={15} maxSize={40}>
+						<CommentsPanel />
+					</Resizable.Pane>
+				{/if}
 			</Resizable.PaneGroup>
 		{/if}
 	</main>

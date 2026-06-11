@@ -313,6 +313,71 @@ export interface NewReviewCommentInput {
 	side: 'LEFT' | 'RIGHT';
 }
 
+// ─── Local review comments ───────────────────────────────────────────────────
+// A reviewer's note pinned to a line range of a diff, stored locally in the repo
+// under .super-review/comments (one JSON file per comment) so it travels with the
+// branch like a session. Unlike PRReviewComment these never touch GitHub: they're
+// a human's working-tree review notes that an agent can read back, act on, and
+// mark resolved — optionally linking the session that documents the fix. Flat (no
+// threads) by design.
+
+// Who authored or resolved a local comment. Humans leave comments in the desktop
+// app; agents (claude-code, cursor, …) only ever appear as the *resolver*, since
+// comments aren't agent-authored. `harness` is set for agents so the UI can show
+// their logo, mirroring how sessions identify their harness.
+export interface LocalCommentAuthor {
+	kind: 'human' | 'agent';
+	// Display name: a human's git/GitHub handle, or an agent's harness label.
+	name: string;
+	// The agent's harness, when kind === 'agent'. Drives the logo shown beside the
+	// resolver, matching how a session card shows its harness.
+	harness?: HarnessKind;
+}
+
+// A single local comment. Anchored GitHub-style by `side` + line range, so it
+// never drifts within a frozen ref but may go "outdated" if the working tree
+// changes under it (the UI keeps it, just unanchored).
+export interface LocalComment {
+	id: string;
+	// Which diff view this comment was made in — `diffContextKey(ctx)` (e.g.
+	// "workingTree", "branch:main..feat", "pr:12", "session:<id>", "stash:<sha>").
+	// Comments are scoped per view: a comment only surfaces in the context it was
+	// authored in.
+	contextKey: string;
+	// File the comment is pinned to, repo-relative (posix), matching SessionFile.
+	path: string;
+	// Which side the line numbers refer to, matching PRReviewComment: 'RIGHT' = the
+	// new file (additions), 'LEFT' = the original (deletions).
+	side: 'LEFT' | 'RIGHT';
+	// 1-based inclusive line range on `side`. A single-line comment has
+	// startLine === endLine.
+	startLine: number;
+	endLine: number;
+	// The note itself (Markdown).
+	body: string;
+	author: LocalCommentAuthor;
+	createdAt: number;
+	updatedAt: number;
+	// Resolution. Presence of `resolvedAt` ⇒ resolved. An agent that fixed the
+	// feedback can link the session documenting the fix via `resolvedSessionId`, so
+	// the reviewer can jump straight to that guided tour.
+	resolvedAt?: number;
+	resolvedBy?: LocalCommentAuthor;
+	resolvedSessionId?: string;
+}
+
+// The fields a caller supplies to create a local comment; the store fills in the
+// id and timestamps.
+export interface NewLocalCommentInput {
+	contextKey: string;
+	path: string;
+	side: 'LEFT' | 'RIGHT';
+	startLine: number;
+	endLine: number;
+	body: string;
+	author: LocalCommentAuthor;
+}
+
 export type ViewMode = 'split' | 'unified';
 
 // How the diff view lays out a context's files. 'scroll' renders every file's
@@ -736,6 +801,11 @@ export interface UserPrefs {
 	// When true, the window opens maximized. windowWidth/windowHeight still serve
 	// as the pre-maximize ("restore") bounds.
 	startMaximized: boolean;
+	// Persisted open/closed state of the two main sidebars, so the layout the user
+	// left survives a restart. `sidebarCollapsed` is the left file-list sidebar
+	// (true = collapsed); `commentsSidebarOpen` is the right comments panel.
+	sidebarCollapsed: boolean;
+	commentsSidebarOpen: boolean;
 }
 
 export interface DeviceFlowStart {
@@ -1009,6 +1079,30 @@ export interface PreloadAPI {
 		watch(repoId: string | null): Promise<void>;
 		unwatch(): Promise<void>;
 	};
+	comments: {
+		// Local review comments for a single diff context (`diffContextKey(ctx)`),
+		// read from the repo's git-ignored SQLite database.
+		list(repoId: string, contextKey: string): Promise<LocalComment[]>;
+		// Create a comment (id + timestamps assigned by the main process) and return
+		// the persisted record.
+		add(repoId: string, input: NewLocalCommentInput): Promise<LocalComment>;
+		// Stamp `resolvedAt`/`resolvedBy` (and optionally link a session that
+		// addressed the feedback). Returns the updated comment, or null if it's gone.
+		resolve(
+			repoId: string,
+			id: string,
+			resolver: LocalCommentAuthor,
+			sessionId?: string | null
+		): Promise<LocalComment | null>;
+		// Clear resolution. Returns the updated comment, or null if it's gone.
+		unresolve(repoId: string, id: string): Promise<LocalComment | null>;
+		remove(repoId: string, id: string): Promise<void>;
+		// Start/stop live updates for this window's active repo. The main process
+		// fs-watches the repo's .super-review/comments dir and emits
+		// `onCommentsChanged`; pass null (or call unwatch) to stop.
+		watch(repoId: string | null): Promise<void>;
+		unwatch(): Promise<void>;
+	};
 	skill: {
 		// Whether the document-session skill is installed in the repo
 		// (`.agents/skills/document-session/SKILL.md` exists).
@@ -1063,6 +1157,10 @@ export interface PreloadAPI {
 		// A repo's sessions changed on disk (manifest written/removed by the CLI or
 		// another window). Payload is the repo id. Returns an unsubscribe fn.
 		onSessionsChanged(handler: (repoId: string) => void): () => void;
+		// A repo's local comments changed on disk (added in another window, or an
+		// agent resolved one via the CLI). Payload is the repo id. Returns an
+		// unsubscribe fn.
+		onCommentsChanged(handler: (repoId: string) => void): () => void;
 	};
 }
 

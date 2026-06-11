@@ -102,7 +102,7 @@ const RELATIVE_UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, numbe
 	['minute', 60 * 1000]
 ];
 
-export function formatRelative(iso: string): string {
+export function formatRelative(iso: string | number): string {
 	const then = new Date(iso).getTime();
 	const now = Date.now();
 	const diff = Math.max(0, now - then);
