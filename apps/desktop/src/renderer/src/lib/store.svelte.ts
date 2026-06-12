@@ -4485,8 +4485,7 @@ export const actions = {
 	async setRecentRepoCount(count: number): Promise<void> {
 		// 0 is meaningful (hides the Recent section); invalid input keeps the
 		// current value rather than silently hiding it.
-		const next =
-			Number.isFinite(count) && count >= 0 ? Math.floor(count) : app.recentRepoCount;
+		const next = Number.isFinite(count) && count >= 0 ? Math.floor(count) : app.recentRepoCount;
 		app.recentRepoCount = next;
 		app.prefs = await window.api.state.setPrefs({ recentRepoCount: next });
 	},
