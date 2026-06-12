@@ -17,7 +17,6 @@
 	// otherwise the group overflows and the last row's bottom padding gets
 	// clipped.
 	const MAX_LIST_HEIGHT = 312;
-	const RECENT_COUNT = 3;
 	const OTHER_OWNER = 'Other';
 
 	type Row = { kind: 'header'; label: string } | { kind: 'repo'; repo: RepoInfo };
@@ -123,9 +122,11 @@
 		const result: Row[] = [];
 
 		if (needle === '') {
+			// The section size is user-configurable (Settings → Behavior); 0 hides
+			// the section via the empty-slice + length guard below.
 			const recent = [...filtered]
 				.sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
-				.slice(0, RECENT_COUNT);
+				.slice(0, app.recentRepoCount);
 			if (recent.length > 0) {
 				result.push({ kind: 'header', label: 'Recent' });
 				for (const repo of recent) result.push({ kind: 'repo', repo });

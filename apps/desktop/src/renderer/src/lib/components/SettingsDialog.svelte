@@ -122,6 +122,7 @@
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
 	let draftUnmarkSeenOnChange = $state<boolean>(true);
 	let draftMaxDiffLines = $state<number>(1500);
+	let draftRecentRepoCount = $state<number>(5);
 	let draftWindowWidth = $state<number>(WINDOW_BOUNDS.defaultWidth);
 	let draftWindowHeight = $state<number>(WINDOW_BOUNDS.defaultHeight);
 	let draftStartMaximized = $state<boolean>(false);
@@ -174,6 +175,7 @@
 			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
 			draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
 			draftMaxDiffLines = app.maxDiffLines;
+			draftRecentRepoCount = app.recentRepoCount;
 			draftWindowWidth = app.windowWidth;
 			draftWindowHeight = app.windowHeight;
 			draftStartMaximized = app.startMaximized;
@@ -284,6 +286,14 @@
 				: 0;
 		if (clampedMaxDiffLines !== app.maxDiffLines) {
 			promises.push(actions.setMaxDiffLines(clampedMaxDiffLines));
+		}
+		const parsedRecentRepoCount = Number(draftRecentRepoCount);
+		const clampedRecentRepoCount =
+			Number.isFinite(parsedRecentRepoCount) && parsedRecentRepoCount >= 0
+				? Math.floor(parsedRecentRepoCount)
+				: app.recentRepoCount;
+		if (clampedRecentRepoCount !== app.recentRepoCount) {
+			promises.push(actions.setRecentRepoCount(clampedRecentRepoCount));
 		}
 		if (!arraysEqual(draftHiddenDiffPatterns, app.hiddenDiffPatterns)) {
 			promises.push(actions.setHiddenDiffPatterns(draftHiddenDiffPatterns));
@@ -874,6 +884,19 @@
 								</span>
 							</label>
 						</div>
+					</div>
+				</div>
+
+				<div>
+					<h3 class="text-base font-semibold">Recent repositories</h3>
+					<p class="mt-1 text-xs text-muted-foreground">
+						How many recently opened repositories the repository picker lists in its "Recent"
+						section. Set to 0 to hide the section.
+					</p>
+
+					<div class="mt-4 flex items-center gap-2">
+						<Input type="number" min="0" step="1" bind:value={draftRecentRepoCount} class="w-32" />
+						<span class="text-xs text-muted-foreground">repositories</span>
 					</div>
 				</div>
 

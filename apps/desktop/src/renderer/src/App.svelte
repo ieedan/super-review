@@ -284,6 +284,12 @@
 			void actions.onCommentsChanged(repoId);
 		});
 
+		// An account's GitHub token started or stopped failing authentication —
+		// keep the "sign in again" prompt in sync.
+		const offGithubAuthChanged = window.api.events.onGithubAuthChanged((errors) => {
+			actions.onGithubAuthChanged(errors);
+		});
+
 		// Center the traffic lights once now; the resize binding handles every
 		// subsequent zoom change.
 		syncWindowControls();
@@ -308,6 +314,7 @@
 			offTrashFailed();
 			offSessionsChanged();
 			offCommentsChanged();
+			offGithubAuthChanged();
 			stopPoll();
 			window.clearInterval(tickId);
 			window.clearInterval(checksId);

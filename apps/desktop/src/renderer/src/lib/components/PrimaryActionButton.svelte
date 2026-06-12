@@ -7,6 +7,7 @@
 		GitPullRequest,
 		GitPullRequestArrow,
 		Loader2,
+		Rocket,
 		X
 	} from 'lucide-svelte';
 	import { Button } from './ui/button';
@@ -184,6 +185,10 @@
 	const running = $derived(checks?.checks.filter((c) => c.state === 'pending') ?? []);
 	const passing = $derived(checks?.checks.filter((c) => c.state === 'success') ?? []);
 
+	// Deployments attached to the head commit (preview/production environments),
+	// surfaced as clickable "View deployment" links at the bottom of the menu.
+	const deployments = $derived(checks?.deployments ?? []);
+
 	function plural(n: number, word: string): string {
 		return `${n} ${word}${n === 1 ? '' : 's'}`;
 	}
@@ -218,7 +223,7 @@
 		<Icon class={cn('size-3.5', busy && 'animate-spin')} />
 		<span class="text-xs">{label}</span>
 		{#if mode === 'go-pr' && !busy}
-			{#if checks && checks.checks.length > 0}
+			{#if checks && (checks.checks.length > 0 || deployments.length > 0)}
 				<Tooltip.Provider delayDuration={150}>
 					<Tooltip.Root>
 						<Tooltip.Trigger>
@@ -242,6 +247,9 @@
 								{/if}
 								{#if passing.length > 0}
 									{@render group(plural(passing.length, 'successful check'), passing)}
+								{/if}
+								{#if deployments.length > 0}
+									{@render deploymentGroup(checks.checks.length > 0)}
 								{/if}
 							</div>
 						</Tooltip.Content>
@@ -285,5 +293,46 @@
 				{statusText(check)}
 			</span>
 		</div>
+	{/each}
+{/snippet}
+
+{#snippet deploymentGroup(divider: boolean)}
+	<div
+		class={cn(
+			'px-2.5 pt-2 pb-1 text-xs font-medium text-muted-foreground',
+			divider && 'mt-1 border-t border-border'
+		)}
+	>
+		{plural(deployments.length, 'deployment')}
+	</div>
+	{#each deployments as d (d.environment)}
+		<button
+			type="button"
+			class="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-accent"
+			title={d.environment}
+			onclick={() => void window.api.shell.openExternal(d.url)}
+		>
+			{#if d.state === 'success'}
+				<Check class="size-3.5 shrink-0 text-green-500" />
+			{:else if d.state === 'failure'}
+				<X class="size-3.5 shrink-0 text-red-500" />
+			{:else if d.state === 'pending'}
+				<GithubSpinner class="size-3.5 shrink-0 text-[#d29922]" />
+			{/if}
+			<!-- The creating app's avatar doubles as the hosting provider's logo
+			(Vercel, Netlify, Cloudflare Pages, …); fall back to a generic rocket. -->
+			{#if d.avatarUrl}
+				<img src={d.avatarUrl} alt="" class="size-3.5 shrink-0 rounded-full" />
+			{:else}
+				<Rocket class="size-3.5 shrink-0 text-muted-foreground" />
+			{/if}
+			<span class="truncate">{d.environment}</span>
+			<span
+				class="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-muted-foreground"
+			>
+				View deployment
+				<ExternalLink class="size-3" />
+			</span>
+		</button>
 	{/each}
 {/snippet}

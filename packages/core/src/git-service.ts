@@ -776,6 +776,21 @@ async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 	}
 }
 
+// Resolve a ref to its full commit SHA, or null if it doesn't resolve. Used to
+// anchor a PR review comment to the exact commit the on-screen diff was rendered
+// from (the local `pr/<n>/head` snapshot), so the comment's line/side match what
+// the user is looking at rather than a possibly-newer live head.
+export async function resolveRef(repoPath: string, ref: string): Promise<string | null> {
+	const git = simpleGit(repoPath);
+	try {
+		const out = await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+		const sha = out.trim();
+		return sha.length > 0 ? sha : null;
+	} catch {
+		return null;
+	}
+}
+
 // Resolve a branch-diff base to its remote-tracking copy when one exists, so the
 // comparison uses the up-to-date remote tip (`origin/main`) — matching how
 // GitHub computes a PR/branch diff — instead of a possibly-stale local default
@@ -2556,7 +2571,13 @@ export async function fetchPRRef(
 	const base = simpleGit(repoPath);
 	const remoteUrl = await resolveRemoteUrl(base, remote);
 	const git = authedGit(repoPath, remoteUrl);
-	await git.fetch([remote, `pull/${prNumber}/head:refs/pr/${prNumber}/head`]).catch(() => {});
+	// Force (`+`) so a rebased/force-pushed PR updates the pinned snapshot instead
+	// of leaving a stale ref: `refs/pr/<n>/head` persists across reviews, and a
+	// non-forced non-fast-forward update is rejected (and swallowed below). A stale
+	// head makes the diff's line numbers disagree with the live head SHA that
+	// createReviewComment anchors to — GitHub then rejects comments with
+	// "pull_request_review_thread.path could not be resolved".
+	await git.fetch([remote, `+pull/${prNumber}/head:refs/pr/${prNumber}/head`]).catch(() => {});
 	// base ref is whatever the PR base branch's tip is — we fetch and pin locally
 	// The actual base branch name comes from the GitHub API and is resolved by the caller.
 	return {

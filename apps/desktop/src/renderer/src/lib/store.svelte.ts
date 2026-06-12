@@ -12,6 +12,7 @@ import type {
 	EditorKind,
 	FileListLayout,
 	GithubAccount,
+	GithubAuthError,
 	LastCommit,
 	LocalComment,
 	LocalCommentAuthor,
@@ -193,6 +194,8 @@ interface AppState {
 	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
 	unmarkSeenOnChange: boolean;
+	// How many repos the repo picker's "Recent" section lists (see UserPrefs).
+	recentRepoCount: number;
 	hotkeys: Hotkeys;
 	// Initial window bounds, applied on the next launch (see UserPrefs).
 	windowWidth: number;
@@ -210,6 +213,10 @@ interface AppState {
 	prefs: UserPrefs | null;
 	githubAccounts: GithubAccount[];
 	activeGithubAccount: GithubAccount | null;
+	// Accounts whose GitHub token no longer authenticates (revoked, or a SAML
+	// session that lapsed). Hydrated at startup and kept live via the
+	// github:auth-changed event; drives the "sign in again" prompt.
+	githubAuthErrors: GithubAuthError[];
 	sidebarCollapsed: boolean;
 	collapsedFolders: SvelteSet<string>;
 	// A request to scroll the diff view to a file (`path`), a tour step header
@@ -250,6 +257,11 @@ interface AppState {
 	lastCommit: LastCommit | null;
 	// PR matching the current branch (if any). Refreshed alongside push status.
 	branchPR: PRSummary | null;
+	// PR numbers whose base branch tip we've pinned locally to `pr/<n>/base`.
+	// The Branch diff targets that ref (so it matches the PR's real base — which
+	// may be an upstream/non-default branch — rather than the local default) only
+	// once it's in here, otherwise it would reference a ref git can't resolve.
+	fetchedPRBases: Set<number>;
 	// CI/workflow status for `branchPR`'s head commit — aggregate plus the
 	// individual checks for a hover breakdown. Keyed by PR number so a stale poll
 	// result can't paint the wrong PR. Polled on an interval while a PR is shown.
@@ -540,6 +552,7 @@ const initial: AppState = {
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
 	unmarkSeenOnChange: true,
+	recentRepoCount: 5,
 	hotkeys: DEFAULT_HOTKEYS,
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
@@ -553,6 +566,7 @@ const initial: AppState = {
 	prefs: null,
 	githubAccounts: [],
 	activeGithubAccount: null,
+	githubAuthErrors: [],
 	sidebarCollapsed: false,
 	collapsedFolders: new SvelteSet(),
 	scrollRequest: null,
@@ -586,6 +600,7 @@ const initial: AppState = {
 	pushStatus: null,
 	lastCommit: null,
 	branchPR: null,
+	fetchedPRBases: new Set<number>(),
 	branchPRChecks: null,
 	branchPRPushAccess: null,
 	repoPushAccess: null,
@@ -961,6 +976,14 @@ export function effectiveGithubAccount(): GithubAccount | null {
 	return app.activeGithubAccount;
 }
 
+// Auth failure (revoked token / lapsed SAML session) for the account the active
+// project authenticates as, if any — drives the "sign in again" prompt.
+export function effectiveAccountAuthError(): GithubAuthError | null {
+	const account = effectiveGithubAccount();
+	if (!account) return null;
+	return app.githubAuthErrors.find((e) => e.accountId === account.id) ?? null;
+}
+
 async function refreshGithubAccounts(): Promise<void> {
 	const [accounts, active] = await Promise.all([
 		window.api.github.listAccounts(),
@@ -1148,6 +1171,23 @@ async function performSwitchBackAfterMerge(branch: string, defaultBranch: string
 	}
 }
 
+// Pin a PR's base branch tip to `pr/<n>/base` (via fetchPR, which targets the
+// PR's own base repo — the upstream parent for a fork PR) so the Branch diff can
+// resolve against it. Records the number in `fetchedPRBases` so branchDiffBaseRef
+// only switches the base once the ref actually exists. Best-effort and idempotent.
+// Returns true when the base is (now) pinned.
+async function ensurePRBasePinned(pr: PRSummary | null): Promise<boolean> {
+	if (!app.activeRepo || !pr) return false;
+	if (app.fetchedPRBases.has(pr.number)) return true;
+	try {
+		await window.api.github.fetchPR(app.activeRepo.id, pr.number, ...prHostArgs(pr));
+		app.fetchedPRBases.add(pr.number);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 // Look up the open PR (if any) for the current branch. Only meaningful when
 // the repo has a GitHub remote and the user is signed in. Failures are silent
 // — the primary action button just falls back to "Create PR".
@@ -1208,6 +1248,19 @@ async function refreshBranchPR(): Promise<void> {
 			void actions.refreshPRComments();
 		}
 	}
+	// Pin the PR's base branch tip so the Branch diff targets the PR's real base
+	// (which may be an upstream/non-default branch) instead of the local default.
+	// If this newly pinned the base while the Branch tab is showing the checked-out
+	// branch, recompute the context and reload so the diff switches to the correct
+	// base — otherwise the diff would keep surfacing files/lines GitHub doesn't
+	// consider part of the PR, and comments on them would fail to resolve.
+	if (app.branchPR && !app.fetchedPRBases.has(app.branchPR.number)) {
+		const pinned = await ensurePRBasePinned(app.branchPR);
+		if (pinned && app.contextTab === 'branch' && !isReadOnlyView()) {
+			app.diffContext = contextForTab('branch');
+			await refreshFiles();
+		}
+	}
 	// Drop any status for a PR we're no longer showing, then refresh.
 	if (app.branchPRChecks && app.branchPRChecks.number !== app.branchPR?.number) {
 		app.branchPRChecks = null;
@@ -1226,8 +1279,16 @@ async function resolveViewBranchPR(branch: string): Promise<void> {
 	const repoId = repo.id;
 	try {
 		const pr = await window.api.github.findPRForBranch(repoId, branch);
-		if (app.activeRepo?.id === repoId && app.viewBranch === branch) {
-			app.viewBranchPR = pr;
+		if (app.activeRepo?.id !== repoId || app.viewBranch !== branch) return;
+		app.viewBranchPR = pr;
+		// Pin the PR's base so the viewed branch diffs against the PR's real base
+		// (an upstream/non-default branch) rather than the local default. Refresh
+		// the diff once it lands if we're still on this view.
+		if (pr && (await ensurePRBasePinned(pr))) {
+			if (app.viewBranch === branch && app.contextTab === 'branch') {
+				app.diffContext = contextForTab('branch');
+				await refreshFiles();
+			}
 		}
 	} catch {
 		// Best-effort — leave it unresolved (button just won't show a PR).
@@ -1277,7 +1338,10 @@ async function refreshBranchPRPushAccess(): Promise<void> {
 	app.branchPRPushAccess = null;
 	try {
 		const can = await window.api.github.canPushToPR(app.activeRepo.id, $state.snapshot(pr));
-		prPushAccess.set(key, can);
+		// Only definitive answers are cached — an unknown (null, e.g. a network
+		// blip or a dead token) must be re-asked next refresh, not pinned for the
+		// whole session.
+		if (can !== null) prPushAccess.set(key, can);
 		if (app.branchPR?.number === pr.number) app.branchPRPushAccess = can;
 	} catch {
 		// Leave unknown — better no warning than a wrong one.
@@ -1301,7 +1365,10 @@ async function refreshRepoPushAccess(): Promise<void> {
 	}
 	try {
 		const can = await window.api.github.getRepoPushAccess(repo.id);
-		repoPushAccessChecked.set(repo.id, can);
+		// Only definitive answers are cached for the session. An unknown (null —
+		// network blip, dead token) is shown as unknown now but re-asked on the
+		// next refresh; caching it once painted a permanent, wrong fork banner.
+		if (can !== null) repoPushAccessChecked.set(repo.id, can);
 		if (app.activeRepo?.id === repo.id) app.repoPushAccess = can;
 	} catch {
 		// Leave unknown — better no banner than a wrong one.
@@ -1332,17 +1399,31 @@ function sessionRef(): string | null {
 	return null;
 }
 
+// The ref the Branch diff should use as its base. When a PR governs the current
+// view (a checked-out branch with a PR, a read-only viewed branch's PR, or a PR
+// view), diff against that PR's base branch tip — pinned to `pr/<n>/base` from
+// the PR's own base repo, which may be an upstream/non-default branch. Diffing
+// against the local default instead surfaces files and lines GitHub doesn't
+// consider part of the PR, so review comments on them fail to resolve. Falls back
+// to the local default branch when no PR governs the view, or its base hasn't
+// been pinned yet (the diff briefly shows against the default until the pin
+// lands and the view refreshes).
+function branchDiffBaseRef(): string {
+	const pr = uiPR();
+	if (pr && app.fetchedPRBases.has(pr.number)) return `pr/${pr.number}/base`;
+	return app.activeRepo?.defaultBranch ?? 'main';
+}
+
 // Resolve which DiffContext the current tab should drive.
 function contextForTab(tab: ContextTab): DiffContext {
 	if (tab === 'branch') {
-		const base = app.activeRepo?.defaultBranch ?? 'main';
 		// Target the read-only view when one is set — a fetched PR head ref, or a
 		// view branch — otherwise the checked-out branch. All read from git refs,
 		// so none touches disk.
 		const head = app.viewPR
 			? `pr/${app.viewPR.number}/head`
 			: (app.viewBranch ?? app.currentBranch ?? 'HEAD');
-		return { kind: 'branch', base, head };
+		return { kind: 'branch', base: branchDiffBaseRef(), head };
 	}
 	if (tab === 'sessions' && app.activeSessionId) {
 		// Read the open session from the viewed branch/PR's ref when reviewing
@@ -1807,6 +1888,7 @@ export const actions = {
 		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
 		app.unmarkSeenOnChange = app.prefs.unmarkSeenOnChange ?? true;
+		app.recentRepoCount = app.prefs.recentRepoCount ?? 5;
 		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
 		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
 		app.startMaximized = app.prefs.startMaximized ?? false;
@@ -1827,6 +1909,12 @@ export const actions = {
 		applyFonts();
 		void loadSystemFonts();
 		await refreshGithubAccounts();
+		// Probe the stored tokens in the background so one revoked while the app
+		// was closed surfaces the sign-in prompt right away, not whenever a feature
+		// first happens to fail. Offline is fine — only real auth failures flag.
+		void window.api.github.validateAccounts().then((errors) => {
+			app.githubAuthErrors = errors;
+		});
 		app.platform = window.api.platform;
 		app.editors = await window.api.editor.detect();
 		app.terminals = await window.api.terminal.detect();
@@ -2537,6 +2625,9 @@ export const actions = {
 			// Fetch pr/<n>/head (+ base) without checking anything out.
 			await window.api.github.fetchPR(app.activeRepo.id, pr.number, ...prHostArgs(snapshot));
 			if (!app.activeRepo) return;
+			// fetchPR pinned pr/<n>/base; record it so branchDiffBaseRef diffs the PR
+			// head against its real base rather than the local default branch.
+			app.fetchedPRBases.add(pr.number);
 			app.viewPR = snapshot;
 			app.viewBranch = null;
 			if (app.contextTab === 'unstaged') {
@@ -2825,6 +2916,7 @@ export const actions = {
 			const summary = app.prs.find((p) => p.number === prNumber) ?? null;
 			const host = prHostArgs(summary);
 			await window.api.github.fetchPR(app.activeRepo.id, prNumber, ...host);
+			app.fetchedPRBases.add(prNumber);
 			app.activePR =
 				summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber, ...host));
 			app.prComments = {};
@@ -4390,6 +4482,15 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ unmarkSeenOnChange: value });
 	},
 
+	async setRecentRepoCount(count: number): Promise<void> {
+		// 0 is meaningful (hides the Recent section); invalid input keeps the
+		// current value rather than silently hiding it.
+		const next =
+			Number.isFinite(count) && count >= 0 ? Math.floor(count) : app.recentRepoCount;
+		app.recentRepoCount = next;
+		app.prefs = await window.api.state.setPrefs({ recentRepoCount: next });
+	},
+
 	// Persist the initial window size. Clamped to the window minimums (and falling
 	// back to the defaults for empty/invalid input) so a stored value can never
 	// produce a smaller-than-allowed window. Takes effect on the next launch.
@@ -4561,6 +4662,10 @@ export const actions = {
 		const next = await window.api.github.setActiveAccount(id);
 		if (!next) return;
 		app.activeGithubAccount = next;
+		// Push-access answers were computed as the previous account — every repo
+		// following the default may now resolve differently.
+		repoPushAccessChecked.clear();
+		prPushAccess.clear();
 		// Only projects following the default are affected; pinned projects keep
 		// their own account, so leave their PR state alone.
 		if (
@@ -4583,11 +4688,32 @@ export const actions = {
 		app.activeRepo = updated;
 		const idx = app.repos.findIndex((r) => r.id === updated.id);
 		if (idx !== -1) app.repos[idx] = updated;
+		// The cached push-access answers were the previous account's — without
+		// dropping them, switching to an account that *does* have write access
+		// leaves a stale "fork this repo" banner for the rest of the session.
+		repoPushAccessChecked.delete(repoId);
+		prPushAccess.clear();
+		app.repoPushAccess = null;
 		app.prs = [];
 		if (updated.githubOwner && updated.githubRepo) {
 			void actions.loadPRs();
 			// The new account may see a different (or newly visible) PR for this
 			// branch, so re-resolve it rather than leaving the stale result.
+			void refreshBranchPR();
+		}
+	},
+
+	// Auth-failure state pushed live from the main process: a token started
+	// failing (revoked / SAML session lapsed) or recovered (re-sign-in, SSO
+	// re-authorized, or simply the next successful request). On recovery,
+	// previously unknowable answers become resolvable — drop the push-access
+	// caches and re-resolve the branch/PR state.
+	onGithubAuthChanged(errors: GithubAuthError[]): void {
+		const hadErrors = app.githubAuthErrors.length > 0;
+		app.githubAuthErrors = errors;
+		if (hadErrors && errors.length === 0) {
+			repoPushAccessChecked.clear();
+			prPushAccess.clear();
 			void refreshBranchPR();
 		}
 	},

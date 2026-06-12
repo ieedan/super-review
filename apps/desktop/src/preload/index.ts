@@ -21,6 +21,7 @@ import type {
 	EditorKind,
 	FileContextMenuAction,
 	GithubAccount,
+	GithubAuthError,
 	GithubOrg,
 	LastCommit,
 	LocalComment,
@@ -178,7 +179,7 @@ const api: PreloadAPI = {
 		detectUpstream: (repoId) =>
 			ipcRenderer.invoke('github:detectUpstream', repoId) as Promise<RepoInfo | null>,
 		getRepoPushAccess: (repoId) =>
-			ipcRenderer.invoke('github:getRepoPushAccess', repoId) as Promise<boolean>,
+			ipcRenderer.invoke('github:getRepoPushAccess', repoId) as Promise<boolean | null>,
 		createFork: (repoId) =>
 			ipcRenderer.invoke('github:createFork', repoId) as Promise<{ owner: string; repo: string }>,
 		getRepoParent: (repoId) =>
@@ -194,7 +195,7 @@ const api: PreloadAPI = {
 		findPRForBranch: (repoId, branch) =>
 			ipcRenderer.invoke('github:findPRForBranch', repoId, branch) as Promise<PRSummary | null>,
 		canPushToPR: (repoId, pr) =>
-			ipcRenderer.invoke('github:canPushToPR', repoId, pr) as Promise<boolean>,
+			ipcRenderer.invoke('github:canPushToPR', repoId, pr) as Promise<boolean | null>,
 		getChecks: (repoId, ref, owner, repo) =>
 			ipcRenderer.invoke('github:getChecks', repoId, ref, owner, repo) as Promise<PRChecksSummary>,
 		getPR: (repoId, prNumber, owner, repo) =>
@@ -238,7 +239,10 @@ const api: PreloadAPI = {
 		setReviewThreadResolved: (repoId, threadId, resolved) =>
 			ipcRenderer.invoke('github:setReviewThreadResolved', repoId, threadId, resolved) as Promise<{
 				isResolved: boolean;
-			}>
+			}>,
+		getAuthErrors: () => ipcRenderer.invoke('github:getAuthErrors') as Promise<GithubAuthError[]>,
+		validateAccounts: () =>
+			ipcRenderer.invoke('github:validateAccounts') as Promise<GithubAuthError[]>
 	},
 	state: {
 		getPrefs: () => ipcRenderer.invoke('state:getPrefs') as Promise<UserPrefs>,
@@ -386,6 +390,12 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
 			ipcRenderer.on('comments:changed', listener);
 			return () => ipcRenderer.off('comments:changed', listener);
+		},
+		onGithubAuthChanged(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, errors: GithubAuthError[]) =>
+				handler(errors);
+			ipcRenderer.on('github:auth-changed', listener);
+			return () => ipcRenderer.off('github:auth-changed', listener);
 		}
 	}
 };

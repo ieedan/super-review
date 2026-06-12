@@ -89,6 +89,14 @@
 										default
 									</span>
 								{/if}
+								{#if app.githubAuthErrors.some((e) => e.accountId === acct.id)}
+									<span
+										class="shrink-0 rounded-sm bg-warning/15 px-1 text-[9px] tracking-wide text-warning uppercase"
+										title="This account's sign-in expired — use “Add another account” to sign in again"
+									>
+										expired
+									</span>
+								{/if}
 							</div>
 							{#if acct.name}
 								<div class="truncate text-[10px] text-muted-foreground">{acct.name}</div>

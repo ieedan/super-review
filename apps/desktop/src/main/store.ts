@@ -68,7 +68,8 @@ const defaults: Schema = {
 		windowHeight: WINDOW_BOUNDS.defaultHeight,
 		startMaximized: false,
 		sidebarCollapsed: false,
-		commentsSidebarOpen: false
+		commentsSidebarOpen: false,
+		recentRepoCount: 5
 	},
 	seen: {},
 	collapsedFiles: {},

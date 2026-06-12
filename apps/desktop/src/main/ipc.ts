@@ -24,6 +24,7 @@ import type {
 	FileContextMenuAction,
 	FileContextMenuParams,
 	GithubAccount,
+	GithubAuthError,
 	GithubOrg,
 	LastCommit,
 	LocalOnlyBranch,
@@ -69,6 +70,7 @@ import {
 	ensureInitialCommit,
 	fetchOrigin,
 	fetchPRRef,
+	resolveRef,
 	getConflicts,
 	getDefaultBranch,
 	recheckConflicts,
@@ -872,6 +874,17 @@ export function registerIpc(): void {
 	);
 
 	// ─── GitHub ────────────────────────────────────────────────────────────
+	// Push auth failures (revoked token / SAML session lapsed) and their
+	// recovery to every window so the UI can prompt for a re-sign-in.
+	gh.onAuthErrorsChanged((errors) => broadcast('github:auth-changed', errors));
+	ipcMain.handle(
+		'github:getAuthErrors',
+		async (): Promise<GithubAuthError[]> => gh.getAuthErrors()
+	);
+	ipcMain.handle(
+		'github:validateAccounts',
+		async (): Promise<GithubAuthError[]> => gh.validateAccounts()
+	);
 	ipcMain.handle('github:listAccounts', async (): Promise<GithubAccount[]> => gh.listAccounts());
 	ipcMain.handle(
 		'github:getActiveAccount',
@@ -919,12 +932,16 @@ export function registerIpc(): void {
 
 	// Whether the project's account can push to `origin`'s repo. False (rather
 	// than throwing) when there's no GitHub remote, so the renderer can simply
-	// treat false as "offer to fork".
-	ipcMain.handle('github:getRepoPushAccess', async (_e, repoId: string): Promise<boolean> => {
-		const repo = repoOrThrow(repoId);
-		if (!repo.githubOwner || !repo.githubRepo) return false;
-		return gh.canPushToRepo(repo.githubOwner, repo.githubRepo, repo.githubAccountId);
-	});
+	// treat false as "offer to fork". null = unknown (transient failure) — the
+	// renderer must not offer to fork on it.
+	ipcMain.handle(
+		'github:getRepoPushAccess',
+		async (_e, repoId: string): Promise<boolean | null> => {
+			const repo = repoOrThrow(repoId);
+			if (!repo.githubOwner || !repo.githubRepo) return false;
+			return gh.canPushToRepo(repo.githubOwner, repo.githubRepo, repo.githubAccountId);
+		}
+	);
 
 	// Fork the project's `origin` repo under the account; returns the fork's
 	// owner/name (its name usually matches the parent's).
@@ -1055,7 +1072,7 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'github:canPushToPR',
-		async (_e, repoId: string, pr: PRSummary): Promise<boolean> => {
+		async (_e, repoId: string, pr: PRSummary): Promise<boolean | null> => {
 			const repo = repoOrThrow(repoId);
 			const baseOwner = pr.repoOwner ?? repo.githubOwner;
 			const baseRepo = pr.repoName ?? repo.githubRepo;
@@ -1073,7 +1090,8 @@ export function registerIpc(): void {
 					repo.githubAccountId
 				);
 			} catch {
-				return false;
+				// Couldn't even start the check (e.g. signed out) — unknown.
+				return null;
 			}
 		}
 	);
@@ -1088,7 +1106,7 @@ export function registerIpc(): void {
 			prRepo?: string
 		): Promise<PRChecksSummary> => {
 			const repo = repoOrThrow(repoId);
-			const empty: PRChecksSummary = { state: 'none', checks: [] };
+			const empty: PRChecksSummary = { state: 'none', checks: [], deployments: [] };
 			const owner = prOwner ?? repo.githubOwner;
 			const name = prRepo ?? repo.githubRepo;
 			if (!owner || !name) return empty;
@@ -1155,7 +1173,13 @@ export function registerIpc(): void {
 			if (!owner || !name) {
 				throw new Error('This repository does not have a GitHub remote.');
 			}
-			return gh.createReviewComment(owner, name, input, repo.githubAccountId);
+			// Anchor the comment to the same commit the diff was rendered from — the
+			// local `pr/<n>/head` snapshot — so the clicked line/side matches what's
+			// on screen. Null when the ref isn't present (e.g. a checked-out branch
+			// rather than a fetched PR), in which case the service falls back to the
+			// PR's live head.
+			const snapshotSha = await resolveRef(repo.path, `pr/${input.prNumber}/head`);
+			return gh.createReviewComment(owner, name, input, repo.githubAccountId, snapshotSha);
 		}
 	);
 

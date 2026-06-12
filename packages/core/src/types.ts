@@ -157,10 +157,32 @@ export interface PRCheck {
 	avatarUrl: string | null;
 }
 
+// A deployment created against the PR's head commit (e.g. a preview or
+// production environment). Surfaced so the checks menu can offer a link to the
+// live deployment.
+export interface PRDeployment {
+	// Environment name, e.g. "production", "preview", "Preview – my-app".
+	environment: string;
+	// Latest deployment status, mapped onto the same vocabulary as checks so the
+	// menu can reuse its status icons ('success' = active, 'failure' = error,
+	// 'pending' = in progress). null when no status has been reported yet.
+	state: PRChecksState | null;
+	// URL to view the deployment — the live environment URL when available, else
+	// the deploy log. Always set; deployments without any URL are omitted.
+	url: string;
+	// Avatar of the GitHub App that created the deployment, which doubles as the
+	// hosting provider's logo (e.g. the Vercel/Netlify/Cloudflare Pages bot
+	// avatar). null when the creator has no avatar.
+	avatarUrl: string | null;
+}
+
 // Aggregate state plus the individual checks behind it, for a hover breakdown.
 export interface PRChecksSummary {
 	state: PRChecksState;
 	checks: PRCheck[];
+	// Deployments attached to the head commit, deduped to the latest per
+	// environment. Empty when nothing was deployed.
+	deployments: PRDeployment[];
 }
 
 export type DiffContext =
@@ -806,6 +828,9 @@ export interface UserPrefs {
 	// (true = collapsed); `commentsSidebarOpen` is the right comments panel.
 	sidebarCollapsed: boolean;
 	commentsSidebarOpen: boolean;
+	// How many recently opened repositories the repo picker's "Recent" section
+	// lists. 0 hides the section entirely.
+	recentRepoCount: number;
 }
 
 export interface DeviceFlowStart {
@@ -827,6 +852,17 @@ export type DeviceFlowStatus =
 	| { state: 'pending' }
 	| { state: 'success'; account: GithubAccount }
 	| { state: 'error'; message: string };
+
+// A stored account whose token no longer authenticates: 'revoked' when GitHub
+// rejects the credential outright (revoked or expired token), 'sso' when the
+// token is fine but an organization's SAML session must be re-authorized.
+// Surfaced so the UI can prompt the user to sign in again — without this, a
+// dead token just makes the app silently behave as if access were missing.
+export interface GithubAuthError {
+	accountId: string;
+	login: string;
+	reason: 'revoked' | 'sso';
+}
 
 export interface PreloadAPI {
 	platform: AppPlatform;
@@ -963,10 +999,12 @@ export interface PreloadAPI {
 		// Resolve (and persist) the repo's upstream/parent if it's a fork. Returns
 		// the updated RepoInfo (with upstreamOwner/upstreamRepo set or cleared).
 		detectUpstream(repoId: string): Promise<RepoInfo | null>;
-		// Whether the project's account can push to `origin`'s repo. False when
-		// there's no GitHub remote (or the lookup fails) — drives the "fork this
-		// repo" banner/dialog when the user lacks write access.
-		getRepoPushAccess(repoId: string): Promise<boolean>;
+		// Whether the project's account can push to `origin`'s repo. False only on
+		// a definitive "no" (no GitHub remote, or the API answered and the account
+		// lacks push/visibility) — that's what drives the "fork this repo"
+		// banner/dialog. null when the answer is unknown (network failure, dead
+		// token), so a transient error is never mistaken for missing access.
+		getRepoPushAccess(repoId: string): Promise<boolean | null>;
 		// Fork the project's `origin` repo under the account; returns the fork's
 		// owner/name. Pair with git.convertToFork to rewire the local remotes.
 		createFork(repoId: string): Promise<{ owner: string; repo: string }>;
@@ -988,7 +1026,8 @@ export interface PreloadAPI {
 		// When omitted, the active repo's own coordinates are used.
 		// Whether the active account can push commits to the PR's head branch
 		// (direct push access to the head repo, or maintainer-edit on the base).
-		canPushToPR(repoId: string, pr: PRSummary): Promise<boolean>;
+		// null when the answer couldn't be determined (network failure, dead token).
+		canPushToPR(repoId: string, pr: PRSummary): Promise<boolean | null>;
 		getChecks(repoId: string, ref: string, owner?: string, repo?: string): Promise<PRChecksSummary>;
 		getPR(
 			repoId: string,
@@ -1029,6 +1068,12 @@ export interface PreloadAPI {
 			threadId: string,
 			resolved: boolean
 		): Promise<{ isResolved: boolean }>;
+		// Accounts currently known to be failing authentication. Hydrates the
+		// renderer's auth-error state; live changes arrive via onGithubAuthChanged.
+		getAuthErrors(): Promise<GithubAuthError[]>;
+		// Probe every stored account's token with a cheap /user call, flagging the
+		// ones that no longer authenticate. Returns the resulting error list.
+		validateAccounts(): Promise<GithubAuthError[]>;
 	};
 	state: {
 		getPrefs(): Promise<UserPrefs>;
@@ -1161,6 +1206,10 @@ export interface PreloadAPI {
 		// agent resolved one via the CLI). Payload is the repo id. Returns an
 		// unsubscribe fn.
 		onCommentsChanged(handler: (repoId: string) => void): () => void;
+		// An account's GitHub token started or stopped failing authentication.
+		// Payload is the full current list of failing accounts (empty = all good).
+		// Returns an unsubscribe fn.
+		onGithubAuthChanged(handler: (errors: GithubAuthError[]) => void): () => void;
 	};
 }
 

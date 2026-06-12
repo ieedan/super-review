@@ -6,7 +6,12 @@
 	import { Input } from './ui/input';
 	import { Textarea } from './ui/textarea';
 	import AccountSwitcher from './AccountSwitcher.svelte';
-	import { actions, app, effectiveGithubAccount } from '$lib/store.svelte';
+	import {
+		actions,
+		app,
+		effectiveAccountAuthError,
+		effectiveGithubAccount
+	} from '$lib/store.svelte';
 
 	let summary = $state('');
 	let description = $state('');
@@ -132,6 +137,11 @@
 	// otherwise the app-wide default.
 	const effectiveAccount = $derived(effectiveGithubAccount());
 
+	// That account's token stopped authenticating (revoked, or a SAML org
+	// session lapsed) — every GitHub feature is silently degraded until the user
+	// re-signs in, so prompt for it where they'd otherwise see odd behavior.
+	const authError = $derived(effectiveAccountAuthError());
+
 	// When the checked-out branch is a PR opened by someone else, committing here
 	// targets their PR branch. We resolve actual push access (direct or via
 	// maintainer-edit) so we can tell the user definitively whether a push will
@@ -209,7 +219,27 @@
 		class="min-h-0 resize-none px-2 py-1.5 text-xs"
 	/>
 
-	{#if needsFork}
+	{#if authError}
+		<div
+			class="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] text-muted-foreground"
+		>
+			<TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-warning" />
+			<span>
+				{#if authError.reason === 'sso'}
+					<span class="font-medium text-foreground">{authError.login}</span>'s organization access
+					needs to be re-authorized.
+				{:else}
+					GitHub sign-in for <span class="font-medium text-foreground">{authError.login}</span> has expired
+					or been revoked.
+				{/if}
+				<button
+					type="button"
+					class="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+					onclick={() => actions.openGithubSignIn()}>Sign in again</button
+				>
+			</span>
+		</div>
+	{:else if needsFork}
 		<div
 			class="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] text-muted-foreground"
 		>

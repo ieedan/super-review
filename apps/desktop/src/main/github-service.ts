@@ -6,11 +6,13 @@ import type {
 	DeviceFlowStatus,
 	GitIdentity,
 	GithubAccount,
+	GithubAuthError,
 	GithubOrg,
 	NewReviewCommentInput,
 	PRCheck,
 	PRChecksState,
 	PRChecksSummary,
+	PRDeployment,
 	PRReviewComment,
 	PRSummary
 } from '@shared/types.js';
@@ -144,6 +146,9 @@ export async function startDeviceFlow(): Promise<DeviceFlowStart> {
 			const account = await fetchAccountForToken(result.token);
 			upsertGithubAccount(account);
 			setActiveGithubAccountId(account.id);
+			// Re-signing in mints a fresh token for the same account id — clear any
+			// auth-failure flag so the renderer's prompt goes away.
+			noteRequestSucceeded(account.id);
 			lastStatus = { state: 'success', account: publicAccount(account) };
 		} catch (err) {
 			if (cancelled) return;
@@ -179,8 +184,75 @@ function resolveAccount(accountId?: string | null): StoredGithubAccount {
 	return account;
 }
 
+// ─── Auth-failure tracking ──────────────────────────────────────────────────
+// OAuth device-flow tokens don't expire on their own, but they can be revoked
+// (by the user, an org admin, or GitHub after a year of disuse), and a SAML
+// org's session can lapse and need re-authorizing. Every Octokit request is
+// hooked so the first failure flags the account and the next success (or a
+// re-sign-in) clears it — the renderer is notified either way so it can prompt
+// the user instead of silently degrading.
+
+const authErrors = new Map<string, GithubAuthError>();
+let authErrorsListener: ((errors: GithubAuthError[]) => void) | null = null;
+
+export function onAuthErrorsChanged(listener: (errors: GithubAuthError[]) => void): void {
+	authErrorsListener = listener;
+}
+
+export function getAuthErrors(): GithubAuthError[] {
+	return [...authErrors.values()];
+}
+
+// 401 → the token itself no longer authenticates (revoked or expired).
+// 403 with an X-GitHub-SSO header → the token is fine, but a SAML-enforcing
+// organization requires the session to be re-authorized in the browser.
+// Anything else (404, rate limit, network) is not an auth problem.
+function authFailureReason(err: unknown): 'revoked' | 'sso' | null {
+	const status = (err as { status?: number }).status;
+	if (status === 401) return 'revoked';
+	if (status === 403) {
+		const headers = (err as { response?: { headers?: Record<string, unknown> } }).response?.headers;
+		if (headers?.['x-github-sso']) return 'sso';
+	}
+	return null;
+}
+
+function noteRequestFailed(account: StoredGithubAccount, err: unknown): void {
+	const reason = authFailureReason(err);
+	if (!reason) return;
+	if (authErrors.get(account.id)?.reason === reason) return;
+	authErrors.set(account.id, { accountId: account.id, login: account.login, reason });
+	authErrorsListener?.(getAuthErrors());
+}
+
+function noteRequestSucceeded(accountId: string): void {
+	if (authErrors.delete(accountId)) authErrorsListener?.(getAuthErrors());
+}
+
+// Probe each stored account's token with a cheap /user call so a token that
+// died while the app was closed is flagged at startup rather than the first
+// time some feature happens to need it. Non-auth failures (offline, …) are
+// ignored — the hooks only flag 401/SSO.
+export async function validateAccounts(): Promise<GithubAuthError[]> {
+	await migrateLegacyTokenOnce();
+	await Promise.all(
+		listGithubAccounts().map((account) =>
+			octokit(account)
+				.users.getAuthenticated()
+				.catch(() => {})
+		)
+	);
+	return getAuthErrors();
+}
+
 function octokit(account: StoredGithubAccount): Octokit {
-	return new Octokit({ auth: account.token });
+	const o = new Octokit({ auth: account.token });
+	o.hook.after('request', () => noteRequestSucceeded(account.id));
+	o.hook.error('request', (err) => {
+		noteRequestFailed(account, err);
+		throw err;
+	});
+	return o;
 }
 
 // Bridge the signed-in GitHub OAuth token to git transport. git authenticates
@@ -308,7 +380,10 @@ function toPRSummary(
 // Whether the authenticated account can push commits to a PR's head branch:
 // either it has push access to the head repo directly, or the PR allows
 // maintainer edits and the account has push access to the base repo. Uses
-// `repos.get`, which reports the viewer's own `permissions` on a repo.
+// `repos.get`, which reports the viewer's own `permissions` on a repo. Returns
+// null when the answer couldn't be determined (network failure, dead token) —
+// only a definitive "no" from the API comes back as false, so a transient
+// error never paints a "can't push" warning.
 export async function canPushToPR(
 	args: {
 		headOwner?: string;
@@ -319,8 +394,9 @@ export async function canPushToPR(
 		maintainerCanModify?: boolean;
 	},
 	accountId?: string | null
-): Promise<boolean> {
+): Promise<boolean | null> {
 	const o = octokit(resolveAccount(accountId));
+	let definitive = true;
 	// Direct push access to the repo the head branch lives in.
 	if (args.headOwner && args.headRepo) {
 		try {
@@ -329,8 +405,11 @@ export async function canPushToPR(
 				repo: args.headRepo
 			});
 			if (head.data.permissions?.push) return true;
-		} catch {
-			// No visibility into the head repo — fall through to the maintainer path.
+		} catch (err) {
+			// 404 = no visibility into the head repo — a real "no" for this path;
+			// fall through to the maintainer path. Anything else leaves the overall
+			// answer unknown.
+			if ((err as { status?: number }).status !== 404) definitive = false;
 		}
 	}
 	// Maintainer edit: the PR opts in and we can push to the base repo.
@@ -351,10 +430,10 @@ export async function canPushToPR(
 			});
 			if (base.data.permissions?.push) return true;
 		}
-	} catch {
-		// Treat any failure as "can't determine" → not pushable.
+	} catch (err) {
+		if ((err as { status?: number }).status !== 404) definitive = false;
 	}
-	return false;
+	return definitive ? false : null;
 }
 
 // List PRs for the repo, most-recently-updated first. `state: 'all'` so the
@@ -402,19 +481,22 @@ export async function getUpstream(
 }
 
 // Whether the authenticated account can push to `owner/repo` itself. `repos.get`
-// reports the viewer's own `permissions` on the repo. Returns false when the call
-// fails (no visibility / not found) so the UI can offer to fork.
+// reports the viewer's own `permissions` on the repo. Only a definitive "no" —
+// the API answered and the account lacks push (or any visibility: 404) — comes
+// back as false, which is what lets the UI offer to fork. Every other failure
+// (network, rate limit, dead token) returns null so a transient error is never
+// presented as missing write access.
 export async function canPushToRepo(
 	owner: string,
 	repo: string,
 	accountId?: string | null
-): Promise<boolean> {
+): Promise<boolean | null> {
 	const o = octokit(resolveAccount(accountId));
 	try {
 		const res = await o.repos.get({ owner, repo });
 		return res.data.permissions?.push === true;
-	} catch {
-		return false;
+	} catch (err) {
+		return (err as { status?: number }).status === 404 ? false : null;
 	}
 }
 
@@ -499,9 +581,89 @@ function rollupChecks(checks: PRCheck[]): PRChecksState {
 	return 'success';
 }
 
+// Map a GraphQL DeploymentStatusState onto our check vocabulary so the menu can
+// reuse the same status icons. Returns null for inactive/abandoned states with
+// no meaningful indicator.
+function deploymentState(s: string | null | undefined): PRChecksState | null {
+	switch (s) {
+		case 'ACTIVE':
+		case 'SUCCESS':
+			return 'success';
+		case 'ERROR':
+		case 'FAILURE':
+			return 'failure';
+		case 'IN_PROGRESS':
+		case 'QUEUED':
+		case 'PENDING':
+		case 'WAITING':
+			return 'pending';
+		default:
+			return null;
+	}
+}
+
+// Deployments created against the head commit (preview/production environments),
+// fetched via GraphQL so we get the live environment URL in one request. Deduped
+// to the latest deployment per environment, keeping only those with a URL to
+// view. `ref` must be the head SHA (the only thing getChecks is called with).
+async function getDeployments(
+	o: Octokit,
+	owner: string,
+	repo: string,
+	ref: string
+): Promise<PRDeployment[]> {
+	const query = `
+    query ($owner: String!, $repo: String!, $oid: GitObjectID!) {
+      repository(owner: $owner, name: $repo) {
+        object(oid: $oid) {
+          ... on Commit {
+            deployments(first: 50, orderBy: { field: CREATED_AT, direction: DESC }) {
+              nodes {
+                environment
+                creator { avatarUrl }
+                latestStatus { state environmentUrl logUrl }
+              }
+            }
+          }
+        }
+      }
+    }`;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const res: any = await o.graphql(query, { owner, repo, oid: ref });
+	const nodes: Array<{
+		environment: string | null;
+		creator: { avatarUrl: string | null } | null;
+		latestStatus: {
+			state: string | null;
+			environmentUrl: string | null;
+			logUrl: string | null;
+		} | null;
+	}> = res?.repository?.object?.deployments?.nodes ?? [];
+
+	const byEnv = new Map<string, PRDeployment>();
+	for (const n of nodes) {
+		const env = n.environment ?? 'deployment';
+		// Nodes are newest-first, so the first one seen per environment is latest.
+		if (byEnv.has(env)) continue;
+		// Prefer the live environment URL, fall back to the deploy log. Without a
+		// URL there's nothing to view, so skip it.
+		const url = n.latestStatus?.environmentUrl || n.latestStatus?.logUrl;
+		if (!url) continue;
+		byEnv.set(env, {
+			environment: env,
+			state: deploymentState(n.latestStatus?.state),
+			url,
+			// The creating app's avatar is the hosting provider's logo.
+			avatarUrl: n.creator?.avatarUrl ?? null
+		});
+	}
+	return [...byEnv.values()];
+}
+
 // Aggregate GitHub Actions check-runs and legacy commit statuses for a ref,
 // returning both the rolled-up state and the individual checks (name, state,
-// run time) for a hover breakdown. `state` is 'none' when nothing reports.
+// run time) for a hover breakdown, plus any deployments attached to the commit.
+// `state` is 'none' when nothing reports.
 export async function getChecks(
 	owner: string,
 	repo: string,
@@ -509,9 +671,11 @@ export async function getChecks(
 	accountId?: string | null
 ): Promise<PRChecksSummary> {
 	const o = octokit(resolveAccount(accountId));
-	const [runs, combined] = await Promise.all([
+	const [runs, combined, deployments] = await Promise.all([
 		o.checks.listForRef({ owner, repo, ref, per_page: 100 }),
-		o.repos.getCombinedStatusForRef({ owner, repo, ref }).catch(() => null)
+		o.repos.getCombinedStatusForRef({ owner, repo, ref }).catch(() => null),
+		// Deployments are best-effort; a failure here must not sink the checks.
+		getDeployments(o, owner, repo, ref).catch(() => [])
 	]);
 
 	const checks: PRCheck[] = [];
@@ -546,7 +710,7 @@ export async function getChecks(
 		}
 	}
 
-	return { state: rollupChecks(checks), checks };
+	return { state: rollupChecks(checks), checks, deployments };
 }
 
 function mapReviewComment(
@@ -699,23 +863,52 @@ export async function createReviewComment(
 	owner: string,
 	repo: string,
 	input: NewReviewCommentInput,
-	accountId?: string | null
+	accountId?: string | null,
+	// SHA of the commit the on-screen diff was rendered from (the local
+	// `pr/<n>/head` snapshot). Anchoring the comment here — rather than the PR's
+	// live head — guarantees the line/side the user clicked resolve against the
+	// same diff they're looking at, even if the PR gained commits since it loaded.
+	// Falls back to the live head when the snapshot can't be resolved.
+	commitId?: string | null
 ): Promise<PRReviewComment> {
 	const viewer = resolveAccount(accountId);
 	const o = octokit(viewer);
-	// Need the head commit SHA to anchor the comment.
-	const pr = await o.pulls.get({ owner, repo, pull_number: input.prNumber });
-	const res = await o.pulls.createReviewComment({
-		owner,
-		repo,
-		pull_number: input.prNumber,
-		body: input.body,
-		commit_id: pr.data.head.sha,
-		path: input.path,
-		line: input.line,
-		side: input.side
-	});
-	return mapReviewComment(res.data, input.prNumber, viewer?.login ?? null);
+	// Anchor to the reviewed snapshot; fetch the live head only as a fallback.
+	const anchor =
+		commitId ?? (await o.pulls.get({ owner, repo, pull_number: input.prNumber })).data.head.sha;
+	try {
+		const res = await o.pulls.createReviewComment({
+			owner,
+			repo,
+			pull_number: input.prNumber,
+			body: input.body,
+			commit_id: anchor,
+			path: input.path,
+			line: input.line,
+			side: input.side
+		});
+		return mapReviewComment(res.data, input.prNumber, viewer?.login ?? null);
+	} catch (err) {
+		// GitHub rejects a comment whose (path, line, side) it can't place in the
+		// PR's diff at the head commit with a 422 "could not be resolved". This
+		// almost always means the on-screen diff is anchored to a different commit
+		// than the PR's current head (e.g. the PR was rebased/force-pushed since it
+		// was loaded), so the line no longer maps. Surface something actionable
+		// instead of the raw API validation error.
+		const status = (err as { status?: number }).status;
+		const errors = (err as { response?: { data?: { errors?: Array<{ field?: string }> } } })
+			.response?.data?.errors;
+		const unresolvablePath = errors?.some((e) => e.field?.endsWith('.path'));
+		if (status === 422 && unresolvablePath) {
+			throw new Error(
+				`GitHub couldn't place this comment on ${input.path}:${input.line} — that line isn't ` +
+					`part of the PR's current diff. The PR was likely updated since you opened it; ` +
+					`refresh the PR and try again.`,
+				{ cause: err }
+			);
+		}
+		throw err;
+	}
 }
 
 export async function replyReviewComment(
