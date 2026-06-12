@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.1.9
+
+### Patch Changes
+
+- Fix PR review comments failing with "could not be resolved". A branch with a PR is now diffed against the PR's actual base ref (`pr/<n>/base`, fetched from the PR's own base repo) instead of the local default branch, so the diff matches GitHub's PR and comments anchor to lines that are genuinely part of it. Also force-fetch the PR head snapshot, anchor comments to the reviewed commit, and surface a clearer message when a line truly isn't in the current diff. ([`53831e5`](https://github.com/ieedan/super-review/commit/53831e5d20d07e029ccda9a9ab1bb18f041ff47f))
+
+- The repository picker's "Recent" section now shows 5 repositories by default (up from 3), and the count is configurable in Settings → Behavior — set it to 0 to hide the section entirely. ([`53831e5`](https://github.com/ieedan/super-review/commit/53831e5d20d07e029ccda9a9ab1bb18f041ff47f))
+
 ## 0.1.8
 
 ### Patch Changes

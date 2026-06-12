@@ -14,7 +14,6 @@ a per-repo dropdown with auto-detected favicons.
   <img src="https://github.com/user-attachments/assets/1aa72a5c-2482-4ccb-8ef8-9b5c194df10e" alt="Super Review screenshot" />
 </div>
 
-
 You might need this for now:
 
 ```sh
