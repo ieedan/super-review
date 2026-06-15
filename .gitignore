@@ -6,6 +6,9 @@ dist
 .env.local
 *.log
 
+# super-review review sessions: local guided-tour artifacts, not version-controlled
+.super-review/sessions
+
 # electron-builder output
 release
 build/icon.*
