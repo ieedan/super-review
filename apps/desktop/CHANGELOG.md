@@ -1,5 +1,14 @@
 # @super-review/desktop
 
+## 0.1.10
+
+### Patch Changes
+
+- fix: diff view polish — center the gutter `+` comment button in its own lane between the line numbers and code, render deleted files as an all-removed diff (GitHub-style) with a compact `FileMinus`/`FileEdit` status icon instead of a wide text badge, and show "The diff for this file is too large to render" for oversized files (including ones with a single pathologically long line that previously painted blank) ([`68d083a`](https://github.com/ieedan/super-review/commit/68d083a48d3f1a4dac0fa17823352257ba936107))
+
+- Updated dependencies [[`68d083a`](https://github.com/ieedan/super-review/commit/68d083a48d3f1a4dac0fa17823352257ba936107)]:
+  - @super-review/core@0.1.5
+
 ## 0.1.9
 
 ### Patch Changes
