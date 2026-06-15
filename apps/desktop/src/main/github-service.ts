@@ -890,20 +890,27 @@ export async function createReviewComment(
 		return mapReviewComment(res.data, input.prNumber, viewer?.login ?? null);
 	} catch (err) {
 		// GitHub rejects a comment whose (path, line, side) it can't place in the
-		// PR's diff at the head commit with a 422 "could not be resolved". This
-		// almost always means the on-screen diff is anchored to a different commit
-		// than the PR's current head (e.g. the PR was rebased/force-pushed since it
-		// was loaded), so the line no longer maps. Surface something actionable
-		// instead of the raw API validation error.
+		// PR's diff at the anchored commit with a 422 "could not be resolved". It
+		// reports the unresolvable anchor on either the `.path` or the `.line`
+		// field of `pull_request_review_thread` (the `.line` variant is what you
+		// get when the path matches but the specific line doesn't). Both mean the
+		// same thing: the on-screen diff disagrees with the PR's diff at its head —
+		// the PR was rebased/force-pushed since it loaded, or (in the Branch tab)
+		// the local branch has changes that aren't pushed to the PR yet. Surface
+		// something actionable instead of the raw API validation JSON.
 		const status = (err as { status?: number }).status;
-		const errors = (err as { response?: { data?: { errors?: Array<{ field?: string }> } } })
-			.response?.data?.errors;
-		const unresolvablePath = errors?.some((e) => e.field?.endsWith('.path'));
-		if (status === 422 && unresolvablePath) {
+		const errors = (
+			err as { response?: { data?: { errors?: Array<{ field?: string; code?: string }> } } }
+		).response?.data?.errors;
+		const unresolvableAnchor = errors?.some(
+			(e) => e.field?.endsWith('.path') || e.field?.endsWith('.line')
+		);
+		if (status === 422 && unresolvableAnchor) {
 			throw new Error(
 				`GitHub couldn't place this comment on ${input.path}:${input.line} — that line isn't ` +
-					`part of the PR's current diff. The PR was likely updated since you opened it; ` +
-					`refresh the PR and try again.`,
+					`part of the PR's current diff. Either the PR was updated since you opened it, or ` +
+					`your local branch has changes that haven't been pushed to the PR yet. Refresh the ` +
+					`PR (or push your branch) and try again.`,
 				{ cause: err }
 			);
 		}
