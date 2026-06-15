@@ -7,6 +7,8 @@
 		Code,
 		Code2,
 		Eye,
+		FileEdit,
+		FileMinus,
 		FileText,
 		Image as ImageIcon
 	} from 'lucide-svelte';
@@ -163,21 +165,17 @@
 			? file.oldPath
 			: null
 	);
-	const isDeleted = $derived(file.status === 'deleted');
 	// Image files are rendered side by side (raster) or get a code/image toggle
-	// (SVG), so the usual "renamed"/"deleted" one-liners don't apply — we still
-	// want to show the old image of a deleted image, etc.
+	// (SVG), so the usual "renamed" one-liner doesn't apply — we still want to
+	// show the old image of a deleted image, etc.
 	const isImage = $derived(isImagePath(file.path));
 	const isSvg = $derived(isSvgPath(file.path));
-	// Files where the diff body is pointless to render — show a one-liner.
+	// Files where the diff body is pointless to render — show a one-liner. A
+	// deletion is NOT one of these: like GitHub, we render the old file as an
+	// all-removed diff (getDiff returns the old contents with an empty new side)
+	// rather than a "this file was deleted" placeholder.
 	const placeholderMessage = $derived(
-		isImage
-			? null
-			: renamedNoChanges
-				? 'File renamed without changes.'
-				: isDeleted
-					? 'This file was deleted.'
-					: null
+		isImage ? null : renamedNoChanges ? 'File renamed without changes.' : null
 	);
 
 	// Partial (line/hunk) staging is offered only in the Unstaged working-tree
@@ -865,6 +863,34 @@
 		.sr-excluded [data-line-number-content] { opacity: 0.4; }
 	`;
 
+	// Breathing room around Pierre's hover `+` comment button. By default Pierre
+	// pins the button to the right edge of the line-number column and then yanks
+	// it ~12px further right (`margin-right: calc(1ch - 1lh)`), so it lands on top
+	// of the first code token. Instead: widen the gutter (the number column is
+	// `minmax(min-content, max-content)`, so padding-right grows it), pad the code
+	// line, and center the button on the number/code seam so it sits in its own
+	// lane between the two — never over a token.
+	//
+	// The spacing goes on the colored cells themselves — the number cell
+	// (`[data-column-number]`) and the per-line code element (`[data-line]`),
+	// which both carry `--diffs-line-bg` — NOT on the `[data-content]` column
+	// wrapper (plain `--diffs-bg`). Padding the wrapper would expose an uncolored
+	// strip and visibly break the diff's line background.
+	//
+	// These cells live in Pierre's shadow DOM, so a light-DOM stylesheet can't
+	// reach them. We feed this through Pierre's `unsafeCSS` option, which injects
+	// into the shadow root under `@layer unsafe` (the top layer) — outranking
+	// Pierre's own `@layer base` rules for padding and the button margin.
+	// The button pins to the number cell's right padding edge, which sits inside
+	// the seam by the 2px gutter/content border (`--diffs-gap-style`). translateX
+	// of half the button width lands its center on that padding edge — 1px shy of
+	// the visual gap's midpoint, so add 1px (half the border) to balance it.
+	const GUTTER_UTILITY_CSS = `
+		[data-column-number] { padding-right: 14px; }
+		[data-content] [data-line], [data-column-content] { padding-left: 14px; }
+		[data-utility-button] { margin-right: 0; transform: translateX(calc(50% + 1px)); }
+	`;
+
 	// Parse the git patch into the file's full set of changed-line keys.
 	function buildStagingModel(patch: string): StagingModel | null {
 		const parsed = parseFilePatch(patch);
@@ -1151,6 +1177,9 @@
 				disableFileHeader: true,
 				renderAnnotation,
 				onLineNumberClick: onDiffLineNumberClick,
+				// Gutter/code spacing + `+` button centering, injected into Pierre's
+				// shadow DOM (scoped component styles can't reach these cells).
+				unsafeCSS: GUTTER_UTILITY_CSS,
 				// Built-in gutter `+` button (the one with `data-utility-button`).
 				// Only enable it where commenting is meaningful — toggled live below
 				// via setOptions + flushManagers when `canComment` changes.
@@ -1293,7 +1322,7 @@
 		// Don't fetch hidden diffs — wait until the user clicks "Load diff". When
 		// they do, `deferred` flips false and this effect re-runs to fetch.
 		if (deferred) return;
-		// Nothing useful to render for a pure rename or a deletion.
+		// Nothing useful to render for a pure rename with no content change.
 		if (placeholderMessage) return;
 		const repo = app.activeRepo;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
@@ -1685,10 +1714,14 @@
 				>{#if displayPrefix}<span class={[!isSeen && 'text-muted-foreground']}>{displayPrefix}</span
 					>{/if}<span class="shrink-0">{pathBase}</span></span
 			>
-			{#if statusBadge}
-				<Badge variant={statusBadge === 'deleted' ? 'destructive' : 'warning'}>
-					{statusBadge}
-				</Badge>
+			{#if statusBadge === 'deleted'}
+				<span class="flex shrink-0 items-center" title="Deleted">
+					<FileMinus class="size-3.5 text-destructive" />
+				</span>
+			{:else if statusBadge === 'renamed'}
+				<span class="flex shrink-0 items-center" title="Renamed">
+					<FileEdit class="size-3.5 text-warning" />
+				</span>
 			{/if}
 			{#if file.isBinary}
 				<Badge variant="muted">binary</Badge>
@@ -1823,7 +1856,7 @@
 				<div class="p-4 text-sm text-muted-foreground">Binary file, diff not shown.</div>
 			{:else if diffData?.truncated}
 				<div class="p-4 text-sm text-muted-foreground">
-					File too large to render. Diff preview disabled.
+					The diff for this file is too large to render.
 				</div>
 			{/if}
 			<div bind:this={host} class="diff-host pl-2"></div>
@@ -1851,53 +1884,7 @@
 		display: block;
 		width: 100%;
 	}
-	/* Pierre's gutter container sits absolute over the line-number cell with
-     no z-index. Raise it above the digits and let it fill the gutter so the
-     `+` button has a solid backdrop. */
-	.diff-host :global([data-gutter-utility-slot]) {
-		z-index: 5;
-		left: 0;
-		right: 0;
-		align-items: center;
-		justify-content: center;
-		background: var(--diffs-bg-num, var(--diffs-bg, transparent));
-	}
-	/* Pierre's built-in `+` button (with `data-utility-button`). Reskin to
-     match the project's default Button variant — primary bg, white icon,
-     rounded, with a soft elevation so it pops against the diff line. */
-	.diff-host :global([data-utility-button]) {
-		display: grid;
-		place-items: center;
-		width: 18px;
-		height: 18px;
-		padding: 0;
-		border: 0;
-		border-radius: 6px;
-		background: hsl(var(--primary));
-		color: hsl(var(--primary-foreground));
-		cursor: pointer;
-		box-shadow:
-			0 1px 2px rgba(0, 0, 0, 0.25),
-			0 0 0 1px rgba(0, 0, 0, 0.04);
-		transition:
-			transform 80ms ease,
-			box-shadow 80ms ease,
-			background-color 80ms ease;
-	}
-	.diff-host :global([data-utility-button]:hover) {
-		background: color-mix(in lab, hsl(var(--primary)) 90%, white);
-		transform: scale(1.06);
-		box-shadow:
-			0 2px 6px rgba(0, 0, 0, 0.25),
-			0 0 0 1px rgba(0, 0, 0, 0.05);
-	}
-	.diff-host :global([data-utility-button]:focus-visible) {
-		outline: 2px solid hsl(var(--ring));
-		outline-offset: 1px;
-	}
-	.diff-host :global([data-utility-button] svg) {
-		width: 12px;
-		height: 12px;
-		stroke-width: 2.5;
-	}
+	/* Pierre's `+` gutter button and its slot live inside Pierre's shadow DOM,
+     which these scoped light-DOM rules can't reach. Their styling and centering
+     is in GUTTER_UTILITY_CSS above, injected via Pierre's `unsafeCSS`. */
 </style>

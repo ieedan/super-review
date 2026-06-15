@@ -25,6 +25,36 @@ const execFileAsync = promisify(execFile);
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
+// A single line longer than this chokes the diff renderer — the browser can't
+// lay out one enormous unwrapped line, so the diff paints blank. Treat such a
+// file as too large to render (same as the byte cap) and show the placeholder
+// instead. Generated/minified blobs (e.g. embedded session JSON) hit this even
+// when their total size is under MAX_FILE_BYTES.
+const MAX_RENDER_LINE_BYTES = 100 * 1024;
+
+// True when either side is too large for the renderer: over the byte cap, or
+// containing a single line long enough to stall layout.
+function tooLargeToRender(oldContents: string, newContents: string): boolean {
+	return (
+		oldContents.length > MAX_FILE_BYTES ||
+		newContents.length > MAX_FILE_BYTES ||
+		hasOverlongLine(oldContents) ||
+		hasOverlongLine(newContents)
+	);
+}
+
+// Scan for a line over MAX_RENDER_LINE_BYTES without splitting the whole string
+// into an array (these inputs can be multi-MB).
+function hasOverlongLine(contents: string): boolean {
+	let start = 0;
+	for (;;) {
+		const nl = contents.indexOf('\n', start);
+		if (nl === -1) return contents.length - start > MAX_RENDER_LINE_BYTES;
+		if (nl - start > MAX_RENDER_LINE_BYTES) return true;
+		start = nl + 1;
+	}
+}
+
 // Images are embedded as base64 `data:` URLs and shipped whole over IPC, so the
 // cap is higher than the text cap (images are routinely a few MB) but still
 // bounded — past this we leave the side unrendered rather than balloon memory.
@@ -1277,7 +1307,7 @@ async function getStashDiff(repoPath: string, filePath: string, ref: string): Pr
 	else if (hasOld && !hasNew) status = 'deleted';
 	else status = 'modified';
 
-	const truncated = oldContents.length > MAX_FILE_BYTES || newContents.length > MAX_FILE_BYTES;
+	const truncated = tooLargeToRender(oldContents, newContents);
 	const dropTextContents = isBinary && imageMime !== null;
 
 	// Untracked files have no patch from git (they're not against any parent);
@@ -1398,7 +1428,7 @@ export async function getDiff(
 	else if (hasOld && !hasNew) status = 'deleted';
 	else status = 'modified';
 
-	const truncated = oldContents.length > MAX_FILE_BYTES || newContents.length > MAX_FILE_BYTES;
+	const truncated = tooLargeToRender(oldContents, newContents);
 
 	// A raster image's "contents" are lossy binary noise — drop them so we don't
 	// ship garbage; the side-by-side `data:` URLs are what gets rendered. SVGs
