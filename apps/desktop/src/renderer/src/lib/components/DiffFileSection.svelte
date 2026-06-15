@@ -58,6 +58,7 @@
 	} from '@shared/diff-staging';
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
+	import DiffHunkSnippet from './DiffHunkSnippet.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
 	import { calloutsForFile } from '$lib/session-tour';
@@ -1664,11 +1665,50 @@
 		visualstudio: 'Visual Studio'
 	};
 
-	// Surface comments that fall outside the rendered diff (e.g. on lines we
-	// skipped) so they aren't silently lost.
-	const orphanComments = $derived.by<PRReviewComment[]>(() => {
+	// Outdated comments can't be pinned inline — their line (or whole file) is gone
+	// from the current diff — so we group them by thread and render them below the
+	// diff from their stored hunk. GitHub keeps these unresolved, so we do too:
+	// they show an "Outdated" badge but the resolved state stays driven by
+	// `isResolved` alone (the resolve bar still renders via CommentAnnotation).
+	const outdatedThreads = $derived.by<
+		Array<{
+			rootId: number;
+			diffHunk?: string;
+			originalLine: number | null;
+			side: 'LEFT' | 'RIGHT';
+			comments: PRReviewComment[];
+		}>
+	>(() => {
 		if (!isPRContext) return [];
-		return (app.prComments[file.path] ?? []).filter((c) => c.line == null);
+		const all = app.prComments[file.path] ?? [];
+		// Group outdated comments under their thread root, preserving first-seen
+		// order. A live root with an outdated reply still groups here, anchored by
+		// the root's hunk; only the outdated comments are rendered in the group.
+		const threads: Array<{
+			rootId: number;
+			diffHunk?: string;
+			originalLine: number | null;
+			side: 'LEFT' | 'RIGHT';
+			comments: PRReviewComment[];
+		}> = [];
+		for (const c of all) {
+			if (!c.isOutdated) continue;
+			const rootId = c.inReplyTo ?? c.id;
+			let thread = threads.find((t) => t.rootId === rootId);
+			if (!thread) {
+				const anchor = all.find((x) => x.id === rootId) ?? c;
+				thread = {
+					rootId,
+					diffHunk: anchor.diffHunk,
+					originalLine: anchor.originalLine,
+					side: anchor.side,
+					comments: []
+				};
+				threads.push(thread);
+			}
+			thread.comments.push(c);
+		}
+		return threads;
 	});
 </script>
 
@@ -1860,19 +1900,26 @@
 				</div>
 			{/if}
 			<div bind:this={host} class="diff-host pl-2"></div>
-			{#if orphanComments.length > 0}
-				<div class="border-t border-border p-3 text-xs text-muted-foreground">
-					<p class="mb-2 font-medium">
-						{orphanComments.length} comment{orphanComments.length === 1 ? '' : 's'} on outdated lines:
-					</p>
-					<ul class="space-y-2">
-						{#each orphanComments as c (c.id)}
-							<li class="rounded border border-border bg-card/40 p-2">
-								<div class="font-medium">{c.author}</div>
-								<p class="whitespace-pre-wrap">{c.body}</p>
-							</li>
-						{/each}
-					</ul>
+			{#if outdatedThreads.length > 0}
+				<div class="border-t border-border">
+					{#each outdatedThreads as thread (thread.rootId)}
+						<div class="border-b border-border last:border-b-0">
+							<!-- Render the code context from the comment's saved hunk, not the
+							     working tree, so it shows even when the line/file is gone. -->
+							{#if thread.diffHunk}
+								<div class="px-3 pt-3">
+									<DiffHunkSnippet
+										hunk={thread.diffHunk}
+										originalLine={thread.originalLine}
+										side={thread.side}
+									/>
+								</div>
+							{/if}
+							{#each thread.comments as c (c.id)}
+								<CommentAnnotation meta={{ kind: 'comment', comment: c }} />
+							{/each}
+						</div>
+					{/each}
 				</div>
 			{/if}
 		</div>

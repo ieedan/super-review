@@ -730,7 +730,17 @@ function mapReviewComment(
 		createdAt: c.created_at,
 		updatedAt: c.updated_at,
 		url: c.html_url,
-		line: c.line ?? c.original_line ?? null,
+		// `line` is the live anchor (null when outdated); `original_line` is kept
+		// separately so we can still render/label an outdated comment. We no longer
+		// fall back from one to the other — conflating them would pin an outdated
+		// comment onto the wrong current-diff line.
+		line: c.line ?? null,
+		originalLine: c.original_line ?? null,
+		position: c.position ?? null,
+		diffHunk: c.diff_hunk ?? undefined,
+		// GitHub's canonical outdated signal: the comment has a captured hunk
+		// (an original anchor) but no longer maps into the current diff.
+		isOutdated: c.position == null && c.diff_hunk != null,
 		side: (c.side ?? 'RIGHT') as 'LEFT' | 'RIGHT',
 		inReplyTo: c.in_reply_to_id ?? undefined,
 		canDelete: viewerLogin ? c.user?.login === viewerLogin : false,

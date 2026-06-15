@@ -187,6 +187,13 @@
 				<header>
 					<span class="author">{c.author}</span>
 					<span class="time">{formatRelative(c.createdAt)}</span>
+					<!-- "Outdated" mirrors GitHub: the anchored line/file is gone from the
+					     current diff. It's independent of resolution — the resolved badge
+					     below stays driven solely by `isResolved`. Shown once per thread
+					     (on the root) like the resolved badge. -->
+					{#if c.isOutdated && isRoot}
+						<span class="outdated-tag">Outdated</span>
+					{/if}
 					{#if c.isResolved && isRoot}
 						<span class="resolved-tag"><Check class="size-3" /> Resolved</span>
 					{/if}
@@ -416,6 +423,17 @@
 		margin-top: 6px;
 		padding-top: 6px;
 		border-top: 1px solid var(--color-border);
+	}
+	.outdated-tag {
+		display: inline-flex;
+		align-items: center;
+		font-size: 10px;
+		font-weight: 600;
+		line-height: 1;
+		padding: 2px 6px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+		color: var(--color-warning);
 	}
 	.resolved-tag {
 		display: inline-flex;

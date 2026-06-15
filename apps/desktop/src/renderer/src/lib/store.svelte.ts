@@ -1631,9 +1631,14 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 // Copy-ready prompt for a single PR review comment — same shape as the local
 // formatter so an agent gets a consistent instruction regardless of source.
 function formatPRCommentPrompt(c: PRReviewComment): string {
+	// Fall back to the original line for outdated comments (their live `line` is
+	// gone) so the prompt still points at where the comment was made, flagged so
+	// the agent knows the code there may have since changed.
+	const line = c.line ?? c.originalLine;
+	const outdated = c.isOutdated ? ' (outdated)' : '';
 	const loc =
-		c.line != null
-			? `at line ${c.line}${sideQualifier(c.side)} in \`${c.path}\``
+		line != null
+			? `at line ${line}${sideQualifier(c.side)} in \`${c.path}\`${outdated}`
 			: `on \`${c.path}\` (file-level)`;
 	return `Review comment ${loc}:\n\n${c.body.trim()}`;
 }
@@ -1652,7 +1657,11 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 	for (const [path, list] of byFile) {
 		sections.push(`### ${path}`);
 		for (const c of list) {
-			const where = c.line != null ? `line ${c.line}${sideQualifier(c.side)}` : 'file-level';
+			const line = c.line ?? c.originalLine;
+			const where =
+				line != null
+					? `line ${line}${sideQualifier(c.side)}${c.isOutdated ? ' (outdated)' : ''}`
+					: 'file-level';
 			const body = c.body.trim().replace(/\n/g, '\n  ');
 			sections.push(`- [ ] **${where}** - ${body}`);
 		}
@@ -3300,7 +3309,7 @@ export const actions = {
 	async copyAllUnresolvedPRComments(): Promise<void> {
 		const roots = Object.values(app.prComments)
 			.flat()
-			.filter((c) => c.inReplyTo == null && c.line != null && !c.isResolved);
+			.filter((c) => c.inReplyTo == null && (c.line != null || c.isOutdated) && !c.isResolved);
 		if (roots.length === 0) return;
 		await actions.copyToClipboard(formatPRCommentsPrompt(roots));
 	},
