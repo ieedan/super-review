@@ -1573,39 +1573,34 @@ async function loadLocalComments(): Promise<void> {
 }
 
 // ── Copy-to-prompt formatting ──
-// Comments are pinned to a line of a *diff*, so a copied prompt has to say so —
-// "new/original side" is meaningless without the diff in front of the reader.
-// These helpers spell out that it's a diff and what each side refers to.
+// Comments are pinned to a line of a diff. An agent acting on the copied prompt
+// works in the live file, where line numbers match the new (post-change) side —
+// so a plain "line 240 in `path`" is enough. Only the original (pre-change) side
+// needs a qualifier, since there the number refers to the old file.
 
 // "line 5" / "lines 5-7" for a 1-based inclusive span.
 function lineRangeLabel(start: number, end: number): string {
 	return start === end ? `line ${start}` : `lines ${start}-${end}`;
 }
 
-// Full clause naming the diff side, for the single-comment prompt.
-function diffSideClause(side: 'LEFT' | 'RIGHT'): string {
-	return side === 'LEFT'
-		? 'the original side of the diff (the code before the change)'
-		: 'the new side of the diff (the code after the change)';
-}
-
-// Short side tag for the dense task-list rows.
-function diffSideShort(side: 'LEFT' | 'RIGHT'): string {
-	return side === 'LEFT' ? 'original side' : 'new side';
+// Appended after a line label when the comment sits on the original (pre-change)
+// side of the diff. Empty for the new side, where the number matches the file.
+function sideQualifier(side: 'LEFT' | 'RIGHT'): string {
+	return side === 'LEFT' ? ' (original side)' : '';
 }
 
 // A header line for the "copy all" task lists, naming what the list is.
 const COMMENTS_PROMPT_INTRO =
 	'Address the following review comments left on a diff (the code changes under review). ' +
-	'Each item gives the file, the line(s), which side of the diff (new = after the change, ' +
-	'original = before the change), and the feedback:\n';
+	'Each item gives the file, the line(s), and the feedback. Line numbers are on the new ' +
+	'(post-change) side unless marked "(original side)":\n';
 
 // Build a copy-ready prompt for a single comment: makes the diff context and the
 // side explicit so an agent can act on it without the diff in front of them.
 function formatCommentPrompt(c: LocalComment): string {
 	return (
-		`Review comment on the diff of \`${c.path}\`, at ${lineRangeLabel(c.startLine, c.endLine)} ` +
-		`on ${diffSideClause(c.side)}:\n\n${c.body.trim()}`
+		`Review comment at ${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)} ` +
+		`in \`${c.path}\`:\n\n${c.body.trim()}`
 	);
 }
 
@@ -1624,7 +1619,7 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 	for (const [path, list] of byFile) {
 		sections.push(`### ${path}`);
 		for (const c of list) {
-			const where = `${lineRangeLabel(c.startLine, c.endLine)}, ${diffSideShort(c.side)}`;
+			const where = `${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)}`;
 			const body = c.body.trim().replace(/\n/g, '\n  ');
 			sections.push(`- [ ] **${where}** - ${body}`);
 		}
@@ -1637,8 +1632,10 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 // formatter so an agent gets a consistent instruction regardless of source.
 function formatPRCommentPrompt(c: PRReviewComment): string {
 	const loc =
-		c.line != null ? `, at line ${c.line} on ${diffSideClause(c.side)}` : ' (file-level comment)';
-	return `Review comment on the diff of \`${c.path}\`${loc}:\n\n${c.body.trim()}`;
+		c.line != null
+			? `at line ${c.line}${sideQualifier(c.side)} in \`${c.path}\``
+			: `on \`${c.path}\` (file-level)`;
+	return `Review comment ${loc}:\n\n${c.body.trim()}`;
 }
 
 // Markdown task list from several PR review comments, grouped by file.
@@ -1655,7 +1652,7 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 	for (const [path, list] of byFile) {
 		sections.push(`### ${path}`);
 		for (const c of list) {
-			const where = c.line != null ? `line ${c.line}, ${diffSideShort(c.side)}` : 'file-level';
+			const where = c.line != null ? `line ${c.line}${sideQualifier(c.side)}` : 'file-level';
 			const body = c.body.trim().replace(/\n/g, '\n  ');
 			sections.push(`- [ ] **${where}** - ${body}`);
 		}
