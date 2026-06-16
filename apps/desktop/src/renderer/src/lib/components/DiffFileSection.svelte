@@ -621,6 +621,10 @@
 		// Only the section that owns this callout responds.
 		if (!fileCallouts.some((c) => c.id === req.calloutId)) return;
 		lastCalloutScrollNonce = req.nonce;
+		// A deferred diff (too large / hidden) hasn't rendered, so its annotation
+		// containers don't exist yet — force the load so there's something to
+		// scroll to. The retry window in scrollToAnnotation waits for the render.
+		if (deferred) loadDiffOverride = true;
 		scrollToAnnotation(() => calloutContainers.get(req.calloutId!));
 	});
 
@@ -633,6 +637,10 @@
 		if (!req || req.nonce === lastCommentScrollNonce) return;
 		if (req.path !== file.path) return;
 		lastCommentScrollNonce = req.nonce;
+		// As above: if this file's diff was deferred, clicking its comment would
+		// otherwise scroll to nothing because the diff never renders. Force the
+		// load so the comment's annotation mounts and the scroll can land on it.
+		if (deferred) loadDiffOverride = true;
 		scrollToAnnotation(() => commentContainers.get(req.key));
 	});
 
