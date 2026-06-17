@@ -585,10 +585,6 @@ export interface FileContextMenuParams {
 	// Whether to offer commit Include/Exclude items — only in the Unstaged tab,
 	// where the file list drives which changes go into the next commit.
 	canInclude: boolean;
-	// Whether to offer "Mark Seen"/"Mark Unseen" items — only where the seen
-	// indicator is actually surfaced (i.e. not the Unstaged tab, which shows
-	// commit-inclusion checkboxes instead).
-	canMarkSeen: boolean;
 }
 
 // Which editors/terminals make sense to offer per OS. The Settings UI only

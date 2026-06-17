@@ -47,6 +47,7 @@
 		setCachedDiff
 	} from '$lib/store.svelte';
 	import { diffDeferReason } from '@shared/diff-defer';
+	import { sessionIdFromManifestPath } from '@shared/session-manifest';
 	import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { scheduleRender } from '$lib/render-scheduler';
 	import { diffContextKey } from '@shared/diff-context';
@@ -60,6 +61,7 @@
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
+	import SessionDiffCard from './SessionDiffCard.svelte';
 	import { calloutsForFile } from '$lib/session-tour';
 	import type {
 		ChangedFile,
@@ -146,6 +148,10 @@
 		loadDiffOverride ? null : diffDeferReason(file, app.maxDiffLines, app.hiddenDiffPatterns)
 	);
 	const deferred = $derived(deferReason !== null);
+	// When a deferred file is a `.super-review/sessions/*.json` manifest, the raw
+	// JSON diff is useless to a reviewer — show a card that opens the documented
+	// session instead. Null for any other file.
+	const sessionManifestId = $derived(sessionIdFromManifestPath(file.path));
 	// A pure rename (or copy) with no content change has nothing to diff — git
 	// reports zero additions/deletions. Mirror GitHub and show a one-liner
 	// instead of fetching/rendering an empty diff.
@@ -1822,6 +1828,8 @@
 				<div class="p-4 text-sm text-muted-foreground">{placeholderMessage}</div>
 			{:else if loadError}
 				<div class="p-4 text-sm text-destructive">{loadError}</div>
+			{:else if deferred && sessionManifestId}
+				<SessionDiffCard sessionId={sessionManifestId} onViewRaw={() => (loadDiffOverride = true)} />
 			{:else if deferred}
 				<div class="flex flex-col items-center gap-2 p-6 text-center">
 					<p class="text-xs text-muted-foreground">

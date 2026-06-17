@@ -1283,12 +1283,10 @@ export function registerIpc(): void {
 				// groups.
 				const n = params.selectedCount;
 				const groups: MenuItemConstructorOptions[][] = [];
-				if (params.canMarkSeen) {
-					groups.push([
-						item(`Mark ${n} Selected Files as Seen`, 'markSelectedSeen'),
-						item(`Mark ${n} Selected Files as Unseen`, 'markSelectedUnseen')
-					]);
-				}
+				groups.push([
+					item(`Mark ${n} Selected Files as Seen`, 'markSelectedSeen'),
+					item(`Mark ${n} Selected Files as Unseen`, 'markSelectedUnseen')
+				]);
 				if (params.canDiscard) {
 					groups.push([item(`Discard ${n} Selected Files`, 'discardSelected')]);
 				}
