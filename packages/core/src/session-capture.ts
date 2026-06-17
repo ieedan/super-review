@@ -136,7 +136,8 @@ export async function captureSession(
 		stepInput.flatMap((s) => [...s.files, ...(s.callouts ?? []).map((c) => c.file)])
 	);
 	const allChanged = await listChangedFiles(repoPath, ctx);
-	const changed = scopePaths.size > 0 ? allChanged.filter((f) => scopePaths.has(f.path)) : allChanged;
+	const changed =
+		scopePaths.size > 0 ? allChanged.filter((f) => scopePaths.has(f.path)) : allChanged;
 
 	const files: SessionFile[] = [];
 	let additions = 0;
