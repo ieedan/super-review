@@ -61,46 +61,46 @@
 				}
 			}}
 		>
-		<div
-			class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card"
-			title={summary ? harnessLabel(summary.harness, summary.harnessLabel) : 'Session'}
-		>
-			{#if summary}
-				<HarnessLogo harness={summary.harness} size={16} />
-			{:else}
-				<Layers class="size-4 text-muted-foreground" />
-			{/if}
-		</div>
-		<div class="min-w-0 flex-1">
-			<div class="flex items-center gap-2">
-				<span class="truncate text-sm font-medium">{summary?.name ?? 'Documented session'}</span>
-				<ChevronRight
-					class="size-4 flex-none text-muted-foreground transition-transform group-hover:translate-x-0.5"
-				/>
+			<div
+				class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card"
+				title={summary ? harnessLabel(summary.harness, summary.harnessLabel) : 'Session'}
+			>
+				{#if summary}
+					<HarnessLogo harness={summary.harness} size={16} />
+				{:else}
+					<Layers class="size-4 text-muted-foreground" />
+				{/if}
 			</div>
-			{#if summary?.description}
-				<p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{summary.description}</p>
-			{/if}
-			{#if summary}
-				<div
-					class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground tabular-nums"
-				>
-					<span>{relative(summary.updatedAt)}</span>
-					<span>·</span>
-					{#if summary.stepCount > 0}
-						<span>{summary.stepCount} step{summary.stepCount === 1 ? '' : 's'}</span>
-						<span>·</span>
-					{/if}
-					<span>{summary.fileCount} file{summary.fileCount === 1 ? '' : 's'}</span>
-					<span class="text-success">+{summary.additions}</span>
-					<span class="text-destructive">−{summary.deletions}</span>
-					{#if summary.branch}
-						<span>·</span>
-						<span class="truncate">{summary.branch}</span>
-					{/if}
+			<div class="min-w-0 flex-1">
+				<div class="flex items-center gap-2">
+					<span class="truncate text-sm font-medium">{summary?.name ?? 'Documented session'}</span>
+					<ChevronRight
+						class="size-4 flex-none text-muted-foreground transition-transform group-hover:translate-x-0.5"
+					/>
 				</div>
-			{/if}
-			<p class="mt-1 text-[11px] text-muted-foreground">Open this session as a guided tour</p>
+				{#if summary?.description}
+					<p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{summary.description}</p>
+				{/if}
+				{#if summary}
+					<div
+						class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground tabular-nums"
+					>
+						<span>{relative(summary.updatedAt)}</span>
+						<span>·</span>
+						{#if summary.stepCount > 0}
+							<span>{summary.stepCount} step{summary.stepCount === 1 ? '' : 's'}</span>
+							<span>·</span>
+						{/if}
+						<span>{summary.fileCount} file{summary.fileCount === 1 ? '' : 's'}</span>
+						<span class="text-success">+{summary.additions}</span>
+						<span class="text-destructive">−{summary.deletions}</span>
+						{#if summary.branch}
+							<span>·</span>
+							<span class="truncate">{summary.branch}</span>
+						{/if}
+					</div>
+				{/if}
+				<p class="mt-1 text-[11px] text-muted-foreground">Open this session as a guided tour</p>
 			</div>
 		</div>
 	{/if}

@@ -1830,7 +1830,10 @@
 			{:else if loadError}
 				<div class="p-4 text-sm text-destructive">{loadError}</div>
 			{:else if deferred && sessionManifestId}
-				<SessionDiffCard sessionId={sessionManifestId} onViewRaw={() => (loadDiffOverride = true)} />
+				<SessionDiffCard
+					sessionId={sessionManifestId}
+					onViewRaw={() => (loadDiffOverride = true)}
+				/>
 			{:else if deferred}
 				<div class="flex flex-col items-center gap-2 p-6 text-center">
 					<p class="text-xs text-muted-foreground">
