@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check } from 'lucide-svelte';
+	import Check from '@lucide/svelte/icons/check';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import * as Command from './ui/command';
 	import { actions, app } from '$lib/store.svelte';

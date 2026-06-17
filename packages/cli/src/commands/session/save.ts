@@ -43,8 +43,10 @@ reviewed as an isolated session in the super-review desktop app.
         "files": ["src/a.ts", "src/b.ts"] }
     ]
   }
-List files in reading order; any changed file you omit still shows, grouped
-under "Other changes" at the end.
+List files in reading order. When a tour is given, the session captures ONLY
+the files the tour references — so list every file you changed. A changed file
+left out of the tour is not captured. (Without a tour, every changed file is
+captured ungrouped.)
 
 Documenting committed changes:
   By default the diff is the working tree (uncommitted edits). To document

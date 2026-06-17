@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { GitMerge, Loader2 } from 'lucide-svelte';
+	import GitMerge from '@lucide/svelte/icons/git-merge';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import { Button } from './ui/button';
 	import { actions, app } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';

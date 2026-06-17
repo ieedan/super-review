@@ -5,7 +5,10 @@
 	// stash default to selected; branches that still hold a stash default to kept,
 	// so we don't quietly delete work the user tucked away. Deleting a branch
 	// never drops its stashes — those stay recoverable via `git stash list`.
-	import { Archive, GitBranch, Loader2, Trash2 } from 'lucide-svelte';
+	import Archive from '@lucide/svelte/icons/archive';
+	import GitBranch from '@lucide/svelte/icons/git-branch';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import * as Dialog from './ui/dialog';
 	import { Button } from './ui/button';
 	import { Checkbox } from './ui/checkbox';

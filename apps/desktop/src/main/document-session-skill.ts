@@ -95,9 +95,12 @@ the overview. Don't annotate every line — callouts are for what's easy to miss
 - **Explain the why.** The diff already shows *what* changed — the body should
   say *why*, point at the key line, and flag anything non-obvious.
 - **List files in reading order** within a step.
-- Any changed file you don't place in a step still shows, grouped under
-  **"Other changes"** at the end — nothing is hidden, but anything worth the
-  reviewer's attention should be in a step.
+- **List every file you changed, and only those.** When you pass a tour, the
+  session captures *only* the files the tour references — that's the point: the
+  reviewer sees the exact change you made, not whatever else is sitting in the
+  working tree. So place every file you touched in some step. A changed file you
+  leave out is *not* captured; an unchanged file you list is dropped (the CLI
+  warns about it).
 
 ### Arguments
 
@@ -114,7 +117,9 @@ the overview. Don't annotate every line — callouts are for what's easy to miss
 - \`--cwd\` — Optional. The repo path; defaults to the current directory.
 
 A quick flat session (no tour) still works: pass \`--name\`/\`--description\`
-without \`--tour\`, and every changed file is listed ungrouped.
+without \`--tour\`, and every changed file is captured ungrouped (no scoping —
+this includes any unrelated working-tree edits, so prefer a tour when you want
+only your own changes).
 
 ### Documenting committed changes
 

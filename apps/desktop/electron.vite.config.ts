@@ -64,7 +64,15 @@ export default defineConfig({
 			}
 		},
 		server: {
-			port: 5179
+			port: 5179,
+			// Refuse to boot if 5179 is already taken instead of silently moving to
+			// the next free port. electron-vite force-re-optimizes deps on every dev
+			// start, and a second server started on another port rewrites the shared
+			// node_modules/.vite/deps cache out from under the first — its renderer
+			// then 404s on the renamed chunk-*.js files ("file does not exist … in
+			// the optimize deps directory"). Failing loudly here makes an accidental
+			// duplicate `pnpm dev` obvious rather than quietly corrupting the cache.
+			strictPort: true
 		}
 	}
 });

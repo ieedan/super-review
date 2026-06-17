@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { User } from 'lucide-svelte';
+	import User from '@lucide/svelte/icons/user';
 	import { buttonVariants } from './ui/button';
 	import * as Avatar from './ui/avatar';
 	import AccountSwitcher from './AccountSwitcher.svelte';

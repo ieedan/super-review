@@ -935,10 +935,21 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 			const fullStatus = mapStatus(f.index, f.working_dir);
 			let oldPath: string | undefined;
 			let p = f.path;
-			const renameMatch = f.path.match(/^(.+) -> (.+)$/);
-			if (renameMatch) {
-				oldPath = renameMatch[1];
-				p = renameMatch[2];
+			// simple-git surfaces a staged rename as `{ path: <new>, from: <old> }`
+			// — not the legacy `"<old> -> <new>"` string. Prefer the structured
+			// `from`; without it the rename's old side is dropped, so the commit
+			// stages only the new path and leaves the old path's staged deletion
+			// behind as an orphan that can never be committed (its pathspec no
+			// longer matches anything once the rename lands). Keep the ` -> ` regex
+			// as a fallback for any code path that still produces that format.
+			if (f.from) {
+				oldPath = f.from;
+			} else {
+				const renameMatch = f.path.match(/^(.+) -> (.+)$/);
+				if (renameMatch) {
+					oldPath = renameMatch[1];
+					p = renameMatch[2];
+				}
 			}
 			const ns = numstatMap.get(p) ?? {
 				additions: 0,
@@ -2170,6 +2181,14 @@ export interface CommitResult {
 	error?: string;
 }
 
+// Whether a thrown git error is the "pathspec '<x>' did not match any files"
+// failure — git's response when a path is absent from both the worktree and the
+// index (e.g. a rename's old side once the move is staged as a unit).
+function isPathspecMismatch(err: unknown): boolean {
+	const msg = err instanceof Error ? err.message : String(err);
+	return /did not match any file/.test(msg);
+}
+
 // Stages and commits the selected files. Whole-file selections stage the file's
 // full working-tree version; partial selections carry a unified diff (HEAD ->
 // the kept subset) for line/hunk staging. When nothing is partial we take the
@@ -2196,7 +2215,17 @@ export async function commit(
 				paths.push(f.path);
 				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
 			}
-			await git.raw(['add', '-A', '--', ...paths]);
+			// Stage each path on its own and tolerate an unmatched pathspec. When a
+			// rename is already staged as a unit, its old side is gone from both the
+			// worktree and the index, so `git add -- <oldPath>` reports "did not
+			// match any files" and a single batched add would abort the whole
+			// commit. The deletion is already staged in that case, so skipping it is
+			// correct; the `git commit -- <paths>` below still records it.
+			for (const p of paths) {
+				await git.raw(['add', '-A', '--', p]).catch((err) => {
+					if (!isPathspecMismatch(err)) throw err;
+				});
+			}
 			// `-c` sets config for this invocation only, overriding both author and
 			// committer without touching the repo's git config.
 			const identityArgs = identity

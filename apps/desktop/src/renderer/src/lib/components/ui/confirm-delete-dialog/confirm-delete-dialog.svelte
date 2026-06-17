@@ -89,7 +89,8 @@
 </script>
 
 <script lang="ts">
-	import { Loader2, TriangleAlert } from 'lucide-svelte';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog';
 	import { buttonVariants } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';

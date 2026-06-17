@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Download, Loader2 } from 'lucide-svelte';
+	import Download from '@lucide/svelte/icons/download';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import { Button } from './ui/button';
 	import { actions } from '$lib/store.svelte';
 

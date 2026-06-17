@@ -2237,6 +2237,16 @@ export const actions = {
 		await refreshFiles();
 	},
 
+	// Open a documented session from outside the sessions list — e.g. clicking a
+	// session manifest's card in a diff. Switch to the Sessions tab first so the
+	// session's back button returns to the list (and `app.sessions` is loaded for
+	// the viewed ref), then open it. Honors the current read-only ref via the
+	// existing actions.
+	async viewSession(id: string): Promise<void> {
+		await actions.setContextTab('sessions');
+		await actions.openSession(id);
+	},
+
 	// Switch an open session between its tour and the plain changes view. Moving
 	// to the tour drops any file-search filter (the tour has no search box).
 	setSessionView(view: 'tour' | 'changes'): void {
@@ -4158,15 +4168,10 @@ export const actions = {
 		// so the count alone decides single vs. bulk.
 		const selectedPaths = [...app.selectedFiles];
 		const isBulk = selectedPaths.length > 1 && app.selectedFiles.has(file.path);
-		// Seen marks are only surfaced where the seen indicator shows — i.e. not the
-		// Unstaged tab, which swaps it for commit-inclusion checkboxes (see
-		// `seenVisual` in FileList).
-		const canMarkSeen = !(app.contextTab === 'unstaged' && !app.stashView);
 		const action = await window.api.menu.showFileContextMenu({
 			filePath: file.path,
 			canDiscard: app.diffContext.kind === 'workingTree',
 			canInclude: app.contextTab === 'unstaged',
-			canMarkSeen,
 			selectedCount: isBulk ? selectedPaths.length : 1,
 			editorLabel: editor ? EDITOR_LABELS[editor] : null,
 			revealLabel

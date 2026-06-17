@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { GitMerge } from 'lucide-svelte';
+	import GitMerge from '@lucide/svelte/icons/git-merge';
 	import { Button } from './ui/button';
 	import { Checkbox } from './ui/checkbox';
 	import * as Dialog from './ui/dialog';

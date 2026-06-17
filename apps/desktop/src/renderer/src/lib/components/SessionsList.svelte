@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { ExternalLink, MoreHorizontal, Trash2 } from 'lucide-svelte';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
+	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { actions, app } from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
 	import { harnessLabel } from '$lib/harness-logos';

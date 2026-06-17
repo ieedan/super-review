@@ -1,5 +1,10 @@
 <script lang="ts">
-	import { Check, Copy, Github, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-svelte';
+	import Check from '@lucide/svelte/icons/check';
+	import Copy from '@lucide/svelte/icons/copy';
+	import Github from './icons/GithubIcon.svelte';
+	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import HarnessLogo from './HarnessLogo.svelte';

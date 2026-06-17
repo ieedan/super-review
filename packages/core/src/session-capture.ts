@@ -78,7 +78,10 @@ function buildSteps(input: TourStepInput[], knownPaths: Set<string>): SessionSte
 
 // Capture a frozen snapshot of the repo's changes into a Session. `ctx` selects
 // what's captured: the live working tree (default) or a base...head branch diff,
-// which lets a change be documented after it's been committed. When `existing`
+// which lets a change be documented after it's been committed. When the metadata
+// (or carried-over existing session) supplies a tour, the capture is scoped to
+// just the files that tour references, so the session shows only the changes the
+// agent documented rather than every edit in the working tree. When `existing`
 // is supplied this is an update: its id/createdAt (and any metadata the caller
 // didn't override) are preserved, but the file diffs are re-captured fresh so
 // the session reflects the latest changes.
@@ -105,7 +108,37 @@ export async function captureSession(
 		));
 	const branch = (await getCurrentBranch(repoPath).catch(() => null)) ?? undefined;
 
-	const changed = await listChangedFiles(repoPath, ctx);
+	// Tour steps: use the freshly authored ones, else carry over the existing
+	// session's tour (re-validated below against the new file set). Either way
+	// buildSteps prunes paths that aren't in the current snapshot.
+	const stepInput: TourStepInput[] =
+		meta.steps ??
+		existing?.steps?.map((s) => ({
+			title: s.title,
+			body: s.body,
+			files: s.paths,
+			callouts: s.callouts?.map((c) => ({
+				file: c.file,
+				startLine: c.startLine,
+				endLine: c.endLine,
+				side: c.side,
+				body: c.body
+			}))
+		})) ??
+		[];
+
+	// When a tour is present, scope the capture to exactly the files it
+	// references (step files + callout files): the session then shows only the
+	// changes the agent documented, not every unrelated edit sitting in the
+	// working tree. With no tour (a flat session) there's nothing to scope to, so
+	// we capture every changed file.
+	const scopePaths = new Set(
+		stepInput.flatMap((s) => [...s.files, ...(s.callouts ?? []).map((c) => c.file)])
+	);
+	const allChanged = await listChangedFiles(repoPath, ctx);
+	const changed =
+		scopePaths.size > 0 ? allChanged.filter((f) => scopePaths.has(f.path)) : allChanged;
+
 	const files: SessionFile[] = [];
 	let additions = 0;
 	let deletions = 0;
@@ -129,24 +162,6 @@ export async function captureSession(
 		deletions += diff.file.deletions;
 	}
 
-	// Tour steps: use the freshly authored ones, else carry over the existing
-	// session's tour (re-validated below against the new file set). Either way
-	// buildSteps prunes paths that aren't in the current snapshot.
-	const stepInput: TourStepInput[] =
-		meta.steps ??
-		existing?.steps?.map((s) => ({
-			title: s.title,
-			body: s.body,
-			files: s.paths,
-			callouts: s.callouts?.map((c) => ({
-				file: c.file,
-				startLine: c.startLine,
-				endLine: c.endLine,
-				side: c.side,
-				body: c.body
-			}))
-		})) ??
-		[];
 	const knownPaths = new Set(files.map((f) => f.path));
 	const steps = buildSteps(stepInput, knownPaths);
 
