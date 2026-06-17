@@ -1,5 +1,19 @@
 # @super-review/desktop
 
+## 0.1.11
+
+### Patch Changes
+
+- Change sessions to only capture the changes the agent explicitly sets ([`13660f9`](https://github.com/ieedan/super-review/commit/13660f952295718715525e1ddc1f3ac0cc196d80))
+
+- Simplify the copy-as-prompt text for review comments. Copied comments now read `Review comment at line 240 in `path`:` instead of spelling out "on the new/original side of the diff", with an `(original side)` qualifier kept only for comments on the pre-change side where the line number refers to the old file. ([`53fdd59`](https://github.com/ieedan/super-review/commit/53fdd5979d72135a4447624e73896725d18c3b4e))
+
+- Show an "Outdated" badge on PR review comments whose anchored line or file is gone from the current diff, rendering their code context (via the same `@pierre/diffs` engine as the live diffs) from GitHub's captured diff hunk — so comments on changed/deleted lines and deleted files still show syntax-highlighted context. Outdated detection keys off GitHub's live `line` going null, and outdated comments are included in the copy-as-prompt output flagged `(outdated)`. PR review comment threads are now collapsible — one toggle on the thread root (a standalone comment counts as a thread of one), on the right of the header. Collapsing folds the whole conversation down to its header; resolved or outdated threads collapse by default and are dimmed in the comments sidebar. Clicking a thread in the sidebar expands it and scrolls to it. ([#71](https://github.com/ieedan/super-review/pull/71))
+
+- Remove local review comments that a commit orphans. When you commit a file, any working-tree comment pinned to it is removed once the file has no remaining changes (the diff it anchored to is gone for good). Partially-committed files keep their comments, since those may still anchor to what's left. ([#71](https://github.com/ieedan/super-review/pull/71))
+
+- feat: display tours in diffs so that they are more useful ([`13660f9`](https://github.com/ieedan/super-review/commit/13660f952295718715525e1ddc1f3ac0cc196d80))
+
 ## 0.1.10
 
 ### Patch Changes
