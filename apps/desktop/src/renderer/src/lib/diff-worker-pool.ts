@@ -61,7 +61,12 @@ export function initDiffWorkerPool(): void {
 				theme: DEFAULT_THEMES,
 				// Must match the main-thread highlighter (diff-highlighter.ts) so a
 				// worker-rendered diff and a main-thread fallback render identically.
-				langs: ['javascript', 'typescript', 'tsx', 'jsx', 'json', 'css', 'html']
+				langs: ['javascript', 'typescript', 'tsx', 'jsx', 'json', 'css', 'html'],
+				// Character-level intra-line diffs: highlight the exact changed
+				// characters within a modified line, not just whole words (Pierre's
+				// default is 'word-alt'). The worker path is what the main diff view
+				// uses, so this — not the FileDiff constructor option — governs it.
+				lineDiffType: 'char'
 			}
 		});
 	} catch (err) {

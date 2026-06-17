@@ -56,7 +56,9 @@
 			diffStyle,
 			theme: themePair,
 			themeType,
-			disableFileHeader: true
+			disableFileHeader: true,
+			// Character-level intra-line diffs, matching the main diff view.
+			lineDiffType: 'char'
 		});
 
 		const paint = (): void => {

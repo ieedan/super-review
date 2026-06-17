@@ -1,0 +1,36 @@
+{
+	"$schema": "https://getbizi.dev/schemas/task.config.json",
+	"tasks": {
+		"ci": {
+			"tasks": {
+				"check": {
+					"tasks": {
+						"lint": {
+							"command": "pnpm lint"
+						},
+						"typecheck": {
+							"command": "pnpm typecheck",
+							"dependsOn": ["ci:check:lint"]
+						},
+						"build": {
+							"command": "pnpm build",
+							"dependsOn": ["ci:check:typecheck"]
+						}
+					}
+				}
+			}
+		},
+		"dev": {
+			"tasks": {
+				"desktop": {
+					"color": "blue",
+					"command": "pnpm dev:desktop"
+				},
+				"docs": {
+					"color": "green",
+					"command": "pnpm dev:docs"
+				}
+			}
+		}
+	}
+}

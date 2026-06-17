@@ -738,9 +738,13 @@ function mapReviewComment(
 		originalLine: c.original_line ?? null,
 		position: c.position ?? null,
 		diffHunk: c.diff_hunk ?? undefined,
-		// GitHub's canonical outdated signal: the comment has a captured hunk
-		// (an original anchor) but no longer maps into the current diff.
-		isOutdated: c.position == null && c.diff_hunk != null,
+		// Outdated = the comment had a line anchor (`original_line`) that no longer
+		// maps into the current diff, so GitHub nulls the live `line`. We key off
+		// `line` rather than `position`: REST keeps `position` populated (it reflects
+		// the original diff position) even for outdated comments, whereas `line` goes
+		// null — matching GitHub's GraphQL `outdated` flag. Requiring `original_line`
+		// excludes genuine file-level comments (no line anchor at all).
+		isOutdated: c.line == null && c.original_line != null,
 		side: (c.side ?? 'RIGHT') as 'LEFT' | 'RIGHT',
 		inReplyTo: c.in_reply_to_id ?? undefined,
 		canDelete: viewerLogin ? c.user?.login === viewerLogin : false,

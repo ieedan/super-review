@@ -152,7 +152,7 @@
 							tabindex="0"
 							class={[
 								'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
-								root.isResolved && 'opacity-60'
+								(root.isResolved || root.isOutdated) && 'opacity-60'
 							]}
 							onclick={() => actions.revealPRComment(root.path, root.id)}
 							onkeydown={(e) => {
