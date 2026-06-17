@@ -309,7 +309,29 @@ export interface PRReviewComment {
 	createdAt: string;
 	updatedAt: string;
 	url: string;
+	// The comment's line in the *current* diff. Null once the anchored line was
+	// changed/deleted (or the whole file was removed) — i.e. the comment is
+	// outdated. Used to pin the comment inline; outdated comments aren't pinned.
 	line: number | null;
+	// The line the comment was originally placed on, preserved by GitHub even
+	// after the diff moves on. Used to render/label the comment when `line` is
+	// null (outdated).
+	originalLine: number | null;
+	// The comment's position within the current diff hunk, mirroring GitHub's
+	// REST `position`. Kept for reference/pinning; note REST leaves this populated
+	// (reflecting the original diff position) even after a comment goes outdated,
+	// so it is NOT a reliable outdated signal — `line` going null is (see below).
+	position: number | null;
+	// The stored unified-diff hunk GitHub captured when the comment was made. Lets
+	// us render the comment's code context from the snapshot rather than the
+	// working tree, so comments on changed/deleted lines (and deleted files) still
+	// show their context with no file present.
+	diffHunk?: string;
+	// Derived: the comment had a line anchor (`originalLine`) that no longer maps
+	// into the current diff, so GitHub nulled the live `line`
+	// (`line == null && originalLine != null`). Mirrors GitHub's "Outdated" label.
+	// Independent of `isResolved` — an outdated comment is not auto-resolved.
+	isOutdated: boolean;
 	side: 'LEFT' | 'RIGHT';
 	// Top-level comment id this one is replying to (if any).
 	inReplyTo?: number;

@@ -627,6 +627,10 @@
 		// Only the section that owns this callout responds.
 		if (!fileCallouts.some((c) => c.id === req.calloutId)) return;
 		lastCalloutScrollNonce = req.nonce;
+		// A deferred diff (too large / hidden) hasn't rendered, so its annotation
+		// containers don't exist yet — force the load so there's something to
+		// scroll to. The retry window in scrollToAnnotation waits for the render.
+		if (deferred) loadDiffOverride = true;
 		scrollToAnnotation(() => calloutContainers.get(req.calloutId!));
 	});
 
@@ -639,6 +643,12 @@
 		if (!req || req.nonce === lastCommentScrollNonce) return;
 		if (req.path !== file.path) return;
 		lastCommentScrollNonce = req.nonce;
+		// As above: if this file's diff was deferred, clicking its comment would
+		// otherwise scroll to nothing because the diff never renders. Force the
+		// load so the comment's annotation mounts and the scroll can land on it.
+		if (deferred) loadDiffOverride = true;
+		// `revealPRComment` already forces the target thread's comments expanded
+		// (they collapse by default when resolved/outdated); we just scroll to it.
 		scrollToAnnotation(() => commentContainers.get(req.key));
 	});
 
@@ -1182,6 +1192,10 @@
 				diffStyle: app.viewMode,
 				themeType: app.theme,
 				disableFileHeader: true,
+				// Character-level intra-line diffs. Only takes effect on the
+				// main-thread fallback render; when the worker pool is active its own
+				// highlighterOptions.lineDiffType wins (see diff-worker-pool.ts).
+				lineDiffType: 'char',
 				renderAnnotation,
 				onLineNumberClick: onDiffLineNumberClick,
 				// Gutter/code spacing + `+` button centering, injected into Pierre's
@@ -1671,12 +1685,65 @@
 		visualstudio: 'Visual Studio'
 	};
 
-	// Surface comments that fall outside the rendered diff (e.g. on lines we
-	// skipped) so they aren't silently lost.
-	const orphanComments = $derived.by<PRReviewComment[]>(() => {
+	// Outdated comments can't be pinned inline — their line (or whole file) is gone
+	// from the current diff — so we group them by thread and render them below the
+	// diff from their stored hunk. GitHub keeps these unresolved, so we do too:
+	// they show an "Outdated" badge but the resolved state stays driven by
+	// `isResolved` alone (the resolve bar still renders via CommentAnnotation).
+	const outdatedThreads = $derived.by<
+		Array<{
+			rootId: number;
+			diffHunk?: string;
+			comments: PRReviewComment[];
+		}>
+	>(() => {
 		if (!isPRContext) return [];
-		return (app.prComments[file.path] ?? []).filter((c) => c.line == null);
+		const all = app.prComments[file.path] ?? [];
+		// Group outdated comments under their thread root, preserving first-seen
+		// order. A live root with an outdated reply still groups here, anchored by
+		// the root's hunk; only the outdated comments are rendered in the group.
+		const threads: Array<{
+			rootId: number;
+			diffHunk?: string;
+			comments: PRReviewComment[];
+		}> = [];
+		for (const c of all) {
+			if (!c.isOutdated) continue;
+			const rootId = c.inReplyTo ?? c.id;
+			let thread = threads.find((t) => t.rootId === rootId);
+			if (!thread) {
+				const anchor = all.find((x) => x.id === rootId) ?? c;
+				thread = {
+					rootId,
+					diffHunk: anchor.diffHunk,
+					comments: []
+				};
+				threads.push(thread);
+			}
+			thread.comments.push(c);
+		}
+		return threads;
 	});
+
+	// Outdated threads are Svelte-rendered (not Pierre annotations), so they aren't
+	// in `commentContainers` by default. Register each thread's container under
+	// every key the sidebar might scroll to — the root and each comment — so a
+	// "reveal" click lands on it. The element stays mounted while collapsed, so the
+	// scroll target exists even before the thread is expanded.
+	function registerOutdatedContainer(node: HTMLElement, keys: string[]) {
+		let current = keys;
+		for (const k of current) commentContainers.set(k, node);
+		return {
+			update(next: string[]): void {
+				for (const k of current) commentContainers.delete(k);
+				current = next;
+				for (const k of current) commentContainers.set(k, node);
+			},
+			destroy(): void {
+				for (const k of current) commentContainers.delete(k);
+			}
+		};
+	}
 </script>
 
 <section
@@ -1872,19 +1939,31 @@
 				</div>
 			{/if}
 			<div bind:this={host} class="diff-host pl-2"></div>
-			{#if orphanComments.length > 0}
-				<div class="border-t border-border p-3 text-xs text-muted-foreground">
-					<p class="mb-2 font-medium">
-						{orphanComments.length} comment{orphanComments.length === 1 ? '' : 's'} on outdated lines:
-					</p>
-					<ul class="space-y-2">
-						{#each orphanComments as c (c.id)}
-							<li class="rounded border border-border bg-card/40 p-2">
-								<div class="font-medium">{c.author}</div>
-								<p class="whitespace-pre-wrap">{c.body}</p>
-							</li>
-						{/each}
-					</ul>
+			{#if outdatedThreads.length > 0}
+				<div class="outdated-threads">
+					{#each outdatedThreads as thread (thread.rootId)}
+						<!-- Outdated threads are just normal comment threads: each comment
+						     renders through CommentAnnotation (same background/padding/collapse
+						     as every other comment). The only extra is the saved diff hunk,
+						     handed to the root so it renders the code context inside the comment
+						     body. The wrapper only exists to (a) inset the thread to where the
+						     gutter would put an inline comment and (b) register the container so
+						     a sidebar "reveal" can scroll to it. -->
+						<div
+							class="outdated-thread"
+							use:registerOutdatedContainer={[
+								`pr-${thread.rootId}`,
+								...thread.comments.map((c) => `pr-${c.id}`)
+							]}
+						>
+							{#each thread.comments as c (c.id)}
+								<CommentAnnotation
+									meta={{ kind: 'comment', comment: c }}
+									diffHunk={c.inReplyTo ? undefined : thread.diffHunk}
+								/>
+							{/each}
+						</div>
+					{/each}
 				</div>
 			{/if}
 		</div>
@@ -1895,6 +1974,27 @@
 	.diff-host :global(diffs-container) {
 		display: block;
 		width: 100%;
+	}
+	/* Kill the strip Pierre reserves along the bottom of every diff: its scroll
+	   element defaults to `overflow: scroll` (a permanently-visible horizontal
+	   scrollbar) plus `scrollbar-gutter: stable` (space reserved even with no
+	   scrollbar). With always-on OS scrollbars that shows as a dark bar/padding
+	   under the last line. `auto` overflow + `auto` gutter means the scrollbar (and
+	   its reserved space) only appear when a line actually overflows. */
+	.diff-host {
+		--diffs-overflow-override: auto;
+	}
+	.diff-host :global([data-code]) {
+		scrollbar-gutter: auto;
+		/* Pierre keeps a `gap-block` sliver of bottom padding (minus the scrollbar
+		   gutter). Zero it so the last line sits flush; the top padding is untouched. */
+		padding-bottom: 0;
+	}
+	/* Inset the outdated comment thread to where the line-number gutter would put
+	   an inline comment annotation, so it lines up with normal comments instead of
+	   spanning flush-left like code. Approximates the gutter width. */
+	.outdated-thread {
+		padding-left: 2.5rem;
 	}
 	/* Pierre's `+` gutter button and its slot live inside Pierre's shadow DOM,
      which these scoped light-DOM rules can't reach. Their styling and centering

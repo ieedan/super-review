@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Check from '@lucide/svelte/icons/check';
+	import ChevronsDownUp from '@lucide/svelte/icons/chevrons-down-up';
+	import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
 	import Copy from '@lucide/svelte/icons/copy';
 	import Github from './icons/GithubIcon.svelte';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -7,8 +9,15 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Button } from './ui/button';
 	import * as DropdownMenu from './ui/dropdown-menu';
+	import DiffHunkSnippet from './DiffHunkSnippet.svelte';
 	import MarkdownComposer from './MarkdownComposer.svelte';
-	import { actions, app, composerKey, effectiveGithubAccount } from '$lib/store.svelte';
+	import {
+		actions,
+		app,
+		composerKey,
+		effectiveGithubAccount,
+		prThreadCollapsed
+	} from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
 	import { renderMarkdown } from '$lib/markdown';
 	import '$lib/markdown.css';
@@ -29,9 +38,14 @@
 
 	interface Props {
 		meta: CommentMeta;
+		// Outdated threads pass their saved diff hunk here so the root comment renders
+		// the code context inline (right under its header) — keeping outdated threads
+		// on the exact same component and styling as a normal comment, just with a
+		// snippet inside, rather than a bespoke layout.
+		diffHunk?: string;
 	}
 
-	let { meta }: Props = $props();
+	let { meta, diffHunk }: Props = $props();
 
 	// Render the comment body as GitHub-Flavored Markdown (sanitized in
 	// markdown.ts) so comments display formatted text, links, and code — matching
@@ -84,6 +98,15 @@
 	// A reply (not the thread root) gets a divider above it so stacked comments
 	// in a thread read as distinct entries rather than one run-on block.
 	const isReply = $derived(meta.kind === 'comment' && !!meta.comment.inReplyTo);
+	const isRoot = $derived(meta.kind === 'comment' && !meta.comment.inReplyTo);
+	const replyCount = $derived(Math.max(0, threadComments.length - 1));
+
+	// Whether this comment's thread renders collapsed. Collapse is thread-level:
+	// resolved/outdated threads default collapsed and the single toggle lives on the
+	// root. When collapsed the root shows just a header (no body) and the replies
+	// disappear entirely — `hiddenReply` drops them from the DOM.
+	const collapsed = $derived(meta.kind === 'comment' && prThreadCollapsed(meta.comment));
+	const hiddenReply = $derived(collapsed && isReply);
 
 	// The viewer's avatar for the GitHub-style reply prompt.
 	const viewerAvatar = $derived(effectiveGithubAccount()?.avatarUrl ?? '');
@@ -179,186 +202,233 @@
 	}
 </script>
 
-<div class={['comment-annotation', isReply && 'is-reply']}>
-	{#if meta.kind === 'comment'}
-		{@const c = meta.comment}
-		<!-- The thread root is the comment with no parent. Resolve controls and the
-         "Resolved" badge live there so they appear once per thread, not on
-         every reply (replies in a resolved thread are just dimmed). -->
-		{@const isRoot = !c.inReplyTo}
-		<article class="comment">
-			<img class="avatar" src={c.authorAvatarUrl} alt={c.author} width="20" height="20" />
-			<div class="body">
-				<header>
-					<span class="author">{c.author}</span>
-					<span class="time">{formatRelative(c.createdAt)}</span>
-					{#if c.isResolved && isRoot}
-						<span class="resolved-tag"><Check class="size-3" /> Resolved</span>
-					{/if}
-					<!-- Copy is always available; Delete stays tucked in an overflow menu
-                 (shown only when the viewer can delete the comment). -->
-					<div class="ml-auto flex shrink-0 items-center gap-0.5">
-						<button
-							type="button"
-							class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-							title="Copy as prompt"
-							onclick={() => copy(c)}
-						>
-							{#if copied}
-								<Check class="size-3.5" style="color: var(--color-success);" />
-							{:else}
-								<Copy class="size-3.5" />
-							{/if}
-						</button>
-						{#if c.url || c.canDelete}
-							<DropdownMenu.Root>
-								<DropdownMenu.Trigger
-									class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-									aria-label="Comment actions"
-								>
-									<MoreHorizontal class="size-4" />
-								</DropdownMenu.Trigger>
-								<DropdownMenu.Content align="end" class="w-auto!">
-									{#if c.url}
-										<DropdownMenu.Item onSelect={() => viewOnGithub(c)}>
-											<Github class="size-3.5" />
-											View on GitHub
-										</DropdownMenu.Item>
-									{/if}
-									{#if c.canDelete}
-										{#if c.url}
-											<DropdownMenu.Separator />
-										{/if}
-										<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
-											<Trash2 class="size-3.5" />
-											Delete
-										</DropdownMenu.Item>
-									{/if}
-								</DropdownMenu.Content>
-							</DropdownMenu.Root>
+{#if hiddenReply}
+	<!-- A reply inside a collapsed thread is hidden entirely — the thread folds to
+	     just its root header, and the single collapse toggle lives there. -->
+{:else}
+	<div class={['comment-annotation', isReply && 'is-reply']}>
+		{#if meta.kind === 'comment'}
+			{@const c = meta.comment}
+			<article class="comment">
+				<img class="avatar" src={c.authorAvatarUrl} alt={c.author} width="20" height="20" />
+				<div class="body">
+					<header>
+						<span class="author">{c.author}</span>
+						<span class="time">{formatRelative(c.createdAt)}</span>
+						<!-- "Outdated" mirrors GitHub: the anchored line/file is gone from the
+					     current diff. It's independent of resolution — the resolved badge
+					     below stays driven solely by `isResolved`. Shown once per thread
+					     (on the root) like the resolved badge. -->
+						{#if c.isOutdated && isRoot}
+							<span class="outdated-tag">Outdated</span>
 						{/if}
-					</div>
-				</header>
-				{#if bodyHtml}
-					<!-- bodyHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
-					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					<div class="markdown-body text">{@html bodyHtml}</div>
-				{:else}
-					<p class="text">{c.body}</p>
-				{/if}
-			</div>
-		</article>
-		{#if isThreadTail}
-			{#if replyExpanded}
-				<!-- Expanded reply: the same MarkdownComposer the new-comment composer
-             uses, so a reply gets the full Write/Preview editor and toolbar. -->
-				<form
-					class="composer reply-composer"
-					onsubmit={(e) => {
-						e.preventDefault();
-						void submitReply();
-					}}
-				>
-					<MarkdownComposer
-						bind:value={replyDraft}
-						placeholder="Write a reply…"
-						disabled={replySubmitting}
-						autofocus
-						onkeydown={onReplyKeydown}
-					/>
-					<div class="composer-footer">
-						<div class="actions">
-							<Button variant="ghost" size="sm" type="button" onclick={collapseReply}>
-								Cancel <kbd class="kbd">esc</kbd>
-							</Button>
-							<Button
-								variant="default"
-								size="sm"
-								type="submit"
-								disabled={!replyDraft.trim() || replySubmitting}
-							>
-								{replySubmitting ? 'Posting…' : 'Reply'}
-								<kbd class="kbd">⌘⏎</kbd>
-							</Button>
+						{#if c.isResolved && isRoot}
+							<span class="resolved-tag"><Check class="size-3" /> Resolved</span>
+						{/if}
+						<!-- When collapsed, the root keeps a reply count so the header reads
+						     as a stand-in for the whole conversation. -->
+						{#if collapsed && replyCount > 0}
+							<span class="reply-count">
+								{replyCount}
+								{replyCount === 1 ? 'reply' : 'replies'}
+							</span>
+						{/if}
+						<!-- Right-aligned actions. Copy/overflow only show when expanded; the
+						     single thread collapse toggle lives on the root and stays at the
+						     far right in both states. -->
+						<div class="ml-auto flex shrink-0 items-center gap-0.5">
+							{#if !collapsed}
+								<button
+									type="button"
+									class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+									title="Copy as prompt"
+									onclick={() => copy(c)}
+								>
+									{#if copied}
+										<Check class="size-3.5" style="color: var(--color-success);" />
+									{:else}
+										<Copy class="size-3.5" />
+									{/if}
+								</button>
+								{#if c.url || c.canDelete}
+									<DropdownMenu.Root>
+										<DropdownMenu.Trigger
+											class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+											aria-label="Comment actions"
+										>
+											<MoreHorizontal class="size-4" />
+										</DropdownMenu.Trigger>
+										<DropdownMenu.Content align="end" class="w-auto!">
+											{#if c.url}
+												<DropdownMenu.Item onSelect={() => viewOnGithub(c)}>
+													<Github class="size-3.5" />
+													View on GitHub
+												</DropdownMenu.Item>
+											{/if}
+											{#if c.canDelete}
+												{#if c.url}
+													<DropdownMenu.Separator />
+												{/if}
+												<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
+													<Trash2 class="size-3.5" />
+													Delete
+												</DropdownMenu.Item>
+											{/if}
+										</DropdownMenu.Content>
+									</DropdownMenu.Root>
+								{/if}
+							{/if}
+							{#if isRoot}
+								<button
+									type="button"
+									class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+									title={collapsed ? 'Expand thread' : 'Collapse thread'}
+									aria-label={collapsed ? 'Expand thread' : 'Collapse thread'}
+									onclick={() => actions.toggleThreadCollapsed(c)}
+								>
+									{#if collapsed}
+										<ChevronsUpDown class="size-3.5" />
+									{:else}
+										<ChevronsDownUp class="size-3.5" />
+									{/if}
+								</button>
+							{/if}
 						</div>
-					</div>
-				</form>
-			{:else}
-				<!-- GitHub-style reply affordance: the viewer's avatar next to a slim
-             one-line prompt. Clicking (or focusing) it expands the full editor. -->
-				<div class="reply-prompt">
-					{#if viewerAvatar}
-						<img class="reply-avatar" src={viewerAvatar} alt="" width="20" height="20" />
+					</header>
+					{#if !collapsed}
+						<!-- Outdated threads: the saved code context renders here, under the
+						     root's header, so the snippet reads as part of the comment. -->
+						{#if isRoot && diffHunk}
+							<div class="hunk-context">
+								<DiffHunkSnippet hunk={diffHunk} path={c.path} />
+							</div>
+						{/if}
+						{#if bodyHtml}
+							<!-- bodyHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+							<div class="markdown-body text">{@html bodyHtml}</div>
+						{:else}
+							<p class="text">{c.body}</p>
+						{/if}
 					{/if}
-					<input
-						class="reply-box"
-						type="text"
-						placeholder="Reply…"
-						readonly
-						onfocus={expandReply}
-						onclick={expandReply}
-					/>
+				</div>
+			</article>
+			{#if isThreadTail && !collapsed}
+				{#if replyExpanded}
+					<!-- Expanded reply: the same MarkdownComposer the new-comment composer
+             uses, so a reply gets the full Write/Preview editor and toolbar. -->
+					<form
+						class="composer reply-composer"
+						onsubmit={(e) => {
+							e.preventDefault();
+							void submitReply();
+						}}
+					>
+						<MarkdownComposer
+							bind:value={replyDraft}
+							placeholder="Write a reply…"
+							disabled={replySubmitting}
+							autofocus
+							onkeydown={onReplyKeydown}
+						/>
+						<div class="composer-footer">
+							<div class="actions">
+								<Button variant="ghost" size="sm" type="button" onclick={collapseReply}>
+									Cancel <kbd class="kbd">esc</kbd>
+								</Button>
+								<Button
+									variant="default"
+									size="sm"
+									type="submit"
+									disabled={!replyDraft.trim() || replySubmitting}
+								>
+									{replySubmitting ? 'Posting…' : 'Reply'}
+									<kbd class="kbd">⌘⏎</kbd>
+								</Button>
+							</div>
+						</div>
+					</form>
+				{:else}
+					<!-- GitHub-style reply affordance: the viewer's avatar next to a slim
+             one-line prompt. Clicking (or focusing) it expands the full editor. -->
+					<div class="reply-prompt">
+						{#if viewerAvatar}
+							<img class="reply-avatar" src={viewerAvatar} alt="" width="20" height="20" />
+						{/if}
+						<input
+							class="reply-box"
+							type="text"
+							placeholder="Reply…"
+							readonly
+							onfocus={expandReply}
+							onclick={expandReply}
+						/>
+					</div>
+				{/if}
+			{/if}
+			{#if isThreadTail && c.threadId && !collapsed}
+				<!-- Thread-level control: renders below the last comment so it sits
+           under the whole conversation, mirroring GitHub's resolve bar. -->
+				<div class="thread-actions">
+					<Button variant="outline" size="sm" onclick={() => toggleResolved(c)}>
+						{#if !c.isResolved}
+							<Check class="size-3.5" />
+						{/if}
+						{c.isResolved ? 'Unresolve' : 'Resolve'}
+					</Button>
 				</div>
 			{/if}
-		{/if}
-		{#if isThreadTail && c.threadId}
-			<!-- Thread-level control: renders below the last comment so it sits
-           under the whole conversation, mirroring GitHub's resolve bar. -->
-			<div class="thread-actions">
-				<Button variant="outline" size="sm" onclick={() => toggleResolved(c)}>
-					{#if !c.isResolved}
-						<Check class="size-3.5" />
-					{/if}
-					{c.isResolved ? 'Unresolve' : 'Resolve'}
-				</Button>
-			</div>
-		{/if}
-	{:else if composerState?.value}
-		{@const composer = composerState.value}
-		<form
-			class="composer"
-			onsubmit={(e) => {
-				e.preventDefault();
-				submit();
-			}}
-		>
-			<div class="composer-header">
-				<MessageSquare class="size-3.5 text-muted-foreground" />
-				<span>{composer.replyTo ? 'Reply' : 'New comment'}</span>
-			</div>
-			<MarkdownComposer
-				bind:value={composer.draft}
-				placeholder={composer.replyTo ? 'Write a reply…' : 'Leave a comment on this line…'}
-				disabled={composer.submitting}
-				autofocus
-				onkeydown={onKeydown}
-			/>
-			<div class="composer-footer">
-				<div class="actions">
-					<Button variant="ghost" size="sm" type="button" onclick={cancel}>
-						Cancel <kbd class="kbd">esc</kbd>
-					</Button>
-					<Button
-						variant="default"
-						size="sm"
-						type="submit"
-						disabled={!composer.draft.trim() || composer.submitting}
-					>
-						{composer.submitting ? 'Posting…' : composer.replyTo ? 'Reply' : 'Comment'}
-						<kbd class="kbd">⌘⏎</kbd>
-					</Button>
+		{:else if composerState?.value}
+			{@const composer = composerState.value}
+			<form
+				class="composer"
+				onsubmit={(e) => {
+					e.preventDefault();
+					submit();
+				}}
+			>
+				<div class="composer-header">
+					<MessageSquare class="size-3.5 text-muted-foreground" />
+					<span>{composer.replyTo ? 'Reply' : 'New comment'}</span>
 				</div>
-			</div>
-		</form>
-	{/if}
-</div>
+				<MarkdownComposer
+					bind:value={composer.draft}
+					placeholder={composer.replyTo ? 'Write a reply…' : 'Leave a comment on this line…'}
+					disabled={composer.submitting}
+					autofocus
+					onkeydown={onKeydown}
+				/>
+				<div class="composer-footer">
+					<div class="actions">
+						<Button variant="ghost" size="sm" type="button" onclick={cancel}>
+							Cancel <kbd class="kbd">esc</kbd>
+						</Button>
+						<Button
+							variant="default"
+							size="sm"
+							type="submit"
+							disabled={!composer.draft.trim() || composer.submitting}
+						>
+							{composer.submitting ? 'Posting…' : composer.replyTo ? 'Reply' : 'Comment'}
+							<kbd class="kbd">⌘⏎</kbd>
+						</Button>
+					</div>
+				</div>
+			</form>
+		{/if}
+	</div>
+{/if}
 
 <style>
 	.comment-annotation {
 		padding: 8px 12px;
-		background: hsl(var(--muted) / 0.4);
-		border-top: 1px solid hsl(var(--border));
-		border-bottom: 1px solid hsl(var(--border));
+		/* Muted fill separates comments from the diff/page. Must be OPAQUE: a
+		   translucent fill blends with whatever's behind it, so the same comment
+		   looked different over a diff row (inline comment) vs the page (outdated
+		   thread). Mixing into `--color-card` gives one deterministic color
+		   everywhere. (The original `hsl(var(--muted) / 0.4)` referenced an undefined
+		   var — only `--color-muted` exists — so it never painted at all.) */
+		background: color-mix(in srgb, var(--color-muted) 40%, var(--color-card));
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 	}
 	/* Divider between stacked comments in a thread: replies (every comment after
@@ -422,6 +492,17 @@
 		padding-top: 6px;
 		border-top: 1px solid var(--color-border);
 	}
+	.outdated-tag {
+		display: inline-flex;
+		align-items: center;
+		font-size: 10px;
+		font-weight: 600;
+		line-height: 1;
+		padding: 2px 6px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+		color: var(--color-warning);
+	}
 	.resolved-tag {
 		display: inline-flex;
 		align-items: center;
@@ -452,6 +533,17 @@
 	.time {
 		color: hsl(var(--muted-foreground));
 		font-size: 11px;
+	}
+	/* Reply count shown on a collapsed thread's root header. */
+	.reply-count {
+		color: hsl(var(--muted-foreground));
+		font-size: 11px;
+	}
+	/* Outdated-thread code context, between the root header and the comment text.
+	   Sits tight under the header (no extra top gap) so the header doesn't read as
+	   over-padded. */
+	.hunk-context {
+		margin: 4px 0 8px;
 	}
 	.text {
 		font-size: 13px;

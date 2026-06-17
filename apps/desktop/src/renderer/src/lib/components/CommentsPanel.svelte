@@ -32,9 +32,11 @@
 	// ── PR comments ──
 	// Flatten the per-file map to root threads (a comment with no parent, pinned to
 	// a line), each with its reply count. Resolved threads sink to the bottom.
+	// Outdated roots have no live `line` but still belong here — they render with
+	// their original line and an "Outdated" badge rather than being dropped.
 	const prThreads = $derived.by(() => {
 		const all = Object.values(app.prComments).flat();
-		const roots = all.filter((c) => c.inReplyTo == null && c.line != null);
+		const roots = all.filter((c) => c.inReplyTo == null && (c.line != null || c.isOutdated));
 		const withReplies = roots.map((root) => ({
 			root,
 			replies: all.filter((c) => c.inReplyTo === root.id).length
@@ -150,7 +152,7 @@
 							tabindex="0"
 							class={[
 								'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
-								root.isResolved && 'opacity-60'
+								(root.isResolved || root.isOutdated) && 'opacity-60'
 							]}
 							onclick={() => actions.revealPRComment(root.path, root.id)}
 							onkeydown={(e) => {
@@ -170,6 +172,14 @@
 								<span class="shrink-0 text-[11px] text-muted-foreground">
 									{formatRelative(root.createdAt)}
 								</span>
+								{#if root.isOutdated}
+									<span
+										class="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+										style="background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning);"
+									>
+										Outdated
+									</span>
+								{/if}
 								{#if root.isResolved}
 									<span
 										class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
@@ -248,8 +258,10 @@
 									<Icon icon={languageIconForPath(root.path)} class="size-3.5 shrink-0" />
 								{/if}
 								<span class="truncate font-mono">{fileName(root.path)}</span>
-								<span class="shrink-0">·</span>
-								<span class="shrink-0 font-mono">L{root.line}</span>
+								{#if (root.line ?? root.originalLine) != null}
+									<span class="shrink-0">·</span>
+									<span class="shrink-0 font-mono">L{root.line ?? root.originalLine}</span>
+								{/if}
 								{#if replies > 0}
 									<span class="shrink-0">·</span>
 									<span class="shrink-0">{replies} {replies === 1 ? 'reply' : 'replies'}</span>

@@ -51,7 +51,7 @@ export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'edit
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '$lib/repo-frecency.svelte';
 import { tourFileOrder } from '$lib/session-tour';
-import { SvelteSet } from 'svelte/reactivity';
+import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import {
 	upstreamChecked,
 	prsSourceByRepo,
@@ -315,6 +315,11 @@ interface AppState {
 	// Review comments for the active PR, indexed by file path.
 	prComments: Record<string, PRReviewComment[]>;
 	loadingComments: boolean;
+	// Thread collapse overrides, keyed by the root comment id (`pr-<rootId>`).
+	// Absence ⇒ use the default (collapsed when the thread is resolved or outdated,
+	// expanded otherwise), so resolving a thread auto-collapses it; an explicit
+	// entry pins the user's choice. Sidebar "reveal" writes `false` to force open.
+	commentCollapse: SvelteMap<string, boolean>;
 	// At most one composer can be open per (file,line,side) at a time. Keyed
 	// by the same string the renderer uses to scope the annotation.
 	pendingComposers: Record<string, PendingComposer>;
@@ -424,6 +429,16 @@ export function isViewingOtherBranch(): boolean {
 // "checked out elsewhere" hint.
 export function isReadOnlyView(): boolean {
 	return isViewingOtherBranch() || app.viewPR != null;
+}
+
+// Whether a PR comment's *thread* renders collapsed. Collapse is thread-level —
+// keyed by the root comment id, so the whole conversation folds under one toggle.
+// An explicit user/reveal override wins; otherwise a resolved or outdated thread
+// defaults collapsed (low-priority context) while everything else stays open.
+export function prThreadCollapsed(c: PRReviewComment): boolean {
+	const rootId = c.inReplyTo ?? c.id;
+	const root = (app.prComments[c.path] ?? []).find((x) => x.id === rootId) ?? c;
+	return app.commentCollapse.get(`pr-${rootId}`) ?? (root.isResolved || root.isOutdated);
 }
 
 // True when the diff on screen is a pull request's, so commenting surfaces GitHub
@@ -614,6 +629,7 @@ const initial: AppState = {
 	activePR: null,
 	prComments: {},
 	loadingComments: false,
+	commentCollapse: new SvelteMap(),
 	pendingComposers: {},
 	localComments: [],
 	localCommentsContextKey: null,
@@ -1572,6 +1588,25 @@ async function loadLocalComments(): Promise<void> {
 	if (!commentsEqual(comments, app.localComments)) app.localComments = comments;
 }
 
+// Remove working-tree comments orphaned by a commit. Given the set of paths that
+// were committed, a comment is orphaned when its file was committed *and* has no
+// changes left in the working tree (`app.changedFiles`), i.e. the diff it was
+// pinned to is gone for good. Only the loaded (active) context's comments are
+// considered, which on the commit path is the working tree. Best-effort: the
+// comments-dir watcher reconciles `app.localComments` from disk, so a failed
+// delete simply reappears rather than leaving the UI inconsistent.
+async function pruneCommittedComments(repoId: string, committedPaths: string[]): Promise<void> {
+	const committed = new Set(committedPaths);
+	const stillChanged = new Set(app.changedFiles.map((f) => f.path));
+	const orphaned = app.localComments.filter(
+		(c) => committed.has(c.path) && !stillChanged.has(c.path)
+	);
+	if (orphaned.length === 0) return;
+	const orphanedIds = new Set(orphaned.map((c) => c.id));
+	app.localComments = app.localComments.filter((c) => !orphanedIds.has(c.id));
+	await Promise.all(orphaned.map((c) => window.api.comments.remove(repoId, c.id).catch(() => {})));
+}
+
 // ── Copy-to-prompt formatting ──
 // Comments are pinned to a line of a diff. An agent acting on the copied prompt
 // works in the live file, where line numbers match the new (post-change) side —
@@ -1631,9 +1666,14 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 // Copy-ready prompt for a single PR review comment — same shape as the local
 // formatter so an agent gets a consistent instruction regardless of source.
 function formatPRCommentPrompt(c: PRReviewComment): string {
+	// Fall back to the original line for outdated comments (their live `line` is
+	// gone) so the prompt still points at where the comment was made, flagged so
+	// the agent knows the code there may have since changed.
+	const line = c.line ?? c.originalLine;
+	const outdated = c.isOutdated ? ' (outdated)' : '';
 	const loc =
-		c.line != null
-			? `at line ${c.line}${sideQualifier(c.side)} in \`${c.path}\``
+		line != null
+			? `at line ${line}${sideQualifier(c.side)} in \`${c.path}\`${outdated}`
 			: `on \`${c.path}\` (file-level)`;
 	return `Review comment ${loc}:\n\n${c.body.trim()}`;
 }
@@ -1652,7 +1692,11 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 	for (const [path, list] of byFile) {
 		sections.push(`### ${path}`);
 		for (const c of list) {
-			const where = c.line != null ? `line ${c.line}${sideQualifier(c.side)}` : 'file-level';
+			const line = c.line ?? c.originalLine;
+			const where =
+				line != null
+					? `line ${line}${sideQualifier(c.side)}${c.isOutdated ? ' (outdated)' : ''}`
+					: 'file-level';
 			const body = c.body.trim().replace(/\n/g, '\n  ');
 			sections.push(`- [ ] **${where}** - ${body}`);
 		}
@@ -3310,7 +3354,7 @@ export const actions = {
 	async copyAllUnresolvedPRComments(): Promise<void> {
 		const roots = Object.values(app.prComments)
 			.flat()
-			.filter((c) => c.inReplyTo == null && c.line != null && !c.isResolved);
+			.filter((c) => c.inReplyTo == null && (c.line != null || c.isOutdated) && !c.isResolved);
 		if (roots.length === 0) return;
 		await actions.copyToClipboard(formatPRCommentsPrompt(roots));
 	},
@@ -3321,8 +3365,20 @@ export const actions = {
 		app.selectedFile = path;
 		// Expand the file if collapsed so the inline thread is actually visible.
 		if (app.collapsedFiles.has(path)) void actions.toggleFileCollapsed(path, false);
+		// Force the thread open — resolved/outdated threads collapse by default, so
+		// revealing one from the sidebar should always show the conversation rather
+		// than land on a collapsed header.
+		const rootId = (app.prComments[path] ?? []).find((c) => c.id === id)?.inReplyTo ?? id;
+		app.commentCollapse.set(`pr-${rootId}`, false);
 		const nonce = (app.commentScrollTarget?.nonce ?? 0) + 1;
 		app.commentScrollTarget = { key: `pr-${id}`, path, nonce };
+	},
+
+	// Toggle a PR comment thread's collapsed state (keyed by its root), pinning the
+	// choice against the resolved/outdated default.
+	toggleThreadCollapsed(c: PRReviewComment): void {
+		const rootId = c.inReplyTo ?? c.id;
+		app.commentCollapse.set(`pr-${rootId}`, !prThreadCollapsed(c));
 	},
 
 	async refreshFiles(): Promise<void> {
@@ -3568,6 +3624,15 @@ export const actions = {
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
+			// Drop local comments orphaned by this commit. A working-tree comment is
+			// pinned to an uncommitted change; once we commit that file and nothing's
+			// left in it, the comment can never re-anchor, so remove it rather than
+			// strand it in the sidebar. Files with changes still remaining (a partial
+			// commit) keep their comments — those may still anchor to what's left.
+			await pruneCommittedComments(
+				repoId,
+				included.map((f) => f.path)
+			);
 			return true;
 		} catch (err) {
 			app.push.error = err instanceof Error ? err.message : String(err);
