@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { FolderOpen, FolderSearch, TriangleAlert, Copy, Check, X } from 'lucide-svelte';
+	import FolderOpen from '@lucide/svelte/icons/folder-open';
+	import FolderSearch from '@lucide/svelte/icons/folder-search';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import Copy from '@lucide/svelte/icons/copy';
+	import Check from '@lucide/svelte/icons/check';
+	import X from '@lucide/svelte/icons/x';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { Badge } from '$lib/components/ui/badge';
 	import TopBar from '$lib/components/TopBar.svelte';

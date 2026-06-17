@@ -1,15 +1,13 @@
 <script lang="ts">
-	import {
-		ArrowUp,
-		ArrowUpFromLine,
-		Check,
-		ExternalLink,
-		GitPullRequest,
-		GitPullRequestArrow,
-		Loader2,
-		Rocket,
-		X
-	} from 'lucide-svelte';
+	import ArrowUp from '@lucide/svelte/icons/arrow-up';
+	import ArrowUpFromLine from '@lucide/svelte/icons/arrow-up-from-line';
+	import Check from '@lucide/svelte/icons/check';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
+	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
+	import GitPullRequestArrow from '@lucide/svelte/icons/git-pull-request-arrow';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import Rocket from '@lucide/svelte/icons/rocket';
+	import X from '@lucide/svelte/icons/x';
 	import { Button } from './ui/button';
 	import * as Tooltip from './ui/tooltip';
 	import GithubSpinner from './GithubSpinner.svelte';

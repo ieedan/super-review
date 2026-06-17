@@ -1,13 +1,11 @@
 <script lang="ts">
-	import {
-		ChevronDown,
-		ChevronLeft,
-		Download,
-		FolderOpen,
-		FolderSearch,
-		Loader2,
-		Plus
-	} from 'lucide-svelte';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+	import Download from '@lucide/svelte/icons/download';
+	import FolderOpen from '@lucide/svelte/icons/folder-open';
+	import FolderSearch from '@lucide/svelte/icons/folder-search';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import Plus from '@lucide/svelte/icons/plus';
 	import * as Dialog from './ui/dialog';
 	import { Button } from './ui/button';
 	import { Input } from './ui/input';

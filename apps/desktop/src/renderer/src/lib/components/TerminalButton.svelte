@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SquareTerminal } from 'lucide-svelte';
+	import SquareTerminal from '@lucide/svelte/icons/square-terminal';
 	import { Button } from './ui/button';
 	import GhostIcon from './icons/GhostIcon.svelte';
 	import WarpIcon from './icons/WarpIcon.svelte';

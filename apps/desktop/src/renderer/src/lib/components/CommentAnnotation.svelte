@@ -1,5 +1,10 @@
 <script lang="ts">
-	import { Check, Copy, Github, MessageSquare, MoreHorizontal, Trash2 } from 'lucide-svelte';
+	import Check from '@lucide/svelte/icons/check';
+	import Copy from '@lucide/svelte/icons/copy';
+	import Github from './icons/GithubIcon.svelte';
+	import MessageSquare from '@lucide/svelte/icons/message-square';
+	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Button } from './ui/button';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import MarkdownComposer from './MarkdownComposer.svelte';

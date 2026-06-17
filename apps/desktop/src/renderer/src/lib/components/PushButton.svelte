@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { ArrowDown, ArrowUp, ArrowUpFromLine, Check, Loader2 } from 'lucide-svelte';
+	import ArrowDown from '@lucide/svelte/icons/arrow-down';
+	import ArrowUp from '@lucide/svelte/icons/arrow-up';
+	import ArrowUpFromLine from '@lucide/svelte/icons/arrow-up-from-line';
+	import Check from '@lucide/svelte/icons/check';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import { Button } from './ui/button';
 	import { actions, app } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';

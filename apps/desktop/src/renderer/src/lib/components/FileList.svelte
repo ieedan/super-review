@@ -1,25 +1,21 @@
 <script lang="ts">
-	import {
-		Archive,
-		ArrowLeft,
-		Check,
-		ChevronRight,
-		FileMinus,
-		FileEdit,
-		Folder,
-		FolderOpen,
-		List,
-		FolderTree,
-		MessageSquare,
-		Minus,
-		PanelLeft,
-		RotateCcw,
-		Search,
-		Trash2,
-		X
-	} from 'lucide-svelte';
-	// lucide-svelte (0.474) predates this glyph, so pull the checked variant from
-	// @lucide/svelte (also a project dep) via its per-icon path.
+	import Archive from '@lucide/svelte/icons/archive';
+	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+	import Check from '@lucide/svelte/icons/check';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import FileMinus from '@lucide/svelte/icons/file-minus';
+	import FileEdit from '@lucide/svelte/icons/file-edit';
+	import Folder from '@lucide/svelte/icons/folder';
+	import FolderOpen from '@lucide/svelte/icons/folder-open';
+	import List from '@lucide/svelte/icons/list';
+	import FolderTree from '@lucide/svelte/icons/folder-tree';
+	import MessageSquare from '@lucide/svelte/icons/message-square';
+	import Minus from '@lucide/svelte/icons/minus';
+	import PanelLeft from '@lucide/svelte/icons/panel-left';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import Search from '@lucide/svelte/icons/search';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import X from '@lucide/svelte/icons/x';
 	import MessageSquareCheck from '@lucide/svelte/icons/message-square-check';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';

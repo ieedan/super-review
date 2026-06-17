@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { MessageSquareText } from 'lucide-svelte';
+	import MessageSquareText from '@lucide/svelte/icons/message-square-text';
 	import { app } from '$lib/store.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import '$lib/markdown.css';

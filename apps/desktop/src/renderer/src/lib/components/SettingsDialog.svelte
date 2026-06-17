@@ -1,19 +1,17 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import {
-		AppWindow,
-		Check,
-		ChevronDown,
-		Code2,
-		Keyboard,
-		LogOut,
-		Palette,
-		Plus,
-		RotateCcw,
-		SlidersHorizontal,
-		User,
-		X
-	} from 'lucide-svelte';
+	import AppWindow from '@lucide/svelte/icons/app-window';
+	import Check from '@lucide/svelte/icons/check';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Code2 from '@lucide/svelte/icons/code-2';
+	import Keyboard from '@lucide/svelte/icons/keyboard';
+	import LogOut from '@lucide/svelte/icons/log-out';
+	import Palette from '@lucide/svelte/icons/palette';
+	import Plus from '@lucide/svelte/icons/plus';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+	import User from '@lucide/svelte/icons/user';
+	import X from '@lucide/svelte/icons/x';
 	import SettingsShell from './SettingsShell.svelte';
 	import * as Avatar from './ui/avatar';
 	import * as DropdownMenu from './ui/dropdown-menu';

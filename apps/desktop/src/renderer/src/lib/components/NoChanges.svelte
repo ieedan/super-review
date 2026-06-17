@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Code, FolderOpen, Github } from 'lucide-svelte';
+	import Code from '@lucide/svelte/icons/code';
+	import FolderOpen from '@lucide/svelte/icons/folder-open';
+	import Github from './icons/GithubIcon.svelte';
 	import { actions, app, effectiveEditor, EDITOR_LABELS } from '$lib/store.svelte';
 
 	// Which repo-level actions can we actually offer? Each card only renders

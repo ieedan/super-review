@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Command as CommandPrimitive } from 'bits-ui';
-	import { ChevronDown, Plus, Search } from 'lucide-svelte';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Plus from '@lucide/svelte/icons/plus';
+	import Search from '@lucide/svelte/icons/search';
 	import { VirtualList } from '$lib/virtual-list';
 	import { Button, buttonVariants } from './ui/button';
 	import * as Popover from './ui/popover';

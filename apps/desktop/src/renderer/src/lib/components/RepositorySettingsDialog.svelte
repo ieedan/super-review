@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { GitFork } from 'lucide-svelte';
+	import GitFork from '@lucide/svelte/icons/git-fork';
 	import { Button } from './ui/button';
 	import SettingsShell from './SettingsShell.svelte';
 	import ForkUseChoice from './ForkUseChoice.svelte';

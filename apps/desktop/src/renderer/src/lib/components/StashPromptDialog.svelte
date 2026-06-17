@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle } from 'lucide-svelte';
+	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import { Button } from './ui/button';
 	import * as Dialog from './ui/dialog';
 	import { actions, app } from '$lib/store.svelte';

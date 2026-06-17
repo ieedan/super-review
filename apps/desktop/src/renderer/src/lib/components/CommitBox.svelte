@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { ChevronDown, GitPullRequest, Loader2, TriangleAlert, User } from 'lucide-svelte';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import User from '@lucide/svelte/icons/user';
 	import { Button } from './ui/button';
 	import * as Avatar from './ui/avatar';
 	import { Input } from './ui/input';

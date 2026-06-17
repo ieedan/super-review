@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { GitBranch, Loader2 } from 'lucide-svelte';
+	import GitBranch from '@lucide/svelte/icons/git-branch';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import * as Dialog from './ui/dialog';
 	import { Button } from './ui/button';
 	import { RadioGroup, RadioGroupItem } from './ui/radio-group';

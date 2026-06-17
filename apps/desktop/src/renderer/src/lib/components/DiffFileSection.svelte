@@ -1,17 +1,15 @@
 <script lang="ts">
 	import { mount, unmount, onDestroy, onMount } from 'svelte';
-	import {
-		Check,
-		ChevronDown,
-		ChevronRight,
-		Code,
-		Code2,
-		Eye,
-		FileEdit,
-		FileMinus,
-		FileText,
-		Image as ImageIcon
-	} from 'lucide-svelte';
+	import Check from '@lucide/svelte/icons/check';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Code from '@lucide/svelte/icons/code';
+	import Code2 from '@lucide/svelte/icons/code-2';
+	import Eye from '@lucide/svelte/icons/eye';
+	import FileEdit from '@lucide/svelte/icons/file-edit';
+	import FileMinus from '@lucide/svelte/icons/file-minus';
+	import FileText from '@lucide/svelte/icons/file-text';
+	import ImageIcon from '@lucide/svelte/icons/image';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import CursorIcon from './icons/CursorIcon.svelte';
 	import VSCodeIcon from './icons/VSCodeIcon.svelte';

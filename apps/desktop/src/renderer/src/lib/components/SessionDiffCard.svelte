@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { ChevronRight, Layers } from 'lucide-svelte';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Layers from '@lucide/svelte/icons/layers';
 	import { actions, app } from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
 	import { harnessLabel } from '$lib/harness-logos';
