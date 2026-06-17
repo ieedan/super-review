@@ -28,6 +28,10 @@
 		triedLoad = true;
 		void actions.loadSessions();
 	});
+	// The session is gone (e.g. deleted on another branch) once a load has run and
+	// still didn't turn it up. Show a muted, non-clickable note instead of a card
+	// that links nowhere.
+	const unresolved = $derived(triedLoad && !summary);
 
 	function open(): void {
 		void actions.viewSession(sessionId);
@@ -41,18 +45,21 @@
 </script>
 
 <div class="p-4">
-	<div
-		role="button"
-		tabindex="0"
-		class="group mx-auto flex max-w-xl cursor-pointer items-start gap-3 rounded-lg border border-border bg-card/40 p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent"
-		onclick={open}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				open();
-			}
-		}}
-	>
+	{#if unresolved}
+		<p class="text-center text-xs text-muted-foreground">This session is no longer available.</p>
+	{:else}
+		<div
+			role="button"
+			tabindex="0"
+			class="group mx-auto flex max-w-xl cursor-pointer items-start gap-3 rounded-lg border border-border bg-card/40 p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent"
+			onclick={open}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					open();
+				}
+			}}
+		>
 		<div
 			class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card"
 			title={summary ? harnessLabel(summary.harness, summary.harnessLabel) : 'Session'}
@@ -93,8 +100,9 @@
 				</div>
 			{/if}
 			<p class="mt-1 text-[11px] text-muted-foreground">Open this session as a guided tour</p>
+			</div>
 		</div>
-	</div>
+	{/if}
 	{#if onViewRaw}
 		<div class="mt-2 text-center">
 			<button

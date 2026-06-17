@@ -150,8 +150,11 @@
 	const deferred = $derived(deferReason !== null);
 	// When a deferred file is a `.super-review/sessions/*.json` manifest, the raw
 	// JSON diff is useless to a reviewer — show a card that opens the documented
-	// session instead. Null for any other file.
-	const sessionManifestId = $derived(sessionIdFromManifestPath(file.path));
+	// session instead. Null for any other file, and skipped when the manifest is
+	// being deleted: that session no longer exists, so a card would link nowhere.
+	const sessionManifestId = $derived(
+		file.status === 'deleted' ? null : sessionIdFromManifestPath(file.path)
+	);
 	// A pure rename (or copy) with no content change has nothing to diff — git
 	// reports zero additions/deletions. Mirror GitHub and show a one-liner
 	// instead of fetching/rendering an empty diff.
