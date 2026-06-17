@@ -13,3 +13,6 @@ build/icon.*
 # SvelteKit (apps/docs)
 .svelte-kit
 apps/docs/build
+
+# Super Review local session artifacts (generated for local review)
+.super-review
