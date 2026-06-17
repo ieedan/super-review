@@ -1,5 +1,8 @@
 <script lang="ts">
-	import { ChevronDown, ChevronUp, X, CaseSensitive } from 'lucide-svelte';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronUp from '@lucide/svelte/icons/chevron-up';
+	import X from '@lucide/svelte/icons/x';
+	import CaseSensitive from '@lucide/svelte/icons/case-sensitive';
 	import { Button } from './ui/button';
 	import { cn } from '$lib/utils';
 	import {

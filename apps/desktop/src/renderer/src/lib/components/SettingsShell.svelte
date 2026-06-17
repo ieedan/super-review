@@ -5,13 +5,14 @@
 	// place. The owner supplies the tabs, the active tab (bindable), and snippets
 	// for the content (rendered with the active tab id) and footer.
 	import type { Snippet } from 'svelte';
-	import { Icon } from 'lucide-svelte';
+	import type { LucideIcon } from '@lucide/svelte';
 	import * as Dialog from './ui/dialog';
 	import { cn } from '$lib/utils';
 
-	// lucide-svelte icons are SvelteComponentTyped classes; `typeof Icon` (the base
-	// icon class) is the shared constructor type every icon is assignable to.
-	type Tab = { id: string; label: string; icon: typeof Icon };
+	// `LucideIcon` (a `Component<LucideProps>`) is the shared type every lucide
+	// icon is assignable to. Imported type-only so it's erased at build and never
+	// pulls the icon barrel into the bundle.
+	type Tab = { id: string; label: string; icon: LucideIcon };
 
 	let {
 		open = $bindable(false),

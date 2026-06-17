@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { Inbox } from 'lucide-svelte';
+	import Inbox from '@lucide/svelte/icons/inbox';
 	import DiffFileSection from './DiffFileSection.svelte';
 	import SessionStepHeader from './SessionStepHeader.svelte';
 	import NoChanges from './NoChanges.svelte';

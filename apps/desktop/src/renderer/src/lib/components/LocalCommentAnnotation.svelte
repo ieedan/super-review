@@ -10,7 +10,12 @@
 </script>
 
 <script lang="ts">
-	import { Check, Copy, MoreHorizontal, RotateCcw, Trash2, MessageSquare } from 'lucide-svelte';
+	import Check from '@lucide/svelte/icons/check';
+	import Copy from '@lucide/svelte/icons/copy';
+	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import { Button } from './ui/button';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Textarea } from './ui/textarea';

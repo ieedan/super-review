@@ -1,6 +1,10 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { Check, LogOut, Plus, RotateCcw, Settings } from 'lucide-svelte';
+	import Check from '@lucide/svelte/icons/check';
+	import LogOut from '@lucide/svelte/icons/log-out';
+	import Plus from '@lucide/svelte/icons/plus';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import Settings from '@lucide/svelte/icons/settings';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import * as Avatar from './ui/avatar';
 	import { actions, app } from '$lib/store.svelte';

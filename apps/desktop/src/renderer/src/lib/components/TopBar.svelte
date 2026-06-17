@@ -8,7 +8,9 @@
 	import TerminalButton from './TerminalButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
 	import { useSidebar } from './ui/sidebar';
-	import { CornerUpLeft, FileDiff, MessageSquare } from 'lucide-svelte';
+	import CornerUpLeft from '@lucide/svelte/icons/corner-up-left';
+	import FileDiff from '@lucide/svelte/icons/file-diff';
+	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import { actions, app, isReadOnlyView, sidebarHasUnresolvedComments } from '$lib/store.svelte';
 
 	// The left (changes / file list) sidebar's open state lives in the shared

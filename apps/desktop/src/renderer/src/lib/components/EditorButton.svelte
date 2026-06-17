@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Code2 } from 'lucide-svelte';
+	import Code2 from '@lucide/svelte/icons/code-2';
 	import CursorIcon from './icons/CursorIcon.svelte';
 	import VSCodeIcon from './icons/VSCodeIcon.svelte';
 	import XcodeIcon from './icons/XcodeIcon.svelte';

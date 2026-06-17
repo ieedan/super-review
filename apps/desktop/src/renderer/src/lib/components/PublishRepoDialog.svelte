@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { ChevronDown, Github, Loader2 } from 'lucide-svelte';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Github from './icons/GithubIcon.svelte';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import * as Dialog from './ui/dialog';
 	import { Button } from './ui/button';
 	import { Input } from './ui/input';

@@ -1,17 +1,15 @@
 <script lang="ts">
 	import { mount, unmount, onDestroy, onMount } from 'svelte';
-	import {
-		Check,
-		ChevronDown,
-		ChevronRight,
-		Code,
-		Code2,
-		Eye,
-		FileEdit,
-		FileMinus,
-		FileText,
-		Image as ImageIcon
-	} from 'lucide-svelte';
+	import Check from '@lucide/svelte/icons/check';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Code from '@lucide/svelte/icons/code';
+	import Code2 from '@lucide/svelte/icons/code-2';
+	import Eye from '@lucide/svelte/icons/eye';
+	import FileEdit from '@lucide/svelte/icons/file-edit';
+	import FileMinus from '@lucide/svelte/icons/file-minus';
+	import FileText from '@lucide/svelte/icons/file-text';
+	import ImageIcon from '@lucide/svelte/icons/image';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import CursorIcon from './icons/CursorIcon.svelte';
 	import VSCodeIcon from './icons/VSCodeIcon.svelte';
@@ -47,6 +45,7 @@
 		setCachedDiff
 	} from '$lib/store.svelte';
 	import { diffDeferReason } from '@shared/diff-defer';
+	import { sessionIdFromManifestPath } from '@shared/session-manifest';
 	import { getDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { scheduleRender } from '$lib/render-scheduler';
 	import { diffContextKey } from '@shared/diff-context';
@@ -60,6 +59,7 @@
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
+	import SessionDiffCard from './SessionDiffCard.svelte';
 	import { calloutsForFile } from '$lib/session-tour';
 	import type {
 		ChangedFile,
@@ -146,6 +146,13 @@
 		loadDiffOverride ? null : diffDeferReason(file, app.maxDiffLines, app.hiddenDiffPatterns)
 	);
 	const deferred = $derived(deferReason !== null);
+	// When a deferred file is a `.super-review/sessions/*.json` manifest, the raw
+	// JSON diff is useless to a reviewer — show a card that opens the documented
+	// session instead. Null for any other file, and skipped when the manifest is
+	// being deleted: that session no longer exists, so a card would link nowhere.
+	const sessionManifestId = $derived(
+		file.status === 'deleted' ? null : sessionIdFromManifestPath(file.path)
+	);
 	// A pure rename (or copy) with no content change has nothing to diff — git
 	// reports zero additions/deletions. Mirror GitHub and show a one-liner
 	// instead of fetching/rendering an empty diff.
@@ -1822,6 +1829,8 @@
 				<div class="p-4 text-sm text-muted-foreground">{placeholderMessage}</div>
 			{:else if loadError}
 				<div class="p-4 text-sm text-destructive">{loadError}</div>
+			{:else if deferred && sessionManifestId}
+				<SessionDiffCard sessionId={sessionManifestId} onViewRaw={() => (loadDiffOverride = true)} />
 			{:else if deferred}
 				<div class="flex flex-col items-center gap-2 p-6 text-center">
 					<p class="text-xs text-muted-foreground">

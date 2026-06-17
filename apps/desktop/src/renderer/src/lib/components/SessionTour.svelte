@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { FileMinus, FileEdit } from 'lucide-svelte';
+	import FileMinus from '@lucide/svelte/icons/file-minus';
+	import FileEdit from '@lucide/svelte/icons/file-edit';
 	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { actions, app } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';

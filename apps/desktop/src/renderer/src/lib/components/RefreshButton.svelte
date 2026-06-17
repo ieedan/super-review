@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Tooltip as TooltipPrimitive } from 'bits-ui';
-	import { ArrowDown, Loader2, RefreshCw } from 'lucide-svelte';
+	import ArrowDown from '@lucide/svelte/icons/arrow-down';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import { buttonVariants } from './ui/button';
 	import { actions, app, isReadOnlyView } from '$lib/store.svelte';
 	import { cn, formatRelative } from '$lib/utils';

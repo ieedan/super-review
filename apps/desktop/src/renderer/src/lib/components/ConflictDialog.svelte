@@ -1,5 +1,8 @@
 <script lang="ts">
-	import { AlertTriangle, Check, SquarePen, X } from 'lucide-svelte';
+	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
+	import Check from '@lucide/svelte/icons/check';
+	import SquarePen from '@lucide/svelte/icons/square-pen';
+	import X from '@lucide/svelte/icons/x';
 	import { Button } from './ui/button';
 	import * as Dialog from './ui/dialog';
 	import { actions, app, effectiveEditor, EDITOR_LABELS } from '$lib/store.svelte';

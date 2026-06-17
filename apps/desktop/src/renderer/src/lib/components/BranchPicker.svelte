@@ -1,18 +1,16 @@
 <script lang="ts">
 	import { Command as CommandPrimitive } from 'bits-ui';
-	import {
-		ChevronDown,
-		Eye,
-		GitBranch,
-		GitFork,
-		GitMerge,
-		GitPullRequest,
-		GitPullRequestClosed,
-		GitPullRequestDraft,
-		Loader2,
-		Plus,
-		Search
-	} from 'lucide-svelte';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Eye from '@lucide/svelte/icons/eye';
+	import GitBranch from '@lucide/svelte/icons/git-branch';
+	import GitFork from '@lucide/svelte/icons/git-fork';
+	import GitMerge from '@lucide/svelte/icons/git-merge';
+	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
+	import GitPullRequestClosed from '@lucide/svelte/icons/git-pull-request-closed';
+	import GitPullRequestDraft from '@lucide/svelte/icons/git-pull-request-draft';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import Plus from '@lucide/svelte/icons/plus';
+	import Search from '@lucide/svelte/icons/search';
 	import { VirtualList } from '$lib/virtual-list';
 	import { Button, buttonVariants } from './ui/button';
 	import * as Popover from './ui/popover';
