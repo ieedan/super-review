@@ -31,9 +31,13 @@ export function formatChangesetFile(input: {
 	bump: 'patch' | 'minor' | 'major';
 	description: string;
 }): string {
-	const frontmatter = input.packages.map((p) => `'${p}': ${input.bump}`).join('\n');
+	const lines = input.packages.map((p) => `'${p}': ${input.bump}`);
+	// Collapse to an empty `---\n---` block when nothing's selected yet (shown in the
+	// preview before the changeset is creatable). With packages + a body it mirrors
+	// the writer in @super-review/core exactly.
+	const frontmatter = `---\n${lines.length ? lines.join('\n') + '\n' : ''}---`;
 	const body = input.description.trim();
-	return `---\n${frontmatter}\n---\n\n${body}\n`;
+	return body ? `${frontmatter}\n\n${body}\n` : `${frontmatter}\n`;
 }
 
 // Small word lists for a changesets-style `adjective-noun-verb` filename. Just

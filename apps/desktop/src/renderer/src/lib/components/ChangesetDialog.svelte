@@ -254,13 +254,7 @@
 							</span>
 						</header>
 						<div class="min-h-0 flex-1 overflow-auto">
-							{#if selectedNames.length > 0}
-								<ChangesetPreview filename={previewName} content={previewContent} />
-							{:else}
-								<p class="p-3 text-xs text-muted-foreground">
-									Select at least one package to preview your changeset.
-								</p>
-							{/if}
+							<ChangesetPreview filename={previewName} content={previewContent} />
 						</div>
 					</div>
 				</div>
