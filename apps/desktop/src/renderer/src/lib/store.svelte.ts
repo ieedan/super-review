@@ -11,6 +11,7 @@ import type {
 	DiffLayout,
 	EditorKind,
 	FileListLayout,
+	AnimationMode,
 	GithubAccount,
 	GithubAuthError,
 	LastCommit,
@@ -195,7 +196,7 @@ interface AppState {
 	openFileOnArrowNav: boolean;
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
-	animationsEnabled: boolean;
+	animations: AnimationMode;
 	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
 	unmarkSeenOnChange: boolean;
@@ -483,7 +484,7 @@ export function canViewBranchTab(): boolean {
 
 // True when the Branch tab is showing changes and every one has been marked
 // seen. Drives the "You've seen it all" completion state. Scoped to the Branch
-// tab on purpose — the Unstaged tab's checkboxes are commit-inclusion, not
+// tab on purpose: the Unstaged tab's checkboxes are commit-inclusion, not
 // "seen", and the Sessions tab has its own flow.
 export function allBranchChangesSeen(): boolean {
 	return (
@@ -581,7 +582,7 @@ const initial: AppState = {
 	openFileOnArrowNav: true,
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
-	animationsEnabled: false,
+	animations: 'accents',
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
 	unmarkSeenOnChange: true,
@@ -1943,7 +1944,14 @@ export const actions = {
 		app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
 		app.maxDiffLines = app.prefs.maxDiffLines;
 		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
-		app.animationsEnabled = app.prefs.animationsEnabled ?? false;
+		// Migrate the legacy boolean `animationsEnabled` to the 3-way mode: an
+		// explicit on→'all' and off→'none' preserve the prior choice; anything
+		// unset falls through to the new 'accents' default.
+		{
+			const legacy = (app.prefs as { animationsEnabled?: boolean }).animationsEnabled;
+			app.animations =
+				app.prefs.animations ?? (legacy === true ? 'all' : legacy === false ? 'none' : 'accents');
+		}
 		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
 		app.unmarkSeenOnChange = app.prefs.unmarkSeenOnChange ?? true;
@@ -2522,8 +2530,8 @@ export const actions = {
 	},
 
 	// Hide the "You've seen it all" completion state ("Keep Reviewing"). It stays
-	// hidden until the branch drops below fully-seen and is completed again —
-	// that reset happens reactively in DiffView, keyed off `allBranchChangesSeen()`.
+	// hidden until the branch drops below fully-seen and is completed again. That
+	// reset happens reactively in DiffView, keyed off `allBranchChangesSeen()`.
 	dismissSeenItAll(): void {
 		app.seenItAllDismissed = true;
 	},
@@ -4565,9 +4573,9 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ hiddenDiffPatterns: next });
 	},
 
-	async setAnimationsEnabled(enabled: boolean): Promise<void> {
-		app.animationsEnabled = enabled;
-		app.prefs = await window.api.state.setPrefs({ animationsEnabled: enabled });
+	async setAnimations(mode: AnimationMode): Promise<void> {
+		app.animations = mode;
+		app.prefs = await window.api.state.setPrefs({ animations: mode });
 	},
 
 	async setPrMergedBehavior(value: PrMergedBehavior): Promise<void> {

@@ -52,8 +52,8 @@
 
 	// Share the user's animation preference with the whole component tree so
 	// shadcn-svelte primitives can opt in/out of their motion classes via
-	// useAnimations(). Off by default; reactive to the setting.
-	setAnimations(() => app.animationsEnabled);
+	// useAnimations(). Reactive to the setting; defaults to 'accents'.
+	setAnimations(() => app.animations);
 
 	const ORIGIN_POLL_MS = 2 * 60 * 1000;
 	const TICK_MS = 30 * 1000;

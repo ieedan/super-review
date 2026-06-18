@@ -73,7 +73,7 @@
 		data-slot="button"
 		class={cn(
 			buttonVariants({ variant, size }),
-			animations.animationsEnabled && 'transition-all',
+			animations.accentsEnabled && 'transition-all',
 			className
 		)}
 		href={disabled ? undefined : href}
@@ -90,7 +90,7 @@
 		data-slot="button"
 		class={cn(
 			buttonVariants({ variant, size }),
-			animations.animationsEnabled && 'transition-all',
+			animations.accentsEnabled && 'transition-all',
 			className
 		)}
 		{type}

@@ -5,23 +5,24 @@
 	import { fade } from 'svelte/transition';
 	import { backOut, cubicOut } from 'svelte/easing';
 	import { Button } from './ui/button';
-	import { actions, uiPR } from '$lib/store.svelte';
+	import { actions, app, uiPR } from '$lib/store.svelte';
 
 	// The PR that whatever's on screen acts on (a viewed PR/branch in read-only
 	// mode, else the checked-out branch's PR). Its presence decides the primary
 	// action: open the existing PR to approve, or kick off creating one.
 	const pr = $derived(uiPR());
 
-	// The entrance is the whole point of this state, so it always plays — it isn't
-	// gated on the `animationsEnabled` pref (off by default, and scoped to ambient
-	// counter tweens). It's a brief, one-shot transition, not continuous motion.
-	const ITEM_DURATION = 320;
-	const BACKDROP_DURATION = 220;
+	// The celebration is accent-level motion: it plays in 'accents' and 'all', and
+	// only goes instant (durations → 0) when the user picks 'none'. It's not gated
+	// on the overlay-surface ('all') level, since this isn't a menu or dialog.
+	const animate = $derived(app.animations !== 'none');
+	const ITEM_DURATION = $derived(animate ? 320 : 0);
+	const BACKDROP_DURATION = $derived(animate ? 220 : 0);
 	// Each element (icon → title → description → primary → secondary) enters one
 	// STAGGER after the previous, so the card assembles top-to-bottom rather than
 	// all at once. `stagger(i)` is the delay for the i-th item.
 	const STAGGER = 70;
-	const stagger = (i: number): number => i * STAGGER;
+	const stagger = (i: number): number => (animate ? i * STAGGER : 0);
 
 	// Tasteful entrance: each item fades and de-blurs up into place with a slight
 	// overshoot on the scale (backOut), so it "settles" rather than snapping.

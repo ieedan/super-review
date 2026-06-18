@@ -1,33 +1,49 @@
 import { getContext, setContext } from 'svelte';
+import type { AnimationMode } from '@shared/types';
 
 /**
  * Shared animation configuration, provided once near the app root and read by
  * any component that wants to gate shadcn-svelte's enter/exit and transition
- * classes. Components include the motion classes only when enabled:
+ * classes. The user picks one of three modes (see AnimationMode); components
+ * gate their motion classes on the level they belong to:
  *
  *   const animations = useAnimations();
- *   class={cn("static classes…", animations.animationsEnabled && "transition-colors", className)}
+ *   // accent-level motion (hover/focus transitions, counters):
+ *   class={cn("…", animations.accentsEnabled && "transition-colors", className)}
+ *   // overlay surfaces (menus, dialogs, tooltips, popovers, sheets):
+ *   class={cn("…", animations.menusEnabled && "data-[state=open]:animate-in", className)}
  */
 export interface AnimationConfig {
-	readonly animationsEnabled: boolean;
+	/** The raw mode the user selected. */
+	readonly mode: AnimationMode;
+	/** Accent-level motion: on for 'accents' and 'all'. */
+	readonly accentsEnabled: boolean;
+	/** Enter/exit motion for overlay surfaces: on only for 'all'. */
+	readonly menusEnabled: boolean;
 }
 
 const ANIMATIONS_KEY = Symbol.for('sr-animations');
 
-// Falls back to "off" when no provider is mounted (isolated component previews,
-// tests, etc.), matching the app's animations-off default.
-const DEFAULT: AnimationConfig = { animationsEnabled: false };
+// Falls back to "none" when no provider is mounted (isolated component previews,
+// tests, etc.) so nothing animates unexpectedly outside the app shell.
+const DEFAULT: AnimationConfig = { mode: 'none', accentsEnabled: false, menusEnabled: false };
 
 /**
  * Provides the animation config to the component tree. Pass a getter so the
  * value stays reactive to the user's setting.
  *
- * @param enabled A getter returning whether animations are currently enabled.
+ * @param mode A getter returning the user's current animation mode.
  */
-export function setAnimations(enabled: () => boolean): AnimationConfig {
+export function setAnimations(mode: () => AnimationMode): AnimationConfig {
 	const config: AnimationConfig = {
-		get animationsEnabled() {
-			return enabled();
+		get mode() {
+			return mode();
+		},
+		get accentsEnabled() {
+			return mode() !== 'none';
+		},
+		get menusEnabled() {
+			return mode() === 'all';
 		}
 	};
 	return setContext(ANIMATIONS_KEY, config);

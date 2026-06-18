@@ -443,6 +443,15 @@ export type FileListLayout = 'tree' | 'list';
 // automatically; 'nothing' leaves the working tree where it is and never asks.
 export type PrMergedBehavior = 'prompt' | 'switch' | 'nothing';
 
+// How much UI motion the user wants:
+//  • 'none':    no animation anywhere.
+//  • 'accents': accent-level motion only (hover/focus transitions, counter
+//    tweens, the review-complete celebration), but overlay surfaces (menus,
+//    dialogs, tooltips, popovers, sheets) appear instantly.
+//  • 'all':     everything, including those overlay surfaces.
+// Consumed via the useAnimations() context hook.
+export type AnimationMode = 'none' | 'accents' | 'all';
+
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
 export type ContextTab = 'unstaged' | 'branch' | 'sessions';
@@ -817,10 +826,10 @@ export interface UserPrefs {
 	// "Load diff" button by default (lock files, build outputs, etc.). See
 	// DEFAULT_HIDDEN_DIFF_PATTERNS in @shared/diff-defer for match semantics.
 	hiddenDiffPatterns: string[];
-	// When true, UI components include shadcn-svelte's enter/exit and transition
-	// animation classes. Off by default — components render without motion unless
-	// the user opts in. Consumed via the useAnimations() context hook.
-	animationsEnabled: boolean;
+	// How much UI motion to apply. Defaults to 'accents': accent-level motion on,
+	// overlay surfaces (menus/dialogs) instant. See AnimationMode. Consumed via the
+	// useAnimations() context hook.
+	animations: AnimationMode;
 	// What to do when a checked-out branch's PR is detected going from unmerged →
 	// merged: ask via a dialog ('prompt', the default), switch back to the default
 	// branch automatically ('switch'), or do nothing ('nothing').

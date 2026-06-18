@@ -33,6 +33,7 @@
 	import DiffStylePreview from './DiffStylePreview.svelte';
 	import FileListPreview from './FileListPreview.svelte';
 	import FontPicker from './FontPicker.svelte';
+	import SettingOptionCard from './SettingOptionCard.svelte';
 	import ThemePreview from './ThemePreview.svelte';
 	import {
 		actions,
@@ -60,6 +61,7 @@
 	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '$lib/diff-themes';
 	import type {
 		Accent,
+		AnimationMode,
 		DiffLayout,
 		EditorKind,
 		PrMergedBehavior,
@@ -114,7 +116,7 @@
 	let draftViewMode = $state<ViewMode>('split');
 	let draftDiffLayout = $state<DiffLayout>('scroll');
 	let draftShowFileIcons = $state<boolean>(true);
-	let draftAnimationsEnabled = $state<boolean>(false);
+	let draftAnimations = $state<AnimationMode>('accents');
 	let draftOpenFileOnArrowNav = $state<boolean>(true);
 	let draftPrMergedBehavior = $state<PrMergedBehavior>('prompt');
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
@@ -167,7 +169,7 @@
 			draftViewMode = app.viewMode;
 			draftDiffLayout = app.diffLayout;
 			draftShowFileIcons = app.showFileIcons;
-			draftAnimationsEnabled = app.animationsEnabled;
+			draftAnimations = app.animations;
 			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
 			draftPrMergedBehavior = app.prMergedBehavior;
 			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
@@ -262,8 +264,8 @@
 		if (draftShowFileIcons !== app.showFileIcons) {
 			promises.push(actions.setShowFileIcons(draftShowFileIcons));
 		}
-		if (draftAnimationsEnabled !== app.animationsEnabled) {
-			promises.push(actions.setAnimationsEnabled(draftAnimationsEnabled));
+		if (draftAnimations !== app.animations) {
+			promises.push(actions.setAnimations(draftAnimations));
 		}
 		if (draftOpenFileOnArrowNav !== app.openFileOnArrowNav) {
 			promises.push(actions.setOpenFileOnArrowNav(draftOpenFileOnArrowNav));
@@ -469,31 +471,15 @@
 					<div class="mt-4 grid grid-cols-2 gap-3">
 						{#each [{ value: 'light' as const, label: 'Light' }, { value: 'dark' as const, label: 'Dark' }] as opt (opt.value)}
 							{@const active = draftTheme === opt.value}
-							<button
-								type="button"
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
 								onclick={() => (draftTheme = opt.value)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
 							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
 								<div class="w-full p-2">
 									<ThemePreview theme={opt.value} />
 								</div>
-							</button>
+							</SettingOptionCard>
 						{/each}
 					</div>
 				</div>
@@ -507,27 +493,11 @@
 					<div class="mt-4 grid grid-cols-2 gap-3">
 						{#each ACCENTS as opt (opt.id)}
 							{@const active = draftAccent === opt.id}
-							<button
-								type="button"
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
 								onclick={() => (draftAccent = opt.id)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
 							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
 								<div class="flex w-full items-center justify-center p-3">
 									<span
 										class="inline-flex h-7 items-center rounded-md px-4 text-xs font-semibold"
@@ -536,7 +506,7 @@
 										Publish
 									</span>
 								</div>
-							</button>
+							</SettingOptionCard>
 						{/each}
 					</div>
 				</div>
@@ -580,31 +550,15 @@
 					<div class="mt-4 grid grid-cols-2 gap-3">
 						{#each [{ mode: 'split' as ViewMode, label: 'Split' }, { mode: 'unified' as ViewMode, label: 'Unified' }] as opt (opt.mode)}
 							{@const active = draftViewMode === opt.mode}
-							<button
-								type="button"
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
 								onclick={() => (draftViewMode = opt.mode)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
 							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
 								<div class="w-full bg-background p-1.5">
 									<DiffStylePreview mode={opt.mode} theme={draftDiffThemePair} />
 								</div>
-							</button>
+							</SettingOptionCard>
 						{/each}
 					</div>
 				</div>
@@ -658,31 +612,12 @@
 					<div class="mt-4 grid grid-cols-2 gap-3">
 						{#each [{ value: 'scroll' as DiffLayout, label: 'Scrollable', hint: 'All file diffs stack in one continuous scroll.' }, { value: 'single' as DiffLayout, label: 'One at a time', hint: 'Shows the selected file only, like GitHub Desktop.' }] as opt (opt.value)}
 							{@const active = draftDiffLayout === opt.value}
-							<button
-								type="button"
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
+								hint={opt.hint}
 								onclick={() => (draftDiffLayout = opt.value)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
-							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
-								<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
-									{opt.hint}
-								</div>
-							</button>
+							/>
 						{/each}
 					</div>
 				</div>
@@ -696,31 +631,15 @@
 					<div class="mt-4 grid grid-cols-2 gap-3">
 						{#each [{ value: true, label: 'Shown' }, { value: false, label: 'Hidden' }] as opt (opt.label)}
 							{@const active = draftShowFileIcons === opt.value}
-							<button
-								type="button"
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
 								onclick={() => (draftShowFileIcons = opt.value)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
 							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
 								<div class="w-full bg-background py-1">
 									<FileListPreview layout="tree" showIcons={opt.value} />
 								</div>
-							</button>
+							</SettingOptionCard>
 						{/each}
 					</div>
 				</div>
@@ -728,38 +647,19 @@
 				<div>
 					<h3 class="text-base font-semibold">Animations</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
-						Enable enter/exit and hover transitions on menus, dialogs, tooltips, and other UI. Off
-						by default for a snappier, motion-free feel.
+						How much motion the UI uses. "Accents only" keeps hover/focus transitions and small
+						flourishes but opens menus and dialogs instantly; "All" animates those overlays too.
 					</p>
 
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ value: false, label: 'Off', hint: 'UI appears instantly, with no motion.' }, { value: true, label: 'On', hint: 'Menus, dialogs, and tooltips animate in and out.' }] as opt (opt.label)}
-							{@const active = draftAnimationsEnabled === opt.value}
-							<button
-								type="button"
-								onclick={() => (draftAnimationsEnabled = opt.value)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
-							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
-								<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
-									{opt.hint}
-								</div>
-							</button>
+					<div class="mt-4 grid grid-cols-3 gap-3">
+						{#each [{ value: 'none', label: 'None', hint: 'No motion anywhere; everything appears instantly.' }, { value: 'accents', label: 'Accents only', hint: 'Hover/focus transitions and flourishes; menus open instantly.' }, { value: 'all', label: 'All', hint: 'Everything, including menus, dialogs, and tooltips.' }] as const as opt (opt.value)}
+							{@const active = draftAnimations === opt.value}
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
+								hint={opt.hint}
+								onclick={() => (draftAnimations = opt.value)}
+							/>
 						{/each}
 					</div>
 				</div>
@@ -776,31 +676,12 @@
 					<div class="mt-4 grid grid-cols-2 gap-3">
 						{#each [{ value: true, label: 'Open on arrow', hint: 'Arrowing onto a file opens its diff immediately.' }, { value: false, label: 'Open on enter', hint: 'Arrows move the cursor only; Enter opens the file.' }] as opt (opt.label)}
 							{@const active = draftOpenFileOnArrowNav === opt.value}
-							<button
-								type="button"
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
+								hint={opt.hint}
 								onclick={() => (draftOpenFileOnArrowNav = opt.value)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
-							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
-								<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
-									{opt.hint}
-								</div>
-							</button>
+							/>
 						{/each}
 					</div>
 				</div>
@@ -814,31 +695,12 @@
 					<div class="mt-4 grid grid-cols-3 gap-3">
 						{#each [{ value: 'prompt', label: 'Ask each time', hint: 'Show a dialog when a PR merges.' }, { value: 'switch', label: 'Switch back', hint: 'Switch to the default branch automatically.' }, { value: 'nothing', label: 'Do nothing', hint: 'Stay on the branch; never ask.' }] as opt (opt.value)}
 							{@const active = draftPrMergedBehavior === opt.value}
-							<button
-								type="button"
+							<SettingOptionCard
+								selected={active}
+								label={opt.label}
+								hint={opt.hint}
 								onclick={() => (draftPrMergedBehavior = opt.value as PrMergedBehavior)}
-								class={cn(
-									'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors',
-									active ? 'border-primary' : 'border-border hover:border-muted-foreground/50'
-								)}
-							>
-								<div
-									class="flex w-full items-center gap-2 border-b border-border bg-card/40 px-3 py-2 text-xs font-medium"
-								>
-									<span
-										class={cn(
-											'grid size-3.5 shrink-0 place-items-center rounded-full border',
-											active ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
-										)}
-									>
-										{#if active}<Check class="size-2.5" />{/if}
-									</span>
-									{opt.label}
-								</div>
-								<div class="w-full bg-background px-3 py-2 text-xs text-muted-foreground">
-									{opt.hint}
-								</div>
-							</button>
+							/>
 						{/each}
 					</div>
 

@@ -18,7 +18,7 @@
 	data-slot="table-row"
 	class={cn(
 		'border-b border-border hover:bg-muted/50 data-[state=selected]:bg-muted',
-		animations.animationsEnabled && 'transition-colors',
+		animations.accentsEnabled && 'transition-colors',
 		className
 	)}
 	{...restProps}

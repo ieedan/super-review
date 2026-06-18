@@ -51,7 +51,7 @@
 	{href}
 	class={cn(
 		badgeVariants({ variant }),
-		animations.animationsEnabled && 'transition-all',
+		animations.accentsEnabled && 'transition-all',
 		className
 	)}
 	{...restProps}

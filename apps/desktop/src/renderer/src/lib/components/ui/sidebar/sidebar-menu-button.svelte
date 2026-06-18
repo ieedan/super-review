@@ -61,7 +61,7 @@
 	const buttonProps = $derived({
 		class: cn(
 			sidebarMenuButtonVariants({ variant, size }),
-			animations.animationsEnabled && 'transition-[width,height,padding]',
+			animations.accentsEnabled && 'transition-[width,height,padding]',
 			className
 		),
 		'data-slot': 'sidebar-menu-button',

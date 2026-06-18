@@ -59,7 +59,7 @@ const defaults: Schema = {
 		uiFont: 'system',
 		maxDiffLines: 1500,
 		hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
-		animationsEnabled: false,
+		animations: 'accents',
 		prMergedBehavior: 'prompt',
 		autoRemoveMergedBranch: false,
 		unmarkSeenOnChange: true,

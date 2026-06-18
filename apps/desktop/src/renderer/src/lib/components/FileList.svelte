@@ -288,7 +288,7 @@
 	const addTween = new Tween(0, { duration: 400, easing: cubicOut });
 	const delTween = new Tween(0, { duration: 400, easing: cubicOut });
 	$effect(() => {
-		const duration = app.animationsEnabled ? 400 : 0;
+		const duration = app.animations !== 'none' ? 400 : 0;
 		void seenTween.set(seenCount, { duration });
 		void addTween.set(totals.add, { duration });
 		void delTween.set(totals.del, { duration });
