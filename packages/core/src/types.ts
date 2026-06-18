@@ -226,6 +226,10 @@ export interface ChangesetStatus {
 	coveredPackages: string[];
 	// installed && some changed package isn't covered yet.
 	needsChangeset: boolean;
+	// Changesets introduced on this branch (file path + the packages each bumps).
+	// Lets the UI list the ones that look unnecessary — a changeset whose package
+	// has no actual change — and offer to remove them.
+	branchChangesets: { path: string; packages: string[] }[];
 }
 
 // Input for writing a new changeset: one bump type applied to every selected
@@ -755,6 +759,11 @@ export interface DeleteBranchResult {
 export interface CommitDraft {
 	summary: string;
 	description: string;
+	// When the draft was auto-filled from a changeset and is still untouched, the
+	// repo-relative path of that changeset. Persisted so the "detected from
+	// changeset" link survives leaving and returning to the repo (drives clearing
+	// the message if that changeset is later removed). Absent once the user edits.
+	changesetPath?: string;
 }
 
 export interface CloneResult {
@@ -899,6 +908,10 @@ export interface UserPrefs {
 	// How many recently opened repositories the repo picker's "Recent" section
 	// lists. 0 hides the section entirely.
 	recentRepoCount: number;
+	// Whether the changesets integration is active: the "Add a changeset?" prompt,
+	// the unnecessary-changeset warning, commit-message auto-fill, and the toolbar
+	// button. On by default; turn off to silence all changeset behavior.
+	changesetsEnabled: boolean;
 }
 
 export interface DeviceFlowStart {
@@ -1052,6 +1065,8 @@ export interface PreloadAPI {
 		// Write a new `.changeset/<slug>.md` for the selected packages; returns its
 		// repo-relative path.
 		create(repoId: string, input: CreateChangesetInput): Promise<string>;
+		// Delete a changeset file by its repo-relative path (e.g. an unnecessary one).
+		remove(repoId: string, path: string): Promise<void>;
 	};
 	editor: {
 		detect(): Promise<Record<EditorKind, boolean>>;

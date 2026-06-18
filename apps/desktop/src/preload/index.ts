@@ -150,7 +150,9 @@ const api: PreloadAPI = {
 		getStatus: (repoId) =>
 			ipcRenderer.invoke('changesets:getStatus', repoId) as Promise<ChangesetStatus>,
 		create: (repoId, input: CreateChangesetInput) =>
-			ipcRenderer.invoke('changesets:create', repoId, input) as Promise<string>
+			ipcRenderer.invoke('changesets:create', repoId, input) as Promise<string>,
+		remove: (repoId, path: string) =>
+			ipcRenderer.invoke('changesets:remove', repoId, path) as Promise<void>
 	},
 	editor: {
 		detect: () => ipcRenderer.invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,

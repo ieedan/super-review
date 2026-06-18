@@ -153,10 +153,16 @@ interface AppState {
 	changesetStatus: ChangesetStatus | null;
 	// Whether the create-changeset dialog is open.
 	changesetDialogOpen: boolean;
-	// The `repo::branch` the changeset prompt was dismissed for, or null. Lets the
-	// user hide the "Add a changeset?" prompt for the current branch; it returns on
-	// a different branch. In-memory only (resets on restart).
-	changesetPromptDismissedFor: string | null;
+	// Whether the user dismissed the "Add a changeset?" prompt / the "Some
+	// changesets may be unnecessary" warning for the current branch. In-memory only
+	// and cleared on every branch switch, so a dismissal lasts only while you stay
+	// on the branch.
+	changesetPromptDismissed: boolean;
+	changesetWarningDismissed: boolean;
+	// Whether the "review unnecessary changesets" dialog is open.
+	changesetReviewOpen: boolean;
+	// User pref (Integrations settings): when false, all changeset behavior is off.
+	changesetsEnabled: boolean;
 	changedFiles: ChangedFile[];
 	// Free-text filter applied to the changed-files list. Shared between the
 	// sidebar (where it's typed) and the diff view (which hides sections for
@@ -582,7 +588,10 @@ const initial: AppState = {
 	skillInstalled: null,
 	changesetStatus: null,
 	changesetDialogOpen: false,
-	changesetPromptDismissedFor: null,
+	changesetPromptDismissed: false,
+	changesetWarningDismissed: false,
+	changesetsEnabled: true,
+	changesetReviewOpen: false,
 	changedFiles: [],
 	fileSearchQuery: '',
 	unstagedFileCount: 0,
@@ -1091,7 +1100,14 @@ async function refreshBranches(): Promise<void> {
 	app.loading.branches = true;
 	try {
 		app.branches = await window.api.git.listBranches(app.activeRepo.id);
+		const prevBranch = app.currentBranch;
 		app.currentBranch = await window.api.git.getCurrentBranch(app.activeRepo.id);
+		// A changeset prompt/warning dismissal only lasts while you stay on the branch
+		// you dismissed it on — switching branches brings it back.
+		if (app.currentBranch !== prevBranch) {
+			app.changesetPromptDismissed = false;
+			app.changesetWarningDismissed = false;
+		}
 		// The managed stash is keyed by the current branch, so a branch/repo switch
 		// (which always refreshes branches) should re-resolve it. Fire-and-forget —
 		// the sidebar row is non-critical and shouldn't block the branch refresh.
@@ -1785,6 +1801,11 @@ async function refreshDirtyRepos(): Promise<void> {
 // repo switch landing while we're awaiting so a stale result can't overwrite the
 // new repo's status.
 async function refreshChangesetStatus(repoId: string): Promise<void> {
+	// Changesets integration turned off in settings — keep everything silent.
+	if (!app.changesetsEnabled) {
+		app.changesetStatus = null;
+		return;
+	}
 	try {
 		const status = await window.api.changesets.getStatus(repoId);
 		if (app.activeRepo?.id !== repoId) return;
@@ -1973,12 +1994,6 @@ function clampWindowDimension(value: number, min: number, fallback: number): num
 	return Math.max(min, Math.floor(n));
 }
 
-// Identifies the changeset prompt's dismissal scope: the active repo + branch, so
-// dismissing on one branch doesn't hide it on another.
-export function changesetPromptKey(): string {
-	return `${app.activeRepo?.id ?? ''}::${app.currentBranch ?? ''}`;
-}
-
 export const actions = {
 	openChangesetDialog(): void {
 		app.changesetDialogOpen = true;
@@ -1986,8 +2001,40 @@ export const actions = {
 	closeChangesetDialog(): void {
 		app.changesetDialogOpen = false;
 	},
+	async setChangesetsEnabled(value: boolean): Promise<void> {
+		app.changesetsEnabled = value;
+		app.prefs = await window.api.state.setPrefs({ changesetsEnabled: value });
+		// Reflect the change immediately: clear the status when turning off, or
+		// recompute it (in the right context) when turning on.
+		if (!value) {
+			app.changesetStatus = null;
+		} else if (app.activeRepo) {
+			await refreshFiles();
+		}
+	},
 	dismissChangesetPrompt(): void {
-		app.changesetPromptDismissedFor = changesetPromptKey();
+		app.changesetPromptDismissed = true;
+	},
+	dismissChangesetWarning(): void {
+		app.changesetWarningDismissed = true;
+	},
+	openChangesetReview(): void {
+		app.changesetReviewOpen = true;
+	},
+	closeChangesetReview(): void {
+		app.changesetReviewOpen = false;
+	},
+	// Delete a changeset file the user judged unnecessary, then refresh so the
+	// warning and the file list update.
+	async removeChangeset(path: string): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		if (!repoId) return;
+		try {
+			await window.api.changesets.remove(repoId, path);
+			await refreshFiles();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
 	},
 	// Write a new changeset for the selected packages, then refresh: the new
 	// `.changeset/*.md` shows up in the working tree (and the commit-box auto-fill
@@ -2031,6 +2078,7 @@ export const actions = {
 		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
 		app.unmarkSeenOnChange = app.prefs.unmarkSeenOnChange ?? true;
+		app.changesetsEnabled = app.prefs.changesetsEnabled ?? true;
 		app.recentRepoCount = app.prefs.recentRepoCount ?? 5;
 		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
 		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;

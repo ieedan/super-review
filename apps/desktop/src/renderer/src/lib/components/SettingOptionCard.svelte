@@ -32,7 +32,7 @@
 	type="button"
 	{onclick}
 	class={cn(
-		'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-none',
+		'flex flex-col overflow-hidden rounded-lg border-2 text-left transition-none	',
 		selected ? 'border-primary' : 'border-border hover:border-muted-foreground/50',
 		className
 	)}

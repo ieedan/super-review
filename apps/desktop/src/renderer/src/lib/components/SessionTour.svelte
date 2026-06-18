@@ -1,10 +1,9 @@
 <script lang="ts">
 	import FileMinus from '@lucide/svelte/icons/file-minus';
 	import FileEdit from '@lucide/svelte/icons/file-edit';
-	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { actions, app } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
-	import { languageIconForPath } from '$lib/file-icons';
+	import FileIcon from './FileIcon.svelte';
 	import { tourGroups, calloutsForFile } from '$lib/session-tour';
 
 	// The open session's tour, grouped: each step's files (in reading order),
@@ -44,7 +43,6 @@
 			<div class="mt-0.5 flex flex-col">
 				{#each group.files as file (file.path)}
 					{@const isActive = app.selectedFile === file.path}
-					{@const iconName = languageIconForPath(file.path)}
 					<button
 						type="button"
 						class={cn(
@@ -55,7 +53,7 @@
 						title={file.path}
 					>
 						{#if app.showFileIcons}
-							<Icon icon={iconName} class="size-3.5 shrink-0" />
+							<FileIcon path={file.path} class="size-3.5 shrink-0" />
 						{/if}
 						<span class="truncate text-xs">{basename(file.path)}</span>
 						<span class="ml-auto flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums">

@@ -289,22 +289,25 @@ function packagesInChangeset(src: string): string[] {
 	return names;
 }
 
-// Packages covered by the changeset files *introduced on this branch*. We only
-// look at changeset files in `files` (the branch's changed/untracked set), never
-// the whole `.changeset` dir — a changeset already sitting on the base branch
-// for unrelated, unreleased work must not count as covering this branch.
-async function packagesCoveredByFiles(repoPath: string, files: string[]): Promise<string[]> {
-	const covered = new Set<string>();
+// The changeset files *introduced on this branch* (path + the packages each
+// bumps). We only look at changeset files in `files` (the branch's changed /
+// untracked set), never the whole `.changeset` dir — a changeset already sitting
+// on the base branch for unrelated, unreleased work must not count here.
+async function branchChangesetFiles(
+	repoPath: string,
+	files: string[]
+): Promise<{ path: string; packages: string[] }[]> {
+	const out: { path: string; packages: string[] }[] = [];
 	for (const file of files) {
 		if (!isChangesetFile(file)) continue;
 		try {
 			const src = await fs.readFile(path.join(repoPath, file), 'utf8');
-			for (const pkg of packagesInChangeset(src)) covered.add(pkg);
+			out.push({ path: file, packages: packagesInChangeset(src) });
 		} catch {
 			// deleted on the branch / unreadable — covers nothing.
 		}
 	}
-	return [...covered];
+	return out;
 }
 
 // --- public API -------------------------------------------------------------
@@ -315,7 +318,8 @@ export async function getChangesetStatus(repoPath: string): Promise<ChangesetSta
 		packages: [],
 		changedPackages: [],
 		coveredPackages: [],
-		needsChangeset: false
+		needsChangeset: false,
+		branchChangesets: []
 	};
 
 	const config = await readChangesetConfig(repoPath);
@@ -330,7 +334,8 @@ export async function getChangesetStatus(repoPath: string): Promise<ChangesetSta
 	// "Covered" means a changeset *added on this branch* — not one that was already
 	// on the base branch — so existing changesets for other work don't suppress the
 	// prompt.
-	const covered = await packagesCoveredByFiles(repoPath, changedFiles);
+	const branchChangesets = await branchChangesetFiles(repoPath, changedFiles);
+	const covered = [...new Set(branchChangesets.flatMap((c) => c.packages))];
 	const changedPackages = packagesForFiles(changedFiles, packages);
 	const coveredSet = new Set(covered);
 	const needsChangeset = changedPackages.some((p) => !coveredSet.has(p));
@@ -340,7 +345,8 @@ export async function getChangesetStatus(repoPath: string): Promise<ChangesetSta
 		packages,
 		changedPackages,
 		coveredPackages: covered,
-		needsChangeset
+		needsChangeset,
+		branchChangesets
 	};
 }
 
@@ -528,4 +534,15 @@ export async function createChangeset(
 
 	await fs.writeFile(path.join(dir, `${slug}.md`), contents, 'utf8');
 	return relPath;
+}
+
+// Delete a changeset file (e.g. one the user decided was unnecessary). Guarded to
+// `.changeset/<name>.md` so it can never remove anything else; a committed-on-
+// branch changeset becomes a pending deletion, an untracked one just disappears.
+export async function removeChangeset(repoPath: string, relPath: string): Promise<void> {
+	const normalized = relPath.split(path.sep).join('/');
+	if (!isChangesetFile(normalized)) {
+		throw new Error(`Refusing to remove non-changeset path: ${relPath}`);
+	}
+	await fs.rm(path.join(repoPath, normalized), { force: true });
 }

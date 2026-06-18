@@ -2,9 +2,8 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Folder from '@lucide/svelte/icons/folder';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
-	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { cn } from '$lib/utils';
-	import { languageIconForPath } from '$lib/file-icons';
+	import FileIcon from './FileIcon.svelte';
 	import type { ChangedFile, FileListLayout } from '@shared/types';
 
 	// A faithful, non-interactive miniature of FileList — rendered with the
@@ -121,7 +120,6 @@
 				<span class="ml-auto pr-1 tabular-nums">{node.childCount}</span>
 			</div>
 		{:else}
-			{@const iconName = languageIconForPath(node.file.path)}
 			<div
 				class="flex w-full items-center gap-1.5 border-l-2 border-transparent pr-2"
 				style="height: {ROW_HEIGHT}px; padding-left: {node.depth * 10 + 6}px"
@@ -129,7 +127,7 @@
 				<span class="grid size-2.5 shrink-0 place-items-center rounded-[3px] border border-border"
 				></span>
 				{#if showIcons}
-					<Icon icon={iconName} class="size-3 shrink-0" />
+					<FileIcon path={node.file.path} class="size-3 shrink-0" />
 				{/if}
 				{#if node.dirPrefix !== undefined}
 					<span class="flex min-w-0 flex-1 items-center text-[10px]"

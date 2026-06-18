@@ -18,7 +18,6 @@
 	import X from '@lucide/svelte/icons/x';
 	import MessageSquareCheck from '@lucide/svelte/icons/message-square-check';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
-	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { Tween } from 'svelte/motion';
 	import { cubicOut } from 'svelte/easing';
 	import { Button } from './ui/button';
@@ -41,7 +40,7 @@
 		type ContextTab
 	} from '$lib/store.svelte';
 	import { cn, isEditableTarget } from '$lib/utils';
-	import { languageIconForPath } from '$lib/file-icons';
+	import FileIcon from './FileIcon.svelte';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { matchesFileQuery } from '$lib/file-search';
 	import type { ChangedFile } from '@shared/types';
@@ -1071,7 +1070,6 @@
 						</div>
 					{:else}
 						{@const isSeen = app.seenFiles.has(node.file.path)}
-						{@const iconName = languageIconForPath(node.file.path)}
 						{@const isActive = app.selectedFile === node.file.path}
 						{@const isSelected = app.selectedFiles.has(node.file.path)}
 						{@const isFocused = focusedPath === node.file.path}
@@ -1154,7 +1152,7 @@
 								type="button"
 							>
 								{#if app.showFileIcons}
-									<Icon icon={iconName} class="size-3.5 shrink-0" />
+									<FileIcon path={node.file.path} class="size-3.5 shrink-0" />
 								{/if}
 								{#if node.dirPrefix !== undefined}
 									{@const displayPrefix = node.dirPrefix

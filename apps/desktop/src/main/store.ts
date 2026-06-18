@@ -69,7 +69,8 @@ const defaults: Schema = {
 		startMaximized: false,
 		sidebarCollapsed: false,
 		commentsSidebarOpen: false,
-		recentRepoCount: 5
+		recentRepoCount: 5,
+		changesetsEnabled: true
 	},
 	seen: {},
 	collapsedFiles: {},

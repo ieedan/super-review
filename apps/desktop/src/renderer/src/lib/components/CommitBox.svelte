@@ -21,6 +21,15 @@
 	let summary = $state('');
 	let description = $state('');
 
+	// Provenance of an auto-filled message: the changeset it came from plus the
+	// exact text we wrote. Kept only while the box still matches that text — the
+	// moment the user edits, we drop it (so the "detected" badge disappears and
+	// their edit is never discarded). Powers the badge and the "remove the message
+	// when its changeset is removed" behavior below.
+	let detectedChangeset = $state<{ path: string; summary: string; description: string } | null>(
+		null
+	);
+
 	// Restore the persisted draft whenever the active repo changes. Tracked
 	// separately from `app.activeRepo` so we only reload on an actual switch,
 	// not on every metadata refresh.
@@ -29,6 +38,7 @@
 		const repoId = app.activeRepo?.id ?? null;
 		if (repoId === loadedRepoId) return;
 		loadedRepoId = repoId;
+		detectedChangeset = null;
 		if (!repoId) {
 			summary = '';
 			description = '';
@@ -39,6 +49,11 @@
 			if (app.activeRepo?.id !== repoId) return;
 			summary = draft.summary;
 			description = draft.description;
+			// Restore changeset provenance so "remove the message when its changeset is
+			// removed" keeps working after returning to the repo.
+			detectedChangeset = draft.changesetPath
+				? { path: draft.changesetPath, summary: draft.summary, description: draft.description }
+				: null;
 		});
 	});
 
@@ -54,6 +69,8 @@
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	let filledChangesets = new Set<string>();
 	$effect(() => {
+		// Changesets integration disabled in settings — no auto-fill or provenance.
+		if (!app.changesetsEnabled) return;
 		const repoId = app.activeRepo?.id ?? null;
 		const changesetPaths = app.changedFiles
 			.filter((f) => (f.status === 'added' || f.status === 'untracked') && isChangesetPath(f.path))
@@ -69,6 +86,20 @@
 		const present = new Set(changesetPaths);
 		for (const p of filledChangesets) {
 			if (!present.has(p)) filledChangesets.delete(p);
+		}
+
+		// If the changeset our message was detected from is gone (e.g. removed via
+		// the review dialog) and the box still matches it (provenance intact, since
+		// any edit clears it), clear the message too — it's no longer wanted.
+		const detected = untrack(() => detectedChangeset);
+		if (detected && !present.has(detected.path)) {
+			detectedChangeset = null;
+			untrack(() => {
+				summary = '';
+				description = '';
+				const rid = app.activeRepo?.id;
+				if (rid) clearDraft(rid);
+			});
 		}
 
 		if (!repoId || changesetPaths.length !== 1) return;
@@ -95,8 +126,24 @@
 		if (!parsed) return;
 		summary = parsed.summary;
 		description = parsed.description;
+		detectedChangeset = {
+			path: filePath,
+			summary: parsed.summary,
+			description: parsed.description
+		};
 		persistDraft();
 	}
+
+	// Drop the changeset provenance the instant the message diverges from what we
+	// auto-filled — so editing makes the "detected" badge disappear and protects
+	// the user's text from the removal-clear above.
+	$effect(() => {
+		const d = detectedChangeset;
+		if (!d) return;
+		if (summary !== d.summary || description !== d.description) {
+			detectedChangeset = null;
+		}
+	});
 
 	// Debounce persistence so we're not writing the store on every keystroke.
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -104,7 +151,20 @@
 		const repoId = app.activeRepo?.id;
 		if (!repoId) return;
 		clearTimeout(saveTimer);
-		const snapshot = { summary, description };
+		// Persist the changeset provenance with the draft so it survives leaving and
+		// returning to the repo — but only while the message still matches what we
+		// auto-filled. Checked explicitly (not just `detectedChangeset?.path`) because
+		// oninput fires before the divergence effect runs, so an edit could otherwise
+		// persist a stale path for one tick.
+		const stillMatches =
+			detectedChangeset !== null &&
+			summary === detectedChangeset.summary &&
+			description === detectedChangeset.description;
+		const snapshot = {
+			summary,
+			description,
+			changesetPath: stillMatches ? detectedChangeset!.path : undefined
+		};
 		saveTimer = setTimeout(() => {
 			void window.api.state.setCommitDraft(repoId, snapshot);
 		}, 300);

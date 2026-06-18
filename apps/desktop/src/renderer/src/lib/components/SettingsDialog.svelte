@@ -17,6 +17,7 @@
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Button, buttonVariants } from './ui/button';
 	import { Checkbox } from './ui/checkbox';
+	import { Switch } from './ui/switch';
 	import { Input } from './ui/input';
 	import * as Table from './ui/table';
 	import CursorIcon from './icons/CursorIcon.svelte';
@@ -28,6 +29,7 @@
 	import WarpIcon from './icons/WarpIcon.svelte';
 	import ITermIcon from './icons/ITermIcon.svelte';
 	import TerminalAppIcon from './icons/TerminalAppIcon.svelte';
+	import ChangesetLogo from './ChangesetLogo.svelte';
 	import PowerShellIcon from './icons/PowerShellIcon.svelte';
 	import ZshIcon from './icons/ZshIcon.svelte';
 	import DiffStylePreview from './DiffStylePreview.svelte';
@@ -135,6 +137,7 @@
 	let draftUiFont = $state<string>('system');
 	let draftEditor = $state<EditorKind | null>(null);
 	let draftTerminal = $state<TerminalKind | null>(null);
+	let draftChangesetsEnabled = $state<boolean>(true);
 	let draftHotkeys = $state<Hotkeys>({ ...DEFAULT_HOTKEYS });
 
 	// The diff theme the previews on this tab render with — tracks the in-progress
@@ -188,6 +191,7 @@
 			draftUiFont = app.uiFont;
 			draftEditor = effectiveEditor();
 			draftTerminal = effectiveTerminal();
+			draftChangesetsEnabled = app.changesetsEnabled;
 			draftHotkeys = { ...DEFAULT_HOTKEYS, ...$state.snapshot(app.hotkeys) };
 		}
 	});
@@ -336,6 +340,9 @@
 		const savedTerminal = app.prefs?.externalTerminal ?? null;
 		if (draftTerminal !== savedTerminal) {
 			promises.push(actions.setExternalTerminal(draftTerminal));
+		}
+		if (draftChangesetsEnabled !== app.changesetsEnabled) {
+			promises.push(actions.setChangesetsEnabled(draftChangesetsEnabled));
 		}
 		if (hotkeysChanged) {
 			promises.push(actions.setHotkeys($state.snapshot(draftHotkeys)));
@@ -964,6 +971,29 @@
 							</button>
 						{/each}
 					</div>
+				</div>
+
+				<div class="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3">
+					<div
+						class="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-card"
+					>
+						<ChangesetLogo class="h-5 w-auto" />
+					</div>
+					<div class="min-w-0 flex-1">
+						<div class="text-sm font-medium">Changesets</div>
+						<p class="text-xs text-muted-foreground">
+							Prompts, commit message autofill, and a button to create one. For repos that use <a
+								href="https://github.com/changesets/changesets"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="underline underline-offset-2 hover:text-foreground">changesets</a
+							>.
+						</p>
+					</div>
+					<Switch
+						bind:checked={draftChangesetsEnabled}
+						aria-label="Enable changesets integration"
+					/>
 				</div>
 			</section>
 		{:else if activeTab === 'hotkeys'}

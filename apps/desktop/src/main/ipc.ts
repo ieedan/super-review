@@ -57,6 +57,7 @@ import {
 	commit,
 	getChangesetStatus,
 	createChangeset,
+	removeChangeset,
 	continueMerge,
 	convertToForkRemotes,
 	removeUpstreamRemote,
@@ -856,6 +857,13 @@ export function registerIpc(): void {
 		'changesets:create',
 		async (_e, repoId: string, input: CreateChangesetInput): Promise<string> => {
 			return createChangeset(repoOrThrow(repoId).path, input);
+		}
+	);
+
+	ipcMain.handle(
+		'changesets:remove',
+		async (_e, repoId: string, filePath: string): Promise<void> => {
+			await removeChangeset(repoOrThrow(repoId).path, filePath);
 		}
 	);
 

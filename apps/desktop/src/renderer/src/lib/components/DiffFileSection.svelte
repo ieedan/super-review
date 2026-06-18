@@ -10,13 +10,12 @@
 	import FileMinus from '@lucide/svelte/icons/file-minus';
 	import FileText from '@lucide/svelte/icons/file-text';
 	import ImageIcon from '@lucide/svelte/icons/image';
-	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import CursorIcon from './icons/CursorIcon.svelte';
 	import VSCodeIcon from './icons/VSCodeIcon.svelte';
 	import XcodeIcon from './icons/XcodeIcon.svelte';
 	import ZedIcon from './icons/ZedIcon.svelte';
 	import VisualStudioIcon from './icons/VisualStudioIcon.svelte';
-	import { languageIconForPath } from '$lib/file-icons';
+	import FileIcon from './FileIcon.svelte';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { isMarkdownPath, renderMarkdown } from '$lib/markdown';
 	import { isImagePath, isSvgPath } from '@shared/media';
@@ -1772,7 +1771,7 @@
 				<ChevronRight class="size-3.5" />
 			{/if}
 		</button>
-		<Icon icon={languageIconForPath(file.path)} class="size-3.5 shrink-0" />
+		<FileIcon path={file.path} class="size-3.5 shrink-0" />
 		<div class="flex min-w-0 flex-1 items-center gap-2">
 			<!-- Inline whitespace is intentional (see FileList.svelte): a newline
 			     between these flex children renders as a visible gap between the

@@ -6,6 +6,7 @@
 	import UpdateBranchButton from './UpdateBranchButton.svelte';
 	import EditorButton from './EditorButton.svelte';
 	import TerminalButton from './TerminalButton.svelte';
+	import ChangesetButton from './ChangesetButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
 	import { useSidebar } from './ui/sidebar';
 	import CornerUpLeft from '@lucide/svelte/icons/corner-up-left';
@@ -96,6 +97,7 @@
 			     or imply the view is writable. -->
 			{#if !isReadOnlyView()}
 				<UpdateBranchButton />
+				<ChangesetButton />
 				<EditorButton />
 				<TerminalButton />
 			{/if}

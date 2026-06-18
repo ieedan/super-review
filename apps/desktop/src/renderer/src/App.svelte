@@ -20,6 +20,7 @@
 	import StashPromptDialog from '$lib/components/StashPromptDialog.svelte';
 	import SwitchBranchDialog from '$lib/components/SwitchBranchDialog.svelte';
 	import ChangesetDialog from '$lib/components/ChangesetDialog.svelte';
+	import ChangesetReviewDialog from '$lib/components/ChangesetReviewDialog.svelte';
 	import BranchMenu from '$lib/components/BranchMenu.svelte';
 	import RepositoryMenu from '$lib/components/RepositoryMenu.svelte';
 	import AddRepoDialog from '$lib/components/AddRepoDialog.svelte';
@@ -491,6 +492,7 @@
 <StashPromptDialog />
 <SwitchBranchDialog />
 <ChangesetDialog />
+<ChangesetReviewDialog />
 <BranchMenu />
 <RepositoryMenu />
 <AddRepoDialog />

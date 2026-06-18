@@ -5,11 +5,10 @@
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
-	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { actions, app, isPRCommentContext } from '$lib/store.svelte';
-	import { languageIconForPath } from '$lib/file-icons';
+	import FileIcon from './FileIcon.svelte';
 	import { formatRelative } from '$lib/utils';
 	import type { LocalComment, PRReviewComment } from '@shared/types';
 
@@ -255,7 +254,7 @@
 							</div>
 							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
 								{#if app.showFileIcons}
-									<Icon icon={languageIconForPath(root.path)} class="size-3.5 shrink-0" />
+									<FileIcon path={root.path} class="size-3.5 shrink-0" />
 								{/if}
 								<span class="truncate font-mono">{fileName(root.path)}</span>
 								{#if (root.line ?? root.originalLine) != null}
@@ -359,7 +358,7 @@
 							</div>
 							<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
 								{#if app.showFileIcons}
-									<Icon icon={languageIconForPath(c.path)} class="size-3.5 shrink-0" />
+									<FileIcon path={c.path} class="size-3.5 shrink-0" />
 								{/if}
 								<span class="truncate font-mono">{fileName(c.path)}</span>
 								<span class="shrink-0">·</span>

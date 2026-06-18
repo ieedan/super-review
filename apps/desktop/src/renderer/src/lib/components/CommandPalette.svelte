@@ -1,9 +1,8 @@
 <script lang="ts">
 	import Check from '@lucide/svelte/icons/check';
-	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import * as Command from './ui/command';
 	import { actions, app } from '$lib/store.svelte';
-	import { languageIconForPath } from '$lib/file-icons';
+	import FileIcon from './FileIcon.svelte';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { cn } from '$lib/utils';
 
@@ -80,7 +79,6 @@
 		<Command.Group>
 			{#each app.changedFiles as file (file.path)}
 				{@const isSeen = app.seenFiles.has(file.path)}
-				{@const iconName = languageIconForPath(file.path)}
 				{@const parts = splitPath(file.path)}
 				{@const displayPrefix = parts.dir
 					? truncatePathPrefix(parts.dir, parts.name, availablePathWidth, rowFont)
@@ -101,7 +99,7 @@
 						{/if}
 					</span>
 					{#if app.showFileIcons}
-						<Icon icon={iconName} class="!size-4 shrink-0" />
+						<FileIcon path={file.path} class="!size-4 shrink-0" />
 					{/if}
 					<!-- Inline whitespace is intentional: a newline between these flex
                children becomes a text node that can render as a visible gap.

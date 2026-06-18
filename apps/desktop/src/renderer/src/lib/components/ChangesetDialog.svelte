@@ -5,13 +5,12 @@
 	import { Button } from './ui/button';
 	import { Checkbox } from './ui/checkbox';
 	import { RadioGroup, RadioGroupItem } from './ui/radio-group';
-	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import MarkdownComposer from './MarkdownComposer.svelte';
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import ChangesetPreview from './ChangesetPreview.svelte';
 	import { actions, app } from '$lib/store.svelte';
 	import { formatChangesetFile, randomChangesetName } from '$lib/changeset';
-	import { languageIconForPath } from '$lib/file-icons';
+	import FileIcon from './FileIcon.svelte';
 	import type { WorkspacePackage } from '@shared/types';
 
 	type Bump = 'patch' | 'minor' | 'major';
@@ -246,7 +245,7 @@
 						<!-- Mirrors the diff file header in the review tab: language icon + path
 						     on a card-tinted bar. -->
 						<header class="flex h-9 items-center gap-2 border-b border-border bg-card/95 px-3">
-							<Icon icon={languageIconForPath(previewName)} class="size-3.5 shrink-0" />
+							<FileIcon path={previewName} class="size-3.5 shrink-0" />
 							<span
 								class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
 								title={previewName}
