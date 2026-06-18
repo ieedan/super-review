@@ -242,8 +242,7 @@ function iconBaseRank(stem: string): number | undefined {
 		stem.startsWith('maskable')
 	)
 		return ICON_RANK_PWA;
-	if (stem.startsWith('favicon-') || stem.startsWith('favicon_'))
-		return ICON_RANK_FAVICON_VARIANT;
+	if (stem.startsWith('favicon-') || stem.startsWith('favicon_')) return ICON_RANK_FAVICON_VARIANT;
 	if (
 		stem === 'logo' ||
 		stem.startsWith('logo-') ||
@@ -443,7 +442,11 @@ async function resolveIconPair(winnerPath: string, winnerBuf: Buffer): Promise<R
 		.filter((e) => e.isFile())
 		.map((e) => {
 			const ext = path.extname(e.name).slice(1).toLowerCase();
-			return { name: e.name, ext, stem: e.name.slice(0, e.name.length - ext.length - 1).toLowerCase() };
+			return {
+				name: e.name,
+				ext,
+				stem: e.name.slice(0, e.name.length - ext.length - 1).toLowerCase()
+			};
 		})
 		.filter((c) => ICON_EXT_PRIORITY[c.ext] !== undefined && c.stem === wantStem)
 		// Prefer the same extension as the winner, then svg > png > ico.

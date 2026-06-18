@@ -49,11 +49,7 @@
 	bind:this={ref}
 	data-slot="badge"
 	{href}
-	class={cn(
-		badgeVariants({ variant }),
-		animations.accentsEnabled && 'transition-all',
-		className
-	)}
+	class={cn(badgeVariants({ variant }), animations.accentsEnabled && 'transition-all', className)}
 	{...restProps}
 >
 	{@render children?.()}
