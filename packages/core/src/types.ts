@@ -945,6 +945,32 @@ export interface GithubAuthError {
 	reason: 'revoked' | 'sso';
 }
 
+// Trimmed npm-registry metadata for a single package, surfaced in the diff
+// viewer's package.json hover cards. The full registry document is large (it
+// inlines every version's manifest); the main process strips it down to just
+// what the cards render. `time` maps a version (plus the synthetic `created` /
+// `modified` keys npm includes) to its ISO publish timestamp.
+export interface NpmPackageInfo {
+	name: string;
+	description?: string;
+	// `dist-tags.latest` — the version `npm install <name>` resolves to.
+	latestVersion?: string;
+	homepage?: string;
+	// Normalized to a browsable https URL (git+ssh / git+https forms are cleaned).
+	repositoryUrl?: string;
+	license?: string;
+	author?: string;
+	keywords?: string[];
+	// version (or 'created' / 'modified') → ISO publish timestamp.
+	time: Record<string, string>;
+	// Deprecation message keyed by version, when the registry marks one.
+	deprecations?: Record<string, string>;
+}
+
+// Result of an npm lookup: either the trimmed info or a human-readable error
+// (offline, 404, rate-limited) the hover card can show instead of spinning.
+export type NpmPackageResult = { ok: true; info: NpmPackageInfo } | { ok: false; error: string };
+
 export interface PreloadAPI {
 	platform: AppPlatform;
 	repos: {
@@ -1246,6 +1272,12 @@ export interface PreloadAPI {
 		isInstalled(repoId: string): Promise<boolean>;
 		// Write the bundled document-session skill into the repo.
 		install(repoId: string): Promise<void>;
+	};
+	npm: {
+		// Fetch trimmed npm-registry metadata for a package, for the package.json
+		// hover cards. Cached in the main process; resolves to an error variant
+		// rather than rejecting so the card can render the failure inline.
+		getPackageInfo(name: string): Promise<NpmPackageResult>;
 	};
 	shell: {
 		openExternal(url: string): Promise<void>;

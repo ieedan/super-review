@@ -32,6 +32,7 @@ import type {
 	LocalOnlyBranch,
 	ManagedStash,
 	NewReviewCommentInput,
+	NpmPackageResult,
 	PRChecksSummary,
 	PRReviewComment,
 	PRSource,
@@ -99,6 +100,7 @@ import {
 	undoLastCommit
 } from '@super-review/core';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
+import { getNpmPackageInfo } from './npm-service.js';
 import * as gh from './github-service.js';
 import {
 	clearSessions,
@@ -1261,6 +1263,13 @@ export function registerIpc(): void {
 			return gh.setReviewThreadResolved(threadId, resolved, repo.githubAccountId);
 		}
 	);
+
+	// ─── npm ───────────────────────────────────────────────────────────────
+	// Trimmed npm-registry metadata for the package.json hover cards. Cached in
+	// npm-service; resolves to an error variant rather than throwing.
+	ipcMain.handle('npm:getPackageInfo', async (_e, name: string): Promise<NpmPackageResult> => {
+		return getNpmPackageInfo(name);
+	});
 
 	// ─── Shell ─────────────────────────────────────────────────────────────
 	ipcMain.handle('shell:openExternal', async (_e, url: string): Promise<void> => {

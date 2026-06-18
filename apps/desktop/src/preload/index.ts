@@ -32,6 +32,7 @@ import type {
 	NewLocalCommentInput,
 	ManagedStash,
 	NewReviewCommentInput,
+	NpmPackageResult,
 	PRChecksSummary,
 	PRReviewComment,
 	PRSummary,
@@ -324,6 +325,10 @@ const api: PreloadAPI = {
 	skill: {
 		isInstalled: (repoId) => ipcRenderer.invoke('skill:isInstalled', repoId) as Promise<boolean>,
 		install: (repoId) => ipcRenderer.invoke('skill:install', repoId) as Promise<void>
+	},
+	npm: {
+		getPackageInfo: (name) =>
+			ipcRenderer.invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>
 	},
 	shell: {
 		openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,
