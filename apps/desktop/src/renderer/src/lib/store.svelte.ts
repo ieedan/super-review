@@ -165,6 +165,11 @@ interface AppState {
 	// back to the single active file.
 	selectedFiles: SvelteSet<string>;
 	seenFiles: SvelteSet<string>;
+	// Whether the "You've seen it all" completion state on the Branch tab has been
+	// dismissed via "Keep Reviewing". Transient (never persisted): it's reset the
+	// moment the branch drops below fully-seen, so finishing review again re-shows
+	// the celebration. See `allBranchChangesSeen()`.
+	seenItAllDismissed: boolean;
 	// Working-tree files explicitly unchecked in the Unstaged tab so they're
 	// left out of the next commit. Tracking exclusions (rather than inclusions)
 	// means everything is committed by default and newly-changed files show up
@@ -476,6 +481,18 @@ export function canViewBranchTab(): boolean {
 	return app.currentBranch !== base;
 }
 
+// True when the Branch tab is showing changes and every one has been marked
+// seen. Drives the "You've seen it all" completion state. Scoped to the Branch
+// tab on purpose — the Unstaged tab's checkboxes are commit-inclusion, not
+// "seen", and the Sessions tab has its own flow.
+export function allBranchChangesSeen(): boolean {
+	return (
+		app.contextTab === 'branch' &&
+		app.changedFiles.length > 0 &&
+		app.changedFiles.every((f) => app.seenFiles.has(f.path))
+	);
+}
+
 // A short label for the read-only PR being viewed (its head branch), or null
 // when not viewing a PR. The picker trigger shows this in place of a branch.
 export function viewedPRLabel(): string | null {
@@ -552,6 +569,7 @@ const initial: AppState = {
 	selectedFile: null,
 	selectedFiles: new SvelteSet(),
 	seenFiles: new SvelteSet(),
+	seenItAllDismissed: false,
 	excludedFromCommit: new SvelteSet(),
 	stagingLineExclusions: new SvelteSet(),
 	collapsedFiles: new SvelteSet(),
@@ -2501,6 +2519,16 @@ export const actions = {
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
 		await window.api.state.clearSeen(app.activeRepo.id, diffContextKey(ctx));
 		app.seenFiles.clear();
+	},
+
+	// Hide the "You've seen it all" completion state ("Keep Reviewing"). It stays
+	// hidden until the branch drops below fully-seen and is completed again —
+	// that reset happens reactively in DiffView, keyed off `allBranchChangesSeen()`.
+	dismissSeenItAll(): void {
+		app.seenItAllDismissed = true;
+	},
+	resetSeenItAll(): void {
+		if (app.seenItAllDismissed) app.seenItAllDismissed = false;
 	},
 
 	// Toggle whether a working-tree file is included in the next commit. The file

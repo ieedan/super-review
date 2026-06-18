@@ -4,8 +4,9 @@
 	import DiffFileSection from './DiffFileSection.svelte';
 	import SessionStepHeader from './SessionStepHeader.svelte';
 	import NoChanges from './NoChanges.svelte';
+	import BranchReviewComplete from './BranchReviewComplete.svelte';
 	import FindBar from './FindBar.svelte';
-	import { app, actions } from '$lib/store.svelte';
+	import { app, actions, allBranchChangesSeen } from '$lib/store.svelte';
 	import { find, openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
 	import { shortcut, type Options as ShortcutOptions } from '$lib/actions/shortcut.svelte';
 	import { matchesFileQuery } from '$lib/file-search';
@@ -100,6 +101,17 @@
 	const lastFileIndex = $derived(
 		displayPlan.reduce((acc, it, i) => (it.kind === 'file' ? i : acc), -1)
 	);
+
+	// "You've seen it all" completion state: shown over the diff list once every
+	// change on the Branch tab is marked seen, until the reviewer dismisses it
+	// with "Keep Reviewing". Re-arm it whenever the branch drops back below
+	// fully-seen (unmarking a file, new changes, switching context) so finishing
+	// review again re-shows the celebration.
+	const allSeen = $derived(allBranchChangesSeen());
+	const showComplete = $derived(allSeen && !app.seenItAllDismissed);
+	$effect(() => {
+		if (!allSeen) actions.resetSeenItAll();
+	});
 
 	let scrollContainer = $state<HTMLElement | null>(null);
 	let observer = $state<IntersectionObserver | null>(null);
@@ -406,6 +418,10 @@
 			{/if}
 		{/each}
 	</div>
+
+	{#if showComplete}
+		<BranchReviewComplete />
+	{/if}
 </section>
 
 <style>
