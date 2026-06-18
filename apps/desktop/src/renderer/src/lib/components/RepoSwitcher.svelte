@@ -8,6 +8,7 @@
 	import * as Popover from './ui/popover';
 	import * as Command from './ui/command';
 	import { actions, app } from '$lib/store.svelte';
+	import { repoFrecency } from '$lib/repo-frecency.svelte';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import { cn, repoPlaceholder, groupReposByOwner } from '$lib/utils';
 	import type { RepoInfo } from '@shared/types';
@@ -115,11 +116,15 @@
 	}
 
 	// Mirror GitHub Desktop's repo picker: a "Recent" section of the few most
-	// recently opened repos, followed by every repo grouped under its owner
-	// (recent repos still appear in their owner group too). Filtering is applied
-	// here — rather than via Command's built-in matcher — because the list is
+	// relevant repos, followed by every repo grouped under its owner (recent
+	// repos still appear in their owner group too). Filtering is applied here —
+	// rather than via Command's built-in matcher — because the list is
 	// virtualized and its items are not all present in the DOM. While filtering,
 	// the Recent section is dropped and only the owner groups are shown.
+	//
+	// The section is ranked by frecency (frequency blended with recency) rather
+	// than raw recency, so the repos you reach for most stay near the top and
+	// don't get bumped the instant you glance at another repo.
 	const rows = $derived.by(() => {
 		const needle = filter.trim().toLowerCase();
 		const filtered = app.repos.filter(
@@ -134,8 +139,15 @@
 		if (needle === '') {
 			// The section size is user-configurable (Settings → Behavior); 0 hides
 			// the section via the empty-slice + length guard below.
-			const recent = [...filtered]
-				.sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
+			//
+			// `repoFrecency.items` is the repo ids ordered by frecency. Rank by that
+			// position; repos never opened on this machine have no frecency entry and
+			// simply don't appear in Recent (they're still reachable via the owner
+			// groups below).
+			const rank = new Map(repoFrecency.items.map((id, i) => [id, i]));
+			const recent = filtered
+				.filter((r) => rank.has(r.id))
+				.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!)
 				.slice(0, app.recentRepoCount);
 			if (recent.length > 0) {
 				result.push({ kind: 'header', label: 'Recent' });
