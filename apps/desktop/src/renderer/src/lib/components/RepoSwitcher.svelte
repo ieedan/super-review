@@ -264,11 +264,7 @@
 											)}
 										>
 											{#if repo.iconDataUrl}
-												<img
-													src={iconSrc(repo)}
-													alt=""
-													class="size-5 rounded-sm object-contain"
-												/>
+												<img src={iconSrc(repo)} alt="" class="size-5 rounded-sm object-contain" />
 											{:else}
 												{@const { initial, toneClass } = placeholderFor(repo)}
 												<span
