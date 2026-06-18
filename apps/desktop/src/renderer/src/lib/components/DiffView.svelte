@@ -420,7 +420,7 @@
 	</div>
 
 	{#if showComplete}
-		<BranchReviewComplete />
+		<BranchReviewComplete animateEntrance={app.seenItAllAnimate} />
 	{/if}
 </section>
 

@@ -46,6 +46,15 @@
 	letter-spacing: normal;
 }
 
+/* The <textarea> text is `color: transparent` (only the <pre> overlay shows), so
+   its placeholder inherits transparent and vanishes. Give the placeholder its
+   own visible color — unlike the upstream `default` theme, the `github` theme
+   ships no ::placeholder rule. */
+.carta-theme__github .carta-input ::placeholder {
+	color: var(--color-muted-foreground);
+	opacity: 1;
+}
+
 /* Toolbar (Write/Preview tabs on the left, formatting icons on the right). */
 .carta-theme__github .carta-toolbar {
 	height: 2.25rem;

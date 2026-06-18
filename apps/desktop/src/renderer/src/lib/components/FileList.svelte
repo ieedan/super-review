@@ -26,12 +26,14 @@
 	import * as Tabs from './ui/tabs';
 	import * as Sidebar from './ui/sidebar';
 	import CommitBox from './CommitBox.svelte';
+	import ChangesetPrompt from './ChangesetPrompt.svelte';
 	import SessionsList from './SessionsList.svelte';
 	import SessionTour from './SessionTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { harnessLabel } from '$lib/harness-logos';
 	import {
 		actions,
+		allBranchChangesSeen,
 		app,
 		canViewBranchTab,
 		isPRCommentContext,
@@ -297,7 +299,16 @@
 	const addDisplay = $derived(Math.round(addTween.current));
 	const delDisplay = $derived(Math.round(delTween.current));
 
+	// Jumping to a file from the sidebar while the "You've seen it all" state is
+	// up should reveal that file's diff, so dismiss the overlay. Guarded on the
+	// state actually being completable so we never set the dismissed flag while
+	// the branch is below fully-seen (which would suppress the next completion).
+	function dismissSeenItAllForNav(): void {
+		if (allBranchChangesSeen()) actions.dismissSeenItAll();
+	}
+
 	function pick(path: string): void {
+		dismissSeenItAllForNav();
 		focusedPath = path;
 		selectionAnchor = path;
 		// Plain open (click / keyboard) collapses any multi-selection to this file.
@@ -344,6 +355,9 @@
 	// Shift- and plain clicks open the clicked file's diff; cmd/ctrl-click only
 	// adjusts the selection so deselecting a row doesn't yank you to it.
 	function onFileClick(e: MouseEvent, file: ChangedFile): void {
+		// Any click on a file row (plain, shift-range, or cmd-toggle) counts as
+		// re-engaging with the diff, so clear the completion state if it's up.
+		dismissSeenItAllForNav();
 		if (e.shiftKey && selectionAnchor) {
 			actions.setSelectedFiles(filePathsBetween(selectionAnchor, file.path));
 			focusedPath = file.path;
@@ -1234,6 +1248,7 @@
 					<ChevronRight class="size-4 shrink-0 text-muted-foreground" />
 				</button>
 			{/if}
+			<ChangesetPrompt />
 			<CommitBox />
 		</Sidebar.Footer>
 	{/if}

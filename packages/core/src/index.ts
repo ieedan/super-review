@@ -10,6 +10,7 @@
 export * from './types.js';
 export * from './media.js';
 export * from './git-service.js';
+export * from './changesets.js';
 export * from './repo-templates.js';
 export * from './session-capture.js';
 export * from './session-store.js';

@@ -6,6 +6,8 @@ import type {
 	BranchMenuAction,
 	BranchMenuState,
 	ChangedFile,
+	ChangesetStatus,
+	CreateChangesetInput,
 	CloneResult,
 	CreateRepoDefaults,
 	CommitDraft,
@@ -143,6 +145,12 @@ const api: PreloadAPI = {
 			) as Promise<RepoInfo>,
 		setForkContribution: (repoId, contributeToParent) =>
 			ipcRenderer.invoke('git:setForkContribution', repoId, contributeToParent) as Promise<RepoInfo>
+	},
+	changesets: {
+		getStatus: (repoId) =>
+			ipcRenderer.invoke('changesets:getStatus', repoId) as Promise<ChangesetStatus>,
+		create: (repoId, input: CreateChangesetInput) =>
+			ipcRenderer.invoke('changesets:create', repoId, input) as Promise<string>
 	},
 	editor: {
 		detect: () => ipcRenderer.invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,

@@ -3,6 +3,7 @@ import type {
 	AppPlatform,
 	BranchInfo,
 	ChangedFile,
+	ChangesetStatus,
 	CommitFileSelection,
 	ContextTab,
 	CreateRepoOptions,
@@ -146,6 +147,16 @@ interface AppState {
 	// while unknown (no active repo, or the check hasn't returned yet); false
 	// drives the "Install skill" prompts in the header and sessions empty state.
 	skillInstalled: boolean | null;
+	// Changeset situation for the active repo's current branch (drives the "Add a
+	// changeset?" prompt above the commit box). null while unknown / not the
+	// working-tree context.
+	changesetStatus: ChangesetStatus | null;
+	// Whether the create-changeset dialog is open.
+	changesetDialogOpen: boolean;
+	// The `repo::branch` the changeset prompt was dismissed for, or null. Lets the
+	// user hide the "Add a changeset?" prompt for the current branch; it returns on
+	// a different branch. In-memory only (resets on restart).
+	changesetPromptDismissedFor: string | null;
 	changedFiles: ChangedFile[];
 	// Free-text filter applied to the changed-files list. Shared between the
 	// sidebar (where it's typed) and the diff view (which hides sections for
@@ -171,6 +182,12 @@ interface AppState {
 	// moment the branch drops below fully-seen, so finishing review again re-shows
 	// the celebration. See `allBranchChangesSeen()`.
 	seenItAllDismissed: boolean;
+	// Whether the completion state should animate its entrance. Only set when the
+	// user marks the *last* change seen while on the Branch tab (the initial
+	// completion); it stays false when simply switching back to an already-finished
+	// branch, so the celebration only animates the first time you finish. Reset
+	// alongside `seenItAllDismissed` once the branch drops below fully-seen.
+	seenItAllAnimate: boolean;
 	// Working-tree files explicitly unchecked in the Unstaged tab so they're
 	// left out of the next commit. Tracking exclusions (rather than inclusions)
 	// means everything is committed by default and newly-changed files show up
@@ -563,6 +580,9 @@ const initial: AppState = {
 	activeSessionDetail: null,
 	sessionView: 'tour',
 	skillInstalled: null,
+	changesetStatus: null,
+	changesetDialogOpen: false,
+	changesetPromptDismissedFor: null,
 	changedFiles: [],
 	fileSearchQuery: '',
 	unstagedFileCount: 0,
@@ -571,6 +591,7 @@ const initial: AppState = {
 	selectedFiles: new SvelteSet(),
 	seenFiles: new SvelteSet(),
 	seenItAllDismissed: false,
+	seenItAllAnimate: false,
 	excludedFromCommit: new SvelteSet(),
 	stagingLineExclusions: new SvelteSet(),
 	collapsedFiles: new SvelteSet(),
@@ -1760,12 +1781,26 @@ async function refreshDirtyRepos(): Promise<void> {
 	app.dirtyRepoIds = new SvelteSet(results.filter(([, dirty]) => dirty).map(([id]) => id));
 }
 
+// Recompute whether the current branch is missing a changeset. Guarded against a
+// repo switch landing while we're awaiting so a stale result can't overwrite the
+// new repo's status.
+async function refreshChangesetStatus(repoId: string): Promise<void> {
+	try {
+		const status = await window.api.changesets.getStatus(repoId);
+		if (app.activeRepo?.id !== repoId) return;
+		app.changesetStatus = status;
+	} catch {
+		if (app.activeRepo?.id === repoId) app.changesetStatus = null;
+	}
+}
+
 async function refreshFiles(): Promise<void> {
 	if (!app.activeRepo) {
 		app.changedFiles = [];
 		app.unstagedFileCount = 0;
 		app.localComments = [];
 		app.localCommentsContextKey = null;
+		app.changesetStatus = null;
 		return;
 	}
 	// The Sessions tab with no session open shows the sessions list, not a file
@@ -1890,8 +1925,13 @@ async function refreshFiles(): Promise<void> {
 		if (ctx.kind === 'workingTree') {
 			app.unstagedFileCount = files.length;
 			setRepoDirty(repoId, files.length > 0);
+			// Keep the "Add a changeset?" prompt in sync with the working tree.
+			void refreshChangesetStatus(repoId);
 		} else {
 			void refreshUnstagedCount();
+			// The commit box (and its changeset prompt) only show for the working
+			// tree, so don't compute changeset status in other contexts.
+			app.changesetStatus = null;
 		}
 
 		app.lastRefreshAt = Date.now();
@@ -1933,7 +1973,43 @@ function clampWindowDimension(value: number, min: number, fallback: number): num
 	return Math.max(min, Math.floor(n));
 }
 
+// Identifies the changeset prompt's dismissal scope: the active repo + branch, so
+// dismissing on one branch doesn't hide it on another.
+export function changesetPromptKey(): string {
+	return `${app.activeRepo?.id ?? ''}::${app.currentBranch ?? ''}`;
+}
+
 export const actions = {
+	openChangesetDialog(): void {
+		app.changesetDialogOpen = true;
+	},
+	closeChangesetDialog(): void {
+		app.changesetDialogOpen = false;
+	},
+	dismissChangesetPrompt(): void {
+		app.changesetPromptDismissedFor = changesetPromptKey();
+	},
+	// Write a new changeset for the selected packages, then refresh: the new
+	// `.changeset/*.md` shows up in the working tree (and the commit-box auto-fill
+	// picks up its description), and the "Add a changeset?" prompt clears.
+	async createChangeset(
+		packages: string[],
+		bump: 'patch' | 'minor' | 'major',
+		description: string,
+		name?: string
+	): Promise<boolean> {
+		const repoId = app.activeRepo?.id;
+		if (!repoId) return false;
+		try {
+			await window.api.changesets.create(repoId, { packages, bump, description, name });
+			app.changesetDialogOpen = false;
+			await refreshFiles();
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
 	async init(): Promise<void> {
 		app.prefs = await window.api.state.getPrefs();
 		app.viewMode = app.prefs.viewMode;
@@ -2467,9 +2543,16 @@ export const actions = {
 	async toggleSeen(filePath: string, seen?: boolean): Promise<void> {
 		if (!app.activeRepo) return;
 		const next = seen ?? !app.seenFiles.has(filePath);
+		// Was the branch already fully reviewed before this toggle? If not and this
+		// toggle completes it, arm the celebration's entrance animation. Doing it
+		// here (rather than reacting to `allBranchChangesSeen()` flipping true) is
+		// what keeps the animation tied to *finishing* — switching back to an
+		// already-finished branch never runs through here, so it stays instant.
+		const wasComplete = allBranchChangesSeen();
 		// `seenFiles` is a SvelteSet, so the in-place mutation is reactive.
 		if (next) app.seenFiles.add(filePath);
 		else app.seenFiles.delete(filePath);
+		if (!wasComplete && allBranchChangesSeen()) app.seenItAllAnimate = true;
 		// Stamp the file's current content signature when marking it seen so a later
 		// change (new commits, more edits) can clear the mark on refresh.
 		const file = app.changedFiles.find((f) => f.path === filePath);
@@ -2537,6 +2620,7 @@ export const actions = {
 	},
 	resetSeenItAll(): void {
 		if (app.seenItAllDismissed) app.seenItAllDismissed = false;
+		if (app.seenItAllAnimate) app.seenItAllAnimate = false;
 	},
 
 	// Toggle whether a working-tree file is included in the next commit. The file

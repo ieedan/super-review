@@ -204,6 +204,42 @@ export type DiffContext =
 	// untracked tree. Index-shift-proof because we always resolve to a SHA.
 	| { kind: 'stash'; ref: string };
 
+// A workspace package changesets can version. `dir` is the repo-relative posix
+// path to the package; `private` packages are still releasable by default
+// (changesets versions them) but flagged so the UI can hint at it.
+export interface WorkspacePackage {
+	name: string;
+	dir: string;
+	private: boolean;
+}
+
+// Snapshot of the repo's changeset situation for the current branch.
+export interface ChangesetStatus {
+	// `.changeset/config.json` exists — the repo uses changesets.
+	installed: boolean;
+	// Releasable workspace packages (selectable in the create dialog).
+	packages: WorkspacePackage[];
+	// Package names with changes on this branch (vs the base merge-base).
+	changedPackages: string[];
+	// Package names covered by a changeset *introduced on this branch* — changesets
+	// already on the base branch (for unrelated, unreleased work) don't count.
+	coveredPackages: string[];
+	// installed && some changed package isn't covered yet.
+	needsChangeset: boolean;
+}
+
+// Input for writing a new changeset: one bump type applied to every selected
+// package, plus a markdown description that becomes the file body.
+export interface CreateChangesetInput {
+	packages: string[];
+	bump: 'patch' | 'minor' | 'major';
+	description: string;
+	// Optional filename slug (no extension); used as `.changeset/<name>.md` when it
+	// is a safe slug and not already taken, else a random one is generated. Lets the
+	// UI preview the exact file it's about to write.
+	name?: string;
+}
+
 // Which coding-agent harness produced a session. Drives the logo shown on the
 // session card; "other" falls back to a generic icon + `harnessLabel`.
 export type HarnessKind = 'claude-code' | 'cursor' | 'codex' | 'opencode' | 'copilot' | 'other';
@@ -1007,6 +1043,15 @@ export interface PreloadAPI {
 		// clears the upstream and works the fork standalone. Returns the refreshed
 		// RepoInfo. Backs the Fork Behavior settings pane.
 		setForkContribution(repoId: string, contributeToParent: boolean): Promise<RepoInfo>;
+	};
+	changesets: {
+		// Whether this repo uses changesets and whether the current branch is
+		// missing one for a package it changed (drives the "Add a changeset?"
+		// prompt above the commit box).
+		getStatus(repoId: string): Promise<ChangesetStatus>;
+		// Write a new `.changeset/<slug>.md` for the selected packages; returns its
+		// repo-relative path.
+		create(repoId: string, input: CreateChangesetInput): Promise<string>;
 	};
 	editor: {
 		detect(): Promise<Record<EditorKind, boolean>>;

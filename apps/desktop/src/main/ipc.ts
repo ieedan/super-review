@@ -8,6 +8,8 @@ import type {
 	PRContextMenuParams,
 	BranchInfo,
 	ChangedFile,
+	ChangesetStatus,
+	CreateChangesetInput,
 	CloneResult,
 	CreateRepoDefaults,
 	CreateRepoOptions,
@@ -53,6 +55,8 @@ import {
 	addUpstreamRemote,
 	cloneRepo,
 	commit,
+	getChangesetStatus,
+	createChangeset,
 	continueMerge,
 	convertToForkRemotes,
 	removeUpstreamRemote,
@@ -841,6 +845,17 @@ export function registerIpc(): void {
 			if (!updated) throw new Error('Failed to update repository.');
 			broadcast('repos:active-changed', updated);
 			return updated;
+		}
+	);
+
+	ipcMain.handle('changesets:getStatus', async (_e, repoId: string): Promise<ChangesetStatus> => {
+		return getChangesetStatus(repoOrThrow(repoId).path);
+	});
+
+	ipcMain.handle(
+		'changesets:create',
+		async (_e, repoId: string, input: CreateChangesetInput): Promise<string> => {
+			return createChangeset(repoOrThrow(repoId).path, input);
 		}
 	);
 

@@ -7,15 +7,21 @@
 	import { Button } from './ui/button';
 	import { actions, app, uiPR } from '$lib/store.svelte';
 
+	// `animateEntrance` is set by the store only when the user finishes the last
+	// change in place; it's false when this state mounts because they switched
+	// back to an already-finished branch, so re-entry is instant.
+	let { animateEntrance = false }: { animateEntrance?: boolean } = $props();
+
 	// The PR that whatever's on screen acts on (a viewed PR/branch in read-only
 	// mode, else the checked-out branch's PR). Its presence decides the primary
 	// action: open the existing PR to approve, or kick off creating one.
 	const pr = $derived(uiPR());
 
-	// The celebration is accent-level motion: it plays in 'accents' and 'all', and
-	// only goes instant (durations → 0) when the user picks 'none'. It's not gated
-	// on the overlay-surface ('all') level, since this isn't a menu or dialog.
-	const animate = $derived(app.animations !== 'none');
+	// Play the entrance only on the initial completion AND when accent-level
+	// motion is on ('accents' or 'all'); otherwise the state appears instantly
+	// (durations → 0). It's not gated on the overlay-surface ('all') level, since
+	// this isn't a menu or dialog.
+	const animate = $derived(animateEntrance && app.animations !== 'none');
 	const ITEM_DURATION = $derived(animate ? 320 : 0);
 	const BACKDROP_DURATION = $derived(animate ? 220 : 0);
 	// Each element (icon → title → description → primary → secondary) enters one
