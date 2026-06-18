@@ -2483,8 +2483,16 @@ export const actions = {
 		void actions.toggleFileCollapsed(filePath, true);
 		const ordered = actions.displayedFiles();
 		const idx = ordered.findIndex((f) => f.path === filePath);
+		const isUnseen = (f: ChangedFile): boolean => !app.seenFiles.has(f.path);
+		// Advance to the next unseen file below; if nothing remains below (e.g. the
+		// last file, or a tail of already-seen files), wrap to the first unseen file
+		// above instead of stranding the reviewer here. Without the wrap, marking
+		// the last file seen left the diff parked while only the sidebar's active
+		// highlight moved.
 		const next =
-			idx >= 0 ? ordered.slice(idx + 1).find((f) => !app.seenFiles.has(f.path)) : undefined;
+			idx >= 0
+				? (ordered.slice(idx + 1).find(isUnseen) ?? ordered.slice(0, idx).find(isUnseen))
+				: ordered.find(isUnseen);
 		if (next) actions.scrollToFile(next.path);
 	},
 

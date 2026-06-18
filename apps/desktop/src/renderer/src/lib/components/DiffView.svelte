@@ -137,18 +137,31 @@
 	// instantly, but the sections that land in view then fetch + render their
 	// diffs asynchronously — sections *above* the target grow and shove it out
 	// from under the initial scroll, so it ends up off-position. We re-align
-	// whenever the total content height changes, for a short window, and bail the
-	// moment the user scrolls or navigates themselves.
+	// whenever the target drifts back off the top, until it has stayed put for a
+	// sustained quiet period, and bail the moment the user scrolls or navigates
+	// themselves.
 	let cancelSettle: (() => void) | null = null;
 	function pinToTop(target: HTMLElement): void {
 		cancelSettle?.();
 		const container = scrollContainer;
 		if (!container) return;
 		const align = (): void => target.scrollIntoView({ behavior: 'auto', block: 'start' });
+		// How far the target's top sits from the container's top edge right now.
+		// Watching this directly (rather than the container's total scrollHeight)
+		// catches drift even when growth above the target is offset by a shrink
+		// elsewhere and the net height is unchanged.
+		const drift = (): number =>
+			target.getBoundingClientRect().top - container.getBoundingClientRect().top;
 		align();
 		let raf = 0;
-		let lastHeight = container.scrollHeight;
-		const deadline = performance.now() + 800;
+		// Keep correcting until the target has sat at the top undisturbed for a
+		// sustained quiet period. On a big jump the lazy diff sections above the
+		// target render asynchronously (Pierre, scheduled) and keep shoving it down
+		// well after a short fixed deadline would have expired — which is why it
+		// used to land mid-file. A generous hard cap still bounds the loop in case
+		// something never settles.
+		let stableSince = performance.now();
+		const maxDeadline = stableSince + 4000;
 		const stop = (): void => {
 			if (raf) cancelAnimationFrame(raf);
 			raf = 0;
@@ -173,13 +186,16 @@
 			}
 		};
 		const tick = (): void => {
-			const h = container.scrollHeight;
-			if (h !== lastHeight) {
-				lastHeight = h;
-				align();
-			}
-			if (performance.now() < deadline) raf = requestAnimationFrame(tick);
-			else stop();
+			const before = container.scrollTop;
+			if (Math.abs(drift()) > 1) align();
+			const now = performance.now();
+			// Only a correction that actually moved the scroll counts as the target
+			// being disturbed. If we're already at the top — or pinned as close as
+			// the scroll range allows — the position holds and the quiet period
+			// accrues toward stopping.
+			if (Math.abs(container.scrollTop - before) > 1) stableSince = now;
+			if (now - stableSince >= 500 || now >= maxDeadline) stop();
+			else raf = requestAnimationFrame(tick);
 		};
 		container.addEventListener('wheel', stop, { passive: true });
 		container.addEventListener('touchstart', stop, { passive: true });
