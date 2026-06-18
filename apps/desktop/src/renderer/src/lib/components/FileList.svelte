@@ -430,6 +430,16 @@
 	// steals arrow-scroll from the diff pane.
 	function onTreeKeydown(e: KeyboardEvent): void {
 		if (isEditableTarget(e.target)) return;
+		// Cmd/Ctrl+A selects every visible file (respecting the search filter).
+		if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+			e.preventDefault();
+			const paths = filteredFiles.map((f) => f.path);
+			if (paths.length > 0) {
+				actions.setSelectedFiles(paths);
+				selectionAnchor = paths[0];
+			}
+			return;
+		}
 		// Leave meta/ctrl combos to app/global shortcuts. Alt is handled below.
 		if (e.metaKey || e.ctrlKey) return;
 		if (nodes.length === 0) return;
