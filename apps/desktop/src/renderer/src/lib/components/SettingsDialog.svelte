@@ -123,6 +123,7 @@
 	let draftPrMergedBehavior = $state<PrMergedBehavior>('prompt');
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
 	let draftUnmarkSeenOnChange = $state<boolean>(true);
+	let draftSignCommits = $state<boolean>(true);
 	let draftMaxDiffLines = $state<number>(1500);
 	let draftRecentRepoCount = $state<number>(5);
 	let draftWindowWidth = $state<number>(WINDOW_BOUNDS.defaultWidth);
@@ -177,6 +178,7 @@
 			draftPrMergedBehavior = app.prMergedBehavior;
 			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
 			draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
+			draftSignCommits = app.signCommits;
 			draftMaxDiffLines = app.maxDiffLines;
 			draftRecentRepoCount = app.recentRepoCount;
 			draftWindowWidth = app.windowWidth;
@@ -282,6 +284,9 @@
 		}
 		if (draftUnmarkSeenOnChange !== app.unmarkSeenOnChange) {
 			promises.push(actions.setUnmarkSeenOnChange(draftUnmarkSeenOnChange));
+		}
+		if (draftSignCommits !== app.signCommits) {
+			promises.push(actions.setSignCommits(draftSignCommits));
 		}
 		const parsedMaxDiffLines = Number(draftMaxDiffLines);
 		const clampedMaxDiffLines =
@@ -748,6 +753,26 @@
 								<span class="text-xs text-muted-foreground">
 									When a file you marked as seen picks up new changes, fresh commits pushed to the
 									branch, or further edits, clear its seen mark so it resurfaces for review.
+								</span>
+							</label>
+						</div>
+					</div>
+				</div>
+
+				<div>
+					<h3 class="text-base font-semibold">Commits</h3>
+					<p class="mt-1 text-xs text-muted-foreground">
+						How commits you make in Super Review are signed.
+					</p>
+
+					<div class="mt-3">
+						<div class="flex items-start gap-2.5">
+							<Checkbox id="sign-commits" bind:checked={draftSignCommits} class="mt-0.5" />
+							<label for="sign-commits" class="grid cursor-pointer gap-0.5 leading-snug">
+								<span class="text-sm font-medium">Sign my commits</span>
+								<span class="text-xs text-muted-foreground">
+									Super Review creates an SSH signing key for your GitHub account and registers it
+									so your commits show as "Verified". No setup needed. Turn off to commit unsigned.
 								</span>
 							</label>
 						</div>

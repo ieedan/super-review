@@ -349,6 +349,10 @@
 				{#if authError.reason === 'sso'}
 					<span class="font-medium text-foreground">{authError.login}</span>'s organization access
 					needs to be re-authorized.
+				{:else if authError.reason === 'scope'}
+					Sign in again to let Super Review verify <span class="font-medium text-foreground"
+						>{authError.login}</span
+					>'s signed commits on GitHub.
 				{:else}
 					GitHub sign-in for <span class="font-medium text-foreground">{authError.login}</span> has expired
 					or been revoked.
