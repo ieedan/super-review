@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
@@ -16,6 +16,7 @@
 		effectiveAccountAuthError,
 		effectiveGithubAccount
 	} from '$lib/store.svelte';
+	import { isChangesetPath, parseChangesetMessage } from '$lib/changeset';
 
 	let summary = $state('');
 	let description = $state('');
@@ -40,6 +41,62 @@
 			description = draft.description;
 		});
 	});
+
+	// Auto-fill the commit message from a freshly-added changeset. When exactly
+	// one new changeset file (`.changeset/*.md`) is waiting in the working tree and
+	// the box is still empty, use its hand-written description as the message — the
+	// user writes good changesets and shouldn't have to retype them. We fill each
+	// changeset at most once (tracked in `filledChangesets`) so we never fight a
+	// user who deliberately clears the box, and reset on a repo switch.
+	let changesetRepoId: string | null = null;
+	// Plain Set on purpose: mutated inside the effect below, so it must stay
+	// non-reactive or it would re-trigger that effect.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	let filledChangesets = new Set<string>();
+	$effect(() => {
+		const repoId = app.activeRepo?.id ?? null;
+		const changesetPaths = app.changedFiles
+			.filter((f) => (f.status === 'added' || f.status === 'untracked') && isChangesetPath(f.path))
+			.map((f) => f.path);
+
+		if (repoId !== changesetRepoId) {
+			changesetRepoId = repoId;
+			filledChangesets = new Set();
+		}
+
+		// Forget changesets that left the working tree (committed/discarded) so
+		// re-creating one later fills again.
+		const present = new Set(changesetPaths);
+		for (const p of filledChangesets) {
+			if (!present.has(p)) filledChangesets.delete(p);
+		}
+
+		if (!repoId || changesetPaths.length !== 1) return;
+		const path = changesetPaths[0];
+		if (filledChangesets.has(path)) return;
+		// Read the box untracked so backspacing it to empty doesn't re-trigger us.
+		if (untrack(() => summary.trim().length > 0 || description.trim().length > 0)) return;
+
+		filledChangesets.add(path);
+		void fillFromChangeset(repoId, path);
+	});
+
+	async function fillFromChangeset(repoId: string, filePath: string): Promise<void> {
+		let diff;
+		try {
+			diff = await window.api.git.getDiff(repoId, filePath, { kind: 'workingTree' });
+		} catch {
+			return;
+		}
+		// The repo switched or the user started typing while we were fetching.
+		if (app.activeRepo?.id !== repoId) return;
+		if (summary.trim() || description.trim()) return;
+		const parsed = parseChangesetMessage(diff.newContents);
+		if (!parsed) return;
+		summary = parsed.summary;
+		description = parsed.description;
+		persistDraft();
+	}
 
 	// Debounce persistence so we're not writing the store on every keystroke.
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
