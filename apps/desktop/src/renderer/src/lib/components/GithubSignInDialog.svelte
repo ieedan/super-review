@@ -50,11 +50,15 @@
 					activeFlow = false;
 					userCode = null;
 					verificationUri = null;
+					// Close the dialog before the await below. Resetting the flow guards
+					// (activeFlow/userCode/errorMsg) while dialogOpen is still true would
+					// let the start-flow $effect re-fire during the await and kick off a
+					// second device flow — opening a duplicate verification tab.
+					actions.closeGithubSignIn();
 					await actions.refreshGithubAccounts();
 					if (app.activeRepo?.githubOwner && app.activeRepo.githubRepo) {
 						void actions.loadPRs();
 					}
-					actions.closeGithubSignIn();
 				} else if (status.state === 'error') {
 					stopPolling();
 					activeFlow = false;
