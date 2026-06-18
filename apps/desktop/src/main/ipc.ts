@@ -303,6 +303,7 @@ async function refreshRepoInfoInBackground(repoPath: string, previous: RepoInfo)
 		};
 		const changed =
 			merged.iconDataUrl !== previous.iconDataUrl ||
+			merged.iconDataUrlDark !== previous.iconDataUrlDark ||
 			merged.remoteUrl !== previous.remoteUrl ||
 			merged.defaultBranch !== previous.defaultBranch ||
 			merged.githubOwner !== previous.githubOwner ||

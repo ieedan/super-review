@@ -215,20 +215,62 @@ export async function scanForRepos(rootPath: string): Promise<string[]> {
 	return found;
 }
 
-// Names we're willing to treat as a repo icon, ranked best → worst. A real
-// favicon beats a generic logo; `app-icon`/`AppIcon` cover macOS bundles.
-const ICON_BASE_PRIORITY: Record<string, number> = {
-	favicon: 0,
-	icon: 1,
-	'app-icon': 2,
-	appicon: 2,
-	logo: 3
-};
+// How brand-representative an icon's *name* is, ranked best → worst (lower
+// wins). Real repos rarely stop at `favicon.svg` — they ship the whole
+// realfavicongenerator / PWA set: `apple-touch-icon.png`,
+// `android-chrome-512x512.png`, `favicon-32x32.png`, `favicon-dark.ico`, … so
+// we recognize those conventional names too. Otherwise a repo whose only exact
+// `favicon.*` is an un-customized placeholder never reaches its real mark.
+// `app-icon`/`AppIcon` cover macOS bundles. Note: `og.png`/`opengraph-image.*`
+// are social cards, not icons, and are deliberately NOT matched here.
+const ICON_RANK_FAVICON = 0; // canonical favicon.{svg,png,ico}
+const ICON_RANK_APPLE_TOUCH = 1; // apple-touch-icon — full brand mark, hi-res
+const ICON_RANK_PWA = 2; // android-chrome-*, icon-*, maskable, app-icon
+const ICON_RANK_FAVICON_VARIANT = 3; // favicon-32x32, favicon-dark, … (downscaled/themed)
+const ICON_RANK_LOGO = 4; // logo, logo-dark, *-logo
+
+function iconBaseRank(stem: string): number | undefined {
+	if (stem === 'favicon') return ICON_RANK_FAVICON;
+	if (stem === 'apple-touch-icon' || stem.startsWith('apple-touch-icon-'))
+		return ICON_RANK_APPLE_TOUCH;
+	if (
+		stem.startsWith('android-chrome') ||
+		stem === 'icon' ||
+		stem.startsWith('icon-') ||
+		stem === 'app-icon' ||
+		stem === 'appicon' ||
+		stem.startsWith('maskable')
+	)
+		return ICON_RANK_PWA;
+	if (stem.startsWith('favicon-') || stem.startsWith('favicon_'))
+		return ICON_RANK_FAVICON_VARIANT;
+	if (
+		stem === 'logo' ||
+		stem.startsWith('logo-') ||
+		stem.startsWith('logo_') ||
+		stem.endsWith('-logo') ||
+		stem.endsWith('_logo')
+	)
+		return ICON_RANK_LOGO;
+	return undefined;
+}
 const ICON_EXT_PRIORITY: Record<string, number> = {
 	svg: 0,
 	png: 1,
 	ico: 2
 };
+// Content hashes (md5) of well-known starter-template icons that ship
+// unmodified in countless repos — the grey SvelteKit skeleton favicon, etc.
+// They score highest (a root `favicon.png` beats a `logo.svg`) but rarely
+// represent the project's brand. When the best candidate's bytes match one of
+// these we skip past it to the next candidate (usually the real `logo.svg`),
+// falling back to the generic icon only if nothing else turns up.
+const GENERIC_ICON_HASHES = new Set([
+	// SvelteKit skeleton `favicon.png` — the grey Svelte logo, 128×128, 1571 bytes.
+	'3a387408ecc6cc283f724b39ca5fffb4',
+	// SvelteKit skeleton `favicon.svg` — the orange (#ff3e00) Svelte logo, 1569 bytes.
+	'a0d1b540c1b9a2a920d5f6cae983118a'
+]);
 // Directory names we always skip — too noisy, too big, or vendored output.
 const SKIP_DIRS = new Set([
 	'node_modules',
@@ -273,7 +315,16 @@ const NON_CANONICAL_SEGMENTS = new Set([
 	'playground',
 	'sandbox',
 	'storybook',
-	'.storybook'
+	'.storybook',
+	// Scaffolding the repo *ships* (starter templates, boilerplates). Their
+	// favicons are stock placeholders, not the project's own brand — so a repo's
+	// real icon in `apps/web/` should outrank a `favicon.svg` in `templates/`.
+	'template',
+	'templates',
+	'starter',
+	'starters',
+	'boilerplate',
+	'scaffold'
 ]);
 
 // electron-builder config filenames. Any of these at a directory marks it as
@@ -332,14 +383,105 @@ async function electronIconIn(dir: string, entries: Dirent[]): Promise<string | 
 	return undefined;
 }
 
-// Walk the repo up to MAX_DEPTH looking for the best-ranked icon. Bounded
-// because monorepos can have thousands of subdirs and we don't want to stall
-// the picker. A "best so far" tracker lets us short-circuit when we hit the
-// top-priority candidate (favicon.svg).
-async function findRepoIcon(repoPath: string): Promise<string | undefined> {
+// Turn a validated icon file's bytes into a `data:` URL for an <img> src.
+function iconBufferToDataUrl(buf: Buffer, filePath: string): string {
+	const ext = path.extname(filePath).slice(1).toLowerCase();
+	const mime =
+		ext === 'svg'
+			? 'image/svg+xml'
+			: ext === 'png'
+				? 'image/png'
+				: ext === 'ico'
+					? 'image/x-icon'
+					: `image/${ext}`;
+	return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
+// A repo icon resolved to its theme variants. `iconDataUrl` is always set (the
+// light/default icon); `iconDataUrlDark` only when a distinct dark variant
+// exists. Mirrors the same-named fields on RepoInfo.
+interface ResolvedIcon {
+	iconDataUrl: string;
+	iconDataUrlDark?: string;
+}
+
+// Pulls a trailing `-dark`/`-light` (or `_dark`/`_light`) theme marker off an
+// icon's stem. `favicon-dark` → { base: 'favicon', sep: '-', theme: 'dark' }.
+function parseThemeSuffix(
+	stem: string
+): { base: string; sep: string; theme: 'light' | 'dark' } | undefined {
+	const m = stem.match(/^(.+)([-_])(dark|light)$/);
+	if (!m) return undefined;
+	return { base: m[1], sep: m[2], theme: m[3] as 'light' | 'dark' };
+}
+
+// Given the chosen icon, see if it's half of a light/dark pair and, if so, find
+// its sibling so the UI can swap by theme. `favicon-dark.svg` looks for
+// `favicon-light.svg` in the same dir (preferring the same extension). Maps both
+// to light(default)/dark regardless of which side scored as the winner.
+async function resolveIconPair(winnerPath: string, winnerBuf: Buffer): Promise<ResolvedIcon> {
+	const winnerUrl = iconBufferToDataUrl(winnerBuf, winnerPath);
+	const winnerExt = path.extname(winnerPath).slice(1).toLowerCase();
+	const stem = winnerPath
+		.slice(0, winnerPath.length - winnerExt.length - 1)
+		.split(path.sep)
+		.pop()!
+		.toLowerCase();
+	const parsed = parseThemeSuffix(stem);
+	if (!parsed) return { iconDataUrl: winnerUrl };
+
+	const opposite = parsed.theme === 'dark' ? 'light' : 'dark';
+	const wantStem = `${parsed.base}${parsed.sep}${opposite}`;
+	const dir = path.dirname(winnerPath);
+	let entries;
+	try {
+		entries = await fs.readdir(dir, { withFileTypes: true });
+	} catch {
+		return { iconDataUrl: winnerUrl };
+	}
+	const siblings = entries
+		.filter((e) => e.isFile())
+		.map((e) => {
+			const ext = path.extname(e.name).slice(1).toLowerCase();
+			return { name: e.name, ext, stem: e.name.slice(0, e.name.length - ext.length - 1).toLowerCase() };
+		})
+		.filter((c) => ICON_EXT_PRIORITY[c.ext] !== undefined && c.stem === wantStem)
+		// Prefer the same extension as the winner, then svg > png > ico.
+		.sort(
+			(a, b) =>
+				(a.ext === winnerExt ? 0 : 1) - (b.ext === winnerExt ? 0 : 1) ||
+				ICON_EXT_PRIORITY[a.ext] - ICON_EXT_PRIORITY[b.ext]
+		);
+	if (siblings.length === 0) return { iconDataUrl: winnerUrl };
+
+	const sibPath = path.join(dir, siblings[0].name);
+	let sibBuf;
+	try {
+		sibBuf = await fs.readFile(sibPath);
+	} catch {
+		return { iconDataUrl: winnerUrl };
+	}
+	if (sibBuf.byteLength === 0 || sibBuf.byteLength > 256 * 1024) return { iconDataUrl: winnerUrl };
+	const sibUrl = iconBufferToDataUrl(sibBuf, sibPath);
+	return parsed.theme === 'dark'
+		? { iconDataUrl: sibUrl, iconDataUrlDark: winnerUrl }
+		: { iconDataUrl: winnerUrl, iconDataUrlDark: sibUrl };
+}
+
+// Walk the repo up to MAX_DEPTH collecting every candidate icon, then pick the
+// best by score. Bounded because monorepos can have thousands of subdirs and we
+// don't want to stall the picker — but we can't short-circuit on the top score
+// anymore, because the best-scoring candidate may turn out to be a generic
+// starter-template icon (see GENERIC_ICON_HASHES) that we want to skip past.
+async function findRepoIcon(repoPath: string): Promise<ResolvedIcon | undefined> {
 	const MAX_DEPTH = 5;
-	let bestPath: string | undefined;
-	let bestScore = Number.POSITIVE_INFINITY;
+	const candidates: Array<{
+		path: string;
+		score: number;
+		baseRank: number;
+		pairKey?: string;
+		theme?: 'light' | 'dark';
+	}> = [];
 
 	async function visit(dir: string, depth: number, nonCanonical: boolean): Promise<void> {
 		let entries;
@@ -355,10 +497,7 @@ async function findRepoIcon(repoPath: string): Promise<string | undefined> {
 		if (elIcon) {
 			const ext = path.extname(elIcon).slice(1).toLowerCase();
 			const score = (ICON_EXT_PRIORITY[ext] ?? 1) * 10 + depth + (nonCanonical ? 500 : 0);
-			if (score < bestScore) {
-				bestScore = score;
-				bestPath = elIcon;
-			}
+			candidates.push({ path: elIcon, score, baseRank: 0 });
 		}
 		for (const entry of entries) {
 			if (entry.name.startsWith('.') && entry.name !== '.well-known') {
@@ -374,13 +513,12 @@ async function findRepoIcon(repoPath: string): Promise<string | undefined> {
 				const childNonCanonical =
 					nonCanonical || NON_CANONICAL_SEGMENTS.has(entry.name.toLowerCase());
 				await visit(path.join(dir, entry.name), depth + 1, childNonCanonical);
-				if (bestScore === 0) return;
 			} else if (entry.isFile()) {
 				const ext = path.extname(entry.name).slice(1).toLowerCase();
 				const extPriority = ICON_EXT_PRIORITY[ext];
 				if (extPriority === undefined) continue;
 				const stem = entry.name.slice(0, entry.name.length - ext.length - 1).toLowerCase();
-				const basePriority = ICON_BASE_PRIORITY[stem];
+				const basePriority = iconBaseRank(stem);
 				if (basePriority === undefined) continue;
 				// Depth penalty so top-level files beat deeply nested ones at the
 				// same base/ext rank, but a `favicon.svg` 4 levels deep still wins
@@ -388,33 +526,67 @@ async function findRepoIcon(repoPath: string): Promise<string | undefined> {
 				// tests/, fixtures/) take a large penalty so the brand favicon
 				// outranks starter-template icons.
 				const score = basePriority * 100 + extPriority * 10 + depth + (nonCanonical ? 500 : 0);
-				if (score < bestScore) {
-					bestScore = score;
-					bestPath = path.join(dir, entry.name);
-					if (bestScore === 0) return;
-				}
+				// Note light/dark members so a complete pair can be boosted below.
+				// `favicon-dark` / `favicon-light` in the same dir share a pairKey.
+				const parsed = parseThemeSuffix(stem);
+				const pairKey = parsed ? `${dir}\x00${parsed.base}${parsed.sep}` : undefined;
+				candidates.push({
+					path: path.join(dir, entry.name),
+					score,
+					baseRank: basePriority,
+					pairKey,
+					theme: parsed?.theme
+				});
 			}
 		}
 	}
 
 	await visit(repoPath, 0, false);
-	if (!bestPath) return undefined;
-	try {
-		const buf = await fs.readFile(bestPath);
-		if (buf.byteLength === 0 || buf.byteLength > 256 * 1024) return undefined;
-		const ext = path.extname(bestPath).slice(1).toLowerCase();
-		const mime =
-			ext === 'svg'
-				? 'image/svg+xml'
-				: ext === 'png'
-					? 'image/png'
-					: ext === 'ico'
-						? 'image/x-icon'
-						: `image/${ext}`;
-		return `data:${mime};base64,${buf.toString('base64')}`;
-	} catch {
-		return undefined;
+	if (candidates.length === 0) return undefined;
+
+	// A directory holding *both* a `favicon-dark` and a `favicon-light` is the
+	// site's real favicon split by theme — the author made it precisely so the
+	// icon adapts. Promote such a pair to canonical favicon rank so it beats a
+	// single `apple-touch-icon` that would otherwise be black-on-transparent and
+	// vanish in dark mode (e.g. projektr). We deliberately do NOT promote `logo-*`
+	// or other pairs: a themed logo shouldn't outrank a repo's actual favicon
+	// (e.g. runed ships a stale `logo-dark/light.svg` in its docs).
+	const themesByKey = new Map<string, Set<string>>();
+	for (const c of candidates) {
+		if (!c.pairKey || !c.theme) continue;
+		const set = themesByKey.get(c.pairKey) ?? new Set<string>();
+		set.add(c.theme);
+		themesByKey.set(c.pairKey, set);
 	}
+	const isThemedFaviconPair = (c: (typeof candidates)[number]) =>
+		c.baseRank === ICON_RANK_FAVICON_VARIANT &&
+		c.pairKey !== undefined &&
+		themesByKey.get(c.pairKey)?.size === 2;
+	const effectiveScore = (c: (typeof candidates)[number]) =>
+		isThemedFaviconPair(c) ? c.score - ICON_RANK_FAVICON_VARIANT * 100 : c.score;
+	candidates.sort((a, b) => effectiveScore(a) - effectiveScore(b));
+
+	// Walk best → worst, reading bytes lazily. Use the first candidate whose
+	// content isn't a known starter-template icon; remember the best generic one
+	// as a fallback so a repo that only has the stock favicon still gets it.
+	let fallback: string | undefined;
+	for (const { path: candidatePath } of candidates) {
+		let buf;
+		try {
+			buf = await fs.readFile(candidatePath);
+		} catch {
+			continue;
+		}
+		if (buf.byteLength === 0 || buf.byteLength > 256 * 1024) continue;
+		const hash = createHash('md5').update(buf).digest('hex');
+		if (GENERIC_ICON_HASHES.has(hash)) {
+			fallback ??= iconBufferToDataUrl(buf, candidatePath);
+			continue;
+		}
+		return resolveIconPair(candidatePath, buf);
+	}
+	// Only a generic placeholder turned up — show it, but it has no theme variant.
+	return fallback ? { iconDataUrl: fallback } : undefined;
 }
 
 // Maps each SSH `Host` alias in ~/.ssh/config to its real `HostName`, so a
@@ -517,13 +689,14 @@ export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 		console.error(`[repo] buildRepoInfo "${name}" failed to read remotes:`, err);
 	}
 	const defaultBranch = await detectDefaultBranch(git);
-	const iconDataUrl = await findRepoIcon(repoPath);
+	const icon = await findRepoIcon(repoPath);
 	const description = await readRepoDescription(repoPath);
 	return {
 		id,
 		path: path.resolve(repoPath),
 		name,
-		iconDataUrl,
+		iconDataUrl: icon?.iconDataUrl,
+		iconDataUrlDark: icon?.iconDataUrlDark,
 		remoteUrl,
 		githubOwner,
 		githubRepo,

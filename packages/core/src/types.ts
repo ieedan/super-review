@@ -4,7 +4,12 @@ export interface RepoInfo {
 	id: string;
 	path: string;
 	name: string;
+	// The repo's brand icon as a `data:` URL. When the repo ships a light/dark
+	// pair (e.g. `favicon-light.svg` + `favicon-dark.svg`), this holds the
+	// light-theme variant and `iconDataUrlDark` the dark one; otherwise this is
+	// the single detected icon and `iconDataUrlDark` is unset.
 	iconDataUrl?: string;
+	iconDataUrlDark?: string;
 	remoteUrl?: string;
 	githubOwner?: string;
 	githubRepo?: string;

@@ -106,6 +106,14 @@
 		return repoPlaceholder(repo?.name ?? '');
 	}
 
+	// Pick the icon variant for the current theme. Repos that ship a light/dark
+	// pair (e.g. `favicon-light.svg` + `favicon-dark.svg`) expose both; everyone
+	// else only has `iconDataUrl`, so we fall back to it. Reactive on `app.theme`.
+	function iconSrc(repo: RepoInfo | null | undefined): string | undefined {
+		if (!repo) return undefined;
+		return app.theme === 'dark' && repo.iconDataUrlDark ? repo.iconDataUrlDark : repo.iconDataUrl;
+	}
+
 	// Mirror GitHub Desktop's repo picker: a "Recent" section of the few most
 	// recently opened repos, followed by every repo grouped under its owner
 	// (recent repos still appear in their owner group too). Filtering is applied
@@ -174,7 +182,7 @@
 <Popover.Root bind:open>
 	<Popover.Trigger class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[260px]')}>
 		{#if app.activeRepo?.iconDataUrl}
-			<img src={app.activeRepo.iconDataUrl} alt="" class="size-4 rounded-sm object-contain" />
+			<img src={iconSrc(app.activeRepo)} alt="" class="size-4 rounded-sm object-contain" />
 		{:else if app.activeRepo}
 			{@const { initial, toneClass } = placeholderFor(app.activeRepo)}
 			<span
@@ -245,7 +253,7 @@
 										>
 											{#if repo.iconDataUrl}
 												<img
-													src={repo.iconDataUrl}
+													src={iconSrc(repo)}
 													alt=""
 													class="size-5 rounded-sm object-contain"
 												/>
