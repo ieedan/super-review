@@ -768,6 +768,17 @@ function fileContentSig(f: ChangedFile): string {
 	return `${f.status}:${f.additions}:${f.deletions}:${f.isBinary ? 'b' : 't'}`;
 }
 
+// Whether two signatures describe content the same way, so a difference between
+// them actually means the content changed. `fileContentSig` emits an `oid:`
+// signature when git supplied a blob OID and a stat-based one otherwise — and a
+// single failed/empty git diff (e.g. transient index.lock contention) drops the
+// OID for *every* file in the list at once, flipping all of them to the stat
+// scheme. Comparing across schemes would read that flip as "everything changed"
+// and wrongly clear every seen mark, so only compare like with like.
+function sigsComparable(a: string, b: string): boolean {
+	return a.startsWith('oid:') === b.startsWith('oid:');
+}
+
 // Paint the file list from the per-context cache for the current diff context,
 // if we've shown it before. Makes a context switch feel instant — the previous
 // content shows immediately while `refreshFiles` revalidates in the background.
@@ -1880,7 +1891,8 @@ async function refreshFiles(): Promise<void> {
 			for (const file of files) {
 				if (!seenSet.has(file.path)) continue;
 				const prevSig = seenSigs[file.path];
-				if (prevSig && prevSig !== fileContentSig(file)) {
+				const curSig = fileContentSig(file);
+				if (prevSig && sigsComparable(prevSig, curSig) && prevSig !== curSig) {
 					seenSet.delete(file.path);
 					void window.api.state.setFileSeen(repoId, ctxKey, file.path, false);
 				}
