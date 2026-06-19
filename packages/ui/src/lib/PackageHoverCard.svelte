@@ -15,7 +15,7 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import { Popover, PopoverContent } from './ui/popover';
 	import { Badge } from './ui/badge';
-	import { getNpmInfo, requestNpmInfo, type NpmInfoState } from '$lib/npm-info.svelte';
+	import { getNpmInfo, requestNpmInfo, type NpmInfoState } from './npm-info.svelte';
 	import {
 		getReleaseNotes,
 		requestReleaseNotes,
@@ -23,18 +23,29 @@
 		requestReleaseNotesRange,
 		type ReleaseNotesState,
 		type ReleaseNotesRangeState
-	} from '$lib/release-notes.svelte';
+	} from './release-notes.svelte';
 	import {
 		packageHover,
 		keepPackageHover,
 		scheduleHidePackageHover,
 		closePackageHover,
 		setPackageHoverPinned
-	} from '$lib/package-hover.svelte';
-	import { app } from '$lib/store.svelte';
-	import { renderMarkdown } from '$lib/markdown';
-	import '$lib/markdown.css';
-	import type { NpmPackageInfo, ReleaseNotes } from '@shared/types';
+	} from './package-hover.svelte';
+	import { renderMarkdown } from './markdown';
+	import './markdown.css';
+	import type { NpmPackageInfo, ReleaseNotes } from '@super-review/core/types';
+
+	// Decoupled from the Electron renderer: the host passes the current light/dark
+	// mode (drives markdown highlighting) and how to open external links.
+	let {
+		themeType = 'dark',
+		openExternal = (url: string) => {
+			window.open(url, '_blank', 'noopener,noreferrer');
+		}
+	}: {
+		themeType?: 'light' | 'dark';
+		openExternal?: (url: string) => void;
+	} = $props();
 
 	// Kick off the fetch as a side effect when the hovered package changes.
 	// `requestNpmInfo` writes the reactive cache, so it must run in an `$effect`,
@@ -220,7 +231,7 @@
 	let renderedSections = $state<{ tag: string; html: string; htmlUrl: string }[]>([]);
 	$effect(() => {
 		const secs = sections;
-		const theme = app.theme;
+		const theme = themeType;
 		if (secs.length === 0) {
 			renderedSections = [];
 			return;
@@ -288,7 +299,7 @@
 
 	function open(url: string, e: MouseEvent): void {
 		e.preventDefault();
-		void window.api.shell.openExternal(url);
+		openExternal(url);
 	}
 
 	function npmUrl(name: string): string {

@@ -19,6 +19,29 @@ export {
 } from './lib/diff-themes';
 export { ensureDiffHighlighter, initDiffHighlighter } from './lib/diff-highlighter';
 
-// Re-export the account types so hosts can type their data without depending on
-// @super-review/core directly.
-export type { GithubAccount, GithubAuthError } from '@super-review/core/types';
+// package.json hover card: the card component, its shared controller (driven by
+// the host's diff token-hover events), and the injectable npm data provider.
+export { default as PackageHoverCard } from './lib/PackageHoverCard.svelte';
+export {
+	packageHover,
+	showPackageHover,
+	scheduleHidePackageHover,
+	keepPackageHover,
+	closePackageHover,
+	setPackageHoverPinned,
+	type PackageHoverTarget,
+	type AnchorRect
+} from './lib/package-hover.svelte';
+export { setNpmProvider, getNpmProvider, type NpmProvider } from './lib/npm-provider';
+
+// Re-export the data types so hosts can type their fixtures/wiring without
+// depending on @super-review/core directly.
+export type {
+	GithubAccount,
+	GithubAuthError,
+	NpmPackageInfo,
+	ReleaseNotes,
+	NpmPackageResult,
+	ReleaseNotesResult,
+	ReleaseNotesRangeResult
+} from '@super-review/core/types';

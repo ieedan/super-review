@@ -36,7 +36,7 @@
 	import * as Resizable from '$lib/components/ui/resizable';
 	import type { PaneAPI } from 'paneforge';
 	import { actions, setError, app } from '$lib/store.svelte';
-	import { initDiffHighlighter } from '@super-review/ui';
+	import { initDiffHighlighter, setNpmProvider } from '@super-review/ui';
 	import { initDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { setAnimations } from '$lib/hooks/use-animations.svelte';
 	import { HOTKEY_ACTIONS, matchesHotkey, type HotkeyAction } from '@shared/hotkeys';
@@ -65,6 +65,15 @@
 	// including the settings preview — has a warm singleton. This also serves as
 	// the main-thread fallback if the worker pool can't start.
 	initDiffHighlighter();
+
+	// Wire the package.json hover card's data source to the main process (its npm
+	// fetch happens over IPC). The shared component fetches through this provider.
+	setNpmProvider({
+		getPackageInfo: (name) => window.api.npm.getPackageInfo(name),
+		getReleaseNotes: (repo, pkg, version) => window.api.npm.getReleaseNotes(repo, pkg, version),
+		getReleaseNotesRange: (repo, pkg, from, to) =>
+			window.api.npm.getReleaseNotesRange(repo, pkg, from, to)
+	});
 
 	// Spin up the diff render worker pool so highlighting/diff-AST work happens
 	// off the main thread, keeping the UI responsive while diffs paint.

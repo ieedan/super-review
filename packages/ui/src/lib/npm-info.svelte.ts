@@ -4,7 +4,8 @@
 // and repeated hovers of the same package don't re-invoke IPC.
 
 import { SvelteMap } from 'svelte/reactivity';
-import type { NpmPackageInfo } from '@shared/types';
+import type { NpmPackageInfo } from '@super-review/core/types';
+import { getNpmProvider } from './npm-provider';
 
 export type NpmInfoState =
 	| { status: 'loading' }
@@ -31,7 +32,7 @@ export function requestNpmInfo(name: string): void {
 	if (cache.has(name)) return;
 	cache.set(name, { status: 'loading' });
 
-	void window.api.npm
+	void getNpmProvider()
 		.getPackageInfo(name)
 		.then((result) => {
 			cache.set(

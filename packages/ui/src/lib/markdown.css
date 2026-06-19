@@ -1,0 +1,209 @@
+/* GitHub-flavored-markdown preview styling. Scoped to `.markdown-body` so it
+   only touches the rendered preview, and driven by the app's theme tokens
+   (--color-*) so it tracks the light/dark toggle instead of the OS setting. */
+.markdown-body {
+	font-family: var(--ui-font);
+	font-size: 14px;
+	line-height: 1.6;
+	color: var(--color-foreground);
+	word-wrap: break-word;
+}
+
+.markdown-body > *:first-child {
+	margin-top: 0 !important;
+}
+.markdown-body > *:last-child {
+	margin-bottom: 0 !important;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+	margin-top: 24px;
+	margin-bottom: 16px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+.markdown-body h1 {
+	font-size: 2em;
+	padding-bottom: 0.3em;
+	border-bottom: 1px solid var(--color-border);
+}
+.markdown-body h2 {
+	font-size: 1.5em;
+	padding-bottom: 0.3em;
+	border-bottom: 1px solid var(--color-border);
+}
+.markdown-body h3 {
+	font-size: 1.25em;
+}
+.markdown-body h4 {
+	font-size: 1em;
+}
+.markdown-body h5 {
+	font-size: 0.875em;
+}
+.markdown-body h6 {
+	font-size: 0.85em;
+	color: var(--color-muted-foreground);
+}
+
+.markdown-body p,
+.markdown-body blockquote,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body dl,
+.markdown-body table,
+.markdown-body pre,
+.markdown-body details {
+	margin-top: 0;
+	margin-bottom: 16px;
+}
+
+.markdown-body a {
+	color: hsl(212 92% 45%);
+	text-decoration: none;
+}
+.markdown-body a:hover {
+	text-decoration: underline;
+}
+.dark .markdown-body a {
+	color: hsl(212 92% 62%);
+}
+
+.markdown-body strong {
+	font-weight: 600;
+}
+
+.markdown-body blockquote {
+	padding: 0 1em;
+	color: var(--color-muted-foreground);
+	border-left: 0.25em solid var(--color-border);
+}
+.markdown-body blockquote > :first-child {
+	margin-top: 0;
+}
+.markdown-body blockquote > :last-child {
+	margin-bottom: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+	padding-left: 2em;
+}
+.markdown-body li + li {
+	margin-top: 0.25em;
+}
+.markdown-body li > p {
+	margin-bottom: 0;
+}
+.markdown-body ul.contains-task-list,
+.markdown-body li.task-list-item {
+	list-style-type: none;
+}
+.markdown-body li.task-list-item {
+	padding-left: 0;
+}
+.markdown-body .task-list-item input[type='checkbox'] {
+	margin: 0 0.4em 0.25em -1.4em;
+	vertical-align: middle;
+}
+
+.markdown-body code {
+	font-family: var(--code-font);
+	font-size: 85%;
+	padding: 0.2em 0.4em;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--color-muted-foreground) 18%, transparent);
+}
+.markdown-body pre {
+	font-family: var(--code-font);
+	font-size: 85%;
+	padding: 16px;
+	overflow: auto;
+	border-radius: var(--radius);
+	background: var(--color-muted);
+	line-height: 1.45;
+}
+.markdown-body pre code {
+	padding: 0;
+	background: transparent;
+	border-radius: 0;
+	font-size: 100%;
+	white-space: pre;
+}
+
+.markdown-body table {
+	display: block;
+	width: max-content;
+	max-width: 100%;
+	overflow: auto;
+	border-collapse: collapse;
+}
+.markdown-body table th,
+.markdown-body table td {
+	padding: 6px 13px;
+	border: 1px solid var(--color-border);
+}
+.markdown-body table th {
+	font-weight: 600;
+	background: var(--color-muted);
+}
+.markdown-body table tr:nth-child(2n) td {
+	background: color-mix(in srgb, var(--color-muted) 45%, transparent);
+}
+
+/* Leading YAML frontmatter rendered as a key/value table, GitHub-style: a
+   rounded bordered box where the first column (keys) reads as a header. */
+.markdown-body table.markdown-frontmatter {
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	border-spacing: 0;
+	overflow: hidden;
+}
+/* Borders only — drop the muted header fill and the zebra striping the base
+   table styles add, so the frontmatter reads as a plain key/value grid. */
+.markdown-body table.markdown-frontmatter th,
+.markdown-body table.markdown-frontmatter tr:nth-child(2n) td {
+	background: transparent;
+}
+.markdown-body table.markdown-frontmatter th {
+	text-align: left;
+	white-space: nowrap;
+}
+.markdown-body table.markdown-frontmatter tr:first-child th,
+.markdown-body table.markdown-frontmatter tr:first-child td {
+	border-top: 0;
+}
+/* The table's own border draws the bottom edge — drop the last row's cell
+   border so they don't stack into a double line. */
+.markdown-body table.markdown-frontmatter tr:last-child th,
+.markdown-body table.markdown-frontmatter tr:last-child td {
+	border-bottom: 0;
+}
+.markdown-body table.markdown-frontmatter tr td:last-child,
+.markdown-body table.markdown-frontmatter tr th:last-child {
+	border-right: 0;
+}
+.markdown-body table.markdown-frontmatter th:first-child {
+	border-left: 0;
+}
+
+.markdown-body img {
+	max-width: 100%;
+	box-sizing: border-box;
+}
+
+.markdown-body hr {
+	height: 1px;
+	margin: 24px 0;
+	border: 0;
+	background: var(--color-border);
+}
+
+.markdown-body del {
+	text-decoration: line-through;
+}

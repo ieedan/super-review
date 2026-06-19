@@ -9,7 +9,8 @@
 // cache during derivation throws `state_unsafe_mutation`.
 
 import { SvelteMap } from 'svelte/reactivity';
-import type { ReleaseNotes } from '@shared/types';
+import type { ReleaseNotes } from '@super-review/core/types';
+import { getNpmProvider } from './npm-provider';
 
 export type ReleaseNotesState =
 	| { status: 'loading' }
@@ -51,7 +52,7 @@ export function requestReleaseNotes(
 	if (cache.has(key)) return;
 	cache.set(key, { status: 'loading' });
 
-	void window.api.npm
+	void getNpmProvider()
 		.getReleaseNotes(repositoryUrl, packageName, version)
 		.then((result) => {
 			cache.set(
@@ -99,7 +100,7 @@ export function requestReleaseNotesRange(
 	if (rangeCache.has(key)) return;
 	rangeCache.set(key, { status: 'loading' });
 
-	void window.api.npm
+	void getNpmProvider()
 		.getReleaseNotesRange(repositoryUrl, packageName, from, to)
 		.then((result) => {
 			rangeCache.set(
