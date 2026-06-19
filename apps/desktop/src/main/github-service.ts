@@ -1261,9 +1261,7 @@ export async function createReviewComment(
 		).response?.data?.errors;
 		const unresolvableAnchor = errors?.some(
 			(e) =>
-				e.field?.endsWith('.path') ||
-				e.field?.endsWith('.line') ||
-				e.field?.endsWith('.commit_id')
+				e.field?.endsWith('.path') || e.field?.endsWith('.line') || e.field?.endsWith('.commit_id')
 		);
 		if (status === 422 && unresolvableAnchor) {
 			throw new Error(
