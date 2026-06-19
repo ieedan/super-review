@@ -36,6 +36,14 @@ export interface GitIdentity {
 	email: string;
 }
 
+// SSH signing material for a commit. `keyPath` is the absolute path to the
+// private signing key (its `.pub` sits alongside). Git signs via
+// `gpg.format=ssh` + `user.signingkey`, applied as per-invocation `-c`
+// overrides so the repo's and the user's global git config are never touched.
+export interface CommitSigning {
+	keyPath: string;
+}
+
 export interface BranchInfo {
 	name: string;
 	current: boolean;
@@ -912,6 +920,12 @@ export interface UserPrefs {
 	// the unnecessary-changeset warning, commit-message auto-fill, and the toolbar
 	// button. On by default; turn off to silence all changeset behavior.
 	changesetsEnabled: boolean;
+	// SSH-sign every commit. On by default: the app provisions a per-account
+	// ed25519 signing key, registers it with GitHub so commits show "Verified",
+	// and signs without any setup. Silently no-ops on machines whose git or
+	// ssh-keygen is too old (see checkSshSigningSupported), and any signing
+	// failure falls back to an unsigned commit. Turn off to commit unsigned.
+	signCommits: boolean;
 }
 
 export interface DeviceFlowStart {
@@ -934,15 +948,17 @@ export type DeviceFlowStatus =
 	| { state: 'success'; account: GithubAccount }
 	| { state: 'error'; message: string };
 
-// A stored account whose token no longer authenticates: 'revoked' when GitHub
-// rejects the credential outright (revoked or expired token), 'sso' when the
-// token is fine but an organization's SAML session must be re-authorized.
+// A stored account whose token needs the user to re-authenticate: 'revoked'
+// when GitHub rejects the credential outright (revoked or expired token), 'sso'
+// when the token is fine but an organization's SAML session must be
+// re-authorized, 'scope' when the token predates a scope the app now needs
+// (e.g. write:ssh_signing_key for commit signing) so signing in again grants it.
 // Surfaced so the UI can prompt the user to sign in again — without this, a
 // dead token just makes the app silently behave as if access were missing.
 export interface GithubAuthError {
 	accountId: string;
 	login: string;
-	reason: 'revoked' | 'sso';
+	reason: 'revoked' | 'sso' | 'scope';
 }
 
 // Trimmed npm-registry metadata for a single package, surfaced in the diff

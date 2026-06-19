@@ -9,6 +9,7 @@ import type {
 	BranchInfo,
 	ChangedFile,
 	CommitFileSelection,
+	CommitSigning,
 	CreateRepoOptions,
 	DiffContext,
 	DiffData,
@@ -2365,6 +2366,74 @@ function isPathspecMismatch(err: unknown): boolean {
 	return /did not match any file/.test(msg);
 }
 
+// ─── Commit signing ─────────────────────────────────────────────────────────
+// SSH commit signing needs git >= 2.34 (the `gpg.format=ssh` backend) and an
+// ssh-keygen that supports `-Y sign` (OpenSSH >= 8.0). We detect this once and
+// cache it; the desktop app gates signing on the result so a user on ancient
+// tooling never gets a failed or surprising commit.
+
+let sshSigningSupported: boolean | null = null;
+
+function parseVersion(s: string): [number, number] | null {
+	const m = s.match(/(\d+)\.(\d+)/);
+	return m ? [Number(m[1]), Number(m[2])] : null;
+}
+
+function atLeast(v: [number, number] | null, major: number, minor: number): boolean {
+	if (!v) return false;
+	return v[0] > major || (v[0] === major && v[1] >= minor);
+}
+
+export async function checkSshSigningSupported(): Promise<boolean> {
+	if (sshSigningSupported !== null) return sshSigningSupported;
+	sshSigningSupported = await (async () => {
+		try {
+			const { stdout: gitOut } = await execFileAsync('git', ['--version']);
+			if (!atLeast(parseVersion(gitOut), 2, 34)) return false;
+			// ssh-keygen has no clean version flag; `ssh -V` prints "OpenSSH_X.Y…"
+			// (to stderr on most builds, stdout on some). Its absence (ENOENT)
+			// throws, which means signing can't work either.
+			const { stdout, stderr } = await execFileAsync('ssh', ['-V']);
+			const m = (stderr + stdout).match(/OpenSSH[_-](\d+)\.(\d+)/);
+			return atLeast(m ? [Number(m[1]), Number(m[2])] : null, 8, 0);
+		} catch {
+			return false;
+		}
+	})();
+	return sshSigningSupported;
+}
+
+// Per-invocation `-c` overrides that turn on SSH signing against the given key,
+// without writing anything to the repo's or the user's global git config.
+function sshSignConfigArgs(signing: CommitSigning | null | undefined): string[] {
+	if (!signing) return [];
+	return [
+		'-c',
+		'gpg.format=ssh',
+		'-c',
+		`user.signingkey=${signing.keyPath}`,
+		'-c',
+		'commit.gpgsign=true'
+	];
+}
+
+// Run a commit-producing git invocation, signing when configured. The callback
+// receives the signing `-c` config args and the per-command sign flag (`-S`) to
+// splice into its argument list. If a signed attempt fails — missing key,
+// unsupported tooling, a flaky ssh-keygen — we retry once unsigned: a signature
+// is never worth blocking the commit itself.
+async function runSignedOrFallback<T>(
+	signing: CommitSigning | null | undefined,
+	run: (configArgs: string[], signFlag: string[]) => Promise<T>
+): Promise<T> {
+	if (!signing) return run([], []);
+	try {
+		return await run(sshSignConfigArgs(signing), ['-S']);
+	} catch {
+		return run([], []);
+	}
+}
+
 // Stages and commits the selected files. Whole-file selections stage the file's
 // full working-tree version; partial selections carry a unified diff (HEAD ->
 // the kept subset) for line/hunk staging. When nothing is partial we take the
@@ -2374,7 +2443,8 @@ export async function commit(
 	repoPath: string,
 	message: string,
 	files: CommitFileSelection[],
-	identity?: GitIdentity | null
+	identity?: GitIdentity | null,
+	signing?: CommitSigning | null
 ): Promise<CommitResult> {
 	const git = simpleGit(repoPath);
 	try {
@@ -2409,11 +2479,13 @@ export async function commit(
 				: [];
 			// Pin the commit to the selected pathspecs so anything else that may be
 			// staged in the index is left out — only the checked files are committed.
-			await git.raw([...identityArgs, 'commit', '-m', trimmed, '--', ...paths]);
+			await runSignedOrFallback(signing, (cfg, sign) =>
+				git.raw([...cfg, ...identityArgs, 'commit', ...sign, '-m', trimmed, '--', ...paths])
+			);
 			return { ok: true };
 		}
 
-		await commitPartial(repoPath, trimmed, files, identity);
+		await commitPartial(repoPath, trimmed, files, identity, signing);
 		return { ok: true };
 	} catch (err) {
 		return {
@@ -2434,7 +2506,8 @@ async function commitPartial(
 	repoPath: string,
 	message: string,
 	files: CommitFileSelection[],
-	identity?: GitIdentity | null
+	identity?: GitIdentity | null,
+	signing?: CommitSigning | null
 ): Promise<void> {
 	const baseGit = simpleGit(repoPath);
 	const gitDir = (await baseGit.raw(['rev-parse', '--absolute-git-dir'])).trim();
@@ -2485,9 +2558,14 @@ async function commitPartial(
 			commitEnv.GIT_COMMITTER_NAME = identity.name;
 			commitEnv.GIT_COMMITTER_EMAIL = identity.email;
 		}
-		const commitArgs = ['commit-tree', tree, '-m', message];
-		if (headExists) commitArgs.push('-p', 'HEAD');
-		const newSha = (await simpleGit(repoPath).env(commitEnv).raw(commitArgs)).trim();
+		const parentArgs = headExists ? ['-p', 'HEAD'] : [];
+		const newSha = (
+			await runSignedOrFallback(signing, (cfg, sign) =>
+				simpleGit(repoPath)
+					.env(commitEnv)
+					.raw([...cfg, 'commit-tree', ...sign, tree, '-m', message, ...parentArgs])
+			)
+		).trim();
 
 		// Advance the current branch (or detached HEAD) to the new commit.
 		await baseGit.raw(['update-ref', 'HEAD', newSha]);
@@ -2710,7 +2788,8 @@ async function headExists(git: SimpleGit): Promise<boolean> {
 export async function ensureInitialCommit(
 	repoPath: string,
 	message: string,
-	identity?: GitIdentity | null
+	identity?: GitIdentity | null,
+	signing?: CommitSigning | null
 ): Promise<boolean> {
 	const git = simpleGit(repoPath);
 	if (await headExists(git)) return false;
@@ -2727,7 +2806,11 @@ export async function ensureInitialCommit(
 		env.GIT_COMMITTER_NAME = identity.name;
 		env.GIT_COMMITTER_EMAIL = identity.email;
 	}
-	await simpleGit(repoPath).env(env).raw(['commit', '--allow-empty', '-m', message]);
+	await runSignedOrFallback(signing, (cfg, sign) =>
+		simpleGit(repoPath)
+			.env(env)
+			.raw([...cfg, 'commit', ...sign, '--allow-empty', '-m', message])
+	);
 	return true;
 }
 

@@ -20,6 +20,15 @@ import { DEFAULT_HOTKEYS } from '@shared/hotkeys.js';
 
 export interface StoredGithubAccount extends GithubAccount {
 	token: string;
+	// Space-separated OAuth scopes the token was granted, captured from GitHub's
+	// `x-oauth-scopes` response header. Used to tell whether the token can manage
+	// SSH signing keys (`write:ssh_signing_key`) without an extra round-trip.
+	// Absent on accounts authed before scope capture existed.
+	scopes?: string;
+	// Set once the account's SSH signing key has been registered with GitHub
+	// (POST /user/ssh_signing_keys succeeded, or returned "already exists"), so we
+	// don't re-POST on every commit.
+	signingKeyRegistered?: boolean;
 }
 
 interface Schema {
@@ -70,7 +79,8 @@ const defaults: Schema = {
 		sidebarCollapsed: false,
 		commentsSidebarOpen: false,
 		recentRepoCount: 5,
-		changesetsEnabled: true
+		changesetsEnabled: true,
+		signCommits: true
 	},
 	seen: {},
 	collapsedFiles: {},
@@ -334,6 +344,16 @@ export function setActiveGithubAccountId(id: string | null): void {
 export function upsertGithubAccount(account: StoredGithubAccount): void {
 	const accounts = store.get('githubAccounts');
 	accounts[account.id] = account;
+	store.set('githubAccounts', accounts);
+}
+
+// Mark that the account's SSH signing key is registered with GitHub, so we skip
+// the registration call on subsequent commits. No-op if the account is gone.
+export function setSigningKeyRegistered(id: string): void {
+	const accounts = store.get('githubAccounts');
+	const acct = accounts[id];
+	if (!acct) return;
+	acct.signingKeyRegistered = true;
 	store.set('githubAccounts', accounts);
 }
 

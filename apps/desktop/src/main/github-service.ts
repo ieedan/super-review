@@ -1,7 +1,9 @@
+import os from 'node:os';
 import { Octokit } from '@octokit/rest';
 import { createOAuthDeviceAuth } from '@octokit/auth-oauth-device';
 import { shell } from 'electron';
 import type {
+	CommitSigning,
 	DeviceFlowStart,
 	DeviceFlowStatus,
 	GitIdentity,
@@ -16,23 +18,34 @@ import type {
 	PRReviewComment,
 	PRSummary
 } from '@shared/types.js';
-import { setGitCredentialProvider, type GitCredentials } from '@super-review/core';
+import {
+	checkSshSigningSupported,
+	setGitCredentialProvider,
+	type GitCredentials
+} from '@super-review/core';
 import {
 	clearLegacyGithubToken,
 	getActiveGithubAccount,
 	getGithubAccount,
 	getLegacyGithubToken,
+	getPrefs,
 	listGithubAccounts,
 	removeGithubAccount as storeRemoveAccount,
 	setActiveGithubAccountId,
+	setSigningKeyRegistered,
 	upsertGithubAccount,
 	type StoredGithubAccount
 } from './store.js';
+import { ensureSigningKey, readSigningPublicKey, removeSigningKey } from './signing-service.js';
 
 // Default GitHub OAuth client ID for "GitHub CLI" - public, ships with `gh`.
 // Users can override via env var for self-hosted GHE later.
 const CLIENT_ID = process.env.SUPER_REVIEW_GH_CLIENT_ID ?? '178c6fc778ccc68e1d6a';
-const SCOPES = ['repo', 'read:user'];
+// `write:ssh_signing_key` lets the app register each account's commit-signing
+// key so signed commits show "Verified" on GitHub. Tokens minted before this
+// scope was added lack it — see flagAccountsMissingSigningScope.
+const SCOPES = ['repo', 'read:user', 'write:ssh_signing_key'];
+const SIGNING_SCOPE = 'write:ssh_signing_key';
 
 interface PendingDeviceFlow {
 	cancel: () => void;
@@ -52,14 +65,26 @@ async function fetchAccountForToken(token: string): Promise<StoredGithubAccount>
 	const o = new Octokit({ auth: token });
 	const res = await o.users.getAuthenticated();
 	const u = res.data;
+	// GitHub echoes the token's granted scopes here; capture them so we can tell
+	// whether this token can register signing keys without an extra request.
+	const scopes = (res.headers['x-oauth-scopes'] as string | undefined) ?? '';
 	return {
 		id: String(u.id),
 		login: u.login,
 		name: u.name ?? undefined,
 		avatarUrl: u.avatar_url ?? undefined,
 		addedAt: Date.now(),
-		token
+		token,
+		scopes
 	};
+}
+
+// Whether the account's token carries the scope needed to register a signing
+// key with GitHub. Accounts authed before scope capture (scopes === undefined)
+// are treated as missing it so the user is prompted to re-authenticate once.
+function hasSigningScope(account: StoredGithubAccount): boolean {
+	const granted = account.scopes?.split(',').map((s) => s.trim());
+	return granted?.includes(SIGNING_SCOPE) ?? false;
 }
 
 // One-shot migration of the legacy single-token field into the accounts map.
@@ -105,6 +130,8 @@ export async function setActiveAccount(id: string): Promise<GithubAccount | null
 
 export async function removeAccount(id: string): Promise<void> {
 	storeRemoveAccount(id);
+	// Drop the account's signing key so we don't leave an orphaned key pair.
+	await removeSigningKey(id);
 }
 
 export async function startDeviceFlow(): Promise<DeviceFlowStart> {
@@ -146,9 +173,10 @@ export async function startDeviceFlow(): Promise<DeviceFlowStart> {
 			const account = await fetchAccountForToken(result.token);
 			upsertGithubAccount(account);
 			setActiveGithubAccountId(account.id);
-			// Re-signing in mints a fresh token for the same account id — clear any
-			// auth-failure flag so the renderer's prompt goes away.
-			noteRequestSucceeded(account.id);
+			// Re-signing in mints a fresh token (with the current scope set) for the
+			// same account id — clear any auth-failure flag, including a 'scope' one,
+			// so the renderer's prompt goes away.
+			clearAuthError(account.id);
 			lastStatus = { state: 'success', account: publicAccount(account) };
 		} catch (err) {
 			if (cancelled) return;
@@ -226,7 +254,34 @@ function noteRequestFailed(account: StoredGithubAccount, err: unknown): void {
 }
 
 function noteRequestSucceeded(accountId: string): void {
+	// A 'scope' error means the token is missing an OAuth scope, not that it's
+	// dead. A request succeeding doesn't grant the scope — only re-authenticating
+	// does — so leave a 'scope' error in place; clearAuthError handles re-auth.
+	if (authErrors.get(accountId)?.reason === 'scope') return;
 	if (authErrors.delete(accountId)) authErrorsListener?.(getAuthErrors());
+}
+
+// Unconditionally clear an account's auth error. Used after a re-sign-in, which
+// mints a fresh token with the current scope set — so even a 'scope' error is
+// resolved.
+function clearAuthError(accountId: string): void {
+	if (authErrors.delete(accountId)) authErrorsListener?.(getAuthErrors());
+}
+
+// Flag accounts whose token predates the signing scope so the UI prompts a
+// one-time re-sign-in (which grants it). Only when signing is enabled, and never
+// over an existing revoked/SSO error (that's the more urgent fix). Called after
+// token probing in validateAccounts.
+function flagAccountsMissingSigningScope(): void {
+	if (!getPrefs().signCommits) return;
+	let changed = false;
+	for (const account of listGithubAccounts()) {
+		if (hasSigningScope(account)) continue;
+		if (authErrors.has(account.id)) continue;
+		authErrors.set(account.id, { accountId: account.id, login: account.login, reason: 'scope' });
+		changed = true;
+	}
+	if (changed) authErrorsListener?.(getAuthErrors());
 }
 
 // Probe each stored account's token with a cheap /user call so a token that
@@ -242,6 +297,7 @@ export async function validateAccounts(): Promise<GithubAuthError[]> {
 				.catch(() => {})
 		)
 	);
+	flagAccountsMissingSigningScope();
 	return getAuthErrors();
 }
 
@@ -287,6 +343,54 @@ export function resolveCommitIdentity(accountId?: string | null): GitIdentity | 
 		name: account.name ?? account.login,
 		email: `${account.id}+${account.login}@users.noreply.github.com`
 	};
+}
+
+// Resolve the SSH signing material for a commit made under a given account, or
+// null to commit unsigned. Returns null when the user turned signing off, when
+// the local git/ssh-keygen can't sign, when no account is linked, or when key
+// provisioning fails — every one of which should degrade to an unsigned commit,
+// never a blocked one. As a side effect it ensures the account's key exists and
+// (best-effort, fire-and-forget) is registered with GitHub so commits verify.
+export async function resolveCommitSigning(
+	accountId?: string | null
+): Promise<CommitSigning | null> {
+	if (!getPrefs().signCommits) return null;
+	if (!(await checkSshSigningSupported())) return null;
+	const pinned = accountId ? getGithubAccount(accountId) : null;
+	const account = pinned ?? getActiveGithubAccount();
+	if (!account) return null;
+	const keyPath = await ensureSigningKey(account.id, account.login);
+	if (!keyPath) return null;
+	// Register the public key with GitHub so the signature verifies there. Don't
+	// await — a slow or failing API call must not delay (or block) the commit.
+	void ensureSigningKeyRegistered(account);
+	return { keyPath };
+}
+
+// Upload the account's SSH signing key to GitHub (idempotent) so commits signed
+// with it show as "Verified". Best-effort: skipped once registered, skipped when
+// the token lacks the scope (the user is prompted to re-auth separately), and
+// swallows errors so it never affects committing. A 422 means the key is already
+// registered, which we treat as success.
+async function ensureSigningKeyRegistered(account: StoredGithubAccount): Promise<void> {
+	if (account.signingKeyRegistered) return;
+	if (!hasSigningScope(account)) return;
+	const publicKey = await readSigningPublicKey(account.id);
+	if (!publicKey) return;
+	try {
+		await octokit(account).request('POST /user/ssh_signing_keys', {
+			title: `Super Review (${os.hostname()})`,
+			key: publicKey
+		});
+		setSigningKeyRegistered(account.id);
+	} catch (err) {
+		if ((err as { status?: number }).status === 422) {
+			// Already registered (e.g. a prior run, or the same key re-added).
+			setSigningKeyRegistered(account.id);
+			return;
+		}
+		// Any other failure: leave unregistered so a later commit retries.
+	}
 }
 
 // Organizations the account can create repositories under, for the Publish

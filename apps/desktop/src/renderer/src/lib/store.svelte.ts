@@ -163,6 +163,8 @@ interface AppState {
 	changesetReviewOpen: boolean;
 	// User pref (Integrations settings): when false, all changeset behavior is off.
 	changesetsEnabled: boolean;
+	// User pref: SSH-sign every commit (on by default). See UserPrefs.signCommits.
+	signCommits: boolean;
 	changedFiles: ChangedFile[];
 	// Free-text filter applied to the changed-files list. Shared between the
 	// sidebar (where it's typed) and the diff view (which hides sections for
@@ -591,6 +593,7 @@ const initial: AppState = {
 	changesetPromptDismissed: false,
 	changesetWarningDismissed: false,
 	changesetsEnabled: true,
+	signCommits: true,
 	changesetReviewOpen: false,
 	changedFiles: [],
 	fileSearchQuery: '',
@@ -2013,6 +2016,10 @@ export const actions = {
 	closeChangesetDialog(): void {
 		app.changesetDialogOpen = false;
 	},
+	async setSignCommits(value: boolean): Promise<void> {
+		app.signCommits = value;
+		app.prefs = await window.api.state.setPrefs({ signCommits: value });
+	},
 	async setChangesetsEnabled(value: boolean): Promise<void> {
 		app.changesetsEnabled = value;
 		app.prefs = await window.api.state.setPrefs({ changesetsEnabled: value });
@@ -2091,6 +2098,7 @@ export const actions = {
 		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
 		app.unmarkSeenOnChange = app.prefs.unmarkSeenOnChange ?? true;
 		app.changesetsEnabled = app.prefs.changesetsEnabled ?? true;
+		app.signCommits = app.prefs.signCommits ?? true;
 		app.recentRepoCount = app.prefs.recentRepoCount ?? 5;
 		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
 		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;

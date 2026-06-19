@@ -436,7 +436,12 @@ export function registerIpc(): void {
 			// A freshly-created repo leaves its seeded files uncommitted (unborn
 			// branch), which has nothing to push. Make the initial commit first so
 			// "create → publish" works without a manual commit step.
-			await ensureInitialCommit(repo.path, 'Initial commit', gh.resolveCommitIdentity(accountId));
+			await ensureInitialCommit(
+				repo.path,
+				'Initial commit',
+				gh.resolveCommitIdentity(accountId),
+				await gh.resolveCommitSigning(accountId)
+			);
 			const remote = await gh.createRemoteRepo({
 				name: options.name,
 				description: options.description,
@@ -767,7 +772,8 @@ export function registerIpc(): void {
 		): Promise<CommitResult> => {
 			const repo = repoOrThrow(repoId);
 			const identity = gh.resolveCommitIdentity(repo.githubAccountId);
-			return commit(repo.path, message, files, identity);
+			const signing = await gh.resolveCommitSigning(repo.githubAccountId);
+			return commit(repo.path, message, files, identity, signing);
 		}
 	);
 
