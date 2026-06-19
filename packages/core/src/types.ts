@@ -987,6 +987,34 @@ export interface NpmPackageInfo {
 // (offline, 404, rate-limited) the hover card can show instead of spinning.
 export type NpmPackageResult = { ok: true; info: NpmPackageInfo } | { ok: false; error: string };
 
+// A GitHub release's notes, for the hover card's "What's new" disclosure. `body`
+// is the raw release-notes markdown (the card renders it); `htmlUrl` links to
+// the release page on GitHub.
+export interface ReleaseNotes {
+	tag: string;
+	name?: string;
+	body?: string;
+	htmlUrl: string;
+	publishedAt?: string;
+}
+
+// Result of a release-notes lookup. `release` is null when the package isn't on
+// GitHub or has no release matching the version (the card still shows a plain
+// changelog link). Errors resolve as a variant rather than rejecting so the card
+// can degrade to just the link.
+export type ReleaseNotesResult =
+	| { ok: true; release: ReleaseNotes | null }
+	| { ok: false; error: string };
+
+// Result of a release-notes RANGE lookup: every release strictly above the lower
+// version and up to (and including) the higher one, newest first. Used when a
+// dependency's version changed in the diff so the card can show everything that
+// changed between the two versions. `truncated` is true when more releases exist
+// than we fetched/returned (the card then points at the full changelog).
+export type ReleaseNotesRangeResult =
+	| { ok: true; releases: ReleaseNotes[]; truncated: boolean }
+	| { ok: false; error: string };
+
 export interface PreloadAPI {
 	platform: AppPlatform;
 	repos: {
@@ -1294,6 +1322,26 @@ export interface PreloadAPI {
 		// hover cards. Cached in the main process; resolves to an error variant
 		// rather than rejecting so the card can render the failure inline.
 		getPackageInfo(name: string): Promise<NpmPackageResult>;
+		// Fetch the GitHub release notes for a package version, for the hover card's
+		// "What's new" disclosure. `repositoryUrl` is the package's normalized repo
+		// URL and `packageName` lets monorepos be matched by their `name@version`
+		// tag. Resolves `{ release: null }` when it isn't a GitHub repo or has no
+		// matching release, and an error variant rather than rejecting.
+		getReleaseNotes(
+			repositoryUrl: string,
+			packageName: string,
+			version: string
+		): Promise<ReleaseNotesResult>;
+		// Fetch the GitHub release notes for every release between two versions
+		// (exclusive of the lower, inclusive of the higher), for when a dependency's
+		// version changed in the diff. Order of the args doesn't matter; the result
+		// is newest-first.
+		getReleaseNotesRange(
+			repositoryUrl: string,
+			packageName: string,
+			fromVersion: string,
+			toVersion: string
+		): Promise<ReleaseNotesRangeResult>;
 	};
 	shell: {
 		openExternal(url: string): Promise<void>;

@@ -15,15 +15,21 @@ export type NpmInfoState =
 // when the fetch resolves.
 const cache = new SvelteMap<string, NpmInfoState>();
 
-// Get the current state for a package, kicking off a fetch the first time. The
-// returned value is reactive: read it inside a `$derived`/template and it
-// updates from 'loading' to 'loaded'/'error' on its own.
-export function getNpmInfo(name: string): NpmInfoState {
-	const existing = cache.get(name);
-	if (existing) return existing;
+// Reactive read of a package's current request state. Pure, safe to call
+// inside a `$derived`/template; re-runs when the fetch resolves. Returns
+// undefined until a fetch has been kicked off via `requestNpmInfo` (treat that
+// as 'loading'). Kept separate from the trigger below because populating the
+// cache mutates reactive state, which Svelte forbids during derivation.
+export function getNpmInfo(name: string): NpmInfoState | undefined {
+	return cache.get(name);
+}
 
-	const loading: NpmInfoState = { status: 'loading' };
-	cache.set(name, loading);
+// Kick off a fetch for `name` the first time it's requested. SIDE-EFFECTING (it
+// writes the reactive cache), so call it from an `$effect`, never from inside a
+// `$derived` or a template expression, or you get `state_unsafe_mutation`.
+export function requestNpmInfo(name: string): void {
+	if (cache.has(name)) return;
+	cache.set(name, { status: 'loading' });
 
 	void window.api.npm
 		.getPackageInfo(name)
@@ -42,6 +48,4 @@ export function getNpmInfo(name: string): NpmInfoState {
 				error: err instanceof Error ? err.message : 'Failed to load package info.'
 			});
 		});
-
-	return loading;
 }

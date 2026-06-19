@@ -60,6 +60,7 @@
 		isPackageJsonPath,
 		parsePackageDeps,
 		spanAt,
+		versionForName,
 		type PackageDepIndex
 	} from '$lib/package-json-deps';
 	import { showPackageHover, scheduleHidePackageHover } from '$lib/package-hover.svelte';
@@ -245,10 +246,14 @@
 			scheduleHidePackageHover();
 			return;
 		}
+		// Resolve the package's version on each side so the card can show a range
+		// changelog when the version changed in the diff (null when added/removed).
 		showPackageHover(props.tokenElement, {
 			kind: span.kind,
 			name: span.name,
-			version: span.version
+			version: span.version,
+			oldRange: pkgDepsOld ? versionForName(pkgDepsOld, span.name) : null,
+			newRange: pkgDepsNew ? versionForName(pkgDepsNew, span.name) : null
 		});
 	}
 

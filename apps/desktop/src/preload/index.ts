@@ -33,6 +33,8 @@ import type {
 	ManagedStash,
 	NewReviewCommentInput,
 	NpmPackageResult,
+	ReleaseNotesResult,
+	ReleaseNotesRangeResult,
 	PRChecksSummary,
 	PRReviewComment,
 	PRSummary,
@@ -328,7 +330,22 @@ const api: PreloadAPI = {
 	},
 	npm: {
 		getPackageInfo: (name) =>
-			ipcRenderer.invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>
+			ipcRenderer.invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>,
+		getReleaseNotes: (repositoryUrl, packageName, version) =>
+			ipcRenderer.invoke(
+				'npm:getReleaseNotes',
+				repositoryUrl,
+				packageName,
+				version
+			) as Promise<ReleaseNotesResult>,
+		getReleaseNotesRange: (repositoryUrl, packageName, fromVersion, toVersion) =>
+			ipcRenderer.invoke(
+				'npm:getReleaseNotesRange',
+				repositoryUrl,
+				packageName,
+				fromVersion,
+				toVersion
+			) as Promise<ReleaseNotesRangeResult>
 	},
 	shell: {
 		openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,

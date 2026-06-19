@@ -178,6 +178,18 @@ export function parsePackageDeps(text: string): PackageDepIndex {
 	return index;
 }
 
+// The version range recorded for `name` anywhere in this side's index, or null
+// if the package isn't present on that side. Lets the hover card resolve a
+// package's old and new version from the two side indexes to detect a change.
+export function versionForName(index: PackageDepIndex, name: string): string | null {
+	for (const spans of index.values()) {
+		for (const span of spans) {
+			if (span.name === name) return span.version;
+		}
+	}
+	return null;
+}
+
 // Find the dependency span (name or version) covering a hovered token, given
 // the token's line and its character range. Returns the first span whose range
 // overlaps the token — the spans include their quotes, so any sub-token (a

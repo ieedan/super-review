@@ -6,29 +6,239 @@
 	// hovered token via `customAnchor`, so it gets Floating UI positioning,
 	// collision handling, and portaling for free rather than hand-rolled.
 
-	import Package from '@lucide/svelte/icons/package';
 	import Tag from '@lucide/svelte/icons/tag';
 	import Calendar from '@lucide/svelte/icons/calendar';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import Scale from '@lucide/svelte/icons/scale';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import { Popover, PopoverContent } from './ui/popover';
 	import { Badge } from './ui/badge';
-	import { getNpmInfo, type NpmInfoState } from '$lib/npm-info.svelte';
+	import { getNpmInfo, requestNpmInfo, type NpmInfoState } from '$lib/npm-info.svelte';
+	import {
+		getReleaseNotes,
+		requestReleaseNotes,
+		getReleaseNotesRange,
+		requestReleaseNotesRange,
+		type ReleaseNotesState,
+		type ReleaseNotesRangeState
+	} from '$lib/release-notes.svelte';
 	import {
 		packageHover,
 		keepPackageHover,
 		scheduleHidePackageHover,
-		closePackageHover
+		closePackageHover,
+		setPackageHoverPinned
 	} from '$lib/package-hover.svelte';
-	import type { NpmPackageInfo } from '@shared/types';
+	import { app } from '$lib/store.svelte';
+	import { renderMarkdown } from '$lib/markdown';
+	import '$lib/markdown.css';
+	import type { NpmPackageInfo, ReleaseNotes } from '@shared/types';
 
-	// The npm request state for the currently-hovered package. `getNpmInfo` is
-	// reactive (and memoized), so this re-resolves from loading → loaded/error.
+	// Kick off the fetch as a side effect when the hovered package changes.
+	// `requestNpmInfo` writes the reactive cache, so it must run in an `$effect`,
+	// not inside the `$derived` below (mutating state during derivation throws
+	// `state_unsafe_mutation`).
+	$effect(() => {
+		const name = packageHover.target?.name;
+		if (name) requestNpmInfo(name);
+	});
+
+	// The npm request state for the currently-hovered package. Pure reactive read
+	// of the cache, so it re-resolves loading → loaded/error on its own. The cache
+	// is empty until the effect above populates it, so treat "not yet there" as
+	// loading.
 	const infoState = $derived<NpmInfoState | null>(
-		packageHover.target ? getNpmInfo(packageHover.target.name) : null
+		packageHover.target ? (getNpmInfo(packageHover.target.name) ?? { status: 'loading' }) : null
 	);
+
+	// Only actually open the popover once the npm request has settled, so the card
+	// never flashes a "Loading…" state: it stays hidden during the hover-intent
+	// delay + fetch and pops in already populated (loaded or, for a missing/broken
+	// package, the error).
+	const contentReady = $derived(infoState?.status === 'loaded' || infoState?.status === 'error');
+	const cardOpen = $derived(packageHover.armed && contentReady);
+
+	// Open toward whichever side of the hovered token has more room, so expanding
+	// the changelog doesn't shove the card across to the other side. Decided from
+	// the token's viewport position at hover time (the anchor object changes per
+	// hover, so this recomputes then); it stays put while the card is open and the
+	// disclosure grows. Collision flipping stays on as a last-resort backstop.
+	const preferredSide = $derived.by<'top' | 'bottom'>(() => {
+		const rect = packageHover.anchor?.getBoundingClientRect();
+		if (!rect) return 'top';
+		const roomAbove = rect.top;
+		const roomBelow = window.innerHeight - rect.bottom;
+		return roomBelow > roomAbove ? 'bottom' : 'top';
+	});
+
+	// The changelog disclosure's open state. While it's expanded we pin the card
+	// (see the effect below) so growing/repositioning can't dismiss it. Reset to
+	// collapsed whenever the hovered package changes so each card starts closed.
+	let notesOpen = $state(false);
+	$effect(() => {
+		void packageHover.target?.name;
+		notesOpen = false;
+	});
+	$effect(() => {
+		setPackageHoverPinned(notesOpen);
+	});
+
+	// Code-hosting platforms whose favicon is the platform's own logo, not the
+	// package's. Tons of packages set `homepage` to their repo (e.g. globals points
+	// at github.com/sindresorhus/globals#readme), and DuckDuckGo happily returns
+	// GitHub's octocat for that, which is meaningless here (and invisibly dark on
+	// the dark card). Skip the favicon for these so the card shows no icon instead.
+	// Note these are the REPO hosts only; project sites on `*.github.io` /
+	// `*.pages.dev` / `*.vercel.app` etc. keep their own favicon.
+	const CODE_HOST_DOMAINS = [
+		'github.com',
+		'githubusercontent.com',
+		'gitlab.com',
+		'bitbucket.org',
+		'codeberg.org',
+		'gitea.com',
+		'sr.ht',
+		'sourceforge.net'
+	];
+	function isCodeHost(host: string): boolean {
+		return CODE_HOST_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+	}
+
+	// When the loaded package has a homepage, show that site's favicon as the
+	// card icon (it identifies the package better than a generic box). We use
+	// DuckDuckGo's icon service, which resolves the site's declared `<link>`
+	// icons for us; null until info loads, when there's no usable homepage, or
+	// when the homepage is just a code-repo URL (its favicon is the platform logo).
+	const faviconUrl = $derived.by(() => {
+		if (infoState?.status !== 'loaded' || !infoState.info.homepage) return null;
+		try {
+			const host = new URL(infoState.info.homepage).hostname.replace(/^www\./, '');
+			if (!host || isCodeHost(host)) return null;
+			return `https://icons.duckduckgo.com/ip3/${host}.ico`;
+		} catch {
+			// Malformed homepage URL; fall back to no icon.
+			return null;
+		}
+	});
+
+	// The favicon URL that failed to load, so we fall back to the kind icon for
+	// it. Keyed by URL (not a boolean) so hovering a different package whose
+	// favicon is fine isn't suppressed by a previous failure.
+	let brokenFaviconUrl = $state<string | null>(null);
+
+	// ─── Changelog / release notes ───────────────────────────────────────────
+	// The package's repository when it's on GitHub; drives both the changelog
+	// link and the release-notes fetch. null for GitLab/Bitbucket/none.
+	const githubRepoUrl = $derived.by(() => {
+		if (infoState?.status !== 'loaded' || !infoState.info.repositoryUrl) return null;
+		try {
+			const host = new URL(infoState.info.repositoryUrl).hostname;
+			return host === 'github.com' || host === 'www.github.com'
+				? infoState.info.repositoryUrl
+				: null;
+		} catch {
+			return null;
+		}
+	});
+
+	// The repo's Releases page: the reliable changelog fallback, shown whenever
+	// the package is on GitHub regardless of whether inline notes resolve.
+	const changelogUrl = $derived(
+		githubRepoUrl ? `${githubRepoUrl.replace(/\/$/, '')}/releases` : null
+	);
+
+	// The canonical npm name, needed to match monorepo `name@version` release tags.
+	const pkgName = $derived(infoState?.status === 'loaded' ? infoState.info.name : null);
+
+	// The dependency's resolved version on each side of the diff. `currentVersion`
+	// is the version in the file (the new side, or the old side for a removed dep);
+	// `previousVersion` is the old side's version, but only when the dep is present
+	// on both sides so we can tell a real change from an add/remove.
+	const currentVersion = $derived.by(() => {
+		const t = packageHover.target;
+		const range = t?.newRange ?? t?.oldRange ?? t?.version ?? null;
+		return range ? baseVersion(range) : null;
+	});
+	const previousVersion = $derived.by(() => {
+		const t = packageHover.target;
+		if (!t?.oldRange || !t?.newRange) return null;
+		return baseVersion(t.oldRange);
+	});
+	// Did the version actually change in the diff? If so we show the changelog for
+	// every release between the two; otherwise just the current version's.
+	const versionChanged = $derived(
+		!!previousVersion && !!currentVersion && previousVersion !== currentVersion
+	);
+
+	// Unchanged dep → fetch just the current version's release (side effects, so
+	// these live in `$effect`s).
+	$effect(() => {
+		if (githubRepoUrl && pkgName && currentVersion && !versionChanged) {
+			requestReleaseNotes(githubRepoUrl, pkgName, currentVersion);
+		}
+	});
+	const singleState = $derived<ReleaseNotesState | null>(
+		pkgName && currentVersion && !versionChanged
+			? (getReleaseNotes(pkgName, currentVersion) ?? { status: 'loading' })
+			: null
+	);
+
+	// Changed dep → fetch every release between the two versions.
+	$effect(() => {
+		if (githubRepoUrl && pkgName && versionChanged && previousVersion && currentVersion) {
+			requestReleaseNotesRange(githubRepoUrl, pkgName, previousVersion, currentVersion);
+		}
+	});
+	const rangeState = $derived<ReleaseNotesRangeState | null>(
+		pkgName && versionChanged && previousVersion && currentVersion
+			? (getReleaseNotesRange(pkgName, previousVersion, currentVersion) ?? { status: 'loading' })
+			: null
+	);
+
+	// Disclosure title + the release sections to render, unified across the two
+	// cases. The title keeps the diff's direction (old → new) even on a downgrade.
+	const disclosureTitle = $derived(
+		versionChanged && previousVersion && currentVersion
+			? `What changed ${previousVersion} → ${currentVersion}`
+			: currentVersion
+				? `What's new in ${currentVersion}`
+				: "What's new"
+	);
+	const sections = $derived.by<ReleaseNotes[]>(() => {
+		if (versionChanged) return rangeState?.status === 'loaded' ? rangeState.releases : [];
+		const single = singleState?.status === 'loaded' ? singleState.release : null;
+		return single ? [single] : [];
+	});
+	const rangeTruncated = $derived(
+		versionChanged && rangeState?.status === 'loaded' ? rangeState.truncated : false
+	);
+
+	// Render each release's markdown to sanitized HTML for the disclosure. Async +
+	// theme-dependent, so compute into local state from an effect.
+	let renderedSections = $state<{ tag: string; html: string; htmlUrl: string }[]>([]);
+	$effect(() => {
+		const secs = sections;
+		const theme = app.theme;
+		if (secs.length === 0) {
+			renderedSections = [];
+			return;
+		}
+		let cancelled = false;
+		void Promise.all(
+			secs.map(async (s) => ({
+				tag: s.tag,
+				htmlUrl: s.htmlUrl,
+				html: s.body?.trim() ? await renderMarkdown(s.body, theme) : ''
+			}))
+		).then((rendered) => {
+			if (!cancelled) renderedSections = rendered;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	// Resolve a package.json version range to a concrete version present in the
 	// registry's `time` map. We don't ship a semver resolver, so we take the
@@ -112,16 +322,16 @@
 </script>
 
 <Popover
-	open={packageHover.open}
+	open={cardOpen}
 	onOpenChange={(next) => {
 		if (!next) closePackageHover();
 	}}
 >
 	<PopoverContent
 		customAnchor={packageHover.anchor}
-		side="top"
+		side={preferredSide}
 		align="start"
-		sideOffset={6}
+		sideOffset={2}
 		trapFocus={false}
 		onOpenAutoFocus={(e) => e.preventDefault()}
 		onCloseAutoFocus={(e) => e.preventDefault()}
@@ -138,13 +348,20 @@
 			>
 				<!-- Header: package identity + npm link, shown for both card kinds. -->
 				<div class="flex items-start gap-2 p-3 pb-2">
-					<div class="mt-0.5 text-muted-foreground">
-						{#if target.kind === 'version'}
-							<Tag class="size-4" />
-						{:else}
-							<Package class="size-4" />
-						{/if}
-					</div>
+					<!-- Icon: the homepage favicon when we have one. When there's no
+					     homepage or the favicon fails to load we render nothing at all
+					     (not a placeholder), so the name/version text fills the row from
+					     the left edge. -->
+					{#if faviconUrl && brokenFaviconUrl !== faviconUrl}
+						<div class="mt-0.5 text-muted-foreground">
+							<img
+								src={faviconUrl}
+								alt=""
+								class="size-4 rounded-sm"
+								onerror={() => (brokenFaviconUrl = faviconUrl)}
+							/>
+						</div>
+					{/if}
 					<div class="min-w-0 flex-1">
 						<a
 							href={npmUrl(target.name)}
@@ -269,6 +486,59 @@
 									<span class="text-xs">Deprecated: {versionView.deprecated}</span>
 								</div>
 							{/if}
+						{/if}
+
+						<!-- Changelog: a collapsible of the release notes (just the current
+						     version when the dep didn't change, or every release between the
+						     old and new versions when it did), plus a link to the full
+						     Releases page either way (the reliable fallback). -->
+						{#if changelogUrl}
+							{@const changelog = changelogUrl}
+							<div class="mt-2.5 border-t border-foreground/10 pt-2.5">
+								{#if renderedSections.length > 0}
+									<details class="group" bind:open={notesOpen}>
+										<summary
+											class="flex cursor-pointer list-none items-center gap-1 font-medium text-foreground/90 select-none hover:text-foreground [&::-webkit-details-marker]:hidden"
+										>
+											<ChevronRight
+												class="size-3.5 shrink-0 transition-transform group-[[open]]:rotate-90"
+											/>
+											{disclosureTitle}
+										</summary>
+										<div class="mt-2 max-h-48 space-y-3 overflow-y-auto rounded-md bg-muted/40 p-2">
+											{#each renderedSections as section (section.tag)}
+												<div class="space-y-1">
+													<a
+														href={section.htmlUrl}
+														onclick={(e) => open(section.htmlUrl, e)}
+														class="inline-flex items-center gap-1 font-mono text-xs font-medium text-foreground/90 hover:underline"
+													>
+														{section.tag}
+													</a>
+													{#if section.html}
+														<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+														<div class="markdown-body text-xs">{@html section.html}</div>
+													{:else}
+														<p class="text-xs text-muted-foreground">No release notes.</p>
+													{/if}
+												</div>
+											{/each}
+											{#if rangeTruncated}
+												<p class="text-xs text-muted-foreground">
+													Older releases not shown. Open the changelog for the rest.
+												</p>
+											{/if}
+										</div>
+									</details>
+								{/if}
+								<a
+									href={changelog}
+									onclick={(e) => open(changelog, e)}
+									class="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+								>
+									Changelog <ExternalLink class="size-3" />
+								</a>
+							</div>
 						{/if}
 					{/if}
 				</div>
