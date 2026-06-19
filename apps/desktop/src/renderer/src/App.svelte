@@ -147,6 +147,13 @@
 			e.preventDefault();
 			actions.toggleCommentsSidebar();
 		},
+		// Open the comments sidebar straight to the PR Conversation tab (default
+		// Cmd/Ctrl+Shift+L). Toggles closed when already open on that tab.
+		openConversationSidebar: (e) => {
+			if (!app.activeRepo) return;
+			e.preventDefault();
+			actions.openConversationSidebar();
+		},
 		// Open the settings dialog from anywhere (default Cmd/Ctrl+Comma).
 		openSettings: (e) => {
 			e.preventDefault();

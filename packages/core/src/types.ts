@@ -129,6 +129,9 @@ export interface PRSummary {
 	draft: boolean;
 	updatedAt: string;
 	state: 'open' | 'closed';
+	// When the PR was opened (ISO 8601). Drives the "opened …" line on the
+	// Conversation tab's description card.
+	createdAt: string;
 	// True when the PR has been merged. `state` is "closed" for both merged and
 	// plain-closed PRs, so this distinguishes the two for the status icon.
 	merged: boolean;
@@ -408,6 +411,75 @@ export interface NewReviewCommentInput {
 	body: string;
 	line: number;
 	side: 'LEFT' | 'RIGHT';
+}
+
+// ─── PR conversation timeline ─────────────────────────────────────────────────
+// The PR's top-level conversation — what GitHub shows on the "Conversation" tab —
+// as a single chronologically-ordered feed. Distinct from the line-anchored
+// review comments in `PRReviewComment[]`: these are the issue comments, review
+// summaries, commits and timeline events that make up the discussion around the
+// PR as a whole. A discriminated union so the renderer can render each kind with
+// its own chrome.
+export type PRConversationItem =
+	| PRConversationComment
+	| PRConversationReview
+	| PRConversationCommit
+	| PRConversationEvent;
+
+interface PRConversationBase {
+	// Stable, unique key for the renderer's keyed `{#each}`.
+	key: string;
+	// ISO 8601 timestamp the feed is ordered by.
+	createdAt: string;
+}
+
+// A top-level issue comment posted to the PR conversation.
+export interface PRConversationComment extends PRConversationBase {
+	kind: 'comment';
+	id: number;
+	author: string;
+	authorAvatarUrl: string;
+	body: string;
+	url: string;
+	// True when authored by the active GitHub account (so it can be deleted).
+	canDelete: boolean;
+}
+
+// A submitted review (its summary body + verdict). Inline review comments live in
+// `PRReviewComment[]`, not here; an empty-body "commented" review is dropped by
+// the service so it doesn't show up as a contentless row.
+export interface PRConversationReview extends PRConversationBase {
+	kind: 'review';
+	id: number;
+	author: string;
+	authorAvatarUrl: string;
+	body: string;
+	state: 'approved' | 'changes_requested' | 'commented' | 'dismissed';
+	url: string;
+}
+
+// A commit pushed to the PR's head branch.
+export interface PRConversationCommit extends PRConversationBase {
+	kind: 'commit';
+	sha: string;
+	shortSha: string;
+	// First line of the commit message.
+	message: string;
+	author: string;
+	authorAvatarUrl?: string;
+	url?: string;
+}
+
+// A lighter-weight timeline event (merged, closed, reopened, labeled, renamed,
+// review requested, …) rendered as a one-line activity entry. `event` is the raw
+// GitHub event name; `detail` carries any supplemental text (a label name, the
+// new title for a rename, the requested reviewer).
+export interface PRConversationEvent extends PRConversationBase {
+	kind: 'event';
+	event: string;
+	actor: string;
+	actorAvatarUrl?: string;
+	detail?: string;
 }
 
 // ─── Local review comments ───────────────────────────────────────────────────
@@ -1271,6 +1343,29 @@ export interface PreloadAPI {
 			repo?: string
 		): Promise<PRReviewComment>;
 		deleteReviewComment(
+			repoId: string,
+			commentId: number,
+			owner?: string,
+			repo?: string
+		): Promise<void>;
+		// The PR's top-level conversation timeline (issue comments, review summaries,
+		// commits and events) in chronological order. Drives the Conversation tab.
+		listConversation(
+			repoId: string,
+			prNumber: number,
+			owner?: string,
+			repo?: string
+		): Promise<PRConversationItem[]>;
+		// Post a top-level comment to the PR conversation and return the created item.
+		createIssueComment(
+			repoId: string,
+			prNumber: number,
+			body: string,
+			owner?: string,
+			repo?: string
+		): Promise<PRConversationItem>;
+		// Delete one of the viewer's own conversation comments.
+		deleteIssueComment(
 			repoId: string,
 			commentId: number,
 			owner?: string,

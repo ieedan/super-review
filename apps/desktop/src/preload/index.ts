@@ -37,6 +37,7 @@ import type {
 	ReleaseNotesResult,
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
+	PRConversationItem,
 	PRReviewComment,
 	PRSummary,
 	PreloadAPI,
@@ -254,6 +255,27 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('github:setReviewThreadResolved', repoId, threadId, resolved) as Promise<{
 				isResolved: boolean;
 			}>,
+		listConversation: (repoId, prNumber, owner, repo) =>
+			ipcRenderer.invoke('github:listConversation', repoId, prNumber, owner, repo) as Promise<
+				PRConversationItem[]
+			>,
+		createIssueComment: (repoId, prNumber, body, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:createIssueComment',
+				repoId,
+				prNumber,
+				body,
+				owner,
+				repo
+			) as Promise<PRConversationItem>,
+		deleteIssueComment: (repoId, commentId, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:deleteIssueComment',
+				repoId,
+				commentId,
+				owner,
+				repo
+			) as Promise<void>,
 		getAuthErrors: () => ipcRenderer.invoke('github:getAuthErrors') as Promise<GithubAuthError[]>,
 		validateAccounts: () =>
 			ipcRenderer.invoke('github:validateAccounts') as Promise<GithubAuthError[]>

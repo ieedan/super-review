@@ -36,6 +36,7 @@ import type {
 	ReleaseNotesResult,
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
+	PRConversationItem,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
@@ -1271,6 +1272,64 @@ export function registerIpc(): void {
 			// threadId is a global GraphQL node id, so no owner/repo is needed —
 			// only the account whose token authorizes the mutation.
 			return gh.setReviewThreadResolved(threadId, resolved, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:listConversation',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<PRConversationItem[]> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.listConversation(owner, name, prNumber, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:createIssueComment',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			body: string,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<PRConversationItem> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.createIssueComment(owner, name, prNumber, body, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:deleteIssueComment',
+		async (
+			_e,
+			repoId: string,
+			commentId: number,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<void> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			await gh.deleteIssueComment(owner, name, commentId, repo.githubAccountId);
 		}
 	);
 

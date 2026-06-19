@@ -11,6 +11,8 @@ import type {
 	GithubAuthError,
 	GithubOrg,
 	NewReviewCommentInput,
+	PRConversationItem,
+	PRConversationReview,
 	PRCheck,
 	PRChecksState,
 	PRChecksSummary,
@@ -702,6 +704,7 @@ function toPRSummary(
 		url: pr.html_url,
 		draft: pr.draft ?? false,
 		updatedAt: pr.updated_at,
+		createdAt: pr.created_at,
 		state: pr.state as 'open' | 'closed',
 		merged: pr.merged_at != null,
 		headRepoCloneUrl: pr.head.repo?.clone_url ?? undefined,
@@ -1331,4 +1334,199 @@ export async function findPRForBranch(
 	const pr = res.data[0];
 	if (!pr) return null;
 	return toPRSummary(pr);
+}
+
+// ─── PR conversation timeline ────────────────────────────────────────────────
+// The "Conversation" tab feed: the PR's top-level discussion — issue comments,
+// submitted reviews, commits, and lighter timeline events (merged, labeled, …) —
+// flattened into one chronologically-ordered list. We read GitHub's unified
+// issue-timeline endpoint, which already interleaves these in order, and map the
+// handful of event kinds we render. Unknown events are dropped so the feed stays
+// signal over noise. Line-anchored review comments are deliberately excluded —
+// those belong to the Comments tab (`listReviewComments`).
+
+// Review-event states GitHub reports, lower-cased. 'pending' (an unsubmitted
+// draft review) never appears on the timeline, so it isn't in our union.
+function reviewState(state: unknown): PRConversationReview['state'] | null {
+	switch (String(state).toLowerCase()) {
+		case 'approved':
+			return 'approved';
+		case 'changes_requested':
+			return 'changes_requested';
+		case 'commented':
+			return 'commented';
+		case 'dismissed':
+			return 'dismissed';
+		default:
+			return null;
+	}
+}
+
+// Map a single raw timeline event to a conversation item, or null to drop it
+// (unknown event, or a contentless one we don't surface). `viewerLogin` decides
+// delete permission on the viewer's own comments.
+function mapTimelineItem(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	e: any,
+	viewerLogin: string | null
+): PRConversationItem | null {
+	switch (e.event) {
+		case 'commented': {
+			const author = e.user?.login ?? 'unknown';
+			return {
+				kind: 'comment',
+				key: `comment-${e.id}`,
+				id: e.id,
+				author,
+				authorAvatarUrl: e.user?.avatar_url ?? '',
+				body: e.body ?? '',
+				url: e.html_url ?? '',
+				createdAt: e.created_at,
+				canDelete: viewerLogin ? author === viewerLogin : false
+			};
+		}
+		case 'reviewed': {
+			const state = reviewState(e.state);
+			if (!state) return null;
+			// A bare "commented" review with no summary body is just the wrapper around
+			// inline comments (shown on the Comments tab) — drop it so the feed isn't
+			// littered with empty review rows. Approvals / change-requests are kept even
+			// without a body since their verdict is the content.
+			if (state === 'commented' && !(e.body ?? '').trim()) return null;
+			return {
+				kind: 'review',
+				key: `review-${e.id}`,
+				id: e.id,
+				author: e.user?.login ?? 'unknown',
+				authorAvatarUrl: e.user?.avatar_url ?? '',
+				body: e.body ?? '',
+				state,
+				url: e.html_url ?? '',
+				createdAt: e.submitted_at ?? e.created_at
+			};
+		}
+		case 'committed': {
+			// `committed` events carry the git identity (name/date), not a GitHub user,
+			// so there's no reliable avatar. The SHA is GitHub's `sha`.
+			const sha: string = e.sha ?? '';
+			const message: string = (e.message ?? '').split('\n')[0];
+			return {
+				kind: 'commit',
+				key: `commit-${sha}`,
+				sha,
+				shortSha: sha.slice(0, 7),
+				message,
+				author: e.author?.name ?? 'unknown',
+				url: e.html_url ?? undefined,
+				createdAt: e.author?.date ?? e.committer?.date ?? ''
+			};
+		}
+		// Lighter activity events rendered as a one-line entry. Anything not listed
+		// here falls through to `null` and is dropped.
+		case 'merged':
+		case 'closed':
+		case 'reopened':
+		case 'locked':
+		case 'unlocked':
+		case 'head_ref_force_pushed':
+		case 'head_ref_deleted':
+		case 'head_ref_restored':
+		case 'convert_to_draft':
+		case 'ready_for_review':
+		case 'labeled':
+		case 'unlabeled':
+		case 'renamed':
+		case 'review_requested':
+		case 'review_request_removed':
+		case 'assigned':
+		case 'unassigned': {
+			let detail: string | undefined;
+			if (e.event === 'labeled' || e.event === 'unlabeled') detail = e.label?.name;
+			else if (e.event === 'renamed') detail = e.rename?.to;
+			else if (e.event === 'review_requested' || e.event === 'review_request_removed')
+				detail = e.requested_reviewer?.login ?? e.requested_team?.name;
+			else if (e.event === 'assigned' || e.event === 'unassigned') detail = e.assignee?.login;
+			return {
+				kind: 'event',
+				key: `event-${e.id ?? `${e.event}-${e.created_at}`}`,
+				event: e.event,
+				actor: e.actor?.login ?? 'unknown',
+				actorAvatarUrl: e.actor?.avatar_url ?? undefined,
+				detail,
+				createdAt: e.created_at
+			};
+		}
+		default:
+			return null;
+	}
+}
+
+export async function listConversation(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	accountId?: string | null
+): Promise<PRConversationItem[]> {
+	const viewer = resolveAccount(accountId);
+	const o = octokit(viewer);
+	// The PR's issue number equals its PR number; the timeline lives on the issue.
+	const events = await o.paginate(o.issues.listEventsForTimeline, {
+		owner,
+		repo,
+		issue_number: prNumber,
+		per_page: 100
+	});
+	const items: PRConversationItem[] = [];
+	for (const e of events) {
+		const mapped = mapTimelineItem(e, viewer?.login ?? null);
+		if (mapped) items.push(mapped);
+	}
+	// The timeline is roughly chronological already, but mixing `created_at`,
+	// `submitted_at` and commit dates can interleave slightly out of order — sort
+	// to be safe. Items with no usable timestamp sink to the bottom.
+	items.sort((a, b) => {
+		const at = a.createdAt ? Date.parse(a.createdAt) : Infinity;
+		const bt = b.createdAt ? Date.parse(b.createdAt) : Infinity;
+		return at - bt;
+	});
+	return items;
+}
+
+export async function createIssueComment(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	body: string,
+	accountId?: string | null
+): Promise<PRConversationItem> {
+	const viewer = resolveAccount(accountId);
+	const o = octokit(viewer);
+	const res = await o.issues.createComment({
+		owner,
+		repo,
+		issue_number: prNumber,
+		body
+	});
+	const c = res.data;
+	return {
+		kind: 'comment',
+		key: `comment-${c.id}`,
+		id: c.id,
+		author: c.user?.login ?? viewer.login,
+		authorAvatarUrl: c.user?.avatar_url ?? '',
+		body: c.body ?? body,
+		url: c.html_url ?? '',
+		createdAt: c.created_at,
+		canDelete: true
+	};
+}
+
+export async function deleteIssueComment(
+	owner: string,
+	repo: string,
+	commentId: number,
+	accountId?: string | null
+): Promise<void> {
+	const o = octokit(resolveAccount(accountId));
+	await o.issues.deleteComment({ owner, repo, comment_id: commentId });
 }

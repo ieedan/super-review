@@ -20,6 +20,7 @@ import type {
 	LocalCommentAuthor,
 	ManagedStash,
 	PRChecksSummary,
+	PRConversationItem,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
@@ -364,6 +365,18 @@ interface AppState {
 	// Review comments for the active PR, indexed by file path.
 	prComments: Record<string, PRReviewComment[]>;
 	loadingComments: boolean;
+	// The active PR's top-level conversation timeline (issue comments, reviews,
+	// commits, events), chronological. Drives the Conversation tab. Loaded lazily
+	// the first time that tab is shown for a PR; see `prConversationLoadedFor`.
+	prConversation: PRConversationItem[];
+	loadingConversation: boolean;
+	// The PR number `prConversation` was loaded for, so switching to a different PR
+	// (or away) knows the cached feed is stale. Null when nothing's loaded.
+	prConversationLoadedFor: number | null;
+	// Which tab the comments sidebar shows. 'conversation' only renders in a PR
+	// context; the panel falls back to 'comments' (local/review comments) otherwise.
+	// Ephemeral (per launch).
+	commentsSidebarTab: 'comments' | 'conversation';
 	// Thread collapse overrides, keyed by the root comment id (`pr-<rootId>`).
 	// Absence ⇒ use the default (collapsed when the thread is resolved or outdated,
 	// expanded otherwise), so resolving a thread auto-collapses it; an explicit
@@ -706,6 +719,10 @@ const initial: AppState = {
 	activePR: null,
 	prComments: {},
 	loadingComments: false,
+	prConversation: [],
+	loadingConversation: false,
+	prConversationLoadedFor: null,
+	commentsSidebarTab: 'comments',
 	commentCollapse: new SvelteMap(),
 	pendingComposers: {},
 	localComments: [],
@@ -3274,9 +3291,16 @@ export const actions = {
 			app.activePR =
 				summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber, ...host));
 			app.prComments = {};
+			app.prConversation = [];
+			app.prConversationLoadedFor = null;
 			app.pendingComposers = {};
 			await actions.setDiffContext({ kind: 'pr', prNumber });
 			void actions.refreshPRComments();
+			// If the sidebar is already parked on the Conversation tab, load it now so
+			// switching PRs doesn't leave a stale/empty feed until the tab is re-clicked.
+			if (app.commentsSidebarOpen && app.commentsSidebarTab === 'conversation') {
+				void actions.refreshPRConversation();
+			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
@@ -3307,6 +3331,81 @@ export const actions = {
 			setError(err instanceof Error ? err.message : String(err));
 		} finally {
 			app.loadingComments = false;
+		}
+	},
+
+	// ─── PR conversation (Conversation tab) ────────────────────────────────────
+
+	// Fetch the active PR's top-level conversation timeline. Lazy: callers gate on
+	// staleness so we don't hit the API for users who never open the tab. Marks the
+	// loaded PR so a later context switch can tell the cached feed is stale.
+	async refreshPRConversation(): Promise<void> {
+		if (!app.activeRepo) return;
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return;
+		const host = prHostArgs(commentablePR());
+		app.loadingConversation = true;
+		try {
+			const items = await window.api.github.listConversation(app.activeRepo.id, prNumber, ...host);
+			app.prConversation = items;
+			app.prConversationLoadedFor = prNumber;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			app.loadingConversation = false;
+		}
+	},
+
+	// Load the conversation if it hasn't been loaded for the current PR yet. Called
+	// when the Conversation tab becomes visible so its data arrives on demand.
+	ensurePRConversationLoaded(): void {
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return;
+		if (app.loadingConversation) return;
+		if (app.prConversationLoadedFor === prNumber) return;
+		void actions.refreshPRConversation();
+	},
+
+	// Post a top-level comment to the PR conversation. Appends optimistically on
+	// success (the created item comes back from GitHub) rather than refetching the
+	// whole timeline. Returns true so the composer can clear itself.
+	async postConversationComment(body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return false;
+		const trimmed = body.trim();
+		if (!trimmed) return false;
+		const host = prHostArgs(commentablePR());
+		try {
+			const created = await window.api.github.createIssueComment(
+				app.activeRepo.id,
+				prNumber,
+				trimmed,
+				...host
+			);
+			app.prConversation = [...app.prConversation, created];
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	// Delete one of the viewer's own conversation comments. Optimistic with
+	// rollback, mirroring deleteComment for review comments.
+	async deleteConversationComment(commentId: number): Promise<void> {
+		if (!app.activeRepo) return;
+		const prev = app.prConversation;
+		app.prConversation = prev.filter((i) => !(i.kind === 'comment' && i.id === commentId));
+		try {
+			await window.api.github.deleteIssueComment(
+				app.activeRepo.id,
+				commentId,
+				...prHostArgs(commentablePR())
+			);
+		} catch (err) {
+			app.prConversation = prev;
+			setError(err instanceof Error ? err.message : String(err));
 		}
 	},
 
@@ -3607,7 +3706,29 @@ export const actions = {
 	},
 
 	toggleCommentsSidebar(): void {
+		// Opening always lands on the Comments tab (the Conversation tab has its own
+		// hotkey). Closing leaves the remembered tab alone.
+		if (!app.commentsSidebarOpen) app.commentsSidebarTab = 'comments';
 		actions.setCommentsSidebarOpen(!app.commentsSidebarOpen);
+	},
+
+	// Switch the sidebar's active tab, loading the Conversation feed on demand the
+	// first time it's shown for the current PR.
+	setCommentsSidebarTab(tab: 'comments' | 'conversation'): void {
+		app.commentsSidebarTab = tab;
+		if (tab === 'conversation') actions.ensurePRConversationLoaded();
+	},
+
+	// Open the sidebar straight to the Conversation tab (default Cmd/Ctrl+Shift+L).
+	// Toggles closed when it's already open on that tab, mirroring the Comments
+	// hotkey's open/close feel.
+	openConversationSidebar(): void {
+		if (app.commentsSidebarOpen && app.commentsSidebarTab === 'conversation') {
+			actions.setCommentsSidebarOpen(false);
+			return;
+		}
+		actions.setCommentsSidebarTab('conversation');
+		if (!app.commentsSidebarOpen) actions.setCommentsSidebarOpen(true);
 	},
 
 	setCommentsSidebarOpen(open: boolean): void {
