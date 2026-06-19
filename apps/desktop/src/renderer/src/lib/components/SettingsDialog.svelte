@@ -61,9 +61,11 @@
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
 	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '$lib/diff-themes';
+	import { resolveIconSrc } from '$lib/file-icons';
 	import type {
 		Accent,
 		AnimationMode,
+		CustomFileIcon,
 		DiffLayout,
 		EditorKind,
 		PrMergedBehavior,
@@ -131,6 +133,9 @@
 	let draftStartMaximized = $state<boolean>(false);
 	let draftHiddenDiffPatterns = $state<string[]>([]);
 	let newPattern = $state<string>('');
+	let draftCustomFileIcons = $state<CustomFileIcon[]>([]);
+	let newIconPattern = $state<string>('');
+	let newIconSource = $state<string>('');
 	let draftTheme = $state<'light' | 'dark'>('dark');
 	let draftDiffTheme = $state<string>('pierre');
 	let draftAccent = $state<Accent>('super');
@@ -186,6 +191,9 @@
 			draftStartMaximized = app.startMaximized;
 			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
 			newPattern = '';
+			draftCustomFileIcons = app.customFileIcons.map((i) => ({ ...i }));
+			newIconPattern = '';
+			newIconSource = '';
 			draftTheme = app.theme;
 			draftDiffTheme = app.diffTheme;
 			draftAccent = app.accent;
@@ -250,6 +258,28 @@
 		return a.length === b.length && a.every((v, i) => v === b[i]);
 	}
 
+	function addCustomIcon(): void {
+		const pattern = newIconPattern.trim();
+		const source = newIconSource.trim();
+		if (!pattern || !source) return;
+		// Replace an existing row with the same pattern rather than duplicating it.
+		const withoutDupe = draftCustomFileIcons.filter((i) => i.pattern !== pattern);
+		draftCustomFileIcons = [...withoutDupe, { pattern, source }];
+		newIconPattern = '';
+		newIconSource = '';
+	}
+
+	function removeCustomIcon(pattern: string): void {
+		draftCustomFileIcons = draftCustomFileIcons.filter((i) => i.pattern !== pattern);
+	}
+
+	function customIconsEqual(a: CustomFileIcon[], b: CustomFileIcon[]): boolean {
+		return (
+			a.length === b.length &&
+			a.every((v, i) => v.pattern === b[i].pattern && v.source === b[i].source)
+		);
+	}
+
 	// Clamp a window dimension to its minimum, falling back to the default for
 	// empty/invalid input. Matches the store's clampWindowDimension so what we
 	// compare and save lines up with what gets persisted.
@@ -306,6 +336,9 @@
 		}
 		if (!arraysEqual(draftHiddenDiffPatterns, app.hiddenDiffPatterns)) {
 			promises.push(actions.setHiddenDiffPatterns(draftHiddenDiffPatterns));
+		}
+		if (!customIconsEqual(draftCustomFileIcons, app.customFileIcons)) {
+			promises.push(actions.setCustomFileIcons(draftCustomFileIcons));
 		}
 		const clampedWindowWidth = clampWindowDim(
 			draftWindowWidth,
@@ -864,6 +897,89 @@
 													class="ml-auto inline-grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
 													title={`Remove ${pattern}`}
 													onclick={() => removePattern(pattern)}
+												>
+													<X class="size-3.5" />
+												</button>
+											</Table.Cell>
+										</Table.Row>
+									{/each}
+								</Table.Body>
+							</Table.Root>
+						</div>
+					{/if}
+				</div>
+
+				<div id="settings-custom-file-icons" class="scroll-mt-4">
+					<h3 class="text-base font-semibold">Custom file icons</h3>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Badge files matching a glob pattern with your own icon, overriding the built-in file
+						icon — handy for flagging generated files, configs, or anything special in your repo.
+						Patterns work like hidden files: no slash matches the file name anywhere (e.g.
+						<code>*.proto</code>); a slash matches the full path (e.g. <code>infra/**</code>). The
+						icon can be an <code>https://</code> URL or an absolute path to an image on your machine.
+					</p>
+
+					<div class="mt-3 flex gap-2">
+						<Input placeholder="Pattern, e.g. *.proto" bind:value={newIconPattern} class="flex-1" />
+						<Input
+							placeholder="https://… or /path/to/icon.svg"
+							bind:value={newIconSource}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') {
+									e.preventDefault();
+									addCustomIcon();
+								}
+							}}
+							class="flex-1"
+						/>
+						<Button variant="outline" onclick={addCustomIcon}>
+							<Plus class="size-3.5" /> Add
+						</Button>
+					</div>
+
+					{#if draftCustomFileIcons.length === 0}
+						<p class="mt-3 text-xs text-muted-foreground">
+							No custom icons. Files use their built-in language icons.
+						</p>
+					{:else}
+						<div
+							class="mt-3 overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:max-h-[250px]"
+						>
+							<Table.Root>
+								<Table.Header>
+									<Table.Row>
+										<Table.Head class="sticky top-0 z-10 w-10 bg-background"></Table.Head>
+										<Table.Head class="sticky top-0 z-10 bg-background">Pattern</Table.Head>
+										<Table.Head class="sticky top-0 z-10 bg-background">Icon</Table.Head>
+										<Table.Head class="sticky top-0 z-10 w-12 bg-background"></Table.Head>
+									</Table.Row>
+								</Table.Header>
+								<Table.Body>
+									{#each draftCustomFileIcons as icon (icon.pattern)}
+										<Table.Row>
+											<Table.Cell class="py-1">
+												{#await resolveIconSrc(icon.source) then src}
+													{#if src}
+														<img {src} alt="" class="size-4 object-contain" />
+													{:else}
+														<span class="text-muted-foreground" title="Couldn't load this icon"
+															>—</span
+														>
+													{/if}
+												{/await}
+											</Table.Cell>
+											<Table.Cell class="font-mono text-xs">{icon.pattern}</Table.Cell>
+											<Table.Cell
+												class="max-w-[200px] truncate font-mono text-xs text-muted-foreground"
+											>
+												{icon.source}
+											</Table.Cell>
+											<Table.Cell class="py-1 text-right">
+												<button
+													type="button"
+													class="ml-auto inline-grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+													title={`Remove ${icon.pattern}`}
+													onclick={() => removeCustomIcon(icon.pattern)}
 												>
 													<X class="size-3.5" />
 												</button>

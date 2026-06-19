@@ -13,6 +13,7 @@ import type {
 	EditorKind,
 	FileListLayout,
 	AnimationMode,
+	CustomFileIcon,
 	GithubAccount,
 	GithubAuthError,
 	LastCommit,
@@ -236,6 +237,7 @@ interface AppState {
 	openFileOnArrowNav: boolean;
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
+	customFileIcons: CustomFileIcon[];
 	animations: AnimationMode;
 	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
@@ -633,6 +635,7 @@ const initial: AppState = {
 	openFileOnArrowNav: true,
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
+	customFileIcons: [],
 	animations: 'accents',
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
@@ -2192,6 +2195,7 @@ export const actions = {
 		app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
 		app.maxDiffLines = app.prefs.maxDiffLines;
 		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
+		app.customFileIcons = app.prefs.customFileIcons;
 		// Migrate the legacy boolean `animationsEnabled` to the 3-way mode: an
 		// explicit on→'all' and off→'none' preserve the prior choice; anything
 		// unset falls through to the new 'accents' default.
@@ -4830,6 +4834,15 @@ export const actions = {
 		const next = uniqueStrings(patterns.map((p) => p.trim()).filter(Boolean));
 		app.hiddenDiffPatterns = next;
 		app.prefs = await window.api.state.setPrefs({ hiddenDiffPatterns: next });
+	},
+
+	async setCustomFileIcons(icons: CustomFileIcon[]): Promise<void> {
+		// Normalize: trim both fields, drop rows missing a pattern or source.
+		const next = icons
+			.map((i) => ({ pattern: i.pattern.trim(), source: i.source.trim() }))
+			.filter((i) => i.pattern && i.source);
+		app.customFileIcons = next;
+		app.prefs = await window.api.state.setPrefs({ customFileIcons: next });
 	},
 
 	async setAnimations(mode: AnimationMode): Promise<void> {

@@ -928,6 +928,11 @@ export interface UserPrefs {
 	// "Load diff" button by default (lock files, build outputs, etc.). See
 	// DEFAULT_HIDDEN_DIFF_PATTERNS in @shared/diff-defer for match semantics.
 	hiddenDiffPatterns: string[];
+	// User-registered icons for files matching a glob pattern. When a file matches
+	// one of these, its custom icon overrides the built-in language icon
+	// everywhere file icons are shown. Pattern semantics match hiddenDiffPatterns
+	// (see @shared/diff-defer). Empty by default.
+	customFileIcons: CustomFileIcon[];
 	// How much UI motion to apply. Defaults to 'accents': accent-level motion on,
 	// overlay surfaces (menus/dialogs) instant. See AnimationMode. Consumed via the
 	// useAnimations() context hook.
@@ -979,6 +984,20 @@ export interface UserPrefs {
 	// right-click menu. Missing keys fall back to DEFAULT_HEADER_ITEMS so older
 	// persisted prefs (and any future additions) default to visible.
 	headerItems: HeaderItemVisibility;
+}
+
+// A user-registered file icon: every file whose path matches `pattern` is
+// badged with the image at `source` instead of its built-in language icon.
+export interface CustomFileIcon {
+	// Glob pattern matched against the file path. Same semantics as
+	// hiddenDiffPatterns: no slash matches the basename anywhere in the tree
+	// (e.g. `*.proto`, `Dockerfile`); a slash anchors to the full repo-relative
+	// path (e.g. `infra/**`). Matching is case-insensitive.
+	pattern: string;
+	// Where the icon image comes from: an `https://` URL, a `data:` URI, or an
+	// absolute local file path. Local paths are read by the main process and
+	// inlined as a data URI because the renderer's CSP blocks `file://`.
+	source: string;
 }
 
 export interface DeviceFlowStart {
@@ -1319,6 +1338,14 @@ export interface PreloadAPI {
 		clearCollapsedFiles(repoId: string, contextKey: string): Promise<void>;
 		getCommitDraft(repoId: string): Promise<CommitDraft>;
 		setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
+	};
+	icons: {
+		// Resolve a custom-icon source to an `<img>`-ready src. `https:`/`data:`
+		// sources pass through unchanged; an absolute local path is read and
+		// returned as a `data:` URI. Returns null when the path can't be read or
+		// isn't a supported image, so the renderer can fall back to the language
+		// icon.
+		resolveCustomIcon(source: string): Promise<string | null>;
 	};
 	sessions: {
 		// A `ref` (a branch name or fetched PR head ref) reads the sessions
