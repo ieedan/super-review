@@ -167,7 +167,7 @@
 
 		<!-- Feature 1: package.json hover -->
 		<div class="feature">
-			{@render eyebrow('Dependencies', '01')}
+			{@render eyebrow('Dependencies')}
 			<div class="grid items-center gap-10 lg:grid-cols-2">
 				<div>
 					<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
@@ -186,7 +186,7 @@
 
 		<!-- Feature 2: account management -->
 		<div class="feature">
-			{@render eyebrow('Accounts', '02')}
+			{@render eyebrow('Accounts')}
 			<div class="grid items-center gap-10 lg:grid-cols-2">
 				<div class="lg:order-2">
 					<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
@@ -206,7 +206,7 @@
 
 		<!-- Feature 3: diff customization -->
 		<div class="feature">
-			{@render eyebrow('Make it yours', '03')}
+			{@render eyebrow('Make it yours')}
 			<div class="mb-8 max-w-2xl">
 				<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
 					Tune the diff until it <span class="flame-text">disappears into the work</span>
@@ -267,9 +267,8 @@
 	</figure>
 {/snippet}
 
-{#snippet eyebrow(label: string, num: string)}
+{#snippet eyebrow(label: string)}
 	<div class="mb-6 flex items-center gap-3">
-		<span class="font-display text-flame/40 text-sm font-bold">{num}</span>
 		<span class="bg-flame/30 h-px w-8"></span>
 		<span class="text-faint text-xs font-semibold tracking-[0.2em] uppercase">{label}</span>
 	</div>
