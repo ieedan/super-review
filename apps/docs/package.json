@@ -25,7 +25,10 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@iconify-json/material-icon-theme": "^1.2.66",
+		"@iconify/svelte": "^5.2.1",
 		"@lucide/svelte": "^1.17.0",
+		"@pierre/diffs": "^1.2.3",
 		"@super-review/ui": "workspace:*",
 		"bits-ui": "^2.18.1",
 		"clsx": "^2.1.1",

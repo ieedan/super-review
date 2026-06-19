@@ -13,8 +13,8 @@
 	// lines, so highlighting it inline is cheap.
 
 	import { DIFFS_TAG_NAME, FileDiff as FileDiffClass, parseDiffFromFile } from '@pierre/diffs';
-	import { ensureDiffHighlighter } from '$lib/diff-highlighter';
-	import { diffThemePair } from '$lib/diff-themes';
+	import { ensureDiffHighlighter } from '@super-review/ui';
+	import { diffThemePair } from '@super-review/ui';
 	import { app } from '$lib/store.svelte';
 
 	interface Props {

@@ -4,8 +4,8 @@
 	// dialog feels like watching the file get written. Mirrors the standalone-render
 	// pattern in DiffStylePreview.svelte (main thread, no worker pool, no scheduler).
 	import { DIFFS_TAG_NAME, FileDiff as FileDiffClass, parseDiffFromFile } from '@pierre/diffs';
-	import { ensureDiffHighlighter } from '$lib/diff-highlighter';
-	import { diffThemePair } from '$lib/diff-themes';
+	import { ensureDiffHighlighter } from '@super-review/ui';
+	import { diffThemePair } from '@super-review/ui';
 	import { app } from '$lib/store.svelte';
 
 	let { filename, content }: { filename: string; content: string } = $props();

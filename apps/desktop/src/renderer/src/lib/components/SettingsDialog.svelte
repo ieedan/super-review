@@ -32,8 +32,7 @@
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import PowerShellIcon from './icons/PowerShellIcon.svelte';
 	import ZshIcon from './icons/ZshIcon.svelte';
-	import DiffStylePreview from './DiffStylePreview.svelte';
-	import FileListPreview from './FileListPreview.svelte';
+	import { DiffStylePreview, FileListPreview } from '@super-review/ui';
 	import FontPicker from './FontPicker.svelte';
 	import SettingOptionCard from './SettingOptionCard.svelte';
 	import ThemePreview from './ThemePreview.svelte';
@@ -60,7 +59,7 @@
 	import { EDITORS_BY_PLATFORM, TERMINALS_BY_PLATFORM, WINDOW_BOUNDS } from '@shared/types';
 	import { cn } from '$lib/utils';
 	import { ACCENTS } from '$lib/accents';
-	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '$lib/diff-themes';
+	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '@super-review/ui';
 	import type {
 		Accent,
 		AnimationMode,
@@ -551,7 +550,7 @@
 						class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5"
 						style="--code-font: {codeFontCss(draftCodeFont)}"
 					>
-						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
+						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} themeType={draftTheme} />
 					</div>
 				</div>
 
@@ -568,7 +567,7 @@
 								onclick={() => (draftViewMode = opt.mode)}
 							>
 								<div class="w-full bg-background p-1.5">
-									<DiffStylePreview mode={opt.mode} theme={draftDiffThemePair} />
+									<DiffStylePreview mode={opt.mode} theme={draftDiffThemePair} themeType={draftTheme} />
 								</div>
 							</SettingOptionCard>
 						{/each}
@@ -610,7 +609,7 @@
 					</div>
 
 					<div class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5">
-						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
+						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} themeType={draftTheme} />
 					</div>
 				</div>
 

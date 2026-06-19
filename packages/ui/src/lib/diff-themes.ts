@@ -18,7 +18,7 @@ import {
 	RGCB_LIGHT,
 	HC_DARK,
 	HC_LIGHT
-} from '$lib/diff-custom-themes';
+} from './diff-custom-themes';
 
 // Register the accessibility (deuteranopia / high-contrast) Shiki themes now, at
 // module load. Every diff path imports this module, so the loaders are in place

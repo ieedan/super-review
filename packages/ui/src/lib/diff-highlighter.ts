@@ -8,7 +8,7 @@
 // triggers an async load + rerender on its own, so awaiting is optional).
 
 import { isHighlighterLoaded, getHighlighterIfLoaded, preloadHighlighter } from '@pierre/diffs';
-import { ALL_DIFF_THEME_NAMES } from '$lib/diff-themes';
+import { ALL_DIFF_THEME_NAMES } from './diff-themes';
 
 let preloadPromise: Promise<void> | null = null;
 

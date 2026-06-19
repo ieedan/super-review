@@ -1,22 +1,23 @@
 <script lang="ts">
 	import { DIFFS_TAG_NAME, FileDiff as FileDiffClass, parseDiffFromFile } from '@pierre/diffs';
 	import type { ThemesType } from '@pierre/diffs';
-	import { ensureDiffHighlighter } from '$lib/diff-highlighter';
-	import { diffThemePair } from '$lib/diff-themes';
-	import { app } from '$lib/store.svelte';
-	import type { ViewMode } from '@shared/types';
+	import { ensureDiffHighlighter } from './diff-highlighter';
+	import { diffThemePair } from './diff-themes';
+	import type { ViewMode } from '@super-review/core/types';
 
 	interface Props {
 		mode: ViewMode;
-		// The `{ dark, light }` diff theme pair to render. Defaults to the app's
-		// current selection; the settings grid passes a specific pair per option so
+		// The `{ dark, light }` diff theme pair to render. Defaults to the built-in
+		// Pierre pair; the settings grid passes a specific pair per option so
 		// several themes can preview side by side.
 		theme?: ThemesType;
+		// Which half of the pair to show — the host's light/dark mode.
+		themeType?: 'light' | 'dark';
 	}
 
-	let { mode, theme }: Props = $props();
+	let { mode, theme, themeType = 'dark' }: Props = $props();
 
-	const resolvedTheme = $derived(theme ?? diffThemePair(app.diffTheme));
+	const resolvedTheme = $derived(theme ?? diffThemePair(undefined));
 
 	let host = $state<HTMLElement | null>(null);
 
@@ -43,7 +44,7 @@
 	$effect(() => {
 		const diffStyle = mode;
 		const themePair = resolvedTheme;
-		const themeType = app.theme;
+		const currentThemeType = themeType;
 		if (!host) return;
 
 		const container = document.createElement(DIFFS_TAG_NAME);
@@ -55,7 +56,7 @@
 		const instance = new FileDiffClass({
 			diffStyle,
 			theme: themePair,
-			themeType,
+			themeType: currentThemeType,
 			disableFileHeader: true,
 			// Character-level intra-line diffs, matching the main diff view.
 			lineDiffType: 'char'

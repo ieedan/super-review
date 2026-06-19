@@ -47,7 +47,7 @@ import {
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@shared/hotkeys';
 import { comparePathsVSCodeStyle } from '$lib/utils';
-import { DEFAULT_DIFF_THEME, diffThemePair } from '$lib/diff-themes';
+import { DEFAULT_DIFF_THEME, diffThemePair } from '@super-review/ui';
 import { getDiffWorkerPool, POOL_PERSISTENT_RENDER_OPTIONS } from '$lib/diff-worker-pool';
 
 export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';

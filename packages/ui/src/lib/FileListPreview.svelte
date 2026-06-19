@@ -2,9 +2,9 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Folder from '@lucide/svelte/icons/folder';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
-	import { cn } from '$lib/utils';
+	import { cn } from './utils';
 	import FileIcon from './FileIcon.svelte';
-	import type { ChangedFile, FileListLayout } from '@shared/types';
+	import type { ChangedFile, FileListLayout } from '@super-review/core/types';
 
 	// A faithful, non-interactive miniature of FileList — rendered with the
 	// same row markup so the picker in Settings reflects what the sidebar will

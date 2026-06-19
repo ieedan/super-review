@@ -20,7 +20,7 @@
 	const selected = $derived(accounts.find((acct) => acct.id === selectedId)!);
 </script>
 
-<div class="sr-surface flex w-full max-w-md flex-col items-center gap-6 rounded-2xl border border-border p-10">
+<div class="sr-surface dark flex w-full max-w-md flex-col items-center gap-6 rounded-2xl border border-border p-10">
 	<span class="font-mono text-xs text-muted-foreground">Super Review · header</span>
 
 	<AccountSwitcher

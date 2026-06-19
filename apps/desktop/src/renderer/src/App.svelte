@@ -36,7 +36,7 @@
 	import * as Resizable from '$lib/components/ui/resizable';
 	import type { PaneAPI } from 'paneforge';
 	import { actions, setError, app } from '$lib/store.svelte';
-	import { initDiffHighlighter } from '$lib/diff-highlighter';
+	import { initDiffHighlighter } from '@super-review/ui';
 	import { initDiffWorkerPool } from '$lib/diff-worker-pool';
 	import { setAnimations } from '$lib/hooks/use-animations.svelte';
 	import { HOTKEY_ACTIONS, matchesHotkey, type HotkeyAction } from '@shared/hotkeys';
