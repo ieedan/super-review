@@ -87,15 +87,20 @@ function globToRegExp(glob: string): RegExp {
 	return compiled;
 }
 
+// Test a single glob pattern against a repo-relative path. A slash anchors the
+// pattern to the full path; otherwise it's a basename match so e.g.
+// `package-lock.json` or `*.lock` catches the file in any directory. Blank
+// patterns never match.
+export function matchesGlobPattern(path: string, rawPattern: string): boolean {
+	const pattern = rawPattern.trim();
+	if (!pattern) return false;
+	const target = pattern.includes('/') ? path : (path.split('/').pop() ?? path);
+	return globToRegExp(pattern).test(target);
+}
+
 export function matchesHiddenPattern(path: string, patterns: string[]): boolean {
-	const base = path.split('/').pop() ?? path;
-	for (const raw of patterns) {
-		const pattern = raw.trim();
-		if (!pattern) continue;
-		// A slash anchors the pattern to the full path; otherwise it's a basename
-		// match so `package-lock.json` catches the file in any directory.
-		const target = pattern.includes('/') ? path : base;
-		if (globToRegExp(pattern).test(target)) return true;
+	for (const pattern of patterns) {
+		if (matchesGlobPattern(path, pattern)) return true;
 	}
 	return false;
 }

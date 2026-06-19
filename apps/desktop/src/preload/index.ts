@@ -317,6 +317,11 @@ const api: PreloadAPI = {
 		setCommitDraft: (repoId, draft) =>
 			ipcRenderer.invoke('state:setCommitDraft', repoId, draft) as Promise<void>
 	},
+	icons: {
+		resolveCustomIcon: (source) =>
+			ipcRenderer.invoke('icons:resolveCustomIcon', source) as Promise<string | null>,
+		pickIconFile: () => ipcRenderer.invoke('icons:pickIconFile') as Promise<string | null>
+	},
 	sessions: {
 		list: (repoId, ref) =>
 			ipcRenderer.invoke('sessions:list', repoId, ref) as Promise<SessionSummary[]>,

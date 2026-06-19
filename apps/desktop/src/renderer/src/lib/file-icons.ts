@@ -5,6 +5,8 @@
 // @iconify/svelte/dist/OfflineIcon.svelte.
 import { addCollection } from '@iconify/svelte/dist/OfflineIcon.svelte';
 import { icons as materialIconTheme } from '@iconify-json/material-icon-theme';
+import { matchesGlobPattern } from '@shared/diff-defer';
+import type { CustomFileIcon } from '@shared/types';
 
 addCollection(materialIconTheme);
 
@@ -271,4 +273,35 @@ export function languageIconForPath(path: string): string {
 	if (dot <= 0) return DEFAULT_ICON;
 	const ext = name.slice(dot + 1);
 	return ensureAvailable(EXTENSIONS[ext] ?? DEFAULT_ICON);
+}
+
+// The raw source configured for the first custom icon whose pattern matches
+// `path`, or null when none match. Returned source is the user's value (an
+// https URL, data URI, or local path) — resolve it with resolveIconSrc before
+// using as an <img> src. First match wins, so earlier entries take priority.
+export function customIconSourceForPath(path: string, icons: CustomFileIcon[]): string | null {
+	for (const { pattern, source } of icons) {
+		if (!source.trim()) continue;
+		if (matchesGlobPattern(path, pattern)) return source.trim();
+	}
+	return null;
+}
+
+// Cache of resolved icon sources keyed by raw source, so a path shared by many
+// files is read/inlined once. Holds null for sources that failed to resolve.
+const resolvedIconCache = new Map<string, string | null>();
+
+// Turn a custom-icon source into an `<img>`-ready src. `https:`/`data:` sources
+// the renderer CSP already allows pass straight through; anything else (a local
+// path) is read by the main process and returned as a data URI. Returns null
+// when the source can't be used, so callers fall back to the language icon.
+export async function resolveIconSrc(source: string): Promise<string | null> {
+	const src = source.trim();
+	if (!src) return null;
+	if (src.startsWith('https://') || src.startsWith('data:')) return src;
+	const cached = resolvedIconCache.get(src);
+	if (cached !== undefined) return cached;
+	const resolved = await window.api.icons.resolveCustomIcon(src);
+	resolvedIconCache.set(src, resolved);
+	return resolved;
 }

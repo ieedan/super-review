@@ -1,6 +1,7 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import type {
 	BranchContextMenuAction,
 	BranchContextMenuParams,
@@ -156,6 +157,58 @@ function repoOrThrow(id: string): RepoInfo {
 	const repo = getRepo(id);
 	if (!repo) throw new Error(`Repo not found: ${id}`);
 	return repo;
+}
+
+// MIME types for the image extensions a custom file icon may point at. Anything
+// else is rejected so we never inline, say, a multi-megabyte binary as an icon.
+const ICON_MIME_BY_EXT: Record<string, string> = {
+	'.svg': 'image/svg+xml',
+	'.png': 'image/png',
+	'.jpg': 'image/jpeg',
+	'.jpeg': 'image/jpeg',
+	'.gif': 'image/gif',
+	'.webp': 'image/webp',
+	'.ico': 'image/x-icon',
+	'.bmp': 'image/bmp',
+	'.avif': 'image/avif'
+};
+
+// Cap inlined icons so a misconfigured path can't bloat every file row. 2 MB is
+// far larger than any reasonable icon.
+const MAX_ICON_BYTES = 2 * 1024 * 1024;
+
+// Resolve a custom-icon source to an `<img>`-ready src for the renderer. `https:`
+// and `data:` sources are already allowed by the renderer CSP and pass through;
+// an absolute local path to a supported image is read and returned as a data
+// URI. Returns null on anything unreadable/unsupported so the renderer falls
+// back to the built-in language icon.
+async function resolveCustomIcon(rawSource: string): Promise<string | null> {
+	const source = (rawSource ?? '').trim();
+	if (!source) return null;
+	if (source.startsWith('https://') || source.startsWith('data:')) return source;
+
+	let filePath = source;
+	if (filePath.startsWith('file://')) {
+		try {
+			filePath = decodeURI(new URL(filePath).pathname);
+		} catch {
+			return null;
+		}
+	}
+	// Only inline real files from an absolute path; relative paths have no stable
+	// base in the main process and would be a foot-gun.
+	if (!path.isAbsolute(filePath)) return null;
+
+	const mime = ICON_MIME_BY_EXT[path.extname(filePath).toLowerCase()];
+	if (!mime) return null;
+
+	try {
+		const bytes = await readFile(filePath);
+		if (bytes.byteLength > MAX_ICON_BYTES) return null;
+		return `data:${mime};base64,${bytes.toString('base64')}`;
+	} catch {
+		return null;
+	}
 }
 
 // A git-fetchable URL for this fork's `owner/name` counterpart. Derived by
@@ -1628,6 +1681,27 @@ export function registerIpc(): void {
 		'state:setPrefs',
 		async (_e, patch: Partial<UserPrefs>): Promise<UserPrefs> => setPrefs(patch)
 	);
+
+	// ─── Icons ─────────────────────────────────────────────────────────────
+	ipcMain.handle(
+		'icons:resolveCustomIcon',
+		async (_e, source: string): Promise<string | null> => resolveCustomIcon(source)
+	);
+
+	ipcMain.handle('icons:pickIconFile', async (e): Promise<string | null> => {
+		const win = BrowserWindow.fromWebContents(e.sender);
+		const opts: Electron.OpenDialogOptions = {
+			title: 'Choose an icon image',
+			properties: ['openFile'],
+			// Same image types resolveCustomIcon will accept (extensions without the dot).
+			filters: [
+				{ name: 'Images', extensions: Object.keys(ICON_MIME_BY_EXT).map((ext) => ext.slice(1)) }
+			]
+		};
+		const result = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts));
+		if (result.canceled || result.filePaths.length === 0) return null;
+		return result.filePaths[0];
+	});
 
 	ipcMain.handle(
 		'state:getSeenFiles',
