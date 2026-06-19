@@ -107,7 +107,7 @@
 			</div>
 		{:else}
 			<!-- PR description, the conversation's opening post. -->
-			<div class="border-b border-border p-3">
+			<div class="m-2 rounded-lg border border-border p-3">
 				<div class="flex items-center gap-2">
 					<img class="size-5 shrink-0 rounded-full" src={pr.authorAvatarUrl} alt={pr.author} />
 					<span class="truncate text-xs font-medium">{pr.author}</span>
@@ -130,9 +130,9 @@
 
 			<ul>
 				{#each app.prConversation as item (item.key)}
-					<li class="border-b border-border">
+					<li>
 						{#if item.kind === 'comment'}
-							<div class="group p-3">
+							<div class="group m-2 rounded-lg border border-border p-3">
 								<div class="flex items-center gap-2">
 									<img
 										class="size-5 shrink-0 rounded-full"
@@ -179,7 +179,7 @@
 							</div>
 						{:else if item.kind === 'review'}
 							{@const meta = REVIEW_META[item.state]}
-							<div class="p-3">
+							<div class="m-2 rounded-lg border border-border p-3">
 								<div class="flex items-center gap-2">
 									{#if item.state === 'approved'}
 										<Check class="size-4 shrink-0" style="color: {meta.color};" />
@@ -254,16 +254,20 @@
 				disabled={submitting}
 				onkeydown={onComposerKeydown}
 			/>
-			<div class="mt-2 flex items-center justify-end gap-2">
-				<span class="mr-auto text-[11px] text-muted-foreground">⌘⏎ to comment</span>
+			<div class="mt-2 flex items-center justify-end">
 				<button
 					type="button"
-					class="rounded-md px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
+					class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
 					style="background: var(--color-primary);"
 					disabled={!draft.trim() || submitting}
 					onclick={post}
 				>
 					{submitting ? 'Posting…' : 'Comment'}
+					<kbd
+						class="rounded bg-primary-foreground/15 px-1 py-0.5 text-[10px] leading-none font-normal"
+					>
+						⌘⏎
+					</kbd>
 				</button>
 			</div>
 		</div>
