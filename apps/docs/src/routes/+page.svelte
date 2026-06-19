@@ -1,4 +1,8 @@
 <script lang="ts">
+	import PackageHoverDemo from '$lib/demos/PackageHoverDemo.svelte';
+	import AccountSwitcherDemo from '$lib/demos/AccountSwitcherDemo.svelte';
+	import DiffCustomizeDemo from '$lib/demos/DiffCustomizeDemo.svelte';
+
 	// Downloads aren't live yet, so the CTAs are disabled "Coming soon" placeholders
 	// until the first public release. Re-enable by restoring the download <a>'s
 	// (OS detection + DOWNLOADS still live in $lib/releases.ts).
@@ -137,6 +141,92 @@
 		</div>
 	</main>
 
+	<!-- ── Interactive feature showcase ──────────────────────────────────────
+	     Live, in-browser recreations of three app features. Each demo is a
+	     self-contained component under $lib/demos. -->
+	<section class="flex flex-col gap-28 pt-12 pb-28 sm:pt-20">
+		<!-- Section intro -->
+		<div class="text-center">
+			<span
+				class="border-line bg-elevated/60 text-muted inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-semibold tracking-wide"
+			>
+				<span class="h-1.5 w-1.5 rounded-full bg-flame"></span>
+				Try it right here
+			</span>
+			<h2 class="font-display mt-5 text-3xl font-extrabold tracking-tight sm:text-4xl">
+				Built for the way you actually review
+			</h2>
+			<p class="text-muted mx-auto mt-4 max-w-xl text-pretty">
+				These aren't screenshots. They're the real components — go ahead and poke at them.
+			</p>
+		</div>
+
+		<!-- Feature 1: package.json hover -->
+		<div class="feature">
+			{@render eyebrow('Dependencies', '01')}
+			<div class="grid items-center gap-10 lg:grid-cols-2">
+				<div>
+					<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+						Know what changed <span class="flame-text">before you trust it</span>
+					</h3>
+					<p class="text-muted mt-4 leading-relaxed text-pretty">
+						When an agent bumps a dependency, hover the name in <code class="text-fg font-mono text-sm">package.json</code>
+						to pull live npm metadata and GitHub release notes inline — version, license, links,
+						and the full <em>"what's new"</em> changelog. No more tab-hopping to figure out if a
+						version bump is safe.
+					</p>
+					<p class="text-faint mt-4 font-mono text-xs">↓ hover any highlighted package below</p>
+				</div>
+				<PackageHoverDemo />
+			</div>
+		</div>
+
+		<!-- Feature 2: account management -->
+		<div class="feature">
+			{@render eyebrow('Accounts', '02')}
+			<div class="grid items-center gap-10 lg:grid-cols-2">
+				<div class="lg:order-2">
+					<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+						Every account, <span class="flame-text">one click away</span>
+					</h3>
+					<p class="text-muted mt-4 leading-relaxed text-pretty">
+						Personal, work, and bot accounts live side by side. Pick a per-project default,
+						switch who you're reviewing as, and Super Review tells you the moment a token
+						expires — so a SAML lapse never silently swallows your comments.
+					</p>
+					<p class="text-faint mt-4 font-mono text-xs">→ open the switcher</p>
+				</div>
+				<div class="flex justify-center lg:order-1">
+					<div
+						class="border-line bg-elevated/50 flex w-full max-w-md flex-col items-center gap-6 rounded-2xl border p-10"
+					>
+						<span class="text-faint font-mono text-xs">Super Review · header</span>
+						<AccountSwitcherDemo />
+						<span class="text-faint text-center text-xs">
+							Switch the active reviewer for this repo
+						</span>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Feature 3: diff customization -->
+		<div class="feature">
+			{@render eyebrow('Make it yours', '03')}
+			<div class="mb-8 max-w-2xl">
+				<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+					Tune the diff until it <span class="flame-text">disappears into the work</span>
+				</h3>
+				<p class="text-muted mt-4 leading-relaxed text-pretty">
+					Light or dark, split or unified, your favorite syntax theme and code font, file icons
+					on or off. Set it once and read code the way your eyes prefer. Change anything on the
+					left — the diff updates instantly.
+				</p>
+			</div>
+			<DiffCustomizeDemo />
+		</div>
+	</section>
+
 	<!-- Footer -->
 	<footer
 		class="border-line text-faint mt-auto flex flex-col items-center justify-between gap-4 border-t py-8 text-sm sm:flex-row"
@@ -153,6 +243,14 @@
 </div>
 
 <!-- ── snippets ─────────────────────────────────────────────────────────── -->
+
+{#snippet eyebrow(label: string, num: string)}
+	<div class="mb-6 flex items-center gap-3">
+		<span class="font-display text-flame/40 text-sm font-bold">{num}</span>
+		<span class="bg-flame/30 h-px w-8"></span>
+		<span class="text-faint text-xs font-semibold tracking-[0.2em] uppercase">{label}</span>
+	</div>
+{/snippet}
 
 {#snippet miniApp()}
 	<!-- A miniature of the desktop app: file sidebar + diff panel. Replaced by a
