@@ -94,6 +94,7 @@ const defaults: Schema = {
 		sidebarCollapsed: false,
 		commentsSidebarOpen: false,
 		commentsSidebarTab: 'comments',
+		conversationFullscreen: false,
 		recentRepoCount: 5,
 		changesetsEnabled: true,
 		signCommits: true,

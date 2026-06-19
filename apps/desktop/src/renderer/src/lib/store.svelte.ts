@@ -22,6 +22,7 @@ import type {
 	ManagedStash,
 	PRChecksSummary,
 	PRConversationItem,
+	PRMergeMethod,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
@@ -385,6 +386,20 @@ interface AppState {
 	// context; the panel falls back to 'comments' (local/review comments) otherwise.
 	// Ephemeral (per launch).
 	commentsSidebarTab: 'comments' | 'conversation';
+	// Merge box (Conversation tab): mergeability + CI checks for the panel's PR
+	// (activePR ?? branchPR). Fetched on demand when the panel is shown; keyed by
+	// PR number so a stale fetch can't paint the wrong PR. `mergeable` is null
+	// while GitHub is still computing it.
+	mergeBox: {
+		number: number;
+		mergeable: boolean | null;
+		mergeableState: string;
+		checks: PRChecksSummary;
+	} | null;
+	loadingMergeBox: boolean;
+	// Set while a merge / ready-for-review action is in flight so the merge box's
+	// buttons can disable + spin. Cleared when the action settles.
+	mergeBoxBusy: 'merge' | 'ready' | null;
 	// Thread collapse overrides, keyed by the root comment id (`pr-<rootId>`).
 	// Absence ⇒ use the default (collapsed when the thread is resolved or outdated,
 	// expanded otherwise), so resolving a thread auto-collapses it; an explicit
@@ -403,6 +418,9 @@ interface AppState {
 	localComposers: Record<string, LocalComposer>;
 	// Whether the right-hand comments sidebar is open. Ephemeral (per launch).
 	commentsSidebarOpen: boolean;
+	// When true, the comments panel fills the whole work area (diff pane collapsed
+	// to zero). Only enterable while the left sidebar is collapsed.
+	conversationFullscreen: boolean;
 	// A comment the sidebar asked the diff view to scroll to, bumped on each
 	// request so repeated clicks on the same row re-trigger the scroll.
 	// A comment the sidebar asked the diff to scroll to. `key` matches the
@@ -520,6 +538,16 @@ export function isPRCommentContext(): boolean {
 		app.diffContext.kind === 'pr' ||
 		(app.contextTab === 'branch' && app.branchPR != null && !isReadOnlyView())
 	);
+}
+
+// The tab the Comments sidebar actually shows. Outside a PR context the
+// Conversation tab doesn't exist, so the panel always displays Comments even
+// when `commentsSidebarTab` still remembers 'conversation' from a PR view. The
+// hotkeys (openCommentsSidebar) must reason about this effective tab, not the
+// raw remembered one, or Ctrl+L thinks it's on the Conversation tab and needs a
+// second press to close.
+export function effectiveCommentsSidebarTab(): 'comments' | 'conversation' {
+	return isPRCommentContext() ? app.commentsSidebarTab : 'comments';
 }
 
 // Whether the Comments sidebar has UNRESOLVED comments in the current context —
@@ -750,12 +778,16 @@ const initial: AppState = {
 	loadingConversation: false,
 	prConversationLoadedFor: null,
 	commentsSidebarTab: 'comments',
+	mergeBox: null,
+	loadingMergeBox: false,
+	mergeBoxBusy: null,
 	commentCollapse: new SvelteMap(),
 	pendingComposers: {},
 	localComments: [],
 	localCommentsContextKey: null,
 	localComposers: {},
 	commentsSidebarOpen: false,
+	conversationFullscreen: false,
 	commentScrollTarget: null,
 	addRepoDialogOpen: false,
 	publishDialogOpen: false,
@@ -1548,6 +1580,85 @@ async function refreshBranchPRChecks(): Promise<void> {
 		}
 	} catch (err) {
 		console.error('[branchPR] checks lookup threw:', err);
+	}
+}
+
+// The PR the Conversation tab's merge box acts on — the one reviewed in a PR
+// context, else the checked-out branch's PR. Mirrors ConversationPanel's own
+// `pr = activePR ?? branchPR`.
+function mergeBoxPR(): PRSummary | null {
+	return app.activePR ?? app.branchPR;
+}
+
+// Fold a freshly-fetched PR's status fields back into whichever summaries hold
+// it (activePR and/or branchPR), so the header pill and merge box reflect
+// reality without a full reload. Leaves `body` alone — it's edited through its
+// own optimistic flow and a refetch here could clobber an in-progress edit.
+function applyPRStatus(full: PRSummary): void {
+	const patch = {
+		title: full.title,
+		state: full.state,
+		draft: full.draft,
+		merged: full.merged,
+		mergeable: full.mergeable,
+		mergeableState: full.mergeableState
+	};
+	if (app.activePR && app.activePR.number === full.number) {
+		app.activePR = { ...app.activePR, ...patch };
+	}
+	if (app.branchPR && app.branchPR.number === full.number) {
+		app.branchPR = { ...app.branchPR, ...patch };
+	}
+}
+
+// PR number we've already scheduled a single mergeability re-poll for, so an
+// "unknown" (still-computing) result retries once rather than looping forever.
+let mergeBoxRetriedFor: number | null = null;
+
+// Fetch mergeability (single-PR endpoint) and CI checks for the merge box's PR
+// in parallel, then fold the fresh status back into the PR summaries. Guarded
+// against a stale result landing after the user switched PRs. Failure-silent —
+// the box just shows whatever it last had.
+async function refreshMergeBox(): Promise<void> {
+	const pr = mergeBoxPR();
+	if (!app.activeRepo || !pr) {
+		app.mergeBox = null;
+		return;
+	}
+	const repoId = app.activeRepo.id;
+	app.loadingMergeBox = true;
+	try {
+		const host = prHostArgs(pr);
+		const [full, checks] = await Promise.all([
+			window.api.github.getPR(repoId, pr.number, ...host),
+			window.api.github.getChecks(repoId, pr.headSha, ...host)
+		]);
+		// Bail if the panel's PR changed while these were in flight.
+		const cur = mergeBoxPR();
+		if (app.activeRepo?.id !== repoId || !cur || cur.number !== pr.number) return;
+		const mergeable = full ? (full.mergeable ?? null) : null;
+		app.mergeBox = {
+			number: pr.number,
+			mergeable,
+			mergeableState: full?.mergeableState ?? 'unknown',
+			checks
+		};
+		if (full) applyPRStatus(full);
+		// GitHub computes mergeability asynchronously; a freshly-opened PR can come
+		// back null/'unknown'. Re-poll once after a beat so the box settles on its
+		// own rather than needing a manual refresh.
+		if (mergeable === null && mergeBoxRetriedFor !== pr.number) {
+			mergeBoxRetriedFor = pr.number;
+			setTimeout(() => {
+				if (mergeBoxPR()?.number === pr.number) void refreshMergeBox();
+			}, 2500);
+		} else if (mergeable !== null) {
+			mergeBoxRetriedFor = null;
+		}
+	} catch (err) {
+		console.error('[mergeBox] refresh threw:', err);
+	} finally {
+		app.loadingMergeBox = false;
 	}
 }
 
@@ -2351,6 +2462,13 @@ export const actions = {
 		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
 		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
 		app.commentsSidebarTab = app.prefs.commentsSidebarTab ?? 'comments';
+		// Fullscreen only makes sense with the comments panel open and the left
+		// sidebar collapsed; clamp away inconsistent persisted combinations so the
+		// layout never restores with the diff hidden and no way to bring it back.
+		app.conversationFullscreen =
+			(app.prefs.conversationFullscreen ?? false) &&
+			app.commentsSidebarOpen &&
+			app.sidebarCollapsed;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
 		app.theme = app.prefs.theme;
@@ -3603,6 +3721,75 @@ export const actions = {
 		}
 	},
 
+	// ─── Merge box (Conversation tab) ──────────────────────────────────────────
+
+	// Load the merge box (mergeability + checks) for the panel's PR if we don't
+	// already have it. Called when the Conversation tab is shown / the PR changes;
+	// gated on PR number so re-renders don't refetch.
+	ensureMergeBox(prNumber: number): void {
+		if (app.loadingMergeBox) return;
+		if (app.mergeBox?.number === prNumber) return;
+		void refreshMergeBox();
+	},
+
+	// Force a merge-box refetch (e.g. after a merge / ready action).
+	async refreshMergeBox(): Promise<void> {
+		await refreshMergeBox();
+	},
+
+	// Merge the panel's PR with the chosen method. Returns true on success. On a
+	// soft refusal (GitHub returns merged:false) or error, surfaces the message
+	// and leaves the box as-is.
+	async mergePullRequest(method: PRMergeMethod): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const pr = mergeBoxPR();
+		if (!pr) return false;
+		app.mergeBoxBusy = 'merge';
+		try {
+			const res = await window.api.github.mergePullRequest(
+				app.activeRepo.id,
+				pr.number,
+				method,
+				...prHostArgs(pr)
+			);
+			if (!res.merged) {
+				setError(res.message || 'GitHub declined to merge this pull request.');
+				return false;
+			}
+			// Reflect the merge immediately, then refetch the authoritative status
+			// and the conversation (so the "merged" event shows up).
+			applyPRStatus({ ...pr, state: 'closed', merged: true });
+			void refreshMergeBox();
+			void actions.refreshPRConversation();
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		} finally {
+			app.mergeBoxBusy = null;
+		}
+	},
+
+	// Take the panel's draft PR out of draft ("Ready for review").
+	async markPullRequestReady(): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const pr = mergeBoxPR();
+		if (!pr) return false;
+		app.mergeBoxBusy = 'ready';
+		try {
+			await window.api.github.markPullRequestReady(app.activeRepo.id, pr.number, ...prHostArgs(pr));
+			applyPRStatus({ ...pr, draft: false });
+			void refreshMergeBox();
+			void actions.refreshPRConversation();
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		} finally {
+			app.mergeBoxBusy = null;
+		}
+	},
+
 	openComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number, replyTo?: number): void {
 		const key = composerKey(filePath, side, line);
 		if (app.pendingComposers[key]) return;
@@ -3926,7 +4113,7 @@ export const actions = {
 	// stays on the sidebar buttons (toggleCommentsSidebar); this is what lets
 	// Ctrl+L pull you back from the Conversation tab instead of just dismissing.
 	openCommentsSidebar(): void {
-		if (app.commentsSidebarOpen && app.commentsSidebarTab === 'comments') {
+		if (app.commentsSidebarOpen && effectiveCommentsSidebarTab() === 'comments') {
 			actions.setCommentsSidebarOpen(false);
 			return;
 		}
@@ -3948,10 +4135,32 @@ export const actions = {
 
 	setCommentsSidebarOpen(open: boolean): void {
 		app.commentsSidebarOpen = open;
+		// Closing the panel can't leave fullscreen dangling — there'd be nothing on
+		// screen but a collapsed diff. Drop it (which also re-expands the diff).
+		if (!open && app.conversationFullscreen) actions.setConversationFullscreen(false);
 		// Persist so the panel reopens (or stays closed) on the next launch.
 		void window.api.state.setPrefs({ commentsSidebarOpen: open }).then((prefs) => {
 			app.prefs = prefs;
 		});
+	},
+
+	// Fullscreen the comments panel (collapse the diff pane to zero). Entering
+	// fullscreen collapses the left sidebar automatically — that's driven by the
+	// pane $effect in App.svelte, which closes the sidebar before collapsing the
+	// diff. So the only requirement here is that the comments panel is actually
+	// open. Idempotent so the $effect and the drag-to-collapse handler can both
+	// route through it without ping-ponging.
+	setConversationFullscreen(on: boolean): void {
+		const next = on && app.commentsSidebarOpen;
+		if (app.conversationFullscreen === next) return;
+		app.conversationFullscreen = next;
+		void window.api.state.setPrefs({ conversationFullscreen: next }).then((prefs) => {
+			app.prefs = prefs;
+		});
+	},
+
+	toggleConversationFullscreen(): void {
+		actions.setConversationFullscreen(!app.conversationFullscreen);
 	},
 
 	// Left file-list sidebar collapse state. Routed through here (rather than
@@ -3959,6 +4168,9 @@ export const actions = {
 	// hotkey, or dragging the handle shut — persists for the next launch.
 	setSidebarCollapsed(collapsed: boolean): void {
 		app.sidebarCollapsed = collapsed;
+		// Reopening the left sidebar exits fullscreen — the two can't coexist, since
+		// fullscreen requires the sidebar to be out of the way.
+		if (!collapsed && app.conversationFullscreen) actions.setConversationFullscreen(false);
 		void window.api.state.setPrefs({ sidebarCollapsed: collapsed }).then((prefs) => {
 			app.prefs = prefs;
 		});

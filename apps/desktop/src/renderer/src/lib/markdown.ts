@@ -18,7 +18,7 @@
 // The HTML is sanitized with DOMPurify before it reaches `{@html}` — repo
 // contents are untrusted (often agent-written), and this runs in the Electron
 // renderer where an injected script would be dangerous.
-import { marked, type Tokens } from 'marked';
+import { marked, type RendererThis, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
 import { emojify } from 'node-emoji';
 import { getSharedHighlighter } from '@pierre/diffs';
@@ -78,6 +78,19 @@ function escapeHtml(s: string): string {
 	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// GitHub-Flavored-Markdown alerts: a blockquote whose first line is a marker
+// like `> [!NOTE]` renders as a colored callout instead of a plain quote. The
+// marker must be the whole first line; anything else is a normal blockquote.
+// https://docs.github.com/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts
+const ALERT_RE = /^[ \t]*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\r?\n|$)/i;
+const ALERT_TITLES: Record<string, string> = {
+	note: 'Note',
+	tip: 'Tip',
+	important: 'Important',
+	warning: 'Warning',
+	caution: 'Caution'
+};
+
 marked.use({
 	async: true,
 	async walkTokens(token) {
@@ -104,6 +117,19 @@ marked.use({
 				return html;
 			}
 			return `<pre><code>${escapeHtml(token.text)}</code></pre>`;
+		},
+		blockquote(this: RendererThis, token: Tokens.Blockquote) {
+			const m = ALERT_RE.exec(token.text);
+			if (!m) return `<blockquote>\n${this.parser.parse(token.tokens)}</blockquote>\n`;
+			const type = m[1].toLowerCase();
+			// Re-lex the quote body with its marker line removed so the callout's
+			// contents render as normal Markdown inside the styled box.
+			const body = this.parser.parse(marked.lexer(token.text.slice(m[0].length)));
+			return (
+				`<div class="markdown-alert markdown-alert-${type}">` +
+				`<p class="markdown-alert-title"><span class="markdown-alert-icon"></span>${ALERT_TITLES[type]}</p>` +
+				`${body}</div>\n`
+			);
 		}
 	}
 });

@@ -73,6 +73,9 @@
 	// Imperative handle on the sidebar pane, used by Cmd+B and the
 	// SidebarTrigger button to collapse/expand without dragging.
 	let sidebarPane = $state<PaneAPI | undefined>();
+	// Imperative handle on the main (diff) pane. Fullscreen collapses it to zero so
+	// the comments panel takes over; the toggle drives this via the $effect below.
+	let mainPane = $state<PaneAPI | undefined>();
 
 	// Error toast state. `errorDetailsOpen` toggles the raw-message <pre>;
 	// `errorCopied` flips the copy button to a checkmark for a beat. Both reset
@@ -229,15 +232,70 @@
 	};
 
 	// PaneForge sizes panes in percentages, but we want a hard px floor on the
-	// sidebar so the combined header (tabs + totals + trigger) never overflows.
-	// Measure the group width and convert 450px → a percentage minSize, capped so
-	// it can't exceed the pane's max. 22 is a sane fallback before first measure.
-	const SIDEBAR_MIN_PX = 450;
+	// sidebar. The floor only has to fit the context tabs + the collapse trigger:
+	// the seen/total and +/- totals drop out via a container query (see FileList's
+	// header) once the sidebar is too narrow for them, so they never force overflow.
+	// `SIDEBAR_DEFAULT_PX` opens a fresh layout wide enough to show those totals.
+	// Both convert px → a percentage of the measured group width, capped at the pane
+	// max. 22/30 are sane fallbacks before the first measure.
+	const SIDEBAR_MIN_PX = 330;
+	const SIDEBAR_DEFAULT_PX = 450;
 	let paneGroupEl = $state<HTMLElement | null>(null);
 	let groupWidth = $state(0);
 	const sidebarMinSize = $derived(
 		groupWidth > 0 ? Math.min(50, (SIDEBAR_MIN_PX / groupWidth) * 100) : 22
 	);
+	const sidebarDefaultSize = $derived(
+		groupWidth > 0 ? Math.min(50, (SIDEBAR_DEFAULT_PX / groupWidth) * 100) : 30
+	);
+
+	// Resize handles render as a 1px bg-border line. Hide a handle (transparent +
+	// non-interactive) when the pane beside it is collapsed to zero, so a collapsed
+	// pane shows no border at all instead of a stray divider at the window edge.
+	const VISIBLE_HANDLE = 'transition-colors hover:bg-foreground/20';
+	const HIDDEN_HANDLE = 'pointer-events-none bg-transparent';
+	// Sidebar↔diff handle: gone when the left sidebar is collapsed (reopen via the
+	// TopBar toggle or Cmd+B) and in fullscreen (sidebar is collapsed then too).
+	const sidebarHandleClass = $derived(
+		app.sidebarCollapsed || app.conversationFullscreen ? HIDDEN_HANDLE : VISIBLE_HANDLE
+	);
+	// Diff↔comments handle: stays draggable so the conversation can be widened with
+	// the sidebar collapsed; only hidden in fullscreen, where the diff is at zero.
+	const commentsHandleClass = $derived(app.conversationFullscreen ? HIDDEN_HANDLE : VISIBLE_HANDLE);
+
+	// The comments pane's width range is governed entirely by STATIC pane
+	// constraints, never reactive ones: PaneForge reloads (and resets) the whole
+	// layout from storage whenever a pane's constraints change, so a reactive
+	// maxSize/collapsible would clobber the layout mid-collapse — re-opening the
+	// sidebar the instant you closed it. Instead the caps emerge from the diff
+	// pane's static minSize: with the sidebar open it holds the comments pane near
+	// its old max, and once the sidebar collapses to 0 that freed width lets the
+	// comments pane grow much wider. Fullscreen is just the diff pane collapsing to
+	// zero, driven imperatively below.
+
+	// Drive the panes from the fullscreen flag. Mirrors the sidebar-restore effect:
+	// the flag is the source of truth and we move panes imperatively (collapse/
+	// expand no-op when already there). Imperative calls don't touch constraints,
+	// so they never trigger the layout reset above. onCollapse/onExpand sync the
+	// flag back when the user drags. Entering fullscreen first collapses the left
+	// sidebar (so the conversation can fill the area) — done before the diff so the
+	// diff's onCollapse already sees the fullscreen flag and doesn't bounce back.
+	// Exiting only re-expands the diff; the sidebar stays closed for the user to
+	// reopen, matching the manual collapse it stood in for.
+	$effect(() => {
+		const main = mainPane;
+		if (!main) return;
+		const sidebar = sidebarPane;
+		const fullscreen = app.conversationFullscreen;
+		requestAnimationFrame(() => {
+			if (fullscreen) {
+				sidebar?.collapse();
+				main.collapse();
+			} else {
+				main.expand();
+			}
+		});
+	});
 
 	$effect(() => {
 		const el = paneGroupEl;
@@ -412,7 +470,7 @@
 					bind:this={sidebarPane}
 					id="sidebar-pane"
 					order={1}
-					defaultSize={Math.max(22, sidebarMinSize)}
+					defaultSize={Math.max(sidebarMinSize, sidebarDefaultSize)}
 					minSize={sidebarMinSize}
 					maxSize={50}
 					collapsible
@@ -422,8 +480,36 @@
 				>
 					<FileList />
 				</Resizable.Pane>
-				<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
-				<Resizable.Pane id="main-pane" order={2} defaultSize={app.commentsSidebarOpen ? 56 : 78}>
+				<Resizable.Handle class={sidebarHandleClass} />
+				<!-- Statically collapsible (never a reactive constraint — see the layout
+				     note above). Its 30% minSize doubles as the comments pane's width
+				     cap: with the sidebar open the comments pane can't grow past ~40%,
+				     and once the sidebar collapses to 0 that width frees up so it can be
+				     dragged much wider. Collapsing the diff to zero IS fullscreen; the
+				     fullscreen toggle drives it imperatively and dragging past the min
+				     snaps it shut. The diff is only meant to collapse while the sidebar
+				     is closed, so onCollapse bounces it back open otherwise. -->
+				<Resizable.Pane
+					bind:this={mainPane}
+					id="main-pane"
+					order={2}
+					defaultSize={app.commentsSidebarOpen ? 56 : 78}
+					collapsible
+					collapsedSize={0}
+					minSize={30}
+					onCollapse={() => {
+						// Legit when fullscreen is already engaged (button path: the flag is
+						// set before this fires) or when dragging the diff shut with the
+						// sidebar already collapsed. Otherwise the diff was dragged shut while
+						// the sidebar is open — not allowed, so bounce it back.
+						if (app.conversationFullscreen || (app.commentsSidebarOpen && app.sidebarCollapsed)) {
+							actions.setConversationFullscreen(true);
+						} else {
+							requestAnimationFrame(() => mainPane?.expand());
+						}
+					}}
+					onExpand={() => actions.setConversationFullscreen(false)}
+				>
 					{#if app.contextTab === 'sessions' && !app.activeSessionId}
 						<SessionsEmptyState />
 					{:else}
@@ -431,8 +517,8 @@
 					{/if}
 				</Resizable.Pane>
 				{#if app.commentsSidebarOpen}
-					<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
-					<Resizable.Pane id="comments-pane" order={3} defaultSize={22} minSize={15} maxSize={40}>
+					<Resizable.Handle class={commentsHandleClass} />
+					<Resizable.Pane id="comments-pane" order={3} defaultSize={22} minSize={15}>
 						<CommentsPanel />
 					</Resizable.Pane>
 				{/if}

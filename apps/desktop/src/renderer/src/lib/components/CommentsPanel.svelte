@@ -2,6 +2,8 @@
 	import Check from '@lucide/svelte/icons/check';
 	import Copy from '@lucide/svelte/icons/copy';
 	import PanelRight from '@lucide/svelte/icons/panel-right';
+	import Maximize2 from '@lucide/svelte/icons/maximize-2';
+	import Minimize2 from '@lucide/svelte/icons/minimize-2';
 	import Github from './icons/GithubIcon.svelte';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
@@ -11,7 +13,7 @@
 	import { Button } from './ui/button';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import ConversationPanel from './ConversationPanel.svelte';
-	import { actions, app, isPRCommentContext } from '$lib/store.svelte';
+	import { actions, app, isPRCommentContext, effectiveCommentsSidebarTab } from '$lib/store.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import { formatRelative } from '$lib/utils';
 	import type { LocalComment, PRReviewComment } from '@shared/types';
@@ -24,7 +26,7 @@
 	// context. Outside one, the sidebar is always the comments list, so the tab bar
 	// is hidden and the remembered tab is ignored.
 	const showTabs = $derived(isPR);
-	const activeTab = $derived(showTabs ? app.commentsSidebarTab : 'comments');
+	const activeTab = $derived(effectiveCommentsSidebarTab());
 
 	// Mirror the left sidebar's collapse trigger: the panel toggles with the same
 	// hotkey wired up in App.svelte (defaults to ⌘L / Ctrl+L).
@@ -119,7 +121,13 @@
 	}
 </script>
 
-<div class="flex h-full flex-col border-l border-border bg-card/40">
+<!-- The left border is dropped in fullscreen: the diff pane is collapsed away, so
+     the border would just double up against the hidden resize handle at the edge. -->
+<div
+	class="flex h-full flex-col bg-card/40"
+	class:border-l={!app.conversationFullscreen}
+	class:border-border={!app.conversationFullscreen}
+>
 	<!-- First header: tabs on the left, collapse trigger pinned right. Mirrors the
 	     left sidebar's primary header (same h-11, same Tabs/Button components) so
 	     the two panes' bottom borders line up across the diff. -->
@@ -182,6 +190,22 @@
 				{/if}
 			</Button>
 		{/if}
+		<!-- Fullscreen the panel over the diff. Always available: entering fullscreen
+		     collapses the left sidebar automatically (see setConversationFullscreen
+		     and the pane effect in App.svelte). -->
+		<Button
+			variant="ghost"
+			size="icon-sm"
+			class="shrink-0 text-muted-foreground"
+			title={app.conversationFullscreen ? 'Exit fullscreen' : 'Fullscreen conversation'}
+			onclick={() => actions.toggleConversationFullscreen()}
+		>
+			{#if app.conversationFullscreen}
+				<Minimize2 class="size-3.5" />
+			{:else}
+				<Maximize2 class="size-3.5" />
+			{/if}
+		</Button>
 		<Button
 			variant="ghost"
 			size="icon-sm"

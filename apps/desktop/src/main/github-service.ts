@@ -12,11 +12,14 @@ import type {
 	GithubOrg,
 	NewReviewCommentInput,
 	PRConversationItem,
+	PRConversationReference,
 	PRConversationReview,
 	PRCheck,
 	PRChecksState,
 	PRChecksSummary,
 	PRDeployment,
+	PRMergeMethod,
+	PRMergeResult,
 	PRReviewComment,
 	PRSummary,
 	ReleaseNotes,
@@ -713,7 +716,11 @@ function toPRSummary(
 		headRepoName: pr.head.repo?.name ?? undefined,
 		maintainerCanModify: pr.maintainer_can_modify ?? undefined,
 		repoOwner: pr.base.repo?.owner?.login ?? undefined,
-		repoName: pr.base.repo?.name ?? undefined
+		repoName: pr.base.repo?.name ?? undefined,
+		// Present only on single-PR (pulls.get) responses — absent on list rows.
+		// Keep null (GitHub still computing) distinct from undefined (not fetched).
+		mergeable: pr.mergeable === undefined ? undefined : pr.mergeable,
+		mergeableState: pr.mergeable_state ?? undefined
 	};
 }
 
@@ -1031,7 +1038,10 @@ export async function getChecks(
 			name: run.name,
 			state: checkRunState(run.status, run.conclusion),
 			durationMs,
-			avatarUrl: run.app?.owner?.avatar_url ?? null
+			avatarUrl: run.app?.owner?.avatar_url ?? null,
+			// `details_url` is the specific job/run page (what GitHub links the row
+			// to); `html_url` is the check-run itself. Prefer the former.
+			url: run.details_url ?? run.html_url ?? null
 		});
 	}
 
@@ -1045,7 +1055,8 @@ export async function getChecks(
 				name: s.context,
 				state,
 				durationMs: null,
-				avatarUrl: s.avatar_url ?? null
+				avatarUrl: s.avatar_url ?? null,
+				url: s.target_url ?? null
 			});
 		}
 	}
@@ -1469,6 +1480,35 @@ function mapTimelineItem(
 				actorAvatarUrl: e.actor?.avatar_url ?? undefined,
 				detail,
 				labelColor,
+				// The merge commit's short SHA, surfaced so the row reads "merged commit
+				// <sha> into <base>". `commitUrl` is filled in by the caller, which has
+				// the repo coordinates.
+				commitSha:
+					e.event === 'merged' && typeof e.commit_id === 'string'
+						? e.commit_id.slice(0, 7)
+						: undefined,
+				createdAt: e.created_at
+			};
+		}
+		// Another issue/PR referenced this one ("X mentioned this pull request").
+		case 'cross-referenced': {
+			const src = e.source?.issue;
+			if (!src || typeof src.number !== 'number') return null;
+			const isPullRequest = !!src.pull_request;
+			let refState: PRConversationReference['refState'];
+			if (isPullRequest && src.pull_request?.merged_at) refState = 'merged';
+			else if (src.draft) refState = 'draft';
+			else refState = src.state === 'closed' ? 'closed' : 'open';
+			return {
+				kind: 'reference',
+				key: `xref-${src.id ?? src.number}-${e.created_at}`,
+				actor: e.actor?.login ?? src.user?.login ?? 'unknown',
+				actorAvatarUrl: e.actor?.avatar_url ?? undefined,
+				refNumber: src.number,
+				refTitle: src.title ?? '',
+				refUrl: src.html_url ?? '',
+				isPullRequest,
+				refState,
 				createdAt: e.created_at
 			};
 		}
@@ -1489,8 +1529,10 @@ export async function listConversation(
 	// In parallel, list the PR's commits — the timeline's `committed` events carry
 	// only a git identity (no GitHub user), so we map each SHA to its author's
 	// avatar here to render the same avatars GitHub shows. Best-effort: a failed
-	// commit listing just leaves commits without avatars.
-	const [events, commits] = await Promise.all([
+	// commit listing just leaves commits without avatars. We also fetch the PR
+	// itself for its `created_at`, used below to flag auto-requested Copilot
+	// reviews; a failed fetch just disables that flag.
+	const [events, commits, prCreatedAt] = await Promise.all([
 		o.paginate(o.issues.listEventsForTimeline, {
 			owner,
 			repo,
@@ -1499,7 +1541,11 @@ export async function listConversation(
 		}),
 		o
 			.paginate(o.pulls.listCommits, { owner, repo, pull_number: prNumber, per_page: 100 })
-			.catch(() => [] as Array<{ sha: string; author: unknown; committer: unknown }>)
+			.catch(() => [] as Array<{ sha: string; author: unknown; committer: unknown }>),
+		o.pulls
+			.get({ owner, repo, pull_number: prNumber })
+			.then((r) => r.data.created_at)
+			.catch(() => null)
 	]);
 	const commitAvatars = new Map<string, string>();
 	for (const c of commits) {
@@ -1508,6 +1554,29 @@ export async function listConversation(
 			(c.committer as { avatar_url?: string } | null)?.avatar_url;
 		if (avatar) commitAvatars.set(c.sha, avatar);
 	}
+
+	// GitHub's "automatically request Copilot review" setting fires a
+	// `review_requested` for Copilot right after the PR opens or is marked
+	// ready-for-review — within a second or two, by the same actor. No API field
+	// distinguishes it from a manual request (REST, GraphQL and
+	// `performed_via_github_app` are all identical), so we infer it from that
+	// timing: a Copilot request landing within the window after a "ready" moment.
+	const AUTO_REVIEW_WINDOW_MS = 30_000;
+	const readyTimes: number[] = [];
+	if (prCreatedAt) readyTimes.push(Date.parse(prCreatedAt));
+	for (const e of events as Array<{ event?: string; created_at?: string }>) {
+		if (e.event === 'ready_for_review' && e.created_at) readyTimes.push(Date.parse(e.created_at));
+	}
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const isAutoCopilotRequest = (e: any): boolean => {
+		if (e.event !== 'review_requested') return false;
+		const r = e.requested_reviewer;
+		if (!r || r.type !== 'Bot' || r.login !== 'Copilot') return false;
+		const t = e.created_at ? Date.parse(e.created_at) : NaN;
+		if (Number.isNaN(t)) return false;
+		return readyTimes.some((rt) => t >= rt && t - rt <= AUTO_REVIEW_WINDOW_MS);
+	};
+
 	const items: PRConversationItem[] = [];
 	for (const e of events) {
 		const mapped = mapTimelineItem(e, viewer?.login ?? null);
@@ -1515,17 +1584,45 @@ export async function listConversation(
 		if (mapped.kind === 'commit') {
 			mapped.authorAvatarUrl = commitAvatars.get(mapped.sha) ?? mapped.authorAvatarUrl;
 		}
+		// Re-attribute an auto-requested Copilot review to the reviewer, mirroring
+		// GitHub: it shows "Copilot review requested due to automatic review
+		// settings" rather than crediting the user who tripped the setting.
+		if (mapped.kind === 'event' && isAutoCopilotRequest(e)) {
+			const reviewer = (e as { requested_reviewer?: { login: string; avatar_url?: string } })
+				.requested_reviewer;
+			mapped.auto = true;
+			if (reviewer) {
+				mapped.actor = reviewer.login;
+				mapped.actorAvatarUrl = reviewer.avatar_url ?? mapped.actorAvatarUrl;
+			}
+		}
+		// Link the merge commit to its page on GitHub (the timeline gives only the
+		// API url, so build the html one from the repo coordinates + SHA).
+		if (
+			mapped.kind === 'event' &&
+			mapped.event === 'merged' &&
+			typeof (e as { commit_id?: string }).commit_id === 'string'
+		) {
+			mapped.commitUrl = `https://github.com/${owner}/${repo}/commit/${(e as { commit_id: string }).commit_id}`;
+		}
 		items.push(mapped);
 	}
+	// GitHub emits both a `merged` and a `closed` event when a PR is merged; the two
+	// say the same thing, so collapse to just the richer `merged` row (which carries
+	// the commit + base). A plain-closed PR keeps its `closed` event.
+	const merged = items.some((i) => i.kind === 'event' && i.event === 'merged');
+	const deduped = merged
+		? items.filter((i) => !(i.kind === 'event' && i.event === 'closed'))
+		: items;
 	// The timeline is roughly chronological already, but mixing `created_at`,
 	// `submitted_at` and commit dates can interleave slightly out of order — sort
 	// to be safe. Items with no usable timestamp sink to the bottom.
-	items.sort((a, b) => {
+	deduped.sort((a, b) => {
 		const at = a.createdAt ? Date.parse(a.createdAt) : Infinity;
 		const bt = b.createdAt ? Date.parse(b.createdAt) : Infinity;
 		return at - bt;
 	});
-	return items;
+	return deduped;
 }
 
 export async function createIssueComment(
@@ -1594,4 +1691,45 @@ export async function updatePullRequestBody(
 	const o = octokit(resolveAccount(accountId));
 	const res = await o.pulls.update({ owner, repo, pull_number: prNumber, body });
 	return res.data.body ?? body;
+}
+
+// Merge a PR with the given method. GitHub returns `merged: false` (rather than
+// throwing) when it declines a mergeable-looking PR, so the caller surfaces
+// `message` instead of treating it as a hard error.
+export async function mergePullRequest(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	method: PRMergeMethod,
+	accountId?: string | null
+): Promise<PRMergeResult> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.pulls.merge({
+		owner,
+		repo,
+		pull_number: prNumber,
+		merge_method: method
+	});
+	return { merged: res.data.merged, message: res.data.message, sha: res.data.sha };
+}
+
+// Take a draft PR out of draft. REST has no "undraft" endpoint, so we use the
+// GraphQL markPullRequestReadyForReview mutation, which keys off the PR's global
+// node id — fetched here since our PRSummary doesn't carry it.
+export async function markPullRequestReady(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	accountId?: string | null
+): Promise<void> {
+	const o = octokit(resolveAccount(accountId));
+	const { data } = await o.pulls.get({ owner, repo, pull_number: prNumber });
+	await o.graphql(
+		`mutation ($id: ID!) {
+       markPullRequestReadyForReview(input: { pullRequestId: $id }) {
+         pullRequest { id isDraft }
+       }
+     }`,
+		{ id: data.node_id }
+	);
 }

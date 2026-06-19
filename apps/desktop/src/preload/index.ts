@@ -38,6 +38,7 @@ import type {
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
 	PRConversationItem,
+	PRMergeResult,
 	PRReviewComment,
 	PRSummary,
 	PreloadAPI,
@@ -296,6 +297,23 @@ const api: PreloadAPI = {
 				owner,
 				repo
 			) as Promise<string>,
+		mergePullRequest: (repoId, prNumber, method, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:mergePullRequest',
+				repoId,
+				prNumber,
+				method,
+				owner,
+				repo
+			) as Promise<PRMergeResult>,
+		markPullRequestReady: (repoId, prNumber, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:markPullRequestReady',
+				repoId,
+				prNumber,
+				owner,
+				repo
+			) as Promise<void>,
 		getAuthErrors: () => ipcRenderer.invoke('github:getAuthErrors') as Promise<GithubAuthError[]>,
 		validateAccounts: () =>
 			ipcRenderer.invoke('github:validateAccounts') as Promise<GithubAuthError[]>

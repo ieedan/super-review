@@ -38,6 +38,8 @@ import type {
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
 	PRConversationItem,
+	PRMergeMethod,
+	PRMergeResult,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
@@ -1437,6 +1439,45 @@ export function registerIpc(): void {
 				throw new Error('This repository does not have a GitHub remote.');
 			}
 			return gh.updatePullRequestBody(owner, name, prNumber, body, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:mergePullRequest',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			method: PRMergeMethod,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<PRMergeResult> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.mergePullRequest(owner, name, prNumber, method, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:markPullRequestReady',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<void> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			await gh.markPullRequestReady(owner, name, prNumber, repo.githubAccountId);
 		}
 	);
 

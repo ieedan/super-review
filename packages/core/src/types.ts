@@ -155,6 +155,27 @@ export interface PRSummary {
 	// the fork, so PR operations must target it rather than the active repo.
 	repoOwner?: string;
 	repoName?: string;
+	// GitHub's mergeability for the PR, from the single-PR endpoint only — the
+	// list endpoint omits these, so both are undefined for PRs we've only listed.
+	// `mergeable` is null while GitHub is still computing the answer. Drives the
+	// Conversation tab's merge box "conflicts" row.
+	mergeable?: boolean | null;
+	// Raw merge state: 'clean' | 'dirty' | 'blocked' | 'behind' | 'unstable' |
+	// 'unknown' | 'draft' | 'has_hooks'. 'dirty' means the branch conflicts with
+	// its base.
+	mergeableState?: string;
+}
+
+// How GitHub should combine the PR's commits when merging from the merge box.
+export type PRMergeMethod = 'merge' | 'squash' | 'rebase';
+
+// Result of a merge attempt. `merged` is false when GitHub declined (e.g. the
+// branch became unmergeable between the page render and the click); `message`
+// carries GitHub's explanation for the toast.
+export interface PRMergeResult {
+	merged: boolean;
+	message: string;
+	sha?: string;
 }
 
 // Aggregated CI/workflow status for a PR's head commit. Mirrors GitHub's
@@ -174,6 +195,10 @@ export interface PRCheck {
 	// Avatar of the app/integration that reported the check (e.g. GitHub
 	// Actions), or null when unavailable.
 	avatarUrl: string | null;
+	// Link to the check's own page on GitHub — the workflow-run/job for a
+	// check-run, or the status's target URL for a legacy commit status. null when
+	// the source didn't provide one (the row then isn't clickable).
+	url: string | null;
 }
 
 // A deployment created against the PR's head commit (e.g. a preview or
@@ -435,7 +460,8 @@ export type PRConversationItem =
 	| PRConversationComment
 	| PRConversationReview
 	| PRConversationCommit
-	| PRConversationEvent;
+	| PRConversationEvent
+	| PRConversationReference;
 
 interface PRConversationBase {
 	// Stable, unique key for the renderer's keyed `{#each}`.
@@ -516,6 +542,36 @@ export interface PRConversationEvent extends PRConversationBase {
 	// For label events: the label's hex color (no leading '#'), so it renders as a
 	// colored chip like GitHub rather than plain text.
 	labelColor?: string;
+	// True for a Copilot `review_requested` that GitHub auto-created from a repo's
+	// "automatically request Copilot review" setting (inferred from the request
+	// landing within seconds of the PR opening / being marked ready). GitHub shows
+	// these as "Copilot review requested due to automatic review settings" with the
+	// reviewer (not the triggering user) as the subject.
+	auto?: boolean;
+	// For the `merged` event: the short SHA of the merge commit, so the row can
+	// read "merged commit <sha> into <base>" like GitHub. Undefined otherwise.
+	commitSha?: string;
+	// For the `merged` event: a link to the merge commit on GitHub, opened when the
+	// SHA is clicked.
+	commitUrl?: string;
+}
+
+// A cross-reference: another issue or PR that mentioned this one (GitHub's
+// `cross-referenced` timeline event, rendered as "X mentioned this pull request"
+// with a link to the referencing item and its status badge).
+export interface PRConversationReference extends PRConversationBase {
+	kind: 'reference';
+	actor: string;
+	actorAvatarUrl?: string;
+	// The referencing issue/PR.
+	refNumber: number;
+	refTitle: string;
+	refUrl: string;
+	// True when the referencing item is a PR (vs a plain issue) — drives the icon
+	// and the "pull request" / "issue" wording.
+	isPullRequest: boolean;
+	// Status of the referencing item, for the trailing badge.
+	refState: 'open' | 'closed' | 'merged' | 'draft';
 }
 
 // ─── Local review comments ───────────────────────────────────────────────────
@@ -1078,6 +1134,10 @@ export interface UserPrefs {
 	// Which tab the comments sidebar reopens on — the line/review Comments list or
 	// the PR Conversation feed. Persisted so the choice survives a restart.
 	commentsSidebarTab: 'comments' | 'conversation';
+	// When true, the comments panel takes over the whole work area (the diff pane
+	// is collapsed to zero). Only reachable while the left sidebar is collapsed;
+	// reopening the left sidebar exits it. Persisted so it survives a restart.
+	conversationFullscreen: boolean;
 	// How many recently opened repositories the repo picker's "Recent" section
 	// lists. 0 hides the section entirely.
 	recentRepoCount: number;
@@ -1450,6 +1510,24 @@ export interface PreloadAPI {
 			owner?: string,
 			repo?: string
 		): Promise<string>;
+		// Merge the PR with the chosen method (merge commit / squash / rebase).
+		// Targets the PR's host (base) repo. Returns GitHub's result; `merged` is
+		// false when GitHub declined rather than throwing.
+		mergePullRequest(
+			repoId: string,
+			prNumber: number,
+			method: PRMergeMethod,
+			owner?: string,
+			repo?: string
+		): Promise<PRMergeResult>;
+		// Take a draft PR out of draft ("Ready for review"). Uses the GraphQL
+		// markPullRequestAsReady mutation (REST has no equivalent).
+		markPullRequestReady(
+			repoId: string,
+			prNumber: number,
+			owner?: string,
+			repo?: string
+		): Promise<void>;
 		// Resolve or unresolve a review thread by its GraphQL node id. Returns the
 		// thread's resolved state as reported back by GitHub.
 		setReviewThreadResolved(

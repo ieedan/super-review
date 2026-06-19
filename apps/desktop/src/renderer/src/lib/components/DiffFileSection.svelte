@@ -1648,15 +1648,22 @@
 	onMount(() => {
 		const el = pathEl;
 		if (!el) return;
-		const measure = (): void => {
+		// Font (weight + family) comes from the label's CSS classes and never
+		// changes while the user resizes, so resolve it once up front. Keeping
+		// getComputedStyle out of the resize path matters: every visible section
+		// runs this observer, and a forced style recalc per file per resize pixel
+		// is what made dragging the panes lag.
+		const cs = window.getComputedStyle(el);
+		// text-xs is 12px in Tailwind; pair it with the label's resolved
+		// (monospace) family for a canvas-compatible font shorthand.
+		pathFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
+		// Seed the width synchronously so the first truncation pass has a real
+		// value instead of waiting for the observer's async initial callback.
+		pathWidth = el.clientWidth;
+		// The observer now only reads clientWidth, a cheap cached layout property.
+		const ro = new ResizeObserver(() => {
 			pathWidth = el.clientWidth;
-			const cs = window.getComputedStyle(el);
-			// text-xs is 12px in Tailwind; pair it with the label's resolved
-			// (monospace) family for a canvas-compatible font shorthand.
-			pathFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
-		};
-		measure();
-		const ro = new ResizeObserver(measure);
+		});
 		ro.observe(el);
 		return () => ro.disconnect();
 	});
