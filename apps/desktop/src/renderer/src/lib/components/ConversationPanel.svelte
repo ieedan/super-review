@@ -4,7 +4,9 @@
 	import FileDiff from '@lucide/svelte/icons/file-diff';
 	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import GitMerge from '@lucide/svelte/icons/git-merge';
+	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
 	import GitPullRequestClosed from '@lucide/svelte/icons/git-pull-request-closed';
+	import GitPullRequestDraft from '@lucide/svelte/icons/git-pull-request-draft';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
@@ -126,6 +128,23 @@
 		if (url) void window.api.shell.openExternal(url);
 	}
 
+	// Status glyph + label + tint for the sticky header pill, matching how the PR
+	// list renders it (green open, grey draft, red closed, purple merged). The
+	// header fills the pill with the tint so it reads like GitHub's status badge.
+	const prStatus = $derived.by(() => {
+		if (!pr) return null;
+		if (pr.merged) return { icon: GitMerge, color: 'var(--color-merged)', label: 'Merged' };
+		if (pr.state === 'closed')
+			return { icon: GitPullRequestClosed, color: 'var(--color-destructive)', label: 'Closed' };
+		if (pr.draft)
+			return {
+				icon: GitPullRequestDraft,
+				color: 'var(--color-muted-foreground)',
+				label: 'Draft'
+			};
+		return { icon: GitPullRequest, color: 'var(--color-success)', label: 'Open' };
+	});
+
 	// GitHub's author-association badge text ("Owner", "Member", …). Returns '' for
 	// associations we don't badge (NONE, mannequin, etc.), so the badge is skipped.
 	function associationLabel(a: string | undefined): string {
@@ -237,6 +256,33 @@
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col">
+	{#if pr && prStatus}
+		{@const Icon = prStatus.icon}
+		<!-- Sticky status header: pinned above the scrolling feed so the PR's title,
+		     status and branch line stay visible while reading the conversation. -->
+		<div class="shrink-0 border-b border-border bg-background px-3 py-2">
+			<h2 class="min-w-0 text-sm leading-snug font-semibold" title={pr.title}>
+				<span class="line-clamp-2">
+					{pr.title}
+					<span class="font-normal text-muted-foreground">#{pr.number}</span>
+				</span>
+			</h2>
+			<div class="mt-1.5 flex items-center gap-2 text-[11px]">
+				<span
+					class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-white"
+					style="background: {prStatus.color};"
+				>
+					<Icon class="size-3" />
+					{prStatus.label}
+				</span>
+				<span class="flex min-w-0 items-center gap-1 text-muted-foreground">
+					<span class="truncate rounded bg-muted px-1 py-px font-mono">{pr.baseRef}</span>
+					<span class="shrink-0">←</span>
+					<span class="truncate rounded bg-muted px-1 py-px font-mono">{pr.headRef}</span>
+				</span>
+			</div>
+		</div>
+	{/if}
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#if !pr}
 			<div class="grid h-full place-items-center p-6 text-center">
