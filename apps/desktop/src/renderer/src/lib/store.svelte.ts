@@ -29,11 +29,12 @@ import type {
 	RepoInfo,
 	Session,
 	SessionSummary,
+	HeaderItemVisibility,
 	TerminalKind,
 	UserPrefs,
 	ViewMode
 } from '@shared/types';
-import { WINDOW_BOUNDS } from '@shared/types';
+import { DEFAULT_HEADER_ITEMS, WINDOW_BOUNDS } from '@shared/types';
 import { diffContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
@@ -242,6 +243,9 @@ interface AppState {
 	// How many repos the repo picker's "Recent" section lists (see UserPrefs).
 	recentRepoCount: number;
 	hotkeys: Hotkeys;
+	// Visibility of the optional header controls (sidebar toggles, changeset,
+	// editor, terminal), toggled from the header's right-click menu.
+	headerItems: HeaderItemVisibility;
 	// Initial window bounds, applied on the next launch (see UserPrefs).
 	windowWidth: number;
 	windowHeight: number;
@@ -635,6 +639,7 @@ const initial: AppState = {
 	unmarkSeenOnChange: true,
 	recentRepoCount: 5,
 	hotkeys: DEFAULT_HOTKEYS,
+	headerItems: { ...DEFAULT_HEADER_ITEMS },
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
 	startMaximized: false,
@@ -1935,6 +1940,9 @@ async function refreshFiles(): Promise<void> {
 		app.localComments = [];
 		app.localCommentsContextKey = null;
 		void refreshUnstagedCount();
+		// The header's changeset button keys off `installed`, which must hold on
+		// every tab — keep it fresh even on the bare sessions list.
+		void refreshChangesetStatus(app.activeRepo.id);
 		return;
 	}
 	const repoId = app.activeRepo.id;
@@ -2049,14 +2057,15 @@ async function refreshFiles(): Promise<void> {
 		if (ctx.kind === 'workingTree') {
 			app.unstagedFileCount = files.length;
 			setRepoDirty(repoId, files.length > 0);
-			// Keep the "Add a changeset?" prompt in sync with the working tree.
-			void refreshChangesetStatus(repoId);
 		} else {
 			void refreshUnstagedCount();
-			// The commit box (and its changeset prompt) only show for the working
-			// tree, so don't compute changeset status in other contexts.
-			app.changesetStatus = null;
 		}
+		// Keep the changeset status fresh in every context. The "Add a changeset?"
+		// prompt only mounts on the Unstaged tab, so the status's working-tree
+		// prompt fields stay invisible elsewhere — but the header's changeset
+		// button keys off `installed`, a repo-level fact that must hold on every
+		// tab. Nulling it here used to hide the button on the Branch/PR tabs.
+		void refreshChangesetStatus(repoId);
 
 		app.lastRefreshAt = Date.now();
 		// Load the local comments pinned to this context's diff (cheap; reads the
@@ -2107,6 +2116,15 @@ export const actions = {
 	async setSignCommits(value: boolean): Promise<void> {
 		app.signCommits = value;
 		app.prefs = await window.api.state.setPrefs({ signCommits: value });
+	},
+	// Show/hide a single optional header control (sidebar toggle, changeset,
+	// editor, terminal) from the header's right-click menu. Updates the local
+	// copy first so the header reacts instantly, then persists the merged map.
+	async setHeaderItem(key: keyof HeaderItemVisibility, value: boolean): Promise<void> {
+		app.headerItems = { ...app.headerItems, [key]: value };
+		app.prefs = await window.api.state.setPrefs({
+			headerItems: { ...app.headerItems }
+		});
 	},
 	async setChangesetsEnabled(value: boolean): Promise<void> {
 		app.changesetsEnabled = value;
@@ -2194,6 +2212,7 @@ export const actions = {
 		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
 		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
+		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
 		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;
