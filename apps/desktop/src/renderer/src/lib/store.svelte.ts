@@ -92,6 +92,20 @@ export interface LocalComposer {
 	submitting: boolean;
 }
 
+// State for the GitHub device-flow sign-in dialog. The flow is driven by an
+// explicit action (startGithubSignInFlow) rather than a reactive effect, so
+// these fields are just what the dialog renders — the orchestration owns them.
+export interface GithubSignInState {
+	open: boolean;
+	// The device-flow user code and verification URL, populated once the flow
+	// starts and the user needs to enter the code in their browser.
+	userCode: string | null;
+	verificationUri: string | null;
+	// True while we're polling GitHub for the user to authorize the code.
+	polling: boolean;
+	error: string | null;
+}
+
 interface AppState {
 	repos: RepoInfo[];
 	activeRepo: RepoInfo | null;
@@ -281,7 +295,7 @@ interface AppState {
 	// Bumped to ask the sidebar to focus its file-search input — driven by the
 	// global "search files (sidebar)" hotkey, which lives outside FileList.
 	focusSidebarSearchNonce: number;
-	githubSignInOpen: boolean;
+	githubSignIn: GithubSignInState;
 	pushStatus: PushStatus | null;
 	// Tip commit of the current branch, surfaced so the commit box can offer an
 	// "Undo" affordance for the most recent unpushed commit.
@@ -663,7 +677,13 @@ const initial: AppState = {
 	repoSettingsDialogOpen: false,
 	commandMenuOpen: false,
 	focusSidebarSearchNonce: 0,
-	githubSignInOpen: false,
+	githubSignIn: {
+		open: false,
+		userCode: null,
+		verificationUri: null,
+		polling: false,
+		error: null
+	},
 	pushStatus: null,
 	lastCommit: null,
 	branchPR: null,
@@ -1070,6 +1090,67 @@ async function refreshGithubAccounts(): Promise<void> {
 	]);
 	app.githubAccounts = accounts;
 	app.activeGithubAccount = active;
+}
+
+// Bumped every time a sign-in flow starts or is cancelled. The running flow
+// captures the value at its start and bails the moment it changes, so a
+// cancel (dialog closed) or a fresh start cleanly aborts the in-flight poll
+// loop without it racing ahead and reopening the dialog or stomping state.
+let githubSignInRunToken = 0;
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Drive the GitHub device-flow sign-in from start to finish as one awaited
+// sequence: kick off the flow, show the user code, poll until GitHub reports
+// success or error, then on success refresh accounts/PRs and close the dialog.
+// Driving this explicitly (rather than from a reactive $effect on the dialog's
+// open state) means there's no window where resetting the display state can
+// re-trigger the flow — which previously opened a duplicate verification tab.
+async function startGithubSignInFlow(): Promise<void> {
+	const s = app.githubSignIn;
+	// A flow is already running — just make sure its dialog is visible.
+	if (s.polling) {
+		s.open = true;
+		return;
+	}
+	const runToken = ++githubSignInRunToken;
+	s.open = true;
+	s.error = null;
+	s.userCode = null;
+	s.verificationUri = null;
+	s.polling = true;
+	try {
+		const flow = await window.api.github.startDeviceFlow();
+		if (runToken !== githubSignInRunToken) return; // cancelled while starting
+		s.userCode = flow.userCode;
+		s.verificationUri = flow.verificationUri;
+		for (;;) {
+			await delay(1500);
+			if (runToken !== githubSignInRunToken) return; // cancelled
+			const status = await window.api.github.pollDeviceFlow();
+			if (runToken !== githubSignInRunToken) return; // cancelled
+			if (status.state === 'success') {
+				s.polling = false;
+				s.userCode = null;
+				s.verificationUri = null;
+				s.open = false;
+				await refreshGithubAccounts();
+				if (app.activeRepo?.githubOwner && app.activeRepo.githubRepo) {
+					void actions.loadPRs();
+				}
+				return;
+			}
+			if (status.state === 'error') {
+				s.polling = false;
+				s.error = status.message;
+				return;
+			}
+		}
+	} catch (err) {
+		if (runToken !== githubSignInRunToken) return;
+		s.polling = false;
+		s.error = err instanceof Error ? err.message : String(err);
+	}
 }
 
 async function refreshRepos(): Promise<void> {
@@ -4900,10 +4981,19 @@ export const actions = {
 	},
 
 	openGithubSignIn(): void {
-		app.githubSignInOpen = true;
+		void startGithubSignInFlow();
 	},
 	closeGithubSignIn(): void {
-		app.githubSignInOpen = false;
+		// Abort any in-flight flow (the run token bump stops its poll loop) and tell
+		// the main process to drop the pending device flow, then clear the dialog.
+		githubSignInRunToken++;
+		void window.api.github.cancelDeviceFlow();
+		const s = app.githubSignIn;
+		s.open = false;
+		s.polling = false;
+		s.userCode = null;
+		s.verificationUri = null;
+		s.error = null;
 	},
 
 	tickNow(): void {
