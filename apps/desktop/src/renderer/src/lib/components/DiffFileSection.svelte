@@ -1240,6 +1240,19 @@
 			pkgDepsOld = parsePackageDeps(diff.oldContents);
 		}
 
+		// Identical sides have nothing to diff — which includes a newly added empty
+		// file (both sides ''). parseDiffFromFile *throws* on this case ("if the
+		// files are the same maybe?"), but it isn't an error: we just render the
+		// empty diff host (nothing in it) and bail. Surfacing it as loadError would
+		// show a bogus banner and, because loadError persists across renders, leave
+		// that banner stuck once the file later gains content. Clearing fileDiffMeta
+		// keeps stale hunk metadata from a previous render from lingering.
+		if (oldFile.contents === newFile.contents) {
+			fileDiffMeta = null;
+			loadError = null;
+			return;
+		}
+
 		// Parse Pierre's own diff metadata up front: its hunks (not the git patch)
 		// are what the expansion targets, and we need them before the first render so
 		// collapsed regions around comments expand on the first paint (no flash).

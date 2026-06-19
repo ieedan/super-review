@@ -69,6 +69,7 @@ const defaults: Schema = {
 		uiFont: 'system',
 		maxDiffLines: 1500,
 		hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
+		customFileIcons: [],
 		animations: 'accents',
 		prMergedBehavior: 'prompt',
 		autoRemoveMergedBranch: false,
