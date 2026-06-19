@@ -1075,6 +1075,9 @@ export interface UserPrefs {
 	// (true = collapsed); `commentsSidebarOpen` is the right comments panel.
 	sidebarCollapsed: boolean;
 	commentsSidebarOpen: boolean;
+	// Which tab the comments sidebar reopens on — the line/review Comments list or
+	// the PR Conversation feed. Persisted so the choice survives a restart.
+	commentsSidebarTab: 'comments' | 'conversation';
 	// How many recently opened repositories the repo picker's "Recent" section
 	// lists. 0 hides the section entirely.
 	recentRepoCount: number;
