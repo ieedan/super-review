@@ -92,6 +92,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:deleteBranch', repoId, name, opts) as Promise<DeleteBranchResult>,
 		listChangedFiles: (repoId, ctx: DiffContext) =>
 			ipcRenderer.invoke('git:listChangedFiles', repoId, ctx) as Promise<ChangedFile[]>,
+		refExists: (repoId, ref) =>
+			ipcRenderer.invoke('git:refExists', repoId, ref) as Promise<boolean>,
 		getDiff: (repoId, filePath, ctx: DiffContext) =>
 			ipcRenderer.invoke('git:getDiff', repoId, filePath, ctx) as Promise<DiffData>,
 		fetchOrigin: (repoId) =>
@@ -330,6 +332,14 @@ const api: PreloadAPI = {
 			) as Promise<void>,
 		clearCollapsedFiles: (repoId, contextKey) =>
 			ipcRenderer.invoke('state:clearCollapsedFiles', repoId, contextKey) as Promise<void>,
+		getCachedFileList: (repoId, contextKey) =>
+			ipcRenderer.invoke('state:getCachedFileList', repoId, contextKey) as Promise<ChangedFile[]>,
+		setCachedFileList: (repoId, contextKey, files) =>
+			ipcRenderer.invoke('state:setCachedFileList', repoId, contextKey, files) as Promise<void>,
+		getBranchBase: (repoId, branch) =>
+			ipcRenderer.invoke('state:getBranchBase', repoId, branch) as Promise<string | null>,
+		setBranchBase: (repoId, branch, base) =>
+			ipcRenderer.invoke('state:setBranchBase', repoId, branch, base) as Promise<void>,
 		getCommitDraft: (repoId) =>
 			ipcRenderer.invoke('state:getCommitDraft', repoId) as Promise<CommitDraft>,
 		setCommitDraft: (repoId, draft) =>

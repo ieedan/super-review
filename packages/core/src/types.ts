@@ -1249,6 +1249,9 @@ export interface PreloadAPI {
 			opts: { deleteRemote: boolean; upstream?: string }
 		): Promise<DeleteBranchResult>;
 		listChangedFiles(repoId: string, ctx: DiffContext): Promise<ChangedFile[]>;
+		// Whether a ref resolves to a commit locally. Used on a cold start to
+		// confirm a remembered branch base still exists before diffing against it.
+		refExists(repoId: string, ref: string): Promise<boolean>;
 		getDiff(repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData>;
 		fetchOrigin(repoId: string): Promise<{ ok: boolean; error?: string }>;
 		getPushStatus(repoId: string): Promise<PushStatus>;
@@ -1488,6 +1491,17 @@ export interface PreloadAPI {
 			collapsed: boolean
 		): Promise<void>;
 		clearCollapsedFiles(repoId: string, contextKey: string): Promise<void>;
+		// The last-computed changed-file list for a context, persisted so a cold
+		// start can paint the sidebar (with seen markers) instantly while the git
+		// diff revalidates in the background. Empty array if none is cached.
+		getCachedFileList(repoId: string, contextKey: string): Promise<ChangedFile[]>;
+		setCachedFileList(repoId: string, contextKey: string, files: ChangedFile[]): Promise<void>;
+		// The non-default base ref the Branch diff last used for a checked-out
+		// branch (a pinned `pr/<n>/base`), remembered so a cold start targets it
+		// from the first paint instead of flipping off the local default branch
+		// once the async PR lookup lands. Null when none was remembered.
+		getBranchBase(repoId: string, branch: string): Promise<string | null>;
+		setBranchBase(repoId: string, branch: string, base: string | null): Promise<void>;
 		getCommitDraft(repoId: string): Promise<CommitDraft>;
 		setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
 	};

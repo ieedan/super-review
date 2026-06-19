@@ -83,6 +83,7 @@ import {
 	fetchOrigin,
 	fetchPRRef,
 	resolveRef,
+	refExists,
 	getConflicts,
 	getDefaultBranch,
 	recheckConflicts,
@@ -133,6 +134,8 @@ import { listTemplates } from '@super-review/core';
 import {
 	clearCollapsedFiles,
 	clearSeen,
+	getBranchBase,
+	getCachedFileList,
 	getCollapsedFiles,
 	getCommitDraft,
 	getPrefs,
@@ -141,6 +144,8 @@ import {
 	getSeenSignatures,
 	listRepos,
 	removeRepo,
+	setBranchBase,
+	setCachedFileList,
 	setCommitDraft,
 	setFileCollapsed,
 	setPrefs,
@@ -640,6 +645,10 @@ export function registerIpc(): void {
 			return listChangedFiles(repoOrThrow(repoId).path, ctx);
 		}
 	);
+
+	ipcMain.handle('git:refExists', async (_e, repoId: string, ref: string): Promise<boolean> => {
+		return refExists(repoOrThrow(repoId).path, ref);
+	});
 
 	ipcMain.handle(
 		'git:getDiff',
@@ -1796,6 +1805,34 @@ export function registerIpc(): void {
 
 	ipcMain.handle('state:clearCollapsedFiles', async (_e, repoId: string, contextKey: string) =>
 		clearCollapsedFiles(repoId, contextKey)
+	);
+
+	ipcMain.handle(
+		'state:getCachedFileList',
+		async (_e, repoId: string, contextKey: string): Promise<ChangedFile[]> => {
+			return getCachedFileList(repoId, contextKey);
+		}
+	);
+
+	ipcMain.handle(
+		'state:setCachedFileList',
+		async (_e, repoId: string, contextKey: string, files: ChangedFile[]) => {
+			setCachedFileList(repoId, contextKey, files);
+		}
+	);
+
+	ipcMain.handle(
+		'state:getBranchBase',
+		async (_e, repoId: string, branch: string): Promise<string | null> => {
+			return getBranchBase(repoId, branch);
+		}
+	);
+
+	ipcMain.handle(
+		'state:setBranchBase',
+		async (_e, repoId: string, branch: string, base: string | null) => {
+			setBranchBase(repoId, branch, base);
+		}
 	);
 
 	ipcMain.handle(

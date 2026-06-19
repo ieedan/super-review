@@ -493,7 +493,7 @@
 									{/if}
 									<button
 										type="button"
-										class="truncate text-left hover:text-foreground disabled:hover:text-current"
+										class="min-w-0 truncate text-left hover:text-foreground disabled:hover:text-current"
 										disabled={!item.url}
 										onclick={() => item.url && viewOnGithub(item.url)}
 										title={item.url ? `${item.author} · view commit on GitHub` : item.author}
