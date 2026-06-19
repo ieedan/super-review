@@ -41,6 +41,21 @@ function poolSize(): number {
 	return Math.max(2, Math.min(4, cores - 1));
 }
 
+// Pool render options that must survive a theme swap. `setRenderOptions`
+// (see store.svelte.ts `applyDiffTheme`) REPLACES the pool's whole render-options
+// bag and defaults every field it isn't handed, so a call that passes only
+// `theme` silently resets these back to Pierre's defaults. Re-spread this into
+// every `setRenderOptions` call so they persist:
+//   - `useTokenTransformer` emits the per-token `data-char` offsets that the
+//     package.json npm hover cards ride on (without it, no token events fire);
+//   - `lineDiffType: 'char'` keeps character-level intra-line diffs (Pierre's
+//     default is 'word-alt').
+// Keeping them here means the boot config below and `applyDiffTheme` can't drift.
+export const POOL_PERSISTENT_RENDER_OPTIONS = {
+	lineDiffType: 'char',
+	useTokenTransformer: true
+} as const;
+
 let pool: WorkerPoolManager | undefined;
 let initialized = false;
 
@@ -62,11 +77,10 @@ export function initDiffWorkerPool(): void {
 				// Must match the main-thread highlighter (diff-highlighter.ts) so a
 				// worker-rendered diff and a main-thread fallback render identically.
 				langs: ['javascript', 'typescript', 'tsx', 'jsx', 'json', 'css', 'html'],
-				// Character-level intra-line diffs: highlight the exact changed
-				// characters within a modified line, not just whole words (Pierre's
-				// default is 'word-alt'). The worker path is what the main diff view
-				// uses, so this — not the FileDiff constructor option — governs it.
-				lineDiffType: 'char'
+				// Character-level intra-line diffs + per-token `data-char` offsets (for
+				// the package.json hover cards). These must also be re-passed on every
+				// `setRenderOptions` call or a theme swap resets them (see the constant).
+				...POOL_PERSISTENT_RENDER_OPTIONS
 			}
 		});
 	} catch (err) {

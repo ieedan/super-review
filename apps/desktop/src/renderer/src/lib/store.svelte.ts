@@ -48,7 +48,7 @@ import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@shared/hotkeys';
 import { comparePathsVSCodeStyle } from '$lib/utils';
 import { DEFAULT_DIFF_THEME, diffThemePair } from '$lib/diff-themes';
-import { getDiffWorkerPool } from '$lib/diff-worker-pool';
+import { getDiffWorkerPool, POOL_PERSISTENT_RENDER_OPTIONS } from '$lib/diff-worker-pool';
 
 export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
 export type SettingsScrollTarget = 'hidden-files';
@@ -966,7 +966,14 @@ function applyTheme(theme: 'light' | 'dark'): void {
 // keeps flipping light/dark in CSS. No-ops until the pool exists; the App boots
 // it before prefs load, and applyDiffTheme runs again right after prefs land.
 function applyDiffTheme(): void {
-	void getDiffWorkerPool()?.setRenderOptions({ theme: diffThemePair(app.diffTheme) });
+	// `setRenderOptions` replaces the pool's whole render-options bag and defaults
+	// every field it isn't handed, so re-pass the options that must persist
+	// (char-level diffs + the `data-char` token offsets the hover cards need) —
+	// otherwise a theme swap silently resets them. See POOL_PERSISTENT_RENDER_OPTIONS.
+	void getDiffWorkerPool()?.setRenderOptions({
+		theme: diffThemePair(app.diffTheme),
+		...POOL_PERSISTENT_RENDER_OPTIONS
+	});
 }
 
 // Accent palette. Each accent maps to an `.accent-*` class that overrides the

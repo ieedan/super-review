@@ -32,6 +32,9 @@ import type {
 	LocalOnlyBranch,
 	ManagedStash,
 	NewReviewCommentInput,
+	NpmPackageResult,
+	ReleaseNotesResult,
+	ReleaseNotesRangeResult,
 	PRChecksSummary,
 	PRReviewComment,
 	PRSource,
@@ -99,6 +102,7 @@ import {
 	undoLastCommit
 } from '@super-review/core';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
+import { getNpmPackageInfo } from './npm-service.js';
 import * as gh from './github-service.js';
 import {
 	clearSessions,
@@ -1265,6 +1269,43 @@ export function registerIpc(): void {
 			// threadId is a global GraphQL node id, so no owner/repo is needed —
 			// only the account whose token authorizes the mutation.
 			return gh.setReviewThreadResolved(threadId, resolved, repo.githubAccountId);
+		}
+	);
+
+	// ─── npm ───────────────────────────────────────────────────────────────
+	// Trimmed npm-registry metadata for the package.json hover cards. Cached in
+	// npm-service; resolves to an error variant rather than throwing.
+	ipcMain.handle('npm:getPackageInfo', async (_e, name: string): Promise<NpmPackageResult> => {
+		return getNpmPackageInfo(name);
+	});
+
+	// GitHub release notes for a package version (the hover card's "What's new"
+	// disclosure). Resolves `{ release: null }` for non-GitHub repos / no matching
+	// release, and an error variant rather than throwing.
+	ipcMain.handle(
+		'npm:getReleaseNotes',
+		async (
+			_e,
+			repositoryUrl: string,
+			packageName: string,
+			version: string
+		): Promise<ReleaseNotesResult> => {
+			return gh.getReleaseNotes(repositoryUrl, packageName, version);
+		}
+	);
+
+	// Release notes for every release between two versions (a dep that changed in
+	// the diff). Newest-first; resolves an empty/error variant rather than throwing.
+	ipcMain.handle(
+		'npm:getReleaseNotesRange',
+		async (
+			_e,
+			repositoryUrl: string,
+			packageName: string,
+			fromVersion: string,
+			toVersion: string
+		): Promise<ReleaseNotesRangeResult> => {
+			return gh.getReleaseNotesRange(repositoryUrl, packageName, fromVersion, toVersion);
 		}
 	);
 
