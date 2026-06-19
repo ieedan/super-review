@@ -188,7 +188,11 @@
 	// working on, not a read-only browse of someone else's PR.
 	const canAct = $derived(!isReadOnlyView());
 
-	const checks = $derived(mergeBox?.checks ?? null);
+	// CI checks come from the shared `prChecks` store (same fetch the header button
+	// reads), keyed to this PR so a stale entry never paints the wrong one.
+	const checks = $derived(
+		app.prChecks && pr && app.prChecks.number === pr.number ? app.prChecks.summary : null
+	);
 	const checksState = $derived(checks && checks.state !== 'none' ? checks.state : null);
 	const failing = $derived(checks?.checks.filter((c) => c.state === 'failure') ?? []);
 	const running = $derived(checks?.checks.filter((c) => c.state === 'pending') ?? []);

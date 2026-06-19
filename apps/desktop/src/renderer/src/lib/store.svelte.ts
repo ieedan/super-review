@@ -321,10 +321,12 @@ interface AppState {
 	// first paint — before the async PR lookup resolves — so the Branch diff's
 	// seen-state context key doesn't flip ~1s in. Null when none is remembered.
 	rememberedBranchBase: string | null;
-	// CI/workflow status for `branchPR`'s head commit — aggregate plus the
-	// individual checks for a hover breakdown. Keyed by PR number so a stale poll
-	// result can't paint the wrong PR. Polled on an interval while a PR is shown.
-	branchPRChecks: { number: number; summary: PRChecksSummary } | null;
+	// CI/workflow status for the focused PR's head commit (`activePR ?? branchPR`)
+	// — aggregate plus the individual checks for a hover breakdown. The single
+	// source the header button AND the Conversation merge box both read, so they
+	// never skew. Keyed by PR number so a stale poll can't paint the wrong PR;
+	// polled on an interval while a PR is shown.
+	prChecks: { number: number; summary: PRChecksSummary } | null;
 	// Whether the active account can push commits to `branchPR`'s head branch.
 	// null while unknown / not applicable; drives the commit-box warning so it
 	// only fires when a push would actually be rejected.
@@ -386,15 +388,13 @@ interface AppState {
 	// context; the panel falls back to 'comments' (local/review comments) otherwise.
 	// Ephemeral (per launch).
 	commentsSidebarTab: 'comments' | 'conversation';
-	// Merge box (Conversation tab): mergeability + CI checks for the panel's PR
-	// (activePR ?? branchPR). Fetched on demand when the panel is shown; keyed by
-	// PR number so a stale fetch can't paint the wrong PR. `mergeable` is null
-	// while GitHub is still computing it.
+	// Mergeability for the focused PR (`activePR ?? branchPR`). Checks live in the
+	// shared `prChecks` store, not here, so the merge box and header button can't
+	// disagree. Fetched on demand when the Conversation panel is shown.
 	mergeBox: {
 		number: number;
 		mergeable: boolean | null;
 		mergeableState: string;
-		checks: PRChecksSummary;
 	} | null;
 	loadingMergeBox: boolean;
 	// Set while a merge / ready-for-review action is in flight so the merge box's
@@ -761,7 +761,7 @@ const initial: AppState = {
 	branchPR: null,
 	fetchedPRBases: new Set<number>(),
 	rememberedBranchBase: null,
-	branchPRChecks: null,
+	prChecks: null,
 	branchPRPushAccess: null,
 	repoPushAccess: null,
 	forkPrompt: null,
@@ -1525,10 +1525,10 @@ async function refreshBranchPR(): Promise<void> {
 		}
 	}
 	// Drop any status for a PR we're no longer showing, then refresh.
-	if (app.branchPRChecks && app.branchPRChecks.number !== app.branchPR?.number) {
-		app.branchPRChecks = null;
+	if (app.prChecks && app.prChecks.number !== mergeBoxPR()?.number) {
+		app.prChecks = null;
 	}
-	await refreshBranchPRChecks();
+	await refreshPrChecks();
 	void refreshBranchPRPushAccess();
 }
 
@@ -1558,13 +1558,15 @@ async function resolveViewBranchPR(branch: string): Promise<void> {
 	}
 }
 
-// Poll the CI/workflow status for the current branch PR's head commit. Cheap
-// and failure-silent — the button just hides the status indicator on error or
-// when nothing reports. Called after `refreshBranchPR` and on a timer.
-async function refreshBranchPRChecks(): Promise<void> {
-	const pr = app.branchPR;
+// Poll the CI/workflow status for the focused PR's head commit (`activePR ??
+// branchPR`) — the single fetch that feeds both the header button and the
+// Conversation merge box. Cheap and failure-silent: the button just hides the
+// indicator on error or when nothing reports. Called after `refreshBranchPR`,
+// when the Conversation panel opens, and on a timer.
+async function refreshPrChecks(): Promise<void> {
+	const pr = mergeBoxPR();
 	if (!app.activeRepo || !pr) {
-		app.branchPRChecks = null;
+		app.prChecks = null;
 		return;
 	}
 	try {
@@ -1573,13 +1575,13 @@ async function refreshBranchPRChecks(): Promise<void> {
 			pr.headSha,
 			...prHostArgs(pr)
 		);
-		// The PR may have changed while the request was in flight; only apply the
-		// result if it still matches what we're showing.
-		if (app.branchPR?.number === pr.number) {
-			app.branchPRChecks = { number: pr.number, summary };
+		// The focused PR may have changed while the request was in flight; only
+		// apply the result if it still matches what we're showing.
+		if (mergeBoxPR()?.number === pr.number) {
+			app.prChecks = { number: pr.number, summary };
 		}
 	} catch (err) {
-		console.error('[branchPR] checks lookup threw:', err);
+		console.error('[prChecks] checks lookup threw:', err);
 	}
 }
 
@@ -1615,10 +1617,11 @@ function applyPRStatus(full: PRSummary): void {
 // "unknown" (still-computing) result retries once rather than looping forever.
 let mergeBoxRetriedFor: number | null = null;
 
-// Fetch mergeability (single-PR endpoint) and CI checks for the merge box's PR
-// in parallel, then fold the fresh status back into the PR summaries. Guarded
-// against a stale result landing after the user switched PRs. Failure-silent —
-// the box just shows whatever it last had.
+// Fetch mergeability (single-PR endpoint) for the merge box's PR, then fold the
+// fresh status back into the PR summaries. CI checks come from the shared
+// `prChecks` store (refreshed in parallel here so opening the panel doesn't wait
+// a poll cycle), not from here. Guarded against a stale result landing after the
+// user switched PRs. Failure-silent — the box just shows whatever it last had.
 async function refreshMergeBox(): Promise<void> {
 	const pr = mergeBoxPR();
 	if (!app.activeRepo || !pr) {
@@ -1627,21 +1630,19 @@ async function refreshMergeBox(): Promise<void> {
 	}
 	const repoId = app.activeRepo.id;
 	app.loadingMergeBox = true;
+	// Keep the shared checks store in lockstep with the merge box so the panel's
+	// CI rows are current the moment it opens.
+	void refreshPrChecks();
 	try {
-		const host = prHostArgs(pr);
-		const [full, checks] = await Promise.all([
-			window.api.github.getPR(repoId, pr.number, ...host),
-			window.api.github.getChecks(repoId, pr.headSha, ...host)
-		]);
-		// Bail if the panel's PR changed while these were in flight.
+		const full = await window.api.github.getPR(repoId, pr.number, ...prHostArgs(pr));
+		// Bail if the panel's PR changed while the request was in flight.
 		const cur = mergeBoxPR();
 		if (app.activeRepo?.id !== repoId || !cur || cur.number !== pr.number) return;
 		const mergeable = full ? (full.mergeable ?? null) : null;
 		app.mergeBox = {
 			number: pr.number,
 			mergeable,
-			mergeableState: full?.mergeableState ?? 'unknown',
-			checks
+			mergeableState: full?.mergeableState ?? 'unknown'
 		};
 		if (full) applyPRStatus(full);
 		// GitHub computes mergeability asynchronously; a freshly-opened PR can come
@@ -3723,9 +3724,10 @@ export const actions = {
 
 	// ─── Merge box (Conversation tab) ──────────────────────────────────────────
 
-	// Load the merge box (mergeability + checks) for the panel's PR if we don't
-	// already have it. Called when the Conversation tab is shown / the PR changes;
-	// gated on PR number so re-renders don't refetch.
+	// Load the merge box (mergeability) for the panel's PR if we don't already
+	// have it. Called when the Conversation tab is shown / the PR changes; gated
+	// on PR number so re-renders don't refetch. `refreshMergeBox` also kicks the
+	// shared `prChecks` fetch, so the panel's CI rows fill in on open too.
 	ensureMergeBox(prNumber: number): void {
 		if (app.loadingMergeBox) return;
 		if (app.mergeBox?.number === prNumber) return;
@@ -3735,6 +3737,19 @@ export const actions = {
 	// Force a merge-box refetch (e.g. after a merge / ready action).
 	async refreshMergeBox(): Promise<void> {
 		await refreshMergeBox();
+	},
+
+	// Poll the merge box's mergeability so the Conversation tab stays current while
+	// GitHub recomputes it. Gated on the Conversation tab actually being shown
+	// (sidebar tab or fullscreen) so we don't fetch getPR when nobody's looking.
+	// Checks aren't polled here — they ride the always-on `refreshPrChecks` poll.
+	pollMergeBox(): void {
+		if (!app.mergeBox) return;
+		const showing =
+			app.conversationFullscreen ||
+			(app.commentsSidebarOpen && effectiveCommentsSidebarTab() === 'conversation');
+		if (!showing) return;
+		void refreshMergeBox();
 	},
 
 	// Merge the panel's PR with the chosen method. Returns true on success. On a
@@ -5591,8 +5606,8 @@ export const actions = {
 		app.nowTick++;
 	},
 
-	async refreshBranchPRChecks(): Promise<void> {
-		await refreshBranchPRChecks();
+	async refreshPrChecks(): Promise<void> {
+		await refreshPrChecks();
 	},
 
 	async refreshGithubAccounts(): Promise<void> {

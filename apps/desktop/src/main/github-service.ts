@@ -1472,8 +1472,7 @@ function mapTimelineItem(
 			} else if (e.event === 'renamed') {
 				detail = e.rename?.to;
 				renamedFrom = e.rename?.from;
-			}
-			else if (e.event === 'review_requested' || e.event === 'review_request_removed')
+			} else if (e.event === 'review_requested' || e.event === 'review_request_removed')
 				detail = e.requested_reviewer?.login ?? e.requested_team?.name;
 			else if (e.event === 'assigned' || e.event === 'unassigned') detail = e.assignee?.login;
 			return {

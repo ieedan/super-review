@@ -378,9 +378,13 @@
 		// Poll the branch PR's CI/workflow status so the action button's indicator
 		// stays current while checks run. Only while visible and a PR is shown.
 		const checksId = window.setInterval(() => {
-			if (app.branchPR && document.visibilityState === 'visible') {
-				void actions.refreshBranchPRChecks();
-			}
+			if (document.visibilityState !== 'visible') return;
+			// One checks fetch feeds both the header button and the Conversation merge
+			// box (shared `prChecks` store), so they never skew.
+			void actions.refreshPrChecks();
+			// Mergeability is only shown in the Conversation tab — poll it only when
+			// that tab is actually visible (gated inside the action).
+			actions.pollMergeBox();
 		}, CHECKS_POLL_MS);
 
 		return () => {
