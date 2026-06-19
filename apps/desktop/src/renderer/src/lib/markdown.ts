@@ -20,6 +20,7 @@
 // renderer where an injected script would be dangerous.
 import { marked, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
+import { emojify } from 'node-emoji';
 import { getSharedHighlighter } from '@pierre/diffs';
 
 type ShikiTheme = 'github-dark' | 'github-light';
@@ -80,6 +81,15 @@ function escapeHtml(s: string): string {
 marked.use({
 	async: true,
 	async walkTokens(token) {
+		// Replace GitHub `:shortcode:` emoji with the unicode glyph, GitHub-style.
+		// Scoped to leaf text tokens so shortcodes inside code spans / fenced blocks
+		// (types 'codespan' / 'code') are left verbatim. A text token that owns child
+		// tokens renders those, not `.text`, so mutating it there is a harmless no-op.
+		if (token.type === 'text') {
+			const t = token as Tokens.Text;
+			if (t.text.includes(':')) t.text = emojify(t.text);
+			return;
+		}
 		if (token.type !== 'code') return;
 		const code = token as Tokens.Code;
 		const lang = (code.lang ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
@@ -157,6 +167,19 @@ export function isMarkdownPath(path: string): boolean {
  * Render Markdown source to sanitized, GFM-compatible HTML with Shiki-
  * highlighted code blocks. `theme` selects the Shiki theme to match the app.
  */
+// Flip the Nth GFM task-list checkbox in `src` to `checked`, returning the new
+// markdown. Matches `- [ ]` / `* [x]` / `1. [ ]` item markers in document order —
+// the same order the rendered checkboxes appear — so `index` lines up with the
+// clicked input. Returns `src` unchanged when `index` is out of range.
+export function toggleTaskListItem(src: string, index: number, checked: boolean): string {
+	let n = -1;
+	return src.replace(/^(\s*(?:[-*+]|\d+\.)\s+\[)([ xX])(\])/gm, (m, pre, _mark, post) => {
+		n++;
+		if (n !== index) return m;
+		return `${pre}${checked ? 'x' : ' '}${post}`;
+	});
+}
+
 export async function renderMarkdown(src: string, theme: 'light' | 'dark'): Promise<string> {
 	currentShikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
 	const fm = extractFrontmatter(src);

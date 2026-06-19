@@ -276,6 +276,24 @@ const api: PreloadAPI = {
 				owner,
 				repo
 			) as Promise<void>,
+		updateIssueComment: (repoId, commentId, body, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:updateIssueComment',
+				repoId,
+				commentId,
+				body,
+				owner,
+				repo
+			) as Promise<string>,
+		updatePullRequestBody: (repoId, prNumber, body, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:updatePullRequestBody',
+				repoId,
+				prNumber,
+				body,
+				owner,
+				repo
+			) as Promise<string>,
 		getAuthErrors: () => ipcRenderer.invoke('github:getAuthErrors') as Promise<GithubAuthError[]>,
 		validateAccounts: () =>
 			ipcRenderer.invoke('github:validateAccounts') as Promise<GithubAuthError[]>

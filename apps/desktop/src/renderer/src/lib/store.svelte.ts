@@ -3430,6 +3430,66 @@ export const actions = {
 		}
 	},
 
+	// Edit a conversation comment's body — both the explicit "Edit" action and a
+	// task-list checkbox toggle route through here. Optimistic, reconciling to the
+	// body GitHub returns. Returns true on success so the editor can close.
+	async editConversationComment(commentId: number, body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const prev = app.prConversation;
+		app.prConversation = prev.map((i) =>
+			i.kind === 'comment' && i.id === commentId ? { ...i, body } : i
+		);
+		try {
+			const saved = await window.api.github.updateIssueComment(
+				app.activeRepo.id,
+				commentId,
+				body,
+				...prHostArgs(commentablePR())
+			);
+			app.prConversation = app.prConversation.map((i) =>
+				i.kind === 'comment' && i.id === commentId ? { ...i, body: saved } : i
+			);
+			return true;
+		} catch (err) {
+			app.prConversation = prev;
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	// Edit the PR description (body) — the description card's edit and its task-list
+	// checkbox toggles. Updates whichever summary holds the PR (activePR in a PR
+	// view, branchPR on the Branch tab). Optimistic with rollback.
+	async editPRDescription(body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return false;
+		const prevActive = app.activePR;
+		const prevBranch = app.branchPR;
+		if (app.activePR) app.activePR = { ...app.activePR, body };
+		if (app.branchPR && app.branchPR.number === prNumber) {
+			app.branchPR = { ...app.branchPR, body };
+		}
+		try {
+			const saved = await window.api.github.updatePullRequestBody(
+				app.activeRepo.id,
+				prNumber,
+				body,
+				...prHostArgs(commentablePR())
+			);
+			if (app.activePR) app.activePR = { ...app.activePR, body: saved };
+			if (app.branchPR && app.branchPR.number === prNumber) {
+				app.branchPR = { ...app.branchPR, body: saved };
+			}
+			return true;
+		} catch (err) {
+			app.activePR = prevActive;
+			app.branchPR = prevBranch;
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
 	openComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number, replyTo?: number): void {
 		const key = composerKey(filePath, side, line);
 		if (app.pendingComposers[key]) return;

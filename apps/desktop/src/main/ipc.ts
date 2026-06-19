@@ -1391,6 +1391,46 @@ export function registerIpc(): void {
 		}
 	);
 
+	ipcMain.handle(
+		'github:updateIssueComment',
+		async (
+			_e,
+			repoId: string,
+			commentId: number,
+			body: string,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<string> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.updateIssueComment(owner, name, commentId, body, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:updatePullRequestBody',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			body: string,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<string> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.updatePullRequestBody(owner, name, prNumber, body, repo.githubAccountId);
+		}
+	);
+
 	// ─── npm ───────────────────────────────────────────────────────────────
 	// Trimmed npm-registry metadata for the package.json hover cards. Cached in
 	// npm-service; resolves to an error variant rather than throwing.

@@ -1455,8 +1455,11 @@ function mapTimelineItem(
 		case 'assigned':
 		case 'unassigned': {
 			let detail: string | undefined;
-			if (e.event === 'labeled' || e.event === 'unlabeled') detail = e.label?.name;
-			else if (e.event === 'renamed') detail = e.rename?.to;
+			let labelColor: string | undefined;
+			if (e.event === 'labeled' || e.event === 'unlabeled') {
+				detail = e.label?.name;
+				labelColor = e.label?.color ?? undefined;
+			} else if (e.event === 'renamed') detail = e.rename?.to;
 			else if (e.event === 'review_requested' || e.event === 'review_request_removed')
 				detail = e.requested_reviewer?.login ?? e.requested_team?.name;
 			else if (e.event === 'assigned' || e.event === 'unassigned') detail = e.assignee?.login;
@@ -1467,6 +1470,7 @@ function mapTimelineItem(
 				actor: e.actor?.login ?? 'unknown',
 				actorAvatarUrl: e.actor?.avatar_url ?? undefined,
 				detail,
+				labelColor,
 				createdAt: e.created_at
 			};
 		}
@@ -1563,4 +1567,33 @@ export async function deleteIssueComment(
 ): Promise<void> {
 	const o = octokit(resolveAccount(accountId));
 	await o.issues.deleteComment({ owner, repo, comment_id: commentId });
+}
+
+// Edit a conversation comment's body (the user editing their own comment, or a
+// task-list checkbox toggle rewriting the markdown). Returns the new body as
+// GitHub stored it.
+export async function updateIssueComment(
+	owner: string,
+	repo: string,
+	commentId: number,
+	body: string,
+	accountId?: string | null
+): Promise<string> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.issues.updateComment({ owner, repo, comment_id: commentId, body });
+	return res.data.body ?? body;
+}
+
+// Edit the PR's description (its body) — used by the Conversation tab's
+// description card edit and its task-list checkbox toggles. Returns the new body.
+export async function updatePullRequestBody(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	body: string,
+	accountId?: string | null
+): Promise<string> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.pulls.update({ owner, repo, pull_number: prNumber, body });
+	return res.data.body ?? body;
 }

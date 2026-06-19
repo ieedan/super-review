@@ -13,8 +13,9 @@
 	import Github from './icons/GithubIcon.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import MarkdownComposer from './MarkdownComposer.svelte';
+	import Pencil from '@lucide/svelte/icons/pencil';
 	import MarkdownView from './MarkdownView.svelte';
-	import { actions, app } from '$lib/store.svelte';
+	import { actions, app, effectiveGithubAccount } from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { PRConversationItem, PRConversationReview } from '@shared/types';
@@ -32,6 +33,65 @@
 	// `branchPR`. CommentsPanel only mounts this panel inside `isPRCommentContext()`,
 	// so one of the two is always set.
 	const pr = $derived(app.activePR ?? app.branchPR);
+
+	// The PR author can edit the description (and toggle its task checkboxes). We
+	// gate on author identity rather than full write access — which we don't track
+	// here — and let the API reject anything it shouldn't allow.
+	const canEditDescription = $derived(!!pr && effectiveGithubAccount()?.login === pr.author);
+
+	// Inline edit state. At most one comment (or the description) is edited at a
+	// time; `editing` holds the target and the draft is kept locally so typing
+	// doesn't churn the feed.
+	let editing = $state<{ kind: 'comment'; id: number } | { kind: 'description' } | null>(null);
+	let editDraft = $state('');
+	let editSubmitting = $state(false);
+
+	function startEditComment(id: number, body: string): void {
+		editing = { kind: 'comment', id };
+		editDraft = body;
+	}
+	function startEditDescription(body: string): void {
+		editing = { kind: 'description' };
+		editDraft = body;
+	}
+	function cancelEdit(): void {
+		editing = null;
+		editDraft = '';
+	}
+	async function saveEdit(): Promise<void> {
+		if (!editing || editSubmitting) return;
+		const body = editDraft.trim();
+		if (!body) return;
+		editSubmitting = true;
+		const ok =
+			editing.kind === 'comment'
+				? await actions.editConversationComment(editing.id, body)
+				: await actions.editPRDescription(body);
+		editSubmitting = false;
+		if (ok) cancelEdit();
+	}
+	function onEditKeydown(e: KeyboardEvent): void {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			void saveEdit();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelEdit();
+		}
+	}
+
+	// Inline style for a label chip, tinting GitHub's label color into a readable
+	// pill (faint fill + accent border/text), matching how GitHub renders labels in
+	// dark mode. `color` is the API's hex without a leading '#'.
+	function labelChipStyle(color: string | undefined): string {
+		if (!color) return '';
+		const c = `#${color}`;
+		return (
+			`background: color-mix(in srgb, ${c} 18%, transparent);` +
+			`border-color: color-mix(in srgb, ${c} 45%, transparent);` +
+			`color: ${c};`
+		);
+	}
 
 	// Composer state for posting a new top-level conversation comment.
 	let draft = $state('');
@@ -140,6 +200,34 @@
 	{/if}
 {/snippet}
 
+{#snippet editComposer()}
+	<MarkdownComposer
+		bind:value={editDraft}
+		placeholder="Leave a comment"
+		disabled={editSubmitting}
+		onkeydown={onEditKeydown}
+		autofocus
+	/>
+	<div class="mt-2 flex items-center justify-end gap-2">
+		<button
+			type="button"
+			class="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+			onclick={cancelEdit}
+		>
+			Cancel
+		</button>
+		<button
+			type="button"
+			class="rounded-md px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
+			style="background: var(--color-primary);"
+			disabled={!editDraft.trim() || editSubmitting}
+			onclick={saveEdit}
+		>
+			{editSubmitting ? 'Saving…' : 'Save'}
+		</button>
+	</div>
+{/snippet}
+
 <div class="flex h-full min-h-0 flex-col">
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#if !pr}
@@ -166,7 +254,9 @@
 						src={pr.authorAvatarUrl}
 						alt={pr.author}
 					/>
-					<div class="comment-card relative min-w-0 flex-1 rounded-lg border border-border bg-card">
+					<div
+						class="comment-card group relative min-w-0 flex-1 rounded-lg border border-border bg-card"
+					>
 						<div
 							class="comment-header flex min-h-6 items-center gap-1.5 rounded-t-[7px] border-b border-border px-3 py-1"
 						>
@@ -175,10 +265,29 @@
 							<span class="shrink-0 text-[11px] text-muted-foreground">
 								opened {formatRelative(pr.createdAt)}
 							</span>
+							<div class="flex-1"></div>
+							{#if canEditDescription && editing?.kind !== 'description'}
+								<button
+									type="button"
+									class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
+									title="Edit description"
+									onclick={() => startEditDescription(pr.body)}
+								>
+									<Pencil class="size-3.5" />
+								</button>
+							{/if}
 						</div>
 						<div class="px-3 py-2">
-							{#if pr.body.trim()}
-								<MarkdownView src={pr.body} class="text-[13px]" />
+							{#if editing?.kind === 'description'}
+								{@render editComposer()}
+							{:else if pr.body.trim()}
+								<MarkdownView
+									src={pr.body}
+									class="text-[13px]"
+									onToggleTask={canEditDescription
+										? (s) => void actions.editPRDescription(s)
+										: undefined}
+								/>
 							{:else}
 								<p class="text-[13px] text-muted-foreground italic">No description provided.</p>
 							{/if}
@@ -234,6 +343,9 @@
 													{#if item.url}
 														<DropdownMenu.Separator />
 													{/if}
+													<DropdownMenu.Item onSelect={() => startEditComment(item.id, item.body)}>
+														<Pencil class="size-3.5" /> Edit
+													</DropdownMenu.Item>
 													<DropdownMenu.Item
 														variant="destructive"
 														onSelect={() => actions.deleteConversationComment(item.id)}
@@ -246,7 +358,17 @@
 									{/if}
 								</div>
 								<div class="px-3 py-2">
-									<MarkdownView src={item.body} class="text-[13px]" />
+									{#if editing?.kind === 'comment' && editing.id === item.id}
+										{@render editComposer()}
+									{:else}
+										<MarkdownView
+											src={item.body}
+											class="text-[13px]"
+											onToggleTask={item.canDelete
+												? (s) => void actions.editConversationComment(item.id, s)
+												: undefined}
+										/>
+									{/if}
 								</div>
 							</div>
 						</div>
@@ -387,7 +509,20 @@
 								class="flex min-h-6 min-w-0 flex-1 items-center gap-1.5 text-[11px] text-muted-foreground"
 							>
 								<span class="font-medium text-foreground/80">{item.actor}</span>
-								<span class="truncate">{eventLabel(item)}</span>
+								{#if item.event === 'labeled' || item.event === 'unlabeled'}
+									<span class="shrink-0"
+										>{item.event === 'labeled' ? 'added the' : 'removed the'}</span
+									>
+									<span
+										class="inline-flex max-w-40 shrink-0 items-center truncate rounded-full border px-2 py-px text-[10px] font-medium"
+										style={labelChipStyle(item.labelColor)}
+									>
+										{item.detail}
+									</span>
+									<span class="shrink-0">label</span>
+								{:else}
+									<span class="truncate">{eventLabel(item)}</span>
+								{/if}
 								<div class="flex-1"></div>
 								<span class="shrink-0">{formatRelative(item.createdAt)}</span>
 							</div>

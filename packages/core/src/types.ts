@@ -513,6 +513,9 @@ export interface PRConversationEvent extends PRConversationBase {
 	actor: string;
 	actorAvatarUrl?: string;
 	detail?: string;
+	// For label events: the label's hex color (no leading '#'), so it renders as a
+	// colored chip like GitHub rather than plain text.
+	labelColor?: string;
 }
 
 // ─── Local review comments ───────────────────────────────────────────────────
@@ -1423,6 +1426,24 @@ export interface PreloadAPI {
 			owner?: string,
 			repo?: string
 		): Promise<void>;
+		// Edit a conversation comment's body (user edit, or a task-list checkbox
+		// toggle). Returns the body as GitHub stored it.
+		updateIssueComment(
+			repoId: string,
+			commentId: number,
+			body: string,
+			owner?: string,
+			repo?: string
+		): Promise<string>;
+		// Edit the PR description (its body) — the description card's edit and its
+		// task-list checkbox toggles. Returns the new body.
+		updatePullRequestBody(
+			repoId: string,
+			prNumber: number,
+			body: string,
+			owner?: string,
+			repo?: string
+		): Promise<string>;
 		// Resolve or unresolve a review thread by its GraphQL node id. Returns the
 		// thread's resolved state as reported back by GitHub.
 		setReviewThreadResolved(
