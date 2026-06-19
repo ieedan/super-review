@@ -29,11 +29,12 @@ import type {
 	RepoInfo,
 	Session,
 	SessionSummary,
+	HeaderItemVisibility,
 	TerminalKind,
 	UserPrefs,
 	ViewMode
 } from '@shared/types';
-import { WINDOW_BOUNDS } from '@shared/types';
+import { DEFAULT_HEADER_ITEMS, WINDOW_BOUNDS } from '@shared/types';
 import { diffContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
@@ -242,6 +243,9 @@ interface AppState {
 	// How many repos the repo picker's "Recent" section lists (see UserPrefs).
 	recentRepoCount: number;
 	hotkeys: Hotkeys;
+	// Visibility of the optional header controls (sidebar toggles, changeset,
+	// editor, terminal), toggled from the header's right-click menu.
+	headerItems: HeaderItemVisibility;
 	// Initial window bounds, applied on the next launch (see UserPrefs).
 	windowWidth: number;
 	windowHeight: number;
@@ -635,6 +639,7 @@ const initial: AppState = {
 	unmarkSeenOnChange: true,
 	recentRepoCount: 5,
 	hotkeys: DEFAULT_HOTKEYS,
+	headerItems: { ...DEFAULT_HEADER_ITEMS },
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
 	startMaximized: false,
@@ -2101,6 +2106,15 @@ export const actions = {
 		app.signCommits = value;
 		app.prefs = await window.api.state.setPrefs({ signCommits: value });
 	},
+	// Show/hide a single optional header control (sidebar toggle, changeset,
+	// editor, terminal) from the header's right-click menu. Updates the local
+	// copy first so the header reacts instantly, then persists the merged map.
+	async setHeaderItem(key: keyof HeaderItemVisibility, value: boolean): Promise<void> {
+		app.headerItems = { ...app.headerItems, [key]: value };
+		app.prefs = await window.api.state.setPrefs({
+			headerItems: { ...app.headerItems }
+		});
+	},
 	async setChangesetsEnabled(value: boolean): Promise<void> {
 		app.changesetsEnabled = value;
 		app.prefs = await window.api.state.setPrefs({ changesetsEnabled: value });
@@ -2187,6 +2201,7 @@ export const actions = {
 		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
 		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
+		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
 		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;

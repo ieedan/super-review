@@ -840,6 +840,34 @@ export const WINDOW_BOUNDS = {
 	minHeight: 480
 } as const;
 
+// Visibility of the optional, user-hidable controls in the top header. The
+// repo/branch picker, account switcher, refresh, update-branch, and primary
+// action buttons are always present and aren't listed here. Toggled from the
+// header's right-click menu; persisted in UserPrefs.
+export interface HeaderItemVisibility {
+	// The left "Changes" file-list sidebar toggle (panel-left icon), pinned to
+	// the left side of the header.
+	changesToggle: boolean;
+	// The right "Comments" sidebar toggle (panel-right icon), pinned to the
+	// right side of the header.
+	commentsToggle: boolean;
+	// The "Add a changeset" button (only ever shown when the repo uses changesets).
+	changeset: boolean;
+	// The "Open in editor" button.
+	editor: boolean;
+	// The "Open in terminal" button.
+	terminal: boolean;
+}
+
+// Everything visible by default; the user hides what they don't want.
+export const DEFAULT_HEADER_ITEMS: HeaderItemVisibility = {
+	changesToggle: true,
+	commentsToggle: true,
+	changeset: true,
+	editor: true,
+	terminal: true
+};
+
 export interface UserPrefs {
 	viewMode: ViewMode;
 	// Whether the diff view scrolls through all files at once ('scroll') or shows
@@ -926,6 +954,10 @@ export interface UserPrefs {
 	// ssh-keygen is too old (see checkSshSigningSupported), and any signing
 	// failure falls back to an unsigned commit. Turn off to commit unsigned.
 	signCommits: boolean;
+	// Which optional header controls are shown. Toggled from the header's
+	// right-click menu. Missing keys fall back to DEFAULT_HEADER_ITEMS so older
+	// persisted prefs (and any future additions) default to visible.
+	headerItems: HeaderItemVisibility;
 }
 
 export interface DeviceFlowStart {

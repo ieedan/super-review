@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import {
+	DEFAULT_HEADER_ITEMS,
 	WINDOW_BOUNDS,
 	type CommitDraft,
 	type GithubAccount,
@@ -80,7 +81,8 @@ const defaults: Schema = {
 		commentsSidebarOpen: false,
 		recentRepoCount: 5,
 		changesetsEnabled: true,
-		signCommits: true
+		signCommits: true,
+		headerItems: DEFAULT_HEADER_ITEMS
 	},
 	seen: {},
 	collapsedFiles: {},
@@ -219,6 +221,9 @@ export function getPrefs(): UserPrefs {
 	// Merge per-action so bindings added in later releases get their defaults
 	// even when an older prefs file already has a (partial) hotkeys object.
 	merged.hotkeys = { ...defaults.prefs.hotkeys, ...merged.hotkeys };
+	// Same per-key merge for header item visibility, so controls added later
+	// default to visible even when an older prefs file has a partial object.
+	merged.headerItems = { ...defaults.prefs.headerItems, ...merged.headerItems };
 	return merged;
 }
 
