@@ -158,7 +158,9 @@
 						alt={pr.author}
 					/>
 					<div class="comment-card relative min-w-0 flex-1 rounded-lg border border-border bg-card">
-						<div class="flex min-h-6 items-center gap-1.5 border-b border-border px-3 py-1">
+						<div
+							class="comment-header flex min-h-6 items-center gap-1.5 rounded-t-[7px] border-b border-border px-3 py-1"
+						>
 							<span class="truncate text-xs font-medium">{pr.author}</span>
 							{@render assocBadge(pr.authorAssociation)}
 							<span class="shrink-0 text-[11px] text-muted-foreground">
@@ -196,7 +198,9 @@
 							<div
 								class="comment-card relative min-w-0 flex-1 rounded-lg border border-border bg-card"
 							>
-								<div class="flex min-h-6 items-center gap-1.5 border-b border-border px-3 py-1">
+								<div
+									class="comment-header flex min-h-6 items-center gap-1.5 rounded-t-[7px] border-b border-border px-3 py-1"
+								>
 									<span class="truncate text-xs font-medium">{item.author}</span>
 									{@render assocBadge(item.authorAssociation)}
 									<span class="shrink-0 text-[11px] text-muted-foreground">
@@ -255,8 +259,8 @@
 							>
 								<div
 									class={[
-										'flex min-h-6 items-center gap-1.5 px-3 py-1',
-										item.body.trim() && 'border-b border-border'
+										'comment-header flex min-h-6 items-center gap-1.5 px-3 py-1',
+										item.body.trim() ? 'rounded-t-[7px] border-b border-border' : 'rounded-[7px]'
 									]}
 								>
 									{#if item.state === 'approved'}
@@ -300,8 +304,14 @@
 								onclick={() => item.url && viewOnGithub(item.url)}
 								title={item.url ? `${item.author} · view commit on GitHub` : item.author}
 							>
+								{#if item.authorAvatarUrl}
+									<img
+										class="size-4 shrink-0 rounded-full"
+										src={item.authorAvatarUrl}
+										alt={item.author}
+									/>
+								{/if}
 								<span class="truncate">{item.message}</span>
-								<span class="shrink-0 text-[11px] text-muted-foreground">{item.author}</span>
 								<div class="flex-1"></div>
 								{#if item.verified}
 									<span
@@ -382,28 +392,38 @@
 </div>
 
 <style>
-	/* GitHub-style speech-bubble tail: a small triangle on the comment box's left
-	   edge pointing back at the author avatar in the rail gutter. Two stacked
-	   triangles — a border-colored one and a card-colored one inset 1px — give the
-	   arrow a 1px outline matching the box border. Positioned to sit on the header
-	   bar, level with the avatar's center (~12px from the card top). */
+	/* The comment box's header bar is tinted a step away from the card body so the
+	   two read as distinct, GitHub-style. The same color fills the speech-bubble
+	   tail, which sits on the header. */
+	.comment-card {
+		--bubble: color-mix(in srgb, var(--color-muted) 55%, var(--color-card));
+	}
+	.comment-header {
+		background: var(--bubble);
+	}
+
+	/* GitHub-style speech-bubble tail: a triangle on the comment box's left edge
+	   pointing back at the author avatar in the rail gutter. The ::before is a
+	   border-colored triangle; the ::after is a bubble-colored fill 1px smaller and
+	   re-centered (margin-top) so the border shows as a 1px outline on BOTH
+	   diagonals, then nudged 1px right (margin-right) to overlap the box's left
+	   border so the tail merges into the header. Level with the avatar (~12px from
+	   the card top). */
 	.comment-card::before,
 	.comment-card::after {
 		content: '';
 		position: absolute;
 		top: 4px;
+		right: 100%;
 		width: 0;
 		height: 0;
-		border-style: solid;
-	}
-	.comment-card::before {
-		left: -8px;
-		border-width: 8px 8px 8px 0;
-		border-color: transparent var(--color-border) transparent transparent;
+		border: 8px solid transparent;
+		border-right-color: var(--color-border);
 	}
 	.comment-card::after {
-		left: -7px;
-		border-width: 7px 7px 7px 0;
-		border-color: transparent var(--color-card) transparent transparent;
+		border-width: 7px;
+		border-right-color: var(--bubble);
+		margin-top: 1px;
+		margin-right: -1px;
 	}
 </style>

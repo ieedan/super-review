@@ -1475,16 +1475,36 @@ export async function listConversation(
 	const viewer = resolveAccount(accountId);
 	const o = octokit(viewer);
 	// The PR's issue number equals its PR number; the timeline lives on the issue.
-	const events = await o.paginate(o.issues.listEventsForTimeline, {
-		owner,
-		repo,
-		issue_number: prNumber,
-		per_page: 100
-	});
+	// In parallel, list the PR's commits — the timeline's `committed` events carry
+	// only a git identity (no GitHub user), so we map each SHA to its author's
+	// avatar here to render the same avatars GitHub shows. Best-effort: a failed
+	// commit listing just leaves commits without avatars.
+	const [events, commits] = await Promise.all([
+		o.paginate(o.issues.listEventsForTimeline, {
+			owner,
+			repo,
+			issue_number: prNumber,
+			per_page: 100
+		}),
+		o
+			.paginate(o.pulls.listCommits, { owner, repo, pull_number: prNumber, per_page: 100 })
+			.catch(() => [] as Array<{ sha: string; author: unknown; committer: unknown }>)
+	]);
+	const commitAvatars = new Map<string, string>();
+	for (const c of commits) {
+		const avatar =
+			(c.author as { avatar_url?: string } | null)?.avatar_url ??
+			(c.committer as { avatar_url?: string } | null)?.avatar_url;
+		if (avatar) commitAvatars.set(c.sha, avatar);
+	}
 	const items: PRConversationItem[] = [];
 	for (const e of events) {
 		const mapped = mapTimelineItem(e, viewer?.login ?? null);
-		if (mapped) items.push(mapped);
+		if (!mapped) continue;
+		if (mapped.kind === 'commit') {
+			mapped.authorAvatarUrl = commitAvatars.get(mapped.sha) ?? mapped.authorAvatarUrl;
+		}
+		items.push(mapped);
 	}
 	// The timeline is roughly chronological already, but mixing `created_at`,
 	// `submitted_at` and commit dates can interleave slightly out of order — sort
