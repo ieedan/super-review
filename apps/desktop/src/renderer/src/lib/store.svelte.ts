@@ -3740,7 +3740,11 @@ export const actions = {
 	// Merge the panel's PR with the chosen method. Returns true on success. On a
 	// soft refusal (GitHub returns merged:false) or error, surfaces the message
 	// and leaves the box as-is.
-	async mergePullRequest(method: PRMergeMethod): Promise<boolean> {
+	async mergePullRequest(
+		method: PRMergeMethod,
+		commitTitle?: string,
+		commitMessage?: string
+	): Promise<boolean> {
 		if (!app.activeRepo) return false;
 		const pr = mergeBoxPR();
 		if (!pr) return false;
@@ -3750,7 +3754,9 @@ export const actions = {
 				app.activeRepo.id,
 				pr.number,
 				method,
-				...prHostArgs(pr)
+				...prHostArgs(pr),
+				commitTitle,
+				commitMessage
 			);
 			if (!res.merged) {
 				setError(res.message || 'GitHub declined to merge this pull request.');

@@ -1465,10 +1465,14 @@ function mapTimelineItem(
 		case 'unassigned': {
 			let detail: string | undefined;
 			let labelColor: string | undefined;
+			let renamedFrom: string | undefined;
 			if (e.event === 'labeled' || e.event === 'unlabeled') {
 				detail = e.label?.name;
 				labelColor = e.label?.color ?? undefined;
-			} else if (e.event === 'renamed') detail = e.rename?.to;
+			} else if (e.event === 'renamed') {
+				detail = e.rename?.to;
+				renamedFrom = e.rename?.from;
+			}
 			else if (e.event === 'review_requested' || e.event === 'review_request_removed')
 				detail = e.requested_reviewer?.login ?? e.requested_team?.name;
 			else if (e.event === 'assigned' || e.event === 'unassigned') detail = e.assignee?.login;
@@ -1479,6 +1483,7 @@ function mapTimelineItem(
 				actor: e.actor?.login ?? 'unknown',
 				actorAvatarUrl: e.actor?.avatar_url ?? undefined,
 				detail,
+				renamedFrom,
 				labelColor,
 				// The merge commit's short SHA, surfaced so the row reads "merged commit
 				// <sha> into <base>". `commitUrl` is filled in by the caller, which has
@@ -1701,14 +1706,20 @@ export async function mergePullRequest(
 	repo: string,
 	prNumber: number,
 	method: PRMergeMethod,
-	accountId?: string | null
+	accountId?: string | null,
+	// Commit title/message for the merge commit (squash/merge methods only; rebase
+	// ignores them). Undefined lets GitHub fall back to its own defaults.
+	commitTitle?: string,
+	commitMessage?: string
 ): Promise<PRMergeResult> {
 	const o = octokit(resolveAccount(accountId));
 	const res = await o.pulls.merge({
 		owner,
 		repo,
 		pull_number: prNumber,
-		merge_method: method
+		merge_method: method,
+		...(commitTitle ? { commit_title: commitTitle } : {}),
+		...(commitMessage != null ? { commit_message: commitMessage } : {})
 	});
 	return { merged: res.data.merged, message: res.data.message, sha: res.data.sha };
 }

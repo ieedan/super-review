@@ -1450,7 +1450,9 @@ export function registerIpc(): void {
 			prNumber: number,
 			method: PRMergeMethod,
 			prOwner?: string,
-			prRepo?: string
+			prRepo?: string,
+			commitTitle?: string,
+			commitMessage?: string
 		): Promise<PRMergeResult> => {
 			const repo = repoOrThrow(repoId);
 			const owner = prOwner ?? repo.githubOwner;
@@ -1458,7 +1460,15 @@ export function registerIpc(): void {
 			if (!owner || !name) {
 				throw new Error('This repository does not have a GitHub remote.');
 			}
-			return gh.mergePullRequest(owner, name, prNumber, method, repo.githubAccountId);
+			return gh.mergePullRequest(
+				owner,
+				name,
+				prNumber,
+				method,
+				repo.githubAccountId,
+				commitTitle,
+				commitMessage
+			);
 		}
 	);
 

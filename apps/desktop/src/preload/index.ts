@@ -297,14 +297,16 @@ const api: PreloadAPI = {
 				owner,
 				repo
 			) as Promise<string>,
-		mergePullRequest: (repoId, prNumber, method, owner, repo) =>
+		mergePullRequest: (repoId, prNumber, method, owner, repo, commitTitle, commitMessage) =>
 			ipcRenderer.invoke(
 				'github:mergePullRequest',
 				repoId,
 				prNumber,
 				method,
 				owner,
-				repo
+				repo,
+				commitTitle,
+				commitMessage
 			) as Promise<PRMergeResult>,
 		markPullRequestReady: (repoId, prNumber, owner, repo) =>
 			ipcRenderer.invoke(

@@ -539,6 +539,10 @@ export interface PRConversationEvent extends PRConversationBase {
 	actor: string;
 	actorAvatarUrl?: string;
 	detail?: string;
+	// For a `renamed` event: the previous title (GitHub's `rename.from`). `detail`
+	// carries the new title, so the row can show the old title struck through, like
+	// GitHub.
+	renamedFrom?: string;
 	// For label events: the label's hex color (no leading '#'), so it renders as a
 	// colored chip like GitHub rather than plain text.
 	labelColor?: string;
@@ -1518,7 +1522,11 @@ export interface PreloadAPI {
 			prNumber: number,
 			method: PRMergeMethod,
 			owner?: string,
-			repo?: string
+			repo?: string,
+			// Commit title/message for the merge commit (squash/merge only; rebase
+			// ignores them). Omitted lets GitHub use its own defaults.
+			commitTitle?: string,
+			commitMessage?: string
 		): Promise<PRMergeResult>;
 		// Take a draft PR out of draft ("Ready for review"). Uses the GraphQL
 		// markPullRequestAsReady mutation (REST has no equivalent).

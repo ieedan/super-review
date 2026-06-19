@@ -29,6 +29,8 @@
 	import Github from './icons/GithubIcon.svelte';
 	import GithubSpinner from './GithubSpinner.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
+	import { Input } from './ui/input';
+	import { Textarea } from './ui/textarea';
 	import MarkdownComposer from './MarkdownComposer.svelte';
 	import MarkdownView from './MarkdownView.svelte';
 	import { actions, app, effectiveGithubAccount, isReadOnlyView } from '$lib/store.svelte';
@@ -274,8 +276,31 @@
 	const mergeBusy = $derived(app.mergeBoxBusy === 'merge');
 	const readyBusy = $derived(app.mergeBoxBusy === 'ready');
 	// A merge is hard to reverse, so the button arms a confirm step (GitHub does
-	// the same) rather than firing on the first click.
+	// the same) rather than firing on the first click. While armed, the squash/merge
+	// methods expose the commit title + extended description for editing, prefilled
+	// with GitHub's defaults.
 	let confirmingMerge = $state(false);
+	let commitTitle = $state('');
+	let commitMessage = $state('');
+	// Rebase replays the original commits, so there's no single merge-commit message
+	// to edit (GitHub hides these fields for it too).
+	const mergeCommitEditable = $derived(mergeMethod !== 'rebase');
+
+	// Prefill the commit title with GitHub's default for the chosen method, then arm
+	// the confirm step. Squash titles default to "<PR title> (#<number>)"; a merge
+	// commit defaults to "Merge pull request #<number> from <head>". The extended
+	// description starts empty — the user adds one only if they want it.
+	function startConfirmMerge(): void {
+		if (!pr) return;
+		if (mergeMethod === 'merge') {
+			const head = pr.headRepoOwner ? `${pr.headRepoOwner}/${pr.headRef}` : pr.headRef;
+			commitTitle = `Merge pull request #${pr.number} from ${head}`;
+		} else {
+			commitTitle = `${pr.title} (#${pr.number})`;
+		}
+		commitMessage = '';
+		confirmingMerge = true;
+	}
 	// Merging is blocked while it's a draft or has conflicts; GitHub greys the
 	// button in those cases too.
 	const mergeBlocked = $derived(!!pr?.draft || conflictState === 'conflicts');
@@ -284,7 +309,11 @@
 		await actions.markPullRequestReady();
 	}
 	async function doMerge(): Promise<void> {
-		const ok = await actions.mergePullRequest(mergeMethod);
+		const ok = await actions.mergePullRequest(
+			mergeMethod,
+			mergeCommitEditable ? commitTitle.trim() : undefined,
+			mergeCommitEditable ? commitMessage : undefined
+		);
 		confirmingMerge = false;
 		void ok;
 	}
@@ -528,8 +557,9 @@
 	{#if pr && mergeBox}
 		<div class="mx-auto w-full max-w-3xl px-3 pb-3">
 			<div class="divide-y divide-border overflow-hidden rounded-lg border border-border">
-				<!-- Checks rollup (collapsible) -->
-				{#if checksState && checks}
+				<!-- Checks rollup (collapsible). Hidden while confirming a merge so the
+				     commit-message editor takes over the whole box, like GitHub. -->
+				{#if checksState && checks && !confirmingMerge}
 					<div>
 						<button
 							type="button"
@@ -617,7 +647,7 @@
 				{/if}
 
 				<!-- Conflicts / mergeability (open PRs only) -->
-				{#if isOpen}
+				{#if isOpen && !confirmingMerge}
 					<div class="flex items-center gap-3 px-3 py-2.5">
 						{#if conflictState === 'conflicts'}
 							<span
@@ -659,7 +689,7 @@
 				{/if}
 
 				<!-- Draft notice + Ready for review -->
-				{#if isOpen && pr.draft}
+				{#if isOpen && pr.draft && !confirmingMerge}
 					<div class="flex items-center gap-3 px-3 py-2.5">
 						<span
 							class="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
@@ -716,29 +746,49 @@
 				{:else if canAct}
 					<div class="flex flex-wrap items-center gap-2 px-3 py-2.5">
 						{#if confirmingMerge}
-							<button
-								type="button"
-								class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
-								style="background: var(--color-success);"
-								disabled={mergeBusy}
-								onclick={doMerge}
-							>
-								{#if mergeBusy}
-									<Loader2 class="size-3.5 animate-spin" />
-									Merging…
-								{:else}
-									<GitMerge class="size-3.5" />
-									Confirm {METHOD_LABEL[mergeMethod].toLowerCase()}
+							<div class="flex w-full flex-col gap-2">
+								{#if mergeCommitEditable}
+									<Input
+										type="text"
+										bind:value={commitTitle}
+										placeholder="Commit message"
+										disabled={mergeBusy}
+										class="h-8 text-[13px] font-medium"
+									/>
+									<Textarea
+										bind:value={commitMessage}
+										placeholder="Extended description (optional)"
+										rows={4}
+										disabled={mergeBusy}
+										class="resize-y px-2.5 py-1.5 text-xs"
+									/>
 								{/if}
-							</button>
-							<button
-								type="button"
-								class="rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-								disabled={mergeBusy}
-								onclick={() => (confirmingMerge = false)}
-							>
-								Cancel
-							</button>
+								<div class="flex items-center gap-2">
+									<button
+										type="button"
+										class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+										style="background: var(--color-success);"
+										disabled={mergeBusy || (mergeCommitEditable && !commitTitle.trim())}
+										onclick={doMerge}
+									>
+										{#if mergeBusy}
+											<Loader2 class="size-3.5 animate-spin" />
+											Merging…
+										{:else}
+											<GitMerge class="size-3.5" />
+											Confirm {METHOD_LABEL[mergeMethod].toLowerCase()}
+										{/if}
+									</button>
+									<button
+										type="button"
+										class="rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+										disabled={mergeBusy}
+										onclick={() => (confirmingMerge = false)}
+									>
+										Cancel
+									</button>
+								</div>
+							</div>
 						{:else}
 							<div class="flex">
 								<button
@@ -751,7 +801,7 @@
 											? 'Draft pull requests cannot be merged'
 											: 'Resolve conflicts before merging'
 										: METHOD_LABEL[mergeMethod]}
-									onclick={() => (confirmingMerge = true)}
+									onclick={startConfirmMerge}
 								>
 									<GitMerge class="size-3.5" />
 									{METHOD_LABEL[mergeMethod]}
@@ -1243,27 +1293,46 @@
 								>
 									<EventIcon class="size-3.5" />
 								</div>
-								<div
-									class="flex min-h-6 min-w-0 flex-1 items-center gap-1.5 text-[11px] text-muted-foreground"
-								>
-									<span class="font-medium text-foreground/80">{item.actor}</span>
-									{#if item.event === 'labeled' || item.event === 'unlabeled'}
-										<span class="shrink-0"
-											>{item.event === 'labeled' ? 'added the' : 'removed the'}</span
-										>
-										<span
-											class="inline-flex max-w-40 shrink-0 items-center truncate rounded-full border px-2 py-px text-[10px] font-medium"
-											style={labelChipStyle(item.labelColor)}
-										>
-											{item.detail}
-										</span>
-										<span class="shrink-0">label</span>
-									{:else}
-										<span class="truncate">{eventLabel(item)}</span>
-									{/if}
-									<div class="flex-1"></div>
-									<span class="shrink-0">{formatRelative(item.createdAt)}</span>
-								</div>
+								{#if item.event === 'renamed' && item.renamedFrom}
+									<!-- Title change: GitHub shows the old title struck through above the
+									     new one, so the row reads as a before/after. -->
+									<div
+										class="flex min-h-6 min-w-0 flex-1 flex-col gap-0.5 text-[11px] text-muted-foreground"
+									>
+										<div class="flex items-center gap-1.5">
+											<span class="font-medium text-foreground/80">{item.actor}</span>
+											<span class="shrink-0">changed the title</span>
+											<div class="flex-1"></div>
+											<span class="shrink-0">{formatRelative(item.createdAt)}</span>
+										</div>
+										<div class="min-w-0 leading-snug">
+											<div class="truncate line-through">{item.renamedFrom}</div>
+											<div class="truncate text-foreground/80">{item.detail}</div>
+										</div>
+									</div>
+								{:else}
+									<div
+										class="flex min-h-6 min-w-0 flex-1 items-center gap-1.5 text-[11px] text-muted-foreground"
+									>
+										<span class="font-medium text-foreground/80">{item.actor}</span>
+										{#if item.event === 'labeled' || item.event === 'unlabeled'}
+											<span class="shrink-0"
+												>{item.event === 'labeled' ? 'added the' : 'removed the'}</span
+											>
+											<span
+												class="inline-flex max-w-40 shrink-0 items-center truncate rounded-full border px-2 py-px text-[10px] font-medium"
+												style={labelChipStyle(item.labelColor)}
+											>
+												{item.detail}
+											</span>
+											<span class="shrink-0">label</span>
+										{:else}
+											<span class="truncate">{eventLabel(item)}</span>
+										{/if}
+										<div class="flex-1"></div>
+										<span class="shrink-0">{formatRelative(item.createdAt)}</span>
+									</div>
+								{/if}
 							</div>
 						{/if}
 					{/if}
