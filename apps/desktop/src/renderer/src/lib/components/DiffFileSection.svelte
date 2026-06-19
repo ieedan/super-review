@@ -62,7 +62,7 @@
 		spanAt,
 		versionForName,
 		type PackageDepIndex
-	} from '$lib/package-json-deps';
+	} from '@super-review/ui';
 	import { showPackageHover, scheduleHidePackageHover } from '@super-review/ui';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';

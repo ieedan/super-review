@@ -30,9 +30,13 @@
 	--color-add: hsl(142 58% 52%);
 	--color-del: hsl(2 78% 63%);
 
+	/* Title font — the site's distinctive display face, kept for headings (the
+	   `font-display` utility). Everything else uses the desktop app's own default
+	   system stacks so the site reads like the app. */
 	--font-display: 'Red Hat Display', ui-sans-serif, system-ui, sans-serif;
-	--font-body: 'Red Hat Text', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: 'Red Hat Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+	--font-body:
+		ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
 }
 
 html {

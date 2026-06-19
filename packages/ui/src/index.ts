@@ -22,6 +22,17 @@ export { ensureDiffHighlighter, initDiffHighlighter } from './lib/diff-highlight
 // package.json hover card: the card component, its shared controller (driven by
 // the host's diff token-hover events), and the injectable npm data provider.
 export { default as PackageHoverCard } from './lib/PackageHoverCard.svelte';
+export { default as PackageJsonDiff } from './lib/PackageJsonDiff.svelte';
+export {
+	isPackageJsonPath,
+	parsePackageDeps,
+	spanAt,
+	versionForName,
+	DEPENDENCY_FIELDS,
+	type DepTokenSpan,
+	type PackageDepIndex,
+	type DependencyField
+} from './lib/package-json-deps';
 export {
 	packageHover,
 	showPackageHover,

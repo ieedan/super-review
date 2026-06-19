@@ -15,14 +15,11 @@
 		<link rel="manifest" href="%sveltekit.assets%/site.webmanifest" />
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<!-- Red Hat Display is the title font (headings); body + mono use the app's
+		     system stacks (see layout.css). JetBrains Mono / Fira Code back the diff
+		     demo's code-font picker so it shows a real, visible difference. -->
 		<link
-			href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800;900&family=Red+Hat+Text:wght@400;500;600;700&family=Red+Hat+Mono:wght@400;500;600;700&display=swap"
-			rel="stylesheet"
-		/>
-		<!-- Extra monospace families so the diff demo's font picker shows a real,
-		     visible difference (Fira Code ships ligatures). -->
-		<link
-			href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap"
+			href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800;900&family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap"
 			rel="stylesheet"
 		/>
 		%sveltekit.head%
