@@ -41,6 +41,48 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
 const HIDE_DELAY_MS = 140;
 
+// The token element currently wearing the hover affordance, and the inline
+// style values we overwrote, so leaving restores it exactly. Only one token is
+// ever decorated at a time, so a single snapshot suffices (no per-element map).
+let styledEl: HTMLElement | null = null;
+let styledPrior: {
+	textDecorationLine: string;
+	textDecorationStyle: string;
+	textUnderlineOffset: string;
+	cursor: string;
+} | null = null;
+
+// Give the hovered dependency token a dotted underline + help cursor so it
+// reads as interactive. Applied via inline styles (the token lives in Pierre's
+// shadow DOM, and Pierre re-creates these elements, so a stylesheet rule would
+// be both hard to scope and easily wiped); we restore the prior values on leave.
+function applyAffordance(element: HTMLElement): void {
+	if (styledEl === element) return;
+	restoreAffordance();
+	styledPrior = {
+		textDecorationLine: element.style.textDecorationLine,
+		textDecorationStyle: element.style.textDecorationStyle,
+		textUnderlineOffset: element.style.textUnderlineOffset,
+		cursor: element.style.cursor
+	};
+	element.style.textDecorationLine = 'underline';
+	element.style.textDecorationStyle = 'dotted';
+	element.style.textUnderlineOffset = '2px';
+	element.style.cursor = 'help';
+	styledEl = element;
+}
+
+function restoreAffordance(): void {
+	if (styledEl && styledPrior) {
+		styledEl.style.textDecorationLine = styledPrior.textDecorationLine;
+		styledEl.style.textDecorationStyle = styledPrior.textDecorationStyle;
+		styledEl.style.textUnderlineOffset = styledPrior.textUnderlineOffset;
+		styledEl.style.cursor = styledPrior.cursor;
+	}
+	styledEl = null;
+	styledPrior = null;
+}
+
 function cancelHide(): void {
 	if (hideTimer != null) {
 		clearTimeout(hideTimer);
@@ -62,6 +104,7 @@ export function showPackageHover(element: HTMLElement, target: PackageHoverTarge
 		return;
 	}
 	anchorEl = element;
+	applyAffordance(element);
 	// Fresh Measurable each move so bits-ui re-anchors to the new token's rect.
 	state.anchor = { getBoundingClientRect: () => element.getBoundingClientRect() };
 	state.target = target;
@@ -79,6 +122,7 @@ export function scheduleHidePackageHover(): void {
 		state.target = null;
 		state.anchor = null;
 		anchorEl = null;
+		restoreAffordance();
 	}, HIDE_DELAY_MS);
 }
 
@@ -94,4 +138,5 @@ export function closePackageHover(): void {
 	state.target = null;
 	state.anchor = null;
 	anchorEl = null;
+	restoreAffordance();
 }

@@ -66,7 +66,14 @@ export function initDiffWorkerPool(): void {
 				// characters within a modified line, not just whole words (Pierre's
 				// default is 'word-alt'). The worker path is what the main diff view
 				// uses, so this — not the FileDiff constructor option — governs it.
-				lineDiffType: 'char'
+				lineDiffType: 'char',
+				// Emit per-token `data-char` offsets so Pierre's token hover events
+				// (onTokenEnter/onTokenLeave) fire — the package.json npm hover cards
+				// ride on those. On the main thread Pierre turns this on automatically
+				// whenever a token handler is set, but the worker render path has its
+				// own copy of the option (defaulting off), so it must be enabled here
+				// or the workers strip the attribute and no token events ever fire.
+				useTokenTransformer: true
 			}
 		});
 	} catch (err) {
