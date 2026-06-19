@@ -2249,6 +2249,7 @@ export const actions = {
 		app.startMaximized = app.prefs.startMaximized ?? false;
 		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
 		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
+		app.commentsSidebarTab = app.prefs.commentsSidebarTab ?? 'comments';
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
 		app.theme = app.prefs.theme;
@@ -3790,14 +3791,20 @@ export const actions = {
 	toggleCommentsSidebar(): void {
 		// Opening always lands on the Comments tab (the Conversation tab has its own
 		// hotkey). Closing leaves the remembered tab alone.
-		if (!app.commentsSidebarOpen) app.commentsSidebarTab = 'comments';
+		if (!app.commentsSidebarOpen) actions.setCommentsSidebarTab('comments');
 		actions.setCommentsSidebarOpen(!app.commentsSidebarOpen);
 	},
 
 	// Switch the sidebar's active tab, loading the Conversation feed on demand the
-	// first time it's shown for the current PR.
+	// first time it's shown for the current PR. Persisted so the tab the user left
+	// on reopens with the app.
 	setCommentsSidebarTab(tab: 'comments' | 'conversation'): void {
-		app.commentsSidebarTab = tab;
+		if (app.commentsSidebarTab !== tab) {
+			app.commentsSidebarTab = tab;
+			void window.api.state.setPrefs({ commentsSidebarTab: tab }).then((prefs) => {
+				app.prefs = prefs;
+			});
+		}
 		if (tab === 'conversation') actions.ensurePRConversationLoaded();
 	},
 

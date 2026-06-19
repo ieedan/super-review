@@ -80,6 +80,7 @@ const defaults: Schema = {
 		startMaximized: false,
 		sidebarCollapsed: false,
 		commentsSidebarOpen: false,
+		commentsSidebarTab: 'comments',
 		recentRepoCount: 5,
 		changesetsEnabled: true,
 		signCommits: true,

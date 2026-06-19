@@ -34,6 +34,14 @@
 	// so one of the two is always set.
 	const pr = $derived(app.activePR ?? app.branchPR);
 
+	// Whenever this panel is visible for a PR, make sure the feed is loaded. Covers
+	// reopening the app straight onto the Conversation tab (the persisted tab) and
+	// switching PRs while the tab is open; `ensurePRConversationLoaded` is a no-op
+	// when the current PR's feed is already loaded or loading.
+	$effect(() => {
+		if (pr) actions.ensurePRConversationLoaded();
+	});
+
 	// The PR author can edit the description (and toggle its task checkboxes). We
 	// gate on author identity rather than full write access — which we don't track
 	// here — and let the API reject anything it shouldn't allow.
