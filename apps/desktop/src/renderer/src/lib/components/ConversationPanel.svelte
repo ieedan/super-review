@@ -106,39 +106,62 @@
 				<p class="text-sm text-muted-foreground">Open a pull request to see its conversation.</p>
 			</div>
 		{:else}
-			<!-- PR description, the conversation's opening post. -->
-			<div class="m-2 rounded-lg border border-border p-3">
-				<div class="flex items-center gap-2">
-					<img class="size-5 shrink-0 rounded-full" src={pr.authorAvatarUrl} alt={pr.author} />
-					<span class="truncate text-xs font-medium">{pr.author}</span>
-					<span class="shrink-0 text-[11px] text-muted-foreground">
-						opened {formatRelative(pr.createdAt)}
-					</span>
-				</div>
-				<div class="mt-2">
-					{#if pr.body.trim()}
-						<MarkdownView src={pr.body} class="text-[13px]" />
-					{:else}
-						<p class="text-[13px] text-muted-foreground italic">No description provided.</p>
+			<!-- A single timeline whose nodes (avatars / event icons) all sit on one
+			     left rail. Each entry draws its own connector segment down to the next
+			     node, so the line ends exactly at the last node regardless of how tall
+			     the items above it are. `hasItems` decides whether the description's
+			     connector is drawn. -->
+			{@const hasItems = app.prConversation.length > 0}
+			<div class="relative flex flex-col gap-3 px-3 py-3">
+				<!-- PR description, the conversation's opening post. -->
+				<div class="relative flex gap-3">
+					{#if hasItems}
+						<div
+							class="pointer-events-none absolute top-3 -bottom-6 left-3 w-px -translate-x-1/2 bg-border"
+						></div>
 					{/if}
+					<img
+						class="relative z-10 size-6 shrink-0 rounded-full"
+						src={pr.authorAvatarUrl}
+						alt={pr.author}
+					/>
+					<div class="min-w-0 flex-1 rounded-lg border border-border p-3">
+						<div class="flex items-center gap-2">
+							<span class="truncate text-xs font-medium">{pr.author}</span>
+							<span class="shrink-0 text-[11px] text-muted-foreground">
+								opened {formatRelative(pr.createdAt)}
+							</span>
+						</div>
+						<div class="mt-2">
+							{#if pr.body.trim()}
+								<MarkdownView src={pr.body} class="text-[13px]" />
+							{:else}
+								<p class="text-[13px] text-muted-foreground italic">No description provided.</p>
+							{/if}
+						</div>
+					</div>
 				</div>
-			</div>
 
-			{#if app.loadingConversation && app.prConversation.length === 0}
-				<div class="p-4 text-center text-xs text-muted-foreground">Loading conversation…</div>
-			{/if}
+				{#if app.loadingConversation && app.prConversation.length === 0}
+					<div class="text-center text-xs text-muted-foreground">Loading conversation…</div>
+				{/if}
 
-			<ul>
-				{#each app.prConversation as item (item.key)}
-					<li>
-						{#if item.kind === 'comment'}
-							<div class="group m-2 rounded-lg border border-border p-3">
+				{#each app.prConversation as item, i (item.key)}
+					{@const notLast = i < app.prConversation.length - 1}
+					{#if item.kind === 'comment'}
+						<div class="group relative flex gap-3">
+							{#if notLast}
+								<div
+									class="pointer-events-none absolute top-3 -bottom-6 left-3 w-px -translate-x-1/2 bg-border"
+								></div>
+							{/if}
+							<img
+								class="relative z-10 size-6 shrink-0 rounded-full"
+								src={item.authorAvatarUrl}
+								alt={item.author}
+							/>
+							<div class="min-w-0 flex-1 rounded-lg border border-border p-3">
 								<div class="flex items-center gap-2">
-									<img
-										class="size-5 shrink-0 rounded-full"
-										src={item.authorAvatarUrl}
-										alt={item.author}
-									/>
 									<span class="truncate text-xs font-medium">{item.author}</span>
 									<span class="shrink-0 text-[11px] text-muted-foreground">
 										{formatRelative(item.createdAt)}
@@ -177,9 +200,21 @@
 									<MarkdownView src={item.body} class="text-[13px]" />
 								</div>
 							</div>
-						{:else if item.kind === 'review'}
-							{@const meta = REVIEW_META[item.state]}
-							<div class="m-2 rounded-lg border border-border p-3">
+						</div>
+					{:else if item.kind === 'review'}
+						{@const meta = REVIEW_META[item.state]}
+						<div class="relative flex gap-3">
+							{#if notLast}
+								<div
+									class="pointer-events-none absolute top-3 -bottom-6 left-3 w-px -translate-x-1/2 bg-border"
+								></div>
+							{/if}
+							<img
+								class="relative z-10 size-6 shrink-0 rounded-full"
+								src={item.authorAvatarUrl}
+								alt={item.author}
+							/>
+							<div class="min-w-0 flex-1 rounded-lg border border-border p-3">
 								<div class="flex items-center gap-2">
 									{#if item.state === 'approved'}
 										<Check class="size-4 shrink-0" style="color: {meta.color};" />
@@ -188,11 +223,6 @@
 									{:else}
 										<MessageSquare class="size-4 shrink-0 text-muted-foreground" />
 									{/if}
-									<img
-										class="size-5 shrink-0 rounded-full"
-										src={item.authorAvatarUrl}
-										alt={item.author}
-									/>
 									<span class="truncate text-xs font-medium">{item.author}</span>
 									<span class="shrink-0 text-[11px]" style="color: {meta.color};">{meta.label}</span
 									>
@@ -206,42 +236,66 @@
 									</div>
 								{/if}
 							</div>
-						{:else if item.kind === 'commit'}
+						</div>
+					{:else if item.kind === 'commit'}
+						<div class="relative flex gap-3">
+							{#if notLast}
+								<div
+									class="pointer-events-none absolute top-3 -bottom-6 left-3 w-px -translate-x-1/2 bg-border"
+								></div>
+							{/if}
+							<div
+								class="relative z-10 grid size-6 shrink-0 place-items-center rounded-full bg-card text-muted-foreground"
+							>
+								<GitCommitHorizontal class="size-3.5" />
+							</div>
 							<button
 								type="button"
-								class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-transparent"
+								class="flex min-h-6 min-w-0 flex-1 items-center gap-2 rounded text-left text-xs hover:text-foreground disabled:cursor-default disabled:hover:text-current"
 								disabled={!item.url}
 								onclick={() => item.url && viewOnGithub(item.url)}
 								title={item.url ? 'View commit on GitHub' : undefined}
 							>
-								<GitCommitHorizontal class="size-4 shrink-0 text-muted-foreground" />
 								<span class="truncate">{item.message}</span>
 								<div class="flex-1"></div>
 								<span class="shrink-0 font-mono text-[11px] text-muted-foreground">
 									{item.shortSha}
 								</span>
 							</button>
-						{:else}
-							<!-- Lightweight timeline event. -->
-							<div class="flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground">
+						</div>
+					{:else}
+						<!-- Lightweight timeline event. -->
+						<div class="relative flex gap-3">
+							{#if notLast}
+								<div
+									class="pointer-events-none absolute top-3 -bottom-6 left-3 w-px -translate-x-1/2 bg-border"
+								></div>
+							{/if}
+							<div
+								class="relative z-10 grid size-6 shrink-0 place-items-center rounded-full bg-card text-muted-foreground"
+							>
 								{#if item.event === 'merged'}
-									<GitMerge class="size-3.5 shrink-0" style="color: var(--color-primary);" />
+									<GitMerge class="size-3.5" style="color: var(--color-primary);" />
 								{:else if item.event === 'closed'}
-									<GitPullRequestClosed class="size-3.5 shrink-0" />
+									<GitPullRequestClosed class="size-3.5" />
 								{:else if item.event === 'labeled' || item.event === 'unlabeled'}
-									<Tag class="size-3.5 shrink-0" />
+									<Tag class="size-3.5" />
 								{:else}
-									<CircleDot class="size-3.5 shrink-0" />
+									<CircleDot class="size-3.5" />
 								{/if}
+							</div>
+							<div
+								class="flex min-h-6 min-w-0 flex-1 items-center gap-1.5 text-[11px] text-muted-foreground"
+							>
 								<span class="font-medium text-foreground/80">{item.actor}</span>
 								<span class="truncate">{eventLabel(item)}</span>
 								<div class="flex-1"></div>
 								<span class="shrink-0">{formatRelative(item.createdAt)}</span>
 							</div>
-						{/if}
-					</li>
+						</div>
+					{/if}
 				{/each}
-			</ul>
+			</div>
 		{/if}
 	</div>
 
