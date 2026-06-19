@@ -273,6 +273,11 @@
 	};
 	const MERGE_METHODS: PRMergeMethod[] = ['squash', 'merge', 'rebase'];
 
+	// While checks are still running, GitHub de-emphasizes the box: a borderless
+	// blue ring spinner, a blue (not green) "no conflicts" check, and a neutral
+	// (not green) merge button — so it doesn't look ready-to-merge prematurely.
+	const checksPending = $derived(checksState === 'pending');
+
 	const mergeBusy = $derived(app.mergeBoxBusy === 'merge');
 	const readyBusy = $derived(app.mergeBoxBusy === 'ready');
 	// A merge is hard to reverse, so the button arms a confirm step (GitHub does
@@ -568,18 +573,22 @@
 						>
 							<span
 								class="grid size-7 shrink-0 place-items-center rounded-full text-white"
-								style="background: {checksState === 'success'
-									? 'var(--color-success)'
+								style={checksState === 'success'
+									? 'background: var(--color-success);'
 									: checksState === 'failure'
-										? 'var(--color-destructive)'
-										: 'var(--color-warning)'};"
+										? 'background: var(--color-destructive);'
+										: ''}
 							>
 								{#if checksState === 'success'}
 									<Check class="size-4" />
 								{:else if checksState === 'failure'}
 									<X class="size-4" />
 								{:else}
-									<GithubSpinner class="size-4 text-white" />
+									<!-- GitHub shows a borderless blue ring spinner (not a filled blob)
+									     while checks are still running. -->
+									<span
+										class="size-5 animate-spin rounded-full border-2 border-info/30 border-t-info"
+									></span>
 								{/if}
 							</span>
 							<div class="min-w-0 flex-1">
@@ -674,7 +683,7 @@
 						{:else}
 							<span
 								class="grid size-7 shrink-0 place-items-center rounded-full text-white"
-								style="background: var(--color-success);"
+								style="background: {checksPending ? 'var(--color-info)' : 'var(--color-success)'};"
 							>
 								<Check class="size-4" />
 							</span>
@@ -793,8 +802,13 @@
 							<div class="flex">
 								<button
 									type="button"
-									class="inline-flex items-center gap-1.5 rounded-l-md px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-									style="background: var(--color-success);"
+									class={[
+										'inline-flex items-center gap-1.5 rounded-l-md px-3 py-1.5 text-xs font-medium disabled:opacity-50',
+										checksPending
+											? 'border border-border bg-secondary text-foreground hover:bg-accent'
+											: 'text-white'
+									]}
+									style={checksPending ? '' : 'background: var(--color-success);'}
 									disabled={mergeBlocked}
 									title={mergeBlocked
 										? pr.draft
@@ -808,8 +822,13 @@
 								</button>
 								<DropdownMenu.Root>
 									<DropdownMenu.Trigger
-										class="grid place-items-center rounded-r-md border-l border-white/25 px-1.5 text-white disabled:opacity-50"
-										style="background: var(--color-success);"
+										class={[
+											'grid place-items-center rounded-r-md px-1.5 disabled:opacity-50',
+											checksPending
+												? 'border border-l-0 border-border bg-secondary text-foreground hover:bg-accent'
+												: 'border-l border-white/25 text-white'
+										]}
+										style={checksPending ? '' : 'background: var(--color-success);'}
 										disabled={mergeBlocked}
 										aria-label="Choose merge method"
 									>
