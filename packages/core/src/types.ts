@@ -1346,6 +1346,10 @@ export interface PreloadAPI {
 		// isn't a supported image, so the renderer can fall back to the language
 		// icon.
 		resolveCustomIcon(source: string): Promise<string | null>;
+		// Open the native file picker (filtered to supported image types) so the
+		// user can choose a local icon. Resolves to the chosen absolute path, or
+		// null if they cancel.
+		pickIconFile(): Promise<string | null>;
 	};
 	sessions: {
 		// A `ref` (a branch name or fetched PR head ref) reads the sessions

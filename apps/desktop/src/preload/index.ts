@@ -297,7 +297,8 @@ const api: PreloadAPI = {
 	},
 	icons: {
 		resolveCustomIcon: (source) =>
-			ipcRenderer.invoke('icons:resolveCustomIcon', source) as Promise<string | null>
+			ipcRenderer.invoke('icons:resolveCustomIcon', source) as Promise<string | null>,
+		pickIconFile: () => ipcRenderer.invoke('icons:pickIconFile') as Promise<string | null>
 	},
 	sessions: {
 		list: (repoId, ref) =>

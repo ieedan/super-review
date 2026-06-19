@@ -4,6 +4,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Code2 from '@lucide/svelte/icons/code-2';
+	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import Palette from '@lucide/svelte/icons/palette';
@@ -267,6 +268,11 @@
 		draftCustomFileIcons = [...withoutDupe, { pattern, source }];
 		newIconPattern = '';
 		newIconSource = '';
+	}
+
+	async function pickIconFile(): Promise<void> {
+		const picked = await window.api.icons.pickIconFile();
+		if (picked) newIconSource = picked;
 	}
 
 	function removeCustomIcon(pattern: string): void {
@@ -932,6 +938,9 @@
 							}}
 							class="flex-1"
 						/>
+						<Button variant="outline" onclick={pickIconFile} title="Choose a local image">
+							<FolderOpen class="size-3.5" /> Browse
+						</Button>
 						<Button variant="outline" onclick={addCustomIcon}>
 							<Plus class="size-3.5" /> Add
 						</Button>

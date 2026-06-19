@@ -1629,6 +1629,21 @@ export function registerIpc(): void {
 		async (_e, source: string): Promise<string | null> => resolveCustomIcon(source)
 	);
 
+	ipcMain.handle('icons:pickIconFile', async (e): Promise<string | null> => {
+		const win = BrowserWindow.fromWebContents(e.sender);
+		const opts: Electron.OpenDialogOptions = {
+			title: 'Choose an icon image',
+			properties: ['openFile'],
+			// Same image types resolveCustomIcon will accept (extensions without the dot).
+			filters: [
+				{ name: 'Images', extensions: Object.keys(ICON_MIME_BY_EXT).map((ext) => ext.slice(1)) }
+			]
+		};
+		const result = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts));
+		if (result.canceled || result.filePaths.length === 0) return null;
+		return result.filePaths[0];
+	});
+
 	ipcMain.handle(
 		'state:getSeenFiles',
 		async (_e, repoId: string, contextKey: string): Promise<string[]> => {
