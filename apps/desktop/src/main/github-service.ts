@@ -697,6 +697,7 @@ function toPRSummary(
 		body: pr.body ?? '',
 		author: pr.user?.login ?? 'unknown',
 		authorAvatarUrl: pr.user?.avatar_url ?? '',
+		authorAssociation: pr.author_association ?? undefined,
 		headRef: pr.head.ref,
 		baseRef: pr.base.ref,
 		headSha: pr.head.sha,
@@ -1379,6 +1380,7 @@ function mapTimelineItem(
 				id: e.id,
 				author,
 				authorAvatarUrl: e.user?.avatar_url ?? '',
+				authorAssociation: e.author_association ?? undefined,
 				body: e.body ?? '',
 				url: e.html_url ?? '',
 				createdAt: e.created_at,
@@ -1399,6 +1401,7 @@ function mapTimelineItem(
 				id: e.id,
 				author: e.user?.login ?? 'unknown',
 				authorAvatarUrl: e.user?.avatar_url ?? '',
+				authorAssociation: e.author_association ?? undefined,
 				body: e.body ?? '',
 				state,
 				url: e.html_url ?? '',
@@ -1407,7 +1410,8 @@ function mapTimelineItem(
 		}
 		case 'committed': {
 			// `committed` events carry the git identity (name/date), not a GitHub user,
-			// so there's no reliable avatar. The SHA is GitHub's `sha`.
+			// so there's no reliable avatar. The SHA is GitHub's `sha`; `verification`
+			// mirrors the commit-signing state GitHub shows as a "Verified" badge.
 			const sha: string = e.sha ?? '';
 			const message: string = (e.message ?? '').split('\n')[0];
 			return {
@@ -1416,7 +1420,8 @@ function mapTimelineItem(
 				sha,
 				shortSha: sha.slice(0, 7),
 				message,
-				author: e.author?.name ?? 'unknown',
+				author: e.author?.name ?? e.committer?.name ?? 'unknown',
+				verified: e.verification?.verified === true,
 				url: e.html_url ?? undefined,
 				createdAt: e.author?.date ?? e.committer?.date ?? ''
 			};

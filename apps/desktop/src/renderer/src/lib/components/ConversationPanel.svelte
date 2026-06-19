@@ -7,6 +7,7 @@
 	import GitPullRequestClosed from '@lucide/svelte/icons/git-pull-request-closed';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
+	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import Tag from '@lucide/svelte/icons/tag';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import Github from './icons/GithubIcon.svelte';
@@ -46,6 +47,26 @@
 
 	function viewOnGithub(url: string): void {
 		if (url) void window.api.shell.openExternal(url);
+	}
+
+	// GitHub's author-association badge text ("Owner", "Member", …). Returns '' for
+	// associations we don't badge (NONE, mannequin, etc.), so the badge is skipped.
+	function associationLabel(a: string | undefined): string {
+		switch (a) {
+			case 'OWNER':
+				return 'Owner';
+			case 'MEMBER':
+				return 'Member';
+			case 'COLLABORATOR':
+				return 'Collaborator';
+			case 'CONTRIBUTOR':
+				return 'Contributor';
+			case 'FIRST_TIME_CONTRIBUTOR':
+			case 'FIRST_TIMER':
+				return 'First-time contributor';
+			default:
+				return '';
+		}
 	}
 
 	// Human label + accent color for a review verdict.
@@ -99,6 +120,17 @@
 	}
 </script>
 
+{#snippet assocBadge(association: string | undefined)}
+	{@const label = associationLabel(association)}
+	{#if label}
+		<span
+			class="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] font-medium text-muted-foreground"
+		>
+			{label}
+		</span>
+	{/if}
+{/snippet}
+
 <div class="flex h-full min-h-0 flex-col">
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#if !pr}
@@ -125,14 +157,15 @@
 						src={pr.authorAvatarUrl}
 						alt={pr.author}
 					/>
-					<div class="min-w-0 flex-1 rounded-lg border border-border p-3">
-						<div class="flex items-center gap-2">
+					<div class="comment-card relative min-w-0 flex-1 rounded-lg border border-border bg-card">
+						<div class="flex min-h-6 items-center gap-1.5 border-b border-border px-3 py-1">
 							<span class="truncate text-xs font-medium">{pr.author}</span>
+							{@render assocBadge(pr.authorAssociation)}
 							<span class="shrink-0 text-[11px] text-muted-foreground">
 								opened {formatRelative(pr.createdAt)}
 							</span>
 						</div>
-						<div class="mt-2">
+						<div class="px-3 py-2">
 							{#if pr.body.trim()}
 								<MarkdownView src={pr.body} class="text-[13px]" />
 							{:else}
@@ -160,17 +193,20 @@
 								src={item.authorAvatarUrl}
 								alt={item.author}
 							/>
-							<div class="min-w-0 flex-1 rounded-lg border border-border p-3">
-								<div class="flex items-center gap-2">
+							<div
+								class="comment-card relative min-w-0 flex-1 rounded-lg border border-border bg-card"
+							>
+								<div class="flex min-h-6 items-center gap-1.5 border-b border-border px-3 py-1">
 									<span class="truncate text-xs font-medium">{item.author}</span>
+									{@render assocBadge(item.authorAssociation)}
 									<span class="shrink-0 text-[11px] text-muted-foreground">
-										{formatRelative(item.createdAt)}
+										commented {formatRelative(item.createdAt)}
 									</span>
 									<div class="flex-1"></div>
 									{#if item.url || item.canDelete}
 										<DropdownMenu.Root>
 											<DropdownMenu.Trigger
-												class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground group-hover:opacity-100"
+												class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground group-hover:opacity-100"
 												aria-label="More actions"
 											>
 												<MoreHorizontal class="size-4" />
@@ -196,7 +232,7 @@
 										</DropdownMenu.Root>
 									{/if}
 								</div>
-								<div class="mt-2">
+								<div class="px-3 py-2">
 									<MarkdownView src={item.body} class="text-[13px]" />
 								</div>
 							</div>
@@ -214,16 +250,24 @@
 								src={item.authorAvatarUrl}
 								alt={item.author}
 							/>
-							<div class="min-w-0 flex-1 rounded-lg border border-border p-3">
-								<div class="flex items-center gap-2">
+							<div
+								class="comment-card relative min-w-0 flex-1 rounded-lg border border-border bg-card"
+							>
+								<div
+									class={[
+										'flex min-h-6 items-center gap-1.5 px-3 py-1',
+										item.body.trim() && 'border-b border-border'
+									]}
+								>
 									{#if item.state === 'approved'}
-										<Check class="size-4 shrink-0" style="color: {meta.color};" />
+										<Check class="size-3.5 shrink-0" style="color: {meta.color};" />
 									{:else if item.state === 'changes_requested'}
-										<FileDiff class="size-4 shrink-0" style="color: {meta.color};" />
+										<FileDiff class="size-3.5 shrink-0" style="color: {meta.color};" />
 									{:else}
-										<MessageSquare class="size-4 shrink-0 text-muted-foreground" />
+										<MessageSquare class="size-3.5 shrink-0 text-muted-foreground" />
 									{/if}
 									<span class="truncate text-xs font-medium">{item.author}</span>
+									{@render assocBadge(item.authorAssociation)}
 									<span class="shrink-0 text-[11px]" style="color: {meta.color};">{meta.label}</span
 									>
 									<span class="shrink-0 text-[11px] text-muted-foreground">
@@ -231,7 +275,7 @@
 									</span>
 								</div>
 								{#if item.body.trim()}
-									<div class="mt-2 border-l-2 border-border pl-3">
+									<div class="px-3 py-2">
 										<MarkdownView src={item.body} class="text-[13px]" />
 									</div>
 								{/if}
@@ -254,10 +298,19 @@
 								class="flex min-h-6 min-w-0 flex-1 items-center gap-2 rounded text-left text-xs hover:text-foreground disabled:cursor-default disabled:hover:text-current"
 								disabled={!item.url}
 								onclick={() => item.url && viewOnGithub(item.url)}
-								title={item.url ? 'View commit on GitHub' : undefined}
+								title={item.url ? `${item.author} · view commit on GitHub` : item.author}
 							>
 								<span class="truncate">{item.message}</span>
+								<span class="shrink-0 text-[11px] text-muted-foreground">{item.author}</span>
 								<div class="flex-1"></div>
+								{#if item.verified}
+									<span
+										class="inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-px text-[10px] font-medium"
+										style="border-color: color-mix(in srgb, var(--color-success) 50%, transparent); color: var(--color-success);"
+									>
+										<ShieldCheck class="size-2.5" /> Verified
+									</span>
+								{/if}
 								<span class="shrink-0 font-mono text-[11px] text-muted-foreground">
 									{item.shortSha}
 								</span>
@@ -275,7 +328,7 @@
 								class="relative z-10 grid size-6 shrink-0 place-items-center rounded-full bg-card text-muted-foreground"
 							>
 								{#if item.event === 'merged'}
-									<GitMerge class="size-3.5" style="color: var(--color-primary);" />
+									<GitMerge class="size-3.5" style="color: var(--color-merged);" />
 								{:else if item.event === 'closed'}
 									<GitPullRequestClosed class="size-3.5" />
 								{:else if item.event === 'labeled' || item.event === 'unlabeled'}
@@ -327,3 +380,30 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	/* GitHub-style speech-bubble tail: a small triangle on the comment box's left
+	   edge pointing back at the author avatar in the rail gutter. Two stacked
+	   triangles — a border-colored one and a card-colored one inset 1px — give the
+	   arrow a 1px outline matching the box border. Positioned to sit on the header
+	   bar, level with the avatar's center (~12px from the card top). */
+	.comment-card::before,
+	.comment-card::after {
+		content: '';
+		position: absolute;
+		top: 4px;
+		width: 0;
+		height: 0;
+		border-style: solid;
+	}
+	.comment-card::before {
+		left: -8px;
+		border-width: 8px 8px 8px 0;
+		border-color: transparent var(--color-border) transparent transparent;
+	}
+	.comment-card::after {
+		left: -7px;
+		border-width: 7px 7px 7px 0;
+		border-color: transparent var(--color-card) transparent transparent;
+	}
+</style>

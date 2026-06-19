@@ -121,6 +121,9 @@ export interface PRSummary {
 	body: string;
 	author: string;
 	authorAvatarUrl: string;
+	// The PR author's relationship to the repo (Owner/Member/Contributor/…), shown
+	// as a small badge on the Conversation tab's description card.
+	authorAssociation?: GithubAuthorAssociation;
 	headRef: string;
 	baseRef: string;
 	headSha: string;
@@ -433,12 +436,26 @@ interface PRConversationBase {
 	createdAt: string;
 }
 
+// The commenter's relationship to the repo, as GitHub reports it
+// (`author_association`). Drives the small "Owner"/"Member"/"Contributor" badge
+// next to a name. 'NONE' (and anything we don't badge) renders nothing.
+export type GithubAuthorAssociation =
+	| 'OWNER'
+	| 'MEMBER'
+	| 'COLLABORATOR'
+	| 'CONTRIBUTOR'
+	| 'FIRST_TIME_CONTRIBUTOR'
+	| 'FIRST_TIMER'
+	| 'MANNEQUIN'
+	| 'NONE';
+
 // A top-level issue comment posted to the PR conversation.
 export interface PRConversationComment extends PRConversationBase {
 	kind: 'comment';
 	id: number;
 	author: string;
 	authorAvatarUrl: string;
+	authorAssociation?: GithubAuthorAssociation;
 	body: string;
 	url: string;
 	// True when authored by the active GitHub account (so it can be deleted).
@@ -453,6 +470,7 @@ export interface PRConversationReview extends PRConversationBase {
 	id: number;
 	author: string;
 	authorAvatarUrl: string;
+	authorAssociation?: GithubAuthorAssociation;
 	body: string;
 	state: 'approved' | 'changes_requested' | 'commented' | 'dismissed';
 	url: string;
@@ -467,6 +485,9 @@ export interface PRConversationCommit extends PRConversationBase {
 	message: string;
 	author: string;
 	authorAvatarUrl?: string;
+	// True when GitHub verified the commit's signature (renders a "Verified" badge,
+	// mirroring GitHub's commit list).
+	verified: boolean;
 	url?: string;
 }
 
