@@ -56,6 +56,24 @@ export interface BranchInfo {
 	lastCommitAt?: number;
 }
 
+// A single commit in the History tab's list. Lightweight metadata only — the
+// commit's changed files and diffs are fetched lazily through a `commit`
+// DiffContext when the commit is opened.
+export interface CommitInfo {
+	// Full 40-char commit SHA. Used as the stable list key and as the ref a
+	// `commit` DiffContext diffs (`<hash>^..<hash>`).
+	hash: string;
+	// Abbreviated SHA for display.
+	shortHash: string;
+	// First line of the commit message.
+	subject: string;
+	// Author (not committer) name and email — who wrote the change.
+	authorName: string;
+	authorEmail: string;
+	// Unix epoch ms of the author date.
+	authoredAt: number;
+}
+
 // A local branch that no longer lives on any remote — a candidate for "Clean Up
 // Local Branches". It either never tracked a remote, or its upstream is "gone"
 // (the remote branch was deleted and pruned, e.g. after a PR merged). The
@@ -210,7 +228,12 @@ export type DiffContext =
 	// A managed stash entry, addressed by its resolved commit SHA (`ref`). The
 	// stash commit's parents back the diff: `^1` HEAD parent, `^2` index, `^3`
 	// untracked tree. Index-shift-proof because we always resolve to a SHA.
-	| { kind: 'stash'; ref: string };
+	| { kind: 'stash'; ref: string }
+	// A single commit viewed from the History tab, addressed by its SHA (`ref`).
+	// The diff is the commit against its first parent (`<ref>^..<ref>`); a root
+	// commit with no parent diffs against the empty tree. Shares the branch
+	// machinery — `ref` resolves to a base/head pair in refsForContext.
+	| { kind: 'commit'; ref: string };
 
 // A workspace package changesets can version. `dir` is the repo-relative posix
 // path to the package; `private` packages are still releasable by default
@@ -502,7 +525,7 @@ export type AnimationMode = 'none' | 'accents' | 'all';
 
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
-export type ContextTab = 'unstaged' | 'branch' | 'sessions';
+export type ContextTab = 'unstaged' | 'branch' | 'sessions' | 'history';
 
 // Which GitHub repo a PR listing/checkout targets: the repo's own remote
 // ("fork") or, when the repo is a fork, its parent ("upstream").
@@ -1180,6 +1203,9 @@ export interface PreloadAPI {
 		// staging) — see CommitFileSelection.
 		commit(repoId: string, message: string, files: CommitFileSelection[]): Promise<CommitResult>;
 		getLastCommit(repoId: string): Promise<LastCommit | null>;
+		// List commits reachable from `head` (defaults to the checked-out branch),
+		// newest first, capped at `limit`. Backs the History tab's commit list.
+		listCommits(repoId: string, head?: string, limit?: number): Promise<CommitInfo[]>;
 		undoLastCommit(repoId: string): Promise<CommitResult>;
 		cloneRepo(url: string): Promise<CloneResult>;
 		// Repoint `origin` at the user's fork (GitHub Desktop's fork layout). When

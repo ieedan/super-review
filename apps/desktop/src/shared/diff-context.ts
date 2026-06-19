@@ -12,5 +12,7 @@ export function diffContextKey(ctx: DiffContext): string {
 			return `session:${ctx.sessionId}`;
 		case 'stash':
 			return `stash:${ctx.ref}`;
+		case 'commit':
+			return `commit:${ctx.ref}`;
 	}
 }

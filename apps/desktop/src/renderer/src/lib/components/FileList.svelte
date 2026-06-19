@@ -7,6 +7,7 @@
 	import FileEdit from '@lucide/svelte/icons/file-edit';
 	import Folder from '@lucide/svelte/icons/folder';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
+	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import List from '@lucide/svelte/icons/list';
 	import FolderTree from '@lucide/svelte/icons/folder-tree';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -27,6 +28,7 @@
 	import CommitBox from './CommitBox.svelte';
 	import ChangesetPrompt from './ChangesetPrompt.svelte';
 	import SessionsList from './SessionsList.svelte';
+	import CommitsList from './CommitsList.svelte';
 	import SessionTour from './SessionTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { harnessLabel } from '$lib/harness-logos';
@@ -39,7 +41,7 @@
 		isReadOnlyView,
 		type ContextTab
 	} from '$lib/store.svelte';
-	import { cn, isEditableTarget } from '$lib/utils';
+	import { cn, isEditableTarget, formatRelative } from '$lib/utils';
 	import FileIcon from './FileIcon.svelte';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { matchesFileQuery } from '$lib/file-search';
@@ -115,12 +117,17 @@
 	// there's no tour, so it behaves like a plain changes review.
 	const sessionHasSteps = $derived((app.activeSessionDetail?.steps?.length ?? 0) > 0);
 	// The Tour view owns its own navigation; everything else (normal tabs, a
-	// session's Changes view, a stepless session) gets the file search + the
-	// tree/list toggle.
-	const showFileControls = $derived(
-		app.contextTab !== 'sessions' ||
-			(app.activeSessionId != null && (!sessionHasSteps || app.sessionView === 'changes'))
-	);
+	// session's Changes view, a stepless session, an open commit) gets the file
+	// search + the tree/list toggle. The bare Sessions/History lists get neither.
+	const showFileControls = $derived.by(() => {
+		if (app.contextTab === 'sessions') {
+			return app.activeSessionId != null && (!sessionHasSteps || app.sessionView === 'changes');
+		}
+		if (app.contextTab === 'history') {
+			return app.activeCommit != null;
+		}
+		return true;
+	});
 	const showSessionTour = $derived(
 		app.activeSessionId != null && sessionHasSteps && app.sessionView === 'tour'
 	);
@@ -560,6 +567,13 @@
 		app.activeSessionId ? app.sessions.find((s) => s.id === app.activeSessionId) : undefined
 	);
 
+	// Relative author time for the open commit's header. Reads nowTick so it ticks
+	// with the app's shared interval, matching the sessions list.
+	function commitRelative(authoredAt: number): string {
+		void app.nowTick;
+		return formatRelative(new Date(authoredAt).toISOString());
+	}
+
 	// Virtualizer state — wired up to the Sidebar.Content scroll container
 	// through its `ref` prop. We re-measure on scroll (for scrollTop) and on
 	// resize (for clientHeight — pane drags, window resize, sidebar collapse).
@@ -734,6 +748,20 @@
 					<ArrowLeft class="size-4" />
 				</Button>
 				<span class="min-w-0 flex-1 truncate text-sm text-muted-foreground"> Sessions </span>
+			{:else if app.activeCommit}
+				<!-- A commit's diff is open: the tab strip is replaced with a back
+				     button and a muted "History" label naming where it returns to.
+				     The commit's subject/author live in the row below. -->
+				<Button
+					variant="ghost"
+					size="icon"
+					class="size-7 flex-none"
+					title="Back to history"
+					onclick={() => actions.closeCommit()}
+				>
+					<ArrowLeft class="size-4" />
+				</Button>
+				<span class="min-w-0 flex-1 truncate text-sm text-muted-foreground"> History </span>
 			{:else}
 				<!-- Tab strip: drives which diff context fuels the file list. -->
 				<Tabs.Root value={app.contextTab} onValueChange={setTab} class="min-w-0 flex-1 gap-0">
@@ -782,6 +810,14 @@
 									{app.sessionCount > 99 ? '99+' : app.sessionCount}
 								</span>
 							{/if}
+						</Tabs.Trigger>
+						<!-- History lists the commits on the viewed branch/PR head. Always
+						     available — every checkout has a history to look back through. -->
+						<Tabs.Trigger
+							value="history"
+							class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+						>
+							History
 						</Tabs.Trigger>
 					</Tabs.List>
 				</Tabs.Root>
@@ -870,6 +906,28 @@
 							{activeSession.description}
 						</p>
 					{/if}
+				</div>
+			</div>
+		{/if}
+
+		{#if app.activeCommit}
+			<!-- The open commit's identity, on its own row — the same slot the open
+		       session's title/description uses. Shows the subject, then the author
+		       and relative time plus the short SHA. -->
+			<div class="flex items-start gap-2.5 border-b border-border px-2 py-2">
+				<div
+					class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card text-muted-foreground"
+				>
+					<GitCommitHorizontal class="size-4" />
+				</div>
+				<div class="min-w-0 flex-1">
+					<div class="line-clamp-2 text-sm font-medium">
+						{app.activeCommit.subject}
+					</div>
+					<p class="mt-0.5 truncate text-xs text-muted-foreground">
+						{app.activeCommit.authorName} · {commitRelative(app.activeCommit.authoredAt)}
+						<span class="font-mono">{app.activeCommit.shortHash}</span>
+					</p>
 				</div>
 			</div>
 		{/if}
@@ -989,6 +1047,9 @@
 		{#if app.contextTab === 'sessions' && !app.activeSessionId}
 			<!-- Sessions tab with no session open: list the documented sessions. -->
 			<SessionsList />
+		{:else if app.contextTab === 'history' && !app.activeCommit}
+			<!-- History tab with no commit open: list the branch's commits. -->
+			<CommitsList />
 		{:else if showSessionTour}
 			<!-- An open session's Tour view: grouped step-by-step navigation. The
              Changes view (and stepless sessions) fall through to the file list. -->

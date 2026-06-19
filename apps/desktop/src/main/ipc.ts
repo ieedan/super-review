@@ -16,6 +16,7 @@ import type {
 	CreateRepoOptions,
 	CommitDraft,
 	CommitFileSelection,
+	CommitInfo,
 	CommitResult,
 	DeviceFlowStart,
 	DeviceFlowStatus,
@@ -92,6 +93,7 @@ import {
 	isGitRepo,
 	isWorkingTreeDirty,
 	listBranches,
+	listCommits,
 	listLocalOnlyBranches,
 	listChangedFiles,
 	mergeIntoCurrent,
@@ -838,6 +840,12 @@ export function registerIpc(): void {
 		'git:getLastCommit',
 		async (_e, repoId: string): Promise<LastCommit | null> =>
 			getLastCommit(repoOrThrow(repoId).path)
+	);
+
+	ipcMain.handle(
+		'git:listCommits',
+		async (_e, repoId: string, head?: string, limit?: number): Promise<CommitInfo[]> =>
+			listCommits(repoOrThrow(repoId).path, head, limit)
 	);
 
 	ipcMain.handle(

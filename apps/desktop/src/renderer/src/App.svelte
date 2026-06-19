@@ -12,6 +12,7 @@
 	import FileList from '$lib/components/FileList.svelte';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import SessionsEmptyState from '$lib/components/SessionsEmptyState.svelte';
+	import CommitsEmptyState from '$lib/components/CommitsEmptyState.svelte';
 	import CommentsPanel from '$lib/components/CommentsPanel.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
 	import ForkDialog from '$lib/components/ForkDialog.svelte';
@@ -410,6 +411,8 @@
 				<Resizable.Pane defaultSize={app.commentsSidebarOpen ? 56 : 78}>
 					{#if app.contextTab === 'sessions' && !app.activeSessionId}
 						<SessionsEmptyState />
+					{:else if app.contextTab === 'history' && !app.activeCommit}
+						<CommitsEmptyState />
 					{:else}
 						<DiffView />
 					{/if}

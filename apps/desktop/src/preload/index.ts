@@ -11,6 +11,7 @@ import type {
 	CloneResult,
 	CreateRepoDefaults,
 	CommitDraft,
+	CommitInfo,
 	CommitFileSelection,
 	CommitResult,
 	CreateBranchResult,
@@ -136,6 +137,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:commit', repoId, message, files) as Promise<CommitResult>,
 		getLastCommit: (repoId) =>
 			ipcRenderer.invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
+		listCommits: (repoId, head, limit) =>
+			ipcRenderer.invoke('git:listCommits', repoId, head, limit) as Promise<CommitInfo[]>,
 		undoLastCommit: (repoId) =>
 			ipcRenderer.invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
 		cloneRepo: (url) => ipcRenderer.invoke('git:cloneRepo', url) as Promise<CloneResult>,

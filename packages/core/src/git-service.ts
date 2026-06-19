@@ -9,6 +9,7 @@ import type {
 	BranchInfo,
 	ChangedFile,
 	CommitFileSelection,
+	CommitInfo,
 	CommitSigning,
 	CreateRepoOptions,
 	DiffContext,
@@ -951,6 +952,17 @@ async function refsForContext(
 				head: `pr/${ctx.prNumber}/head`,
 				workingTree: false
 			};
+		case 'commit': {
+			// A single commit's diff is the commit against its first parent. base...head
+			// is three-dot, but for a commit vs its own parent the merge-base IS the
+			// parent, so it equals the two-dot diff — reusing the branch machinery
+			// gives exactly `git show <ref>`. A root commit has no parent; we point the
+			// base at the empty tree, which the base/head paths treat as "no common
+			// base" and surface as no changes (rare enough not to special-case).
+			const parent = `${ctx.ref}^`;
+			const hasParent = await revExists(git, parent);
+			return { base: hasParent ? parent : EMPTY_TREE, head: ctx.ref, workingTree: false };
+		}
 		case 'session':
 			// Sessions are frozen snapshots served from disk by the IPC layer; they
 			// never reach git-service. Guard the invariant rather than guess a ref.
@@ -2618,6 +2630,46 @@ export async function getLastCommit(repoPath: string): Promise<LastCommit | null
 		return { hash, subject, relativeTime, canUndo };
 	} catch {
 		return null;
+	}
+}
+
+// List commits reachable from `head` (newest first), capped at `limit`, for the
+// History tab. Lightweight metadata only — the diff for a commit is fetched
+// lazily via a `commit` DiffContext when it's opened. Fields are NUL-ish (unit
+// separator) delimited with the subject last so a `%s` that happens to contain a
+// separator still parses; records are newline-separated (a `%s` is single-line).
+export async function listCommits(
+	repoPath: string,
+	head = 'HEAD',
+	limit = 2000
+): Promise<CommitInfo[]> {
+	const git = simpleGit(repoPath);
+	try {
+		const raw = await git.raw([
+			'log',
+			`--max-count=${Math.max(1, Math.floor(limit))}`,
+			'--pretty=format:%H%h%an%ae%at%s',
+			head
+		]);
+		const commits: CommitInfo[] = [];
+		for (const line of raw.split('\n')) {
+			if (!line) continue;
+			const [hash, shortHash, authorName, authorEmail, at, ...rest] = line.split('');
+			if (!hash) continue;
+			commits.push({
+				hash,
+				shortHash,
+				authorName,
+				authorEmail,
+				authoredAt: Number(at) * 1000,
+				subject: rest.join('')
+			});
+		}
+		return commits;
+	} catch {
+		// No commits yet, or an unresolvable head — show an empty history rather
+		// than surfacing an error.
+		return [];
 	}
 }
 
