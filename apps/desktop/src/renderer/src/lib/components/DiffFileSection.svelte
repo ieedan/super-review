@@ -26,6 +26,7 @@
 		FileDiff as FileDiffClass,
 		parseDiffFromFile,
 		type DiffLineAnnotation,
+		type DiffTokenEventBaseProps,
 		type FileDiffMetadata,
 		type HunkExpansionRegion,
 		type OnDiffLineClickProps,
@@ -55,6 +56,14 @@
 		type DiffSide
 	} from '@shared/diff-staging';
 	import { registerFindSection, notifySectionState } from '$lib/diff-find.svelte';
+	import {
+		isPackageJsonPath,
+		parsePackageDeps,
+		spanAt,
+		versionForName,
+		type PackageDepIndex
+	} from '$lib/package-json-deps';
+	import { showPackageHover, scheduleHidePackageHover } from '$lib/package-hover.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
@@ -210,6 +219,49 @@
 	// Handle for the most recently queued render so we can cancel it if a newer
 	// target supersedes it before the scheduler gets to it.
 	let cancelPendingRender: (() => void) | null = null;
+
+	// ----------------------------------------------------------------------
+	// package.json hover cards. For a package.json diff we index each side's
+	// dependency entries (name + version, with their character ranges) up front,
+	// then map Pierre's token hover events onto them to drive a shared npm info
+	// card. Indexes are rebuilt per render and keyed by side: a token reports the
+	// line number for its own side, so additions/context resolve against the new
+	// contents and deletions against the old.
+	// ----------------------------------------------------------------------
+	const isPkgJson = $derived(isPackageJsonPath(file.path));
+	// Non-reactive caches rebuilt in renderDiff; null until then (and for any
+	// non-package.json file). eslint-disable-next-line is unnecessary — plain
+	// fields, not Svelte state.
+	let pkgDepsNew: PackageDepIndex | null = null;
+	let pkgDepsOld: PackageDepIndex | null = null;
+
+	// Pierre fires this for every token the pointer enters (mouse only). For a
+	// dependency name/version token we open the card anchored to that token;
+	// hovering anything else in the file dismisses it.
+	function onTokenEnter(props: DiffTokenEventBaseProps): void {
+		const index = props.side === 'deletions' ? pkgDepsOld : pkgDepsNew;
+		if (!index) return;
+		const span = spanAt(index, props.lineNumber, props.lineCharStart, props.lineCharEnd);
+		if (!span) {
+			scheduleHidePackageHover();
+			return;
+		}
+		// Resolve the package's version on each side so the card can show a range
+		// changelog when the version changed in the diff (null when added/removed).
+		showPackageHover(props.tokenElement, {
+			kind: span.kind,
+			name: span.name,
+			version: span.version,
+			oldRange: pkgDepsOld ? versionForName(pkgDepsOld, span.name) : null,
+			newRange: pkgDepsNew ? versionForName(pkgDepsNew, span.name) : null
+		});
+	}
+
+	// Leaving a token starts the shared close timer; re-entering a dep token (or
+	// moving onto the card) cancels it, so name→version moves don't flicker.
+	function onTokenLeave(): void {
+		scheduleHidePackageHover();
+	}
 
 	// Show comments / accept new ones only where the local diff matches what
 	// GitHub thinks the PR contains:
@@ -691,6 +743,14 @@
 			stagingClickRoot = null;
 		}
 		staging = null;
+		// The tokens the hover card may be anchored to are about to be destroyed;
+		// drop the indexes and start closing the card (a re-hover elsewhere cancels
+		// it). Guarded so non-package.json disposes never touch the shared card.
+		if (isPkgJson) {
+			pkgDepsNew = null;
+			pkgDepsOld = null;
+			scheduleHidePackageHover();
+		}
 		if (diffContainer) {
 			diffContainer.remove();
 			diffContainer = null;
@@ -1173,6 +1233,13 @@
 		const oldFile = { name: namePair.old, contents: diff.oldContents };
 		const newFile = { name: namePair.new, contents: diff.newContents };
 
+		// Index this package.json's dependency tokens per side so the hover card
+		// can resolve a hovered token to its package name/version range.
+		if (isPkgJson) {
+			pkgDepsNew = parsePackageDeps(diff.newContents);
+			pkgDepsOld = parsePackageDeps(diff.oldContents);
+		}
+
 		// Parse Pierre's own diff metadata up front: its hunks (not the git patch)
 		// are what the expansion targets, and we need them before the first render so
 		// collapsed regions around comments expand on the first paint (no flash).
@@ -1205,6 +1272,10 @@
 				// via setOptions + flushManagers when `canComment` changes.
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
+				// Token-level hover → npm info cards, only wired for package.json so
+				// Pierre doesn't track hovered tokens for every other file.
+				onTokenEnter: isPkgJson ? onTokenEnter : undefined,
+				onTokenLeave: isPkgJson ? onTokenLeave : undefined,
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
 				// rerender, so re-apply each time.

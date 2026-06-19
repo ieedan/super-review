@@ -6,6 +6,7 @@
 	import NoChanges from './NoChanges.svelte';
 	import BranchReviewComplete from './BranchReviewComplete.svelte';
 	import FindBar from './FindBar.svelte';
+	import PackageHoverCard from './PackageHoverCard.svelte';
 	import { app, actions, allBranchChangesSeen } from '$lib/store.svelte';
 	import { find, openFind, closeFind, setFindRoot } from '$lib/diff-find.svelte';
 	import { shortcut, type Options as ShortcutOptions } from '$lib/actions/shortcut.svelte';
@@ -423,6 +424,10 @@
 		<BranchReviewComplete animateEntrance={app.seenItAllAnimate} />
 	{/if}
 </section>
+
+<!-- One shared hover card for the whole diff view; each file section's Pierre
+     token-hover events drive it through the package-hover controller. -->
+<PackageHoverCard />
 
 <style>
 	/* The wrapper is layout-transparent by default so a file section behaves as a

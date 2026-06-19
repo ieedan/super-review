@@ -961,6 +961,60 @@ export interface GithubAuthError {
 	reason: 'revoked' | 'sso' | 'scope';
 }
 
+// Trimmed npm-registry metadata for a single package, surfaced in the diff
+// viewer's package.json hover cards. The full registry document is large (it
+// inlines every version's manifest); the main process strips it down to just
+// what the cards render. `time` maps a version (plus the synthetic `created` /
+// `modified` keys npm includes) to its ISO publish timestamp.
+export interface NpmPackageInfo {
+	name: string;
+	description?: string;
+	// `dist-tags.latest` — the version `npm install <name>` resolves to.
+	latestVersion?: string;
+	homepage?: string;
+	// Normalized to a browsable https URL (git+ssh / git+https forms are cleaned).
+	repositoryUrl?: string;
+	license?: string;
+	author?: string;
+	keywords?: string[];
+	// version (or 'created' / 'modified') → ISO publish timestamp.
+	time: Record<string, string>;
+	// Deprecation message keyed by version, when the registry marks one.
+	deprecations?: Record<string, string>;
+}
+
+// Result of an npm lookup: either the trimmed info or a human-readable error
+// (offline, 404, rate-limited) the hover card can show instead of spinning.
+export type NpmPackageResult = { ok: true; info: NpmPackageInfo } | { ok: false; error: string };
+
+// A GitHub release's notes, for the hover card's "What's new" disclosure. `body`
+// is the raw release-notes markdown (the card renders it); `htmlUrl` links to
+// the release page on GitHub.
+export interface ReleaseNotes {
+	tag: string;
+	name?: string;
+	body?: string;
+	htmlUrl: string;
+	publishedAt?: string;
+}
+
+// Result of a release-notes lookup. `release` is null when the package isn't on
+// GitHub or has no release matching the version (the card still shows a plain
+// changelog link). Errors resolve as a variant rather than rejecting so the card
+// can degrade to just the link.
+export type ReleaseNotesResult =
+	| { ok: true; release: ReleaseNotes | null }
+	| { ok: false; error: string };
+
+// Result of a release-notes RANGE lookup: every release strictly above the lower
+// version and up to (and including) the higher one, newest first. Used when a
+// dependency's version changed in the diff so the card can show everything that
+// changed between the two versions. `truncated` is true when more releases exist
+// than we fetched/returned (the card then points at the full changelog).
+export type ReleaseNotesRangeResult =
+	| { ok: true; releases: ReleaseNotes[]; truncated: boolean }
+	| { ok: false; error: string };
+
 export interface PreloadAPI {
 	platform: AppPlatform;
 	repos: {
@@ -1262,6 +1316,32 @@ export interface PreloadAPI {
 		isInstalled(repoId: string): Promise<boolean>;
 		// Write the bundled document-session skill into the repo.
 		install(repoId: string): Promise<void>;
+	};
+	npm: {
+		// Fetch trimmed npm-registry metadata for a package, for the package.json
+		// hover cards. Cached in the main process; resolves to an error variant
+		// rather than rejecting so the card can render the failure inline.
+		getPackageInfo(name: string): Promise<NpmPackageResult>;
+		// Fetch the GitHub release notes for a package version, for the hover card's
+		// "What's new" disclosure. `repositoryUrl` is the package's normalized repo
+		// URL and `packageName` lets monorepos be matched by their `name@version`
+		// tag. Resolves `{ release: null }` when it isn't a GitHub repo or has no
+		// matching release, and an error variant rather than rejecting.
+		getReleaseNotes(
+			repositoryUrl: string,
+			packageName: string,
+			version: string
+		): Promise<ReleaseNotesResult>;
+		// Fetch the GitHub release notes for every release between two versions
+		// (exclusive of the lower, inclusive of the higher), for when a dependency's
+		// version changed in the diff. Order of the args doesn't matter; the result
+		// is newest-first.
+		getReleaseNotesRange(
+			repositoryUrl: string,
+			packageName: string,
+			fromVersion: string,
+			toVersion: string
+		): Promise<ReleaseNotesRangeResult>;
 	};
 	shell: {
 		openExternal(url: string): Promise<void>;

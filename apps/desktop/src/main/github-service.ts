@@ -16,7 +16,10 @@ import type {
 	PRChecksSummary,
 	PRDeployment,
 	PRReviewComment,
-	PRSummary
+	PRSummary,
+	ReleaseNotes,
+	ReleaseNotesResult,
+	ReleaseNotesRangeResult
 } from '@shared/types.js';
 import {
 	checkSshSigningSupported,
@@ -309,6 +312,235 @@ function octokit(account: StoredGithubAccount): Octokit {
 		throw err;
 	});
 	return o;
+}
+
+// ─── Release notes (package.json hover card "What's new" disclosure) ─────────
+// Fetches a package's GitHub release notes. Unlike the methods above this isn't
+// tied to a project's pinned account: it's a read of public release data for
+// whatever npm package is under the pointer. We authenticate with the active
+// account's token when there is one (5000 req/hr and access to private repos the
+// user can see), and fall back to an unauthenticated client (60 req/hr) so the
+// feature still works signed-out. We deliberately DON'T use the auth-error-hooked
+// `octokit()` here: a 404/rate-limit on someone else's repo isn't a signal that
+// the user's own token is bad.
+
+interface ReleaseNotesCacheEntry {
+	at: number;
+	result: ReleaseNotesResult;
+}
+// `owner/repo@version` → result. Process-wide; mirrors npm-service's cache so
+// repeated hovers (and renderer reloads) don't re-hit the GitHub API.
+const releaseNotesCache = new Map<string, ReleaseNotesCacheEntry>();
+const RELEASE_NOTES_TTL_MS = 60 * 60 * 1000;
+
+// Pull `owner` / `repo` out of a normalized https repository URL, but only for
+// github.com (the only host we can query the Releases API for). Returns null for
+// GitLab/Bitbucket/self-hosted so the caller degrades to no release notes.
+function parseGithubRepo(repositoryUrl: string): { owner: string; repo: string } | null {
+	let url: URL;
+	try {
+		url = new URL(repositoryUrl);
+	} catch {
+		return null;
+	}
+	if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') return null;
+	const parts = url.pathname.split('/').filter(Boolean);
+	if (parts.length < 2) return null;
+	const owner = parts[0];
+	const repo = parts[1].replace(/\.git$/, '');
+	if (!owner || !repo) return null;
+	return { owner, repo };
+}
+
+function releaseNotesOctokit(): Octokit {
+	const account = getActiveGithubAccount();
+	return account ? new Octokit({ auth: account.token }) : new Octokit();
+}
+
+export async function getReleaseNotes(
+	repositoryUrl: string,
+	packageName: string,
+	version: string
+): Promise<ReleaseNotesResult> {
+	const parsed = parseGithubRepo(repositoryUrl);
+	if (!parsed || !version) return { ok: true, release: null };
+	const { owner, repo } = parsed;
+
+	// Keyed by package (not just repo): a monorepo publishes many packages from
+	// one repo, each with its own `name@version` release.
+	const cacheKey = `${packageName}@${version}`;
+	const cached = releaseNotesCache.get(cacheKey);
+	if (cached && Date.now() - cached.at < RELEASE_NOTES_TTL_MS) return cached.result;
+
+	const o = releaseNotesOctokit();
+	// Single-package repos tag releases `v1.2.3` or the bare version; monorepos
+	// (Changesets/Lerna style, e.g. svelte) tag `name@1.2.3`. Try each; a miss is
+	// a 404, which just means "try the next form / none match".
+	const tags = [`v${version}`, version, `${packageName}@${version}`];
+	try {
+		let result: ReleaseNotesResult = { ok: true, release: null };
+		for (const tag of tags) {
+			try {
+				const { data } = await o.repos.getReleaseByTag({ owner, repo, tag });
+				result = { ok: true, release: mapRelease(data) };
+				break;
+			} catch (err) {
+				if ((err as { status?: number }).status === 404) continue;
+				throw err;
+			}
+		}
+		releaseNotesCache.set(cacheKey, { at: Date.now(), result });
+		return result;
+	} catch (err) {
+		// Don't cache transient errors (rate limit / network), so the next hover
+		// retries. A 404 was already handled above as "no matching release".
+		const message = err instanceof Error ? err.message : String(err);
+		return { ok: false, error: `Could not load release notes: ${message}` };
+	}
+}
+
+// The fields we read off a GitHub release (from getReleaseByTag or listReleases).
+interface RawRelease {
+	tag_name: string;
+	name?: string | null;
+	body?: string | null;
+	html_url: string;
+	published_at?: string | null;
+	draft?: boolean;
+}
+
+function mapRelease(data: RawRelease): ReleaseNotes {
+	return {
+		tag: data.tag_name,
+		name: data.name ?? undefined,
+		body: data.body ?? undefined,
+		htmlUrl: data.html_url,
+		publishedAt: data.published_at ?? undefined
+	};
+}
+
+// ─── Release-notes range (a dependency whose version changed in the diff) ────
+// When a dep bumps `1.0.0 -> 1.1.0` we want every release in between, not just
+// one. There's no range endpoint, so we list recent releases and filter by a
+// hand-rolled semver compare (we don't ship a semver lib). The range is
+// (lower, higher]: the releases you gain upgrading (or lose downgrading), which
+// is the same set in either direction.
+
+const RANGE_MAX = 20; // cap how many release sections we return
+
+interface Semver {
+	major: number;
+	minor: number;
+	patch: number;
+	// Dot-separated prerelease identifiers (`1.1.0-beta.2` → ['beta','2']); empty
+	// for a normal release, which sorts ABOVE any of its prereleases.
+	pre: string[];
+}
+
+function parseSemver(version: string): Semver | null {
+	const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-.]+))?(?:\+[0-9A-Za-z-.]+)?$/.exec(version.trim());
+	if (!m) return null;
+	return { major: +m[1], minor: +m[2], patch: +m[3], pre: m[4] ? m[4].split('.') : [] };
+}
+
+function compareSemver(a: Semver, b: Semver): number {
+	if (a.major !== b.major) return a.major - b.major;
+	if (a.minor !== b.minor) return a.minor - b.minor;
+	if (a.patch !== b.patch) return a.patch - b.patch;
+	if (a.pre.length === 0 && b.pre.length === 0) return 0;
+	if (a.pre.length === 0) return 1; // release > prerelease
+	if (b.pre.length === 0) return -1;
+	const n = Math.max(a.pre.length, b.pre.length);
+	for (let i = 0; i < n; i++) {
+		const ai = a.pre[i];
+		const bi = b.pre[i];
+		if (ai === undefined) return -1; // shorter prerelease set sorts lower
+		if (bi === undefined) return 1;
+		const an = /^\d+$/.test(ai);
+		const bn = /^\d+$/.test(bi);
+		if (an && bn) {
+			const d = +ai - +bi;
+			if (d !== 0) return d;
+		} else if (an)
+			return -1; // numeric identifiers sort below alphanumeric
+		else if (bn) return 1;
+		else if (ai !== bi) return ai < bi ? -1 : 1;
+	}
+	return 0;
+}
+
+// Extract this package's version from a release tag. `preferNameAt` is set when
+// the repo is known to use `name@1.2.3` tags (a monorepo publishing per package),
+// so we ignore its shared `vX.Y.Z` tags that belong to other packages / the root.
+function versionFromTag(tag: string, packageName: string, preferNameAt: boolean): string | null {
+	if (tag.startsWith(`${packageName}@`)) return tag.slice(packageName.length + 1);
+	if (preferNameAt) return null;
+	if (/^v\d/.test(tag)) return tag.slice(1);
+	if (/^\d/.test(tag)) return tag;
+	return null;
+}
+
+interface ReleaseNotesRangeCacheEntry {
+	at: number;
+	result: ReleaseNotesRangeResult;
+}
+const releaseNotesRangeCache = new Map<string, ReleaseNotesRangeCacheEntry>();
+
+export async function getReleaseNotesRange(
+	repositoryUrl: string,
+	packageName: string,
+	fromVersion: string,
+	toVersion: string
+): Promise<ReleaseNotesRangeResult> {
+	const parsed = parseGithubRepo(repositoryUrl);
+	const from = parseSemver(fromVersion);
+	const to = parseSemver(toVersion);
+	if (!parsed || !from || !to) return { ok: true, releases: [], truncated: false };
+	const cmp = compareSemver(from, to);
+	if (cmp === 0) return { ok: true, releases: [], truncated: false };
+	const lo = cmp < 0 ? from : to; // exclusive lower bound
+	const hi = cmp < 0 ? to : from; // inclusive upper bound
+	const { owner, repo } = parsed;
+
+	const cacheKey = `${packageName}:${fromVersion}..${toVersion}`;
+	const cached = releaseNotesRangeCache.get(cacheKey);
+	if (cached && Date.now() - cached.at < RELEASE_NOTES_TTL_MS) return cached.result;
+
+	const o = releaseNotesOctokit();
+	try {
+		// One page of the 100 most recent releases (newest first), enough for any
+		// realistic bump. A jump that reaches past 100 releases is reported as
+		// truncated so the card can point at the full changelog.
+		const { data } = await o.repos.listReleases({ owner, repo, per_page: 100 });
+		const usesNameAt = data.some((r) => r.tag_name.startsWith(`${packageName}@`));
+		const inRange: { v: Semver; release: ReleaseNotes }[] = [];
+		let reachedLo = false;
+		for (const r of data) {
+			if (r.draft) continue;
+			const versionStr = versionFromTag(r.tag_name, packageName, usesNameAt);
+			if (!versionStr) continue;
+			const v = parseSemver(versionStr);
+			if (!v) continue;
+			if (compareSemver(v, lo) <= 0) {
+				reachedLo = true; // walked past the lower bound; older releases are out
+				continue;
+			}
+			if (compareSemver(v, hi) > 0) continue; // above the new version
+			inRange.push({ v, release: mapRelease(r) });
+		}
+		inRange.sort((x, y) => compareSemver(y.v, x.v)); // newest first
+		// Incomplete if a full page didn't reach the lower bound (older in-range
+		// releases may exist beyond page 1), or if we hit the display cap.
+		const incomplete = data.length >= 100 && !reachedLo;
+		const releases = inRange.slice(0, RANGE_MAX).map((x) => x.release);
+		const truncated = incomplete || inRange.length > RANGE_MAX;
+		const result: ReleaseNotesRangeResult = { ok: true, releases, truncated };
+		releaseNotesRangeCache.set(cacheKey, { at: Date.now(), result });
+		return result;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return { ok: false, error: `Could not load release notes: ${message}` };
+	}
 }
 
 // Bridge the signed-in GitHub OAuth token to git transport. git authenticates
