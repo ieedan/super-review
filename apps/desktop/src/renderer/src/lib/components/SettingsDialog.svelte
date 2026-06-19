@@ -918,11 +918,9 @@
 				<div id="settings-custom-file-icons" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Custom file icons</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
-						Badge files matching a glob pattern with your own icon, overriding the built-in file
-						icon — handy for flagging generated files, configs, or anything special in your repo.
-						Patterns work like hidden files: no slash matches the file name anywhere (e.g.
-						<code>*.proto</code>); a slash matches the full path (e.g. <code>infra/**</code>). The
-						icon can be an <code>https://</code> URL or an absolute path to an image on your machine.
+						Give files matching a glob pattern your own icon. Patterns work like hidden files:
+						<code>*.proto</code> matches the name anywhere, <code>infra/**</code> matches a path.
+						The icon can be an <code>https://</code> URL or a local image path.
 					</p>
 
 					<div class="mt-3 flex gap-2">
@@ -938,8 +936,13 @@
 							}}
 							class="flex-1"
 						/>
-						<Button variant="outline" onclick={pickIconFile} title="Choose a local image">
-							<FolderOpen class="size-3.5" /> Browse
+						<Button
+							variant="outline"
+							size="icon"
+							onclick={pickIconFile}
+							title="Choose a local image"
+						>
+							<FolderOpen class="size-3.5" />
 						</Button>
 						<Button variant="outline" onclick={addCustomIcon}>
 							<Plus class="size-3.5" /> Add
