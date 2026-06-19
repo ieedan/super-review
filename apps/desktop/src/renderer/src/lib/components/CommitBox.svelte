@@ -9,7 +9,7 @@
 	import * as Avatar from './ui/avatar';
 	import { Input } from './ui/input';
 	import { Textarea } from './ui/textarea';
-	import AccountSwitcher from './AccountSwitcher.svelte';
+	import { AccountSwitcher } from '@super-review/ui';
 	import {
 		actions,
 		app,
@@ -290,11 +290,16 @@
 			align="start"
 			side="top"
 			heading="Account for this project"
+			accounts={app.githubAccounts}
+			authErrors={app.githubAuthErrors}
 			selectedAccountId={effectiveAccount?.id}
 			defaultAccountId={app.activeGithubAccount?.id}
 			isPinned={!!app.activeRepo?.githubAccountId}
 			onSelectAccount={(id) => actions.setRepoGithubAccount(id)}
 			onUseDefault={() => actions.setRepoGithubAccount(null)}
+			onSignIn={() => actions.openGithubSignIn()}
+			onSignOut={(id) => actions.removeGithubAccount(id)}
+			onOpenSettings={() => actions.openSettingsDialog()}
 			triggerTitle={effectiveAccount
 				? `This project uses ${effectiveAccount.login}. Click to switch`
 				: 'Select an account for this project'}

@@ -76,7 +76,7 @@
 			<span class="font-display text-lg font-bold tracking-tight">Super Review</span>
 		</a>
 		<span
-			class="border-line inline-flex cursor-default items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold text-muted"
+			class="border-line inline-flex cursor-default items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold text-dim"
 			aria-disabled="true"
 			title="Downloads coming soon"
 		>
@@ -96,7 +96,7 @@
 		</h1>
 
 		<p
-			class="reveal mt-6 max-w-xl text-lg leading-relaxed text-pretty text-muted"
+			class="reveal mt-6 max-w-xl text-lg leading-relaxed text-pretty text-dim"
 			style="animation-delay: 180ms"
 		>
 			A local-first desktop app designed to structure and review agent-written code.
@@ -105,7 +105,7 @@
 		<!-- Download (coming soon; see note in <script>) -->
 		<div class="reveal mt-9 flex flex-col items-center gap-3" style="animation-delay: 260ms">
 			<span
-				class="border-line bg-elevated/60 inline-flex cursor-default items-center gap-3 rounded-xl border px-7 py-4 font-semibold text-muted"
+				class="border-line bg-elevated/60 inline-flex cursor-default items-center gap-3 rounded-xl border px-7 py-4 font-semibold text-dim"
 				aria-disabled="true"
 			>
 				<span class="h-2 w-2 animate-pulse rounded-full bg-flame"></span>
@@ -148,7 +148,7 @@
 		<!-- Section intro -->
 		<div class="text-center">
 			<span
-				class="border-line bg-elevated/60 text-muted inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-semibold tracking-wide"
+				class="border-line bg-elevated/60 text-dim inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-semibold tracking-wide"
 			>
 				<span class="h-1.5 w-1.5 rounded-full bg-flame"></span>
 				Try it right here
@@ -156,7 +156,7 @@
 			<h2 class="font-display mt-5 text-3xl font-extrabold tracking-tight sm:text-4xl">
 				Built for the way you actually review
 			</h2>
-			<p class="text-muted mx-auto mt-4 max-w-xl text-pretty">
+			<p class="text-dim mx-auto mt-4 max-w-xl text-pretty">
 				These aren't screenshots. They're the real components — go ahead and poke at them.
 			</p>
 		</div>
@@ -169,7 +169,7 @@
 					<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
 						Know what changed <span class="flame-text">before you trust it</span>
 					</h3>
-					<p class="text-muted mt-4 leading-relaxed text-pretty">
+					<p class="text-dim mt-4 leading-relaxed text-pretty">
 						When an agent bumps a dependency, hover the name in <code class="text-fg font-mono text-sm">package.json</code>
 						to pull live npm metadata and GitHub release notes inline — version, license, links,
 						and the full <em>"what's new"</em> changelog. No more tab-hopping to figure out if a
@@ -189,7 +189,7 @@
 					<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
 						Every account, <span class="flame-text">one click away</span>
 					</h3>
-					<p class="text-muted mt-4 leading-relaxed text-pretty">
+					<p class="text-dim mt-4 leading-relaxed text-pretty">
 						Personal, work, and bot accounts live side by side. Pick a per-project default,
 						switch who you're reviewing as, and Super Review tells you the moment a token
 						expires — so a SAML lapse never silently swallows your comments.
@@ -197,15 +197,7 @@
 					<p class="text-faint mt-4 font-mono text-xs">→ open the switcher</p>
 				</div>
 				<div class="flex justify-center lg:order-1">
-					<div
-						class="border-line bg-elevated/50 flex w-full max-w-md flex-col items-center gap-6 rounded-2xl border p-10"
-					>
-						<span class="text-faint font-mono text-xs">Super Review · header</span>
-						<AccountSwitcherDemo />
-						<span class="text-faint text-center text-xs">
-							Switch the active reviewer for this repo
-						</span>
-					</div>
+					<AccountSwitcherDemo />
 				</div>
 			</div>
 		</div>
@@ -217,7 +209,7 @@
 				<h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
 					Tune the diff until it <span class="flame-text">disappears into the work</span>
 				</h3>
-				<p class="text-muted mt-4 leading-relaxed text-pretty">
+				<p class="text-dim mt-4 leading-relaxed text-pretty">
 					Light or dark, split or unified, your favorite syntax theme and code font, file icons
 					on or off. Set it once and read code the way your eyes prefer. Change anything on the
 					left — the diff updates instantly.
@@ -278,7 +270,7 @@
 							<span
 								class="flex items-center justify-between rounded-md px-2 py-1.5 {file.active
 									? 'bg-elevated text-fg'
-									: 'text-muted'}"
+									: 'text-dim'}"
 							>
 								<span class="truncate font-mono text-xs">{file.name.split('/').pop()}</span>
 								<span class="ml-2 flex shrink-0 gap-1 font-mono text-[10px]">
@@ -295,7 +287,7 @@
 					<div
 						class="border-line bg-base/40 flex shrink-0 items-center justify-between border-b px-4 py-2.5 font-mono text-xs"
 					>
-						<span class="text-muted">src/auth/<span class="text-fg">session.ts</span></span>
+						<span class="text-dim">src/auth/<span class="text-fg">session.ts</span></span>
 						<span class="flex items-center gap-2">
 							<span class="text-add">+3</span>
 							<span class="text-del">−2</span>
@@ -333,7 +325,7 @@
 								<code
 									class="flex-1 py-0.5 pr-3 whitespace-pre {line.t === 'add'
 										? 'text-fg'
-										: 'text-muted'}">{line.text}</code
+										: 'text-dim'}">{line.text}</code
 								>
 							</div>
 						{/each}

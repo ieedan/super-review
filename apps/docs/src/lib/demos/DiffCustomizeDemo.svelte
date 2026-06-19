@@ -384,7 +384,7 @@
 						class="flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors {themeId ===
 						t.id
 							? 'border-flame text-fg'
-							: 'border-line text-muted hover:border-line-bright'}"
+							: 'border-line text-dim hover:border-line-bright'}"
 					>
 						<span class="flex h-5 w-5 shrink-0 overflow-hidden rounded-md border border-black/20">
 							<span class="flex-1" style="background:{pp.bg}"></span>
@@ -412,7 +412,7 @@
 						class="flex items-center justify-between rounded-lg border px-3 py-1.5 text-xs transition-colors {fontId ===
 						f.id
 							? 'border-flame text-fg'
-							: 'border-line text-muted hover:border-line-bright'}"
+							: 'border-line text-dim hover:border-line-bright'}"
 						style="font-family: {f.stack}"
 					>
 						{f.label}
@@ -551,7 +551,7 @@
 					onclick={() => set(opt.id)}
 					class="flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors {value === opt.id
 						? 'bg-elevated text-fg shadow'
-						: 'text-muted hover:text-fg'}"
+						: 'text-dim hover:text-fg'}"
 				>
 					{opt.label}
 				</button>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import type { GithubAccount, GithubAuthError } from '@super-review/core/types';
 	import Check from '@lucide/svelte/icons/check';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -7,10 +8,14 @@
 	import Settings from '@lucide/svelte/icons/settings';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import * as Avatar from './ui/avatar';
-	import { actions, app } from '$lib/store.svelte';
-	import { cn } from '$lib/utils';
+	import { cn } from './utils';
 
+	// Decoupled from the global store: the account list, auth errors, and all
+	// actions are passed in. The desktop app wires these to its store; other
+	// hosts (e.g. the marketing site) can supply static data.
 	let {
+		accounts,
+		authErrors = [],
 		trigger,
 		triggerClass,
 		triggerTitle,
@@ -18,20 +23,24 @@
 		side = 'bottom',
 		showSettings = true,
 		heading = 'Signed in accounts',
-		// Account currently in effect (gets the checkmark). Defaults to the
-		// app-wide active account.
-		selectedAccountId = app.activeGithubAccount?.id,
+		// Account currently in effect (gets the checkmark).
+		selectedAccountId,
 		// App-wide default — when provided, that account is tagged "default".
 		defaultAccountId,
-		// What happens when an account is chosen. Defaults to pinning the account
-		// to the current project.
-		onSelectAccount = (id: string) => void actions.setRepoGithubAccount(id),
+		// What happens when an account is chosen.
+		onSelectAccount,
 		// When provided, a "Use app default" item appears that unpins the project.
 		onUseDefault,
 		// Whether the project currently has its own pinned account (controls
 		// whether the reset item is shown).
-		isPinned = false
+		isPinned = false,
+		// Add-account / sign-out / settings handlers.
+		onSignIn,
+		onSignOut,
+		onOpenSettings
 	}: {
+		accounts: GithubAccount[];
+		authErrors?: GithubAuthError[];
 		trigger: Snippet;
 		triggerClass?: string;
 		triggerTitle?: string;
@@ -44,19 +53,10 @@
 		onSelectAccount?: (id: string) => void;
 		onUseDefault?: () => void;
 		isPinned?: boolean;
+		onSignIn?: () => void;
+		onSignOut?: (id: string) => void;
+		onOpenSettings?: () => void;
 	} = $props();
-
-	function startSignIn(): void {
-		actions.openGithubSignIn();
-	}
-
-	function openSettings(): void {
-		actions.openSettingsDialog();
-	}
-
-	async function removeAccount(id: string): Promise<void> {
-		await actions.removeGithubAccount(id);
-	}
 </script>
 
 <DropdownMenu.Root>
@@ -64,16 +64,16 @@
 		{@render trigger()}
 	</DropdownMenu.Trigger>
 	<DropdownMenu.Content {align} {side} class="min-w-[280px]">
-		{#if app.githubAccounts.length > 0}
+		{#if accounts.length > 0}
 			<DropdownMenu.Group>
 				<DropdownMenu.GroupHeading>{heading}</DropdownMenu.GroupHeading>
-				{#each app.githubAccounts as acct (acct.id)}
+				{#each accounts as acct (acct.id)}
 					{@const isSelected = acct.id === selectedAccountId}
 					<DropdownMenu.Item
 						class={cn('gap-2', isSelected && 'opacity-100')}
 						disabled={isSelected}
 						closeOnSelect={!isSelected}
-						onSelect={() => onSelectAccount(acct.id)}
+						onSelect={() => onSelectAccount?.(acct.id)}
 					>
 						<Avatar.Root class="size-6 shrink-0">
 							{#if acct.avatarUrl}
@@ -93,7 +93,7 @@
 										default
 									</span>
 								{/if}
-								{#if app.githubAuthErrors.some((e) => e.accountId === acct.id)}
+								{#if authErrors.some((e) => e.accountId === acct.id)}
 									<span
 										class="shrink-0 rounded-sm bg-warning/15 px-1 text-[9px] tracking-wide text-warning uppercase"
 										title="This account's sign-in expired — use “Add another account” to sign in again"
@@ -114,7 +114,7 @@
 								class="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
 								onclick={(e) => {
 									e.stopPropagation();
-									void removeAccount(acct.id);
+									onSignOut?.(acct.id);
 								}}
 								title={`Sign out ${acct.login}`}
 								aria-label={`Sign out ${acct.login}`}
@@ -133,13 +133,13 @@
 			{/if}
 			<DropdownMenu.Separator />
 		{/if}
-		<DropdownMenu.Item onSelect={startSignIn}>
+		<DropdownMenu.Item onSelect={() => onSignIn?.()}>
 			<Plus class="size-3.5" />
-			{app.githubAccounts.length > 0 ? 'Add another account' : 'Sign in to GitHub'}
+			{accounts.length > 0 ? 'Add another account' : 'Sign in to GitHub'}
 		</DropdownMenu.Item>
 		{#if showSettings}
 			<DropdownMenu.Separator />
-			<DropdownMenu.Item onSelect={openSettings}>
+			<DropdownMenu.Item onSelect={() => onOpenSettings?.()}>
 				<Settings class="size-3.5" />
 				Settings
 			</DropdownMenu.Item>

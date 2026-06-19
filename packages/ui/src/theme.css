@@ -1,0 +1,92 @@
+/* Shared design tokens for @super-review/ui components.
+ *
+ * These are the desktop app's shadcn-svelte tokens (mirrored from
+ * apps/desktop/src/renderer/src/app.css) so the real app components render
+ * identically wherever they're embedded. The consuming app imports
+ * `tailwindcss` itself; this file layers the token system on top.
+ *
+ * Light is the default; add the `dark` class to a wrapping element (the docs
+ * site wraps each embedded surface in `.sr-surface.dark`). */
+
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+	--color-background: hsl(0 0% 100%);
+	--color-foreground: hsl(0 0% 3.9%);
+	--color-card: hsl(0 0% 100%);
+	--color-card-foreground: hsl(0 0% 3.9%);
+	--color-popover: hsl(0 0% 100%);
+	--color-popover-foreground: hsl(0 0% 3.9%);
+	--color-primary: hsl(11 100% 60%);
+	--color-primary-foreground: hsl(20 14% 9%);
+	--color-secondary: hsl(0 0% 96.1%);
+	--color-secondary-foreground: hsl(0 0% 9%);
+	--color-muted: hsl(0 0% 96.1%);
+	--color-muted-foreground: hsl(0 0% 45.1%);
+	--color-accent: hsl(0 0% 96.1%);
+	--color-accent-foreground: hsl(0 0% 9%);
+	--color-destructive: hsl(0 84.2% 60.2%);
+	--color-destructive-foreground: hsl(0 0% 98%);
+	--color-border: hsl(0 0% 89.8%);
+	--color-input: hsl(0 0% 89.8%);
+	--color-ring: hsl(11 100% 60%);
+	--color-success: hsl(142 76% 36%);
+	--color-warning: hsl(38 92% 50%);
+	--color-merged: hsl(265 60% 52%);
+	--color-sidebar: hsl(0 0% 98%);
+	--color-sidebar-foreground: hsl(0 0% 3.9%);
+	--color-sidebar-border: hsl(0 0% 89.8%);
+	--color-sidebar-accent: hsl(0 0% 96.1%);
+	--color-sidebar-accent-foreground: hsl(0 0% 9%);
+	--color-sidebar-primary: hsl(11 100% 60%);
+	--color-sidebar-primary-foreground: hsl(20 14% 9%);
+	--color-sidebar-ring: hsl(11 100% 60%);
+
+	--radius: 0.5rem;
+}
+
+.dark {
+	--color-background: hsl(0 0% 6%);
+	--color-foreground: hsl(0 0% 98%);
+	--color-card: hsl(0 0% 8%);
+	--color-card-foreground: hsl(0 0% 98%);
+	--color-popover: hsl(0 0% 8%);
+	--color-popover-foreground: hsl(0 0% 98%);
+	--color-primary: hsl(11 100% 60%);
+	--color-primary-foreground: hsl(20 14% 9%);
+	--color-secondary: hsl(0 0% 14.9%);
+	--color-secondary-foreground: hsl(0 0% 98%);
+	--color-muted: hsl(0 0% 14.9%);
+	--color-muted-foreground: hsl(0 0% 63.9%);
+	--color-accent: hsl(0 0% 14.9%);
+	--color-accent-foreground: hsl(0 0% 98%);
+	--color-destructive: hsl(0 62.8% 40.6%);
+	--color-destructive-foreground: hsl(0 0% 98%);
+	--color-border: hsl(0 0% 14.9%);
+	--color-input: hsl(0 0% 14.9%);
+	--color-ring: hsl(11 100% 60%);
+	--color-success: hsl(142 70% 45%);
+	--color-warning: hsl(38 92% 60%);
+	--color-merged: hsl(265 70% 65%);
+	--color-sidebar: hsl(0 0% 7%);
+	--color-sidebar-foreground: hsl(0 0% 98%);
+	--color-sidebar-border: hsl(0 0% 14.9%);
+	--color-sidebar-accent: hsl(0 0% 14.9%);
+	--color-sidebar-accent-foreground: hsl(0 0% 98%);
+	--color-sidebar-primary: hsl(11 100% 60%);
+	--color-sidebar-primary-foreground: hsl(20 14% 9%);
+	--color-sidebar-ring: hsl(11 100% 60%);
+}
+
+/* A surface that hosts embedded app components. Establishes the app's base
+   colors and fonts so components look the same as in the desktop app. */
+.sr-surface {
+	background: var(--color-background);
+	color: var(--color-foreground);
+	--ui-font:
+		ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--code-font: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+}

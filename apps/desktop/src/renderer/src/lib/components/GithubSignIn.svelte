@@ -2,7 +2,7 @@
 	import User from '@lucide/svelte/icons/user';
 	import { buttonVariants } from './ui/button';
 	import * as Avatar from './ui/avatar';
-	import AccountSwitcher from './AccountSwitcher.svelte';
+	import { AccountSwitcher } from '@super-review/ui';
 	import {
 		actions,
 		app,
@@ -24,11 +24,16 @@
 <AccountSwitcher
 	align="end"
 	heading="Account for this project"
+	accounts={app.githubAccounts}
+	authErrors={app.githubAuthErrors}
 	selectedAccountId={account?.id}
 	defaultAccountId={app.activeGithubAccount?.id}
 	isPinned={!!app.activeRepo?.githubAccountId}
 	onSelectAccount={(id) => actions.setRepoGithubAccount(id)}
 	onUseDefault={() => actions.setRepoGithubAccount(null)}
+	onSignIn={() => actions.openGithubSignIn()}
+	onSignOut={(id) => actions.removeGithubAccount(id)}
+	onOpenSettings={() => actions.openSettingsDialog()}
 	triggerTitle={authError
 		? `GitHub sign-in for ${authError.login} has expired — sign in again`
 		: account

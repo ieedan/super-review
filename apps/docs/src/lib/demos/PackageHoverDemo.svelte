@@ -196,7 +196,7 @@
 							onpointerenter={(e) => scheduleOpen(line.pkg!, e.currentTarget)}
 							onpointerleave={scheduleHide}
 							onfocus={(e) => scheduleOpen(line.pkg!, e.currentTarget)}
-							onblur={scheduleHide}>{line.pkg}</button>{line.post}{:else}<span class="text-muted">{line.plain}</span>{/if}</code>
+							onblur={scheduleHide}>{line.pkg}</button>{line.post}{:else}<span class="text-dim">{line.plain}</span>{/if}</code>
 			</div>
 		{/each}
 		</div>
@@ -231,7 +231,7 @@
 
 			<!-- Body -->
 			<div class="border-line mt-3 border-t px-3.5 pt-3 pb-3.5">
-				<p class="text-muted text-[12.5px] leading-relaxed">{active.description}</p>
+				<p class="text-dim text-[12.5px] leading-relaxed">{active.description}</p>
 
 				<div class="mt-3 flex flex-wrap gap-1.5">
 					<span
@@ -281,7 +281,7 @@
 					<button
 						type="button"
 						onclick={() => (expanded = !expanded)}
-						class="text-muted hover:text-fg flex w-full items-center gap-1.5 text-[12px] font-medium transition-colors"
+						class="text-dim hover:text-fg flex w-full items-center gap-1.5 text-[12px] font-medium transition-colors"
 					>
 						<svg
 							viewBox="0 0 24 24"
@@ -300,7 +300,7 @@
 							{#each active.releases as rel (rel.tag)}
 								<div class="mb-3 last:mb-0">
 									<div class="text-flame mb-1 font-mono text-[11px] font-semibold">{rel.tag}</div>
-									<div class="text-muted text-[12px] leading-relaxed whitespace-pre-line">
+									<div class="text-dim text-[12px] leading-relaxed whitespace-pre-line">
 										{rel.body}
 									</div>
 								</div>

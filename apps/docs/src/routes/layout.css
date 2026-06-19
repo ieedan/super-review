@@ -1,13 +1,22 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 
+/* Real Super Review app components, embedded via @super-review/ui. This brings
+   in the app's shadcn-svelte design tokens (scoped to `.sr-surface`) and tells
+   Tailwind to scan the package source so the components' utility classes are
+   generated. */
+@import '@super-review/ui/theme.css';
+@source '../../../../packages/ui/src';
+
 @theme {
 	/* Near-black canvas with a warm off-white ink. The desktop app's monochrome
 	   palette, inverted to a confident dark marketing surface. */
 	--color-base: hsl(20 8% 4%);
 	--color-elevated: hsl(20 7% 7%);
 	--color-fg: hsl(30 14% 96%);
-	--color-muted: hsl(28 8% 64%);
+	/* Marketing body text. Named `dim` (not `muted`) so it doesn't collide with
+	   the embedded app components' shadcn `--color-muted` surface token. */
+	--color-dim: hsl(28 8% 64%);
 	--color-faint: hsl(24 6% 42%);
 	--color-line: hsl(28 9% 15%);
 	--color-line-bright: hsl(28 10% 22%);

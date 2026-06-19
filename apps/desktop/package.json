@@ -31,6 +31,7 @@
 		"@octokit/rest": "^21.0.2",
 		"@pierre/diffs": "^1.2.3",
 		"@super-review/core": "workspace:*",
+		"@super-review/ui": "workspace:*",
 		"carta-md": "^4.11.2",
 		"dompurify": "^3.4.7",
 		"drizzle-orm": "^0.45.2",
