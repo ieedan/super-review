@@ -64,8 +64,14 @@ body {
 /* Atmosphere: a fixed flame glow bleeding from the top, a faint grid, and a
    film-grain overlay for texture. Layered behind all content. */
 .atmosphere {
-	position: fixed;
-	inset: 0;
+	/* Anchored to the top of the page (not fixed) so the flame glow + grid sit
+	   behind the hero only and scroll away — the feature sections below stay on
+	   the plain base canvas. */
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 100vh;
 	z-index: 0;
 	pointer-events: none;
 	overflow: hidden;
