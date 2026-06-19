@@ -269,7 +269,7 @@
 							{#if canEditDescription && editing?.kind !== 'description'}
 								<button
 									type="button"
-									class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
+									class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
 									title="Edit description"
 									onclick={() => startEditDescription(pr.body)}
 								>
@@ -328,7 +328,7 @@
 									{#if item.url || item.canDelete}
 										<DropdownMenu.Root>
 											<DropdownMenu.Trigger
-												class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground data-[state=open]:opacity-100"
+												class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
 												aria-label="More actions"
 											>
 												<MoreHorizontal class="size-4" />
