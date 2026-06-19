@@ -1,7 +1,11 @@
 <script lang="ts">
-	import PackageHoverDemo from '$lib/demos/PackageHoverDemo.svelte';
-	import AccountSwitcherDemo from '$lib/demos/AccountSwitcherDemo.svelte';
-	import DiffCustomizeDemo from '$lib/demos/DiffCustomizeDemo.svelte';
+	// Feature-showcase screenshots. Drop images in static/screenshots/ and set the
+	// matching path here to fill a slot; until then each renders a placeholder.
+	const featureShots: Record<string, string | null> = {
+		packageHover: null, // '/screenshots/package-hover.webp'
+		accounts: null, //     '/screenshots/accounts.webp'
+		diff: null //          '/screenshots/diff-customization.webp'
+	};
 
 	// Downloads aren't live yet, so the CTAs are disabled "Coming soon" placeholders
 	// until the first public release. Re-enable by restoring the download <a>'s
@@ -141,9 +145,9 @@
 		</div>
 	</main>
 
-	<!-- ── Interactive feature showcase ──────────────────────────────────────
-	     Live, in-browser recreations of three app features. Each demo is a
-	     self-contained component under $lib/demos. -->
+	<!-- ── Feature showcase ───────────────────────────────────────────────────
+	     Screenshot slots — drop images in static/screenshots/ and wire them up via
+	     `featureShots` in <script>. Each falls back to a placeholder until then. -->
 	<section class="flex flex-col gap-28 pt-12 pb-28 sm:pt-20">
 		<!-- Section intro -->
 		<div class="text-center">
@@ -151,13 +155,13 @@
 				class="border-line bg-elevated/60 text-dim inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-semibold tracking-wide"
 			>
 				<span class="h-1.5 w-1.5 rounded-full bg-flame"></span>
-				Try it right here
+				A closer look
 			</span>
 			<h2 class="font-display mt-5 text-3xl font-extrabold tracking-tight sm:text-4xl">
 				Built for the way you actually review
 			</h2>
 			<p class="text-dim mx-auto mt-4 max-w-xl text-pretty">
-				These aren't screenshots. They're the real components — go ahead and poke at them.
+				The little things that make reviewing agent-written code feel fast instead of fraught.
 			</p>
 		</div>
 
@@ -175,9 +179,8 @@
 						and the full <em>"what's new"</em> changelog. No more tab-hopping to figure out if a
 						version bump is safe.
 					</p>
-					<p class="text-faint mt-4 font-mono text-xs">↓ hover any highlighted package below</p>
 				</div>
-				<PackageHoverDemo />
+				{@render shot(featureShots.packageHover, 'Hovering a package.json dependency to see its info and changelog')}
 			</div>
 		</div>
 
@@ -194,10 +197,9 @@
 						switch who you're reviewing as, and Super Review tells you the moment a token
 						expires — so a SAML lapse never silently swallows your comments.
 					</p>
-					<p class="text-faint mt-4 font-mono text-xs">→ open the switcher</p>
 				</div>
-				<div class="flex justify-center lg:order-1">
-					<AccountSwitcherDemo />
+				<div class="lg:order-1">
+					{@render shot(featureShots.accounts, 'Switching between multiple GitHub accounts')}
 				</div>
 			</div>
 		</div>
@@ -211,11 +213,10 @@
 				</h3>
 				<p class="text-dim mt-4 leading-relaxed text-pretty">
 					Light or dark, split or unified, your favorite syntax theme and code font, file icons
-					on or off. Set it once and read code the way your eyes prefer. Change anything on the
-					left — the diff updates instantly.
+					on or off. Set it once and read code the way your eyes prefer.
 				</p>
 			</div>
-			<DiffCustomizeDemo />
+			{@render shot(featureShots.diff, 'Customizing the diff: theme, font, split or unified, file icons')}
 		</div>
 	</section>
 
@@ -235,6 +236,36 @@
 </div>
 
 <!-- ── snippets ─────────────────────────────────────────────────────────── -->
+
+{#snippet shot(src: string | null, alt: string)}
+	<!-- A screenshot slot: the image once provided, otherwise a labeled placeholder
+	     at the same 16:10 frame so the layout doesn't shift when it's filled in. -->
+	<figure
+		class="border-line bg-elevated/50 overflow-hidden rounded-2xl border shadow-2xl"
+		style="box-shadow: 0 40px 100px -45px hsl(6 88% 40% / 0.45);"
+	>
+		{#if src}
+			<img {src} {alt} class="block aspect-[16/10] w-full object-cover" />
+		{:else}
+			<div class="text-faint flex aspect-[16/10] w-full flex-col items-center justify-center gap-3">
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+					class="h-8 w-8 opacity-60"
+					aria-hidden="true"
+				>
+					<rect x="3" y="4" width="18" height="14" rx="2" />
+					<circle cx="8.5" cy="9" r="1.5" />
+					<path d="M21 15l-5-4-7 6" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+				<span class="px-6 text-center text-xs">{alt}</span>
+				<span class="font-mono text-[10px] tracking-wide uppercase opacity-60">Screenshot</span>
+			</div>
+		{/if}
+	</figure>
+{/snippet}
 
 {#snippet eyebrow(label: string, num: string)}
 	<div class="mb-6 flex items-center gap-3">
