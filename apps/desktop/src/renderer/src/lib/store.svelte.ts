@@ -571,11 +571,13 @@ export function uiPR(): PRSummary | null {
 
 // Resolve which PR the comment surface should target.
 // - `kind: 'pr'` context: the PR being reviewed (its number lives on the ctx).
-// - any other context with a known `branchPR`: comment against that PR. The
-//   local diff is computed against working-tree / branch refs, so line
-//   numbers may not align with what GitHub has — uncommitted changes shift
-//   positions, for instance. GitHub will mark the resulting comment outdated
-//   in that case, same as commenting from a stale web view.
+// - any other context with a known `branchPR`: comment against that PR. We anchor
+//   the comment to the branch tip the diff was rendered from (see
+//   `commentAnchorRef`), so when the branch is pushed and in sync with the PR
+//   head the comment lands current. If the local branch has commits GitHub hasn't
+//   seen yet (unpushed) the line numbers won't align with the PR's diff, and the
+//   comment is rejected with an actionable "push your branch" error rather than
+//   silently landing outdated.
 export function commentablePRNumber(): number | null {
 	if (app.diffContext.kind === 'pr') return app.diffContext.prNumber;
 	// `branchPR` tracks the checked-out branch; while reviewing a *different*
@@ -583,6 +585,21 @@ export function commentablePRNumber(): number | null {
 	// screen, so don't offer commenting against it.
 	if (app.branchPR && !isReadOnlyView()) return app.branchPR.number;
 	return null;
+}
+
+// Git ref of the commit the on-screen diff was rendered from, used to anchor a
+// new review comment to exactly what's visible. Mirrors the head `refsForContext`
+// picks: `pr/<n>/head` for a PR view, the branch tip for a Branch view. On the
+// Branch tab the branch tip (once pushed) is the PR's live head, so the comment
+// isn't born "Outdated"; the old code always anchored to the `pr/<n>/head`
+// snapshot, which lags a branch that's had commits pushed since the PR was last
+// fetched. Undefined for contexts with no committed head (working tree), where
+// the main process falls back to the snapshot then the live head.
+function commentAnchorRef(): string | undefined {
+	const ctx = app.diffContext;
+	if (ctx.kind === 'pr') return `pr/${ctx.prNumber}/head`;
+	if (ctx.kind === 'branch') return ctx.head;
+	return undefined;
 }
 
 // The PR the comment/checks surface currently targets (the one being reviewed,
@@ -3467,7 +3484,8 @@ export const actions = {
 							path: c.filePath,
 							line: c.line,
 							side: c.side,
-							body: c.draft.trim()
+							body: c.draft.trim(),
+							headRef: commentAnchorRef()
 						},
 						...host
 					);

@@ -1263,12 +1263,17 @@ export function registerIpc(): void {
 			if (!owner || !name) {
 				throw new Error('This repository does not have a GitHub remote.');
 			}
-			// Anchor the comment to the same commit the diff was rendered from — the
-			// local `pr/<n>/head` snapshot — so the clicked line/side matches what's
-			// on screen. Null when the ref isn't present (e.g. a checked-out branch
-			// rather than a fetched PR), in which case the service falls back to the
-			// PR's live head.
-			const snapshotSha = await resolveRef(repo.path, `pr/${input.prNumber}/head`);
+			// Anchor the comment to the exact commit the on-screen diff was rendered
+			// from. The renderer passes that view's head ref (`input.headRef`):
+			// `pr/<n>/head` for a PR view, or the branch tip for a Branch view. On the
+			// Branch tab the branch tip (once pushed) IS the PR's live head, so the
+			// comment isn't born "Outdated" — anchoring to the `pr/<n>/head` snapshot
+			// instead lags commits pushed since the PR was last fetched. Fall back to
+			// the snapshot when the renderer didn't supply a ref. Null when neither
+			// resolves (e.g. an unpushed branch), in which case the service falls back
+			// to the PR's live head.
+			const anchorRef = input.headRef ?? `pr/${input.prNumber}/head`;
+			const snapshotSha = await resolveRef(repo.path, anchorRef);
 			return gh.createReviewComment(owner, name, input, repo.githubAccountId, snapshotSha);
 		}
 	);

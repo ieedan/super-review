@@ -1837,7 +1837,7 @@
 >
 	<header
 		class={[
-			'sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
+			'@container sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
 		]}
 	>
 		<!-- The visible chevron stays size-5, but a transparent ::before stretches the
@@ -1897,9 +1897,13 @@
 				{/if}
 			{/if}
 			{#if anyEditorAvailable}
+				<!-- When the diff pane gets cramped (e.g. comments panel open), drop the
+				     secondary actions so the file name keeps its room. The editor button
+				     goes first, then Mark seen; its ⌘↵ hotkey still works either way. -->
 				<Button
 					variant="ghost"
 					size="icon-sm"
+					class="@max-[440px]:hidden"
 					onclick={() => actions.openInEditor(file.path)}
 					title={editor ? `Open in ${editorLabels[editor]}` : 'Open in editor'}
 				>
@@ -1933,7 +1937,12 @@
 					{/if}
 				</Button>
 			{/if}
-			<Button variant={isSeen ? 'secondary' : 'outline'} size="sm" onclick={handleMarkSeen}>
+			<Button
+				variant={isSeen ? 'secondary' : 'outline'}
+				size="sm"
+				class="@max-[340px]:hidden"
+				onclick={handleMarkSeen}
+			>
 				{#if isSeen}
 					<Check class="size-3.5" /> Seen
 				{:else}

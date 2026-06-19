@@ -414,6 +414,14 @@ export interface NewReviewCommentInput {
 	body: string;
 	line: number;
 	side: 'LEFT' | 'RIGHT';
+	// Git ref of the commit the on-screen diff was rendered from, so the comment
+	// anchors to exactly what the user is looking at. `pr/<n>/head` for a PR view,
+	// or the branch tip for a Branch view. On the Branch tab the branch tip (once
+	// pushed) IS the PR's live head, so the comment isn't born "Outdated" — unlike
+	// anchoring to a `pr/<n>/head` snapshot that lags commits pushed since the PR
+	// was last fetched. Omitted for views with no committed head (e.g. working
+	// tree), where the main process falls back to `pr/<n>/head` then the live head.
+	headRef?: string;
 }
 
 // ─── PR conversation timeline ─────────────────────────────────────────────────

@@ -1,11 +1,14 @@
 <script lang="ts">
 	import Check from '@lucide/svelte/icons/check';
 	import Copy from '@lucide/svelte/icons/copy';
+	import PanelRight from '@lucide/svelte/icons/panel-right';
 	import Github from './icons/GithubIcon.svelte';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import * as DropdownMenu from './ui/dropdown-menu';
+	import * as Tabs from './ui/tabs';
+	import { Button } from './ui/button';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import ConversationPanel from './ConversationPanel.svelte';
 	import { actions, app, isPRCommentContext } from '$lib/store.svelte';
@@ -22,6 +25,11 @@
 	// is hidden and the remembered tab is ignored.
 	const showTabs = $derived(isPR);
 	const activeTab = $derived(showTabs ? app.commentsSidebarTab : 'comments');
+
+	// Mirror the left sidebar's collapse trigger: the panel toggles with the same
+	// hotkey wired up in App.svelte (defaults to ⌘L / Ctrl+L).
+	const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+	const toggleShortcut = isMac ? '⌘L' : 'Ctrl+L';
 
 	// ── Local comments ──
 	// Newest first, but always sink resolved comments below the open ones so the
@@ -109,42 +117,41 @@
 </script>
 
 <div class="flex h-full flex-col border-l border-border bg-card/40">
-	<header class="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
+	<!-- First header: tabs on the left, collapse trigger pinned right. Mirrors the
+	     left sidebar's primary header (same h-11, same Tabs/Button components) so
+	     the two panes' bottom borders line up across the diff. -->
+	<header class="flex h-11 shrink-0 items-center gap-2 border-b border-border px-2">
 		{#if showTabs}
 			<!-- Tab switcher: line comments vs the PR's top-level conversation. -->
-			<nav class="flex items-center gap-1" aria-label="Sidebar tabs">
-				<button
-					type="button"
-					class={[
-						'flex items-center gap-1.5 rounded px-2 py-1 text-sm font-medium',
-						activeTab === 'comments'
-							? 'text-foreground'
-							: 'text-muted-foreground hover:text-foreground'
-					]}
-					aria-pressed={activeTab === 'comments'}
-					onclick={() => actions.setCommentsSidebarTab('comments')}
+			<Tabs.Root
+				value={activeTab}
+				onValueChange={(v) => actions.setCommentsSidebarTab(v as 'comments' | 'conversation')}
+				class="min-w-0 flex-1 gap-0"
+			>
+				<Tabs.List
+					class="no-scrollbar w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
 				>
-					Comments
-					{#if totalCount > 0}
-						<span class="rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-							{totalCount}
-						</span>
-					{/if}
-				</button>
-				<button
-					type="button"
-					class={[
-						'rounded px-2 py-1 text-sm font-medium',
-						activeTab === 'conversation'
-							? 'text-foreground'
-							: 'text-muted-foreground hover:text-foreground'
-					]}
-					aria-pressed={activeTab === 'conversation'}
-					onclick={() => actions.setCommentsSidebarTab('conversation')}
-				>
-					Conversation
-				</button>
-			</nav>
+					<Tabs.Trigger
+						value="comments"
+						class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+					>
+						Comments
+						{#if totalCount > 0}
+							<span
+								class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
+							>
+								{totalCount > 99 ? '99+' : totalCount}
+							</span>
+						{/if}
+					</Tabs.Trigger>
+					<Tabs.Trigger
+						value="conversation"
+						class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+					>
+						Conversation
+					</Tabs.Trigger>
+				</Tabs.List>
+			</Tabs.Root>
 		{:else}
 			<span class="text-sm font-semibold">Comments</span>
 			{#if totalCount > 0}
@@ -152,23 +159,35 @@
 					{totalCount}
 				</span>
 			{/if}
+			<div class="flex-1"></div>
 		{/if}
-		<div class="flex-1"></div>
+		<!-- Copy-all lives inline left of the collapse trigger, and only on the
+		     comments tab — the conversation view has no list-level actions. -->
 		{#if activeTab === 'comments'}
-			<button
-				type="button"
-				class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				class="shrink-0 text-muted-foreground"
 				title="Copy all unresolved comments as a prompt"
 				disabled={unresolvedCount === 0}
 				onclick={copyAll}
 			>
 				{#if copiedKey === 'all'}
-					<Check class="size-4" style="color: var(--color-success);" />
+					<Check class="size-3.5" style="color: var(--color-success);" />
 				{:else}
-					<Copy class="size-4" />
+					<Copy class="size-3.5" />
 				{/if}
-			</button>
+			</Button>
 		{/if}
+		<Button
+			variant="ghost"
+			size="icon-sm"
+			class="shrink-0"
+			title={`Collapse comments (${toggleShortcut})`}
+			onclick={() => actions.toggleCommentsSidebar()}
+		>
+			<PanelRight class="size-3.5" />
+		</Button>
 	</header>
 
 	{#if activeTab === 'conversation'}

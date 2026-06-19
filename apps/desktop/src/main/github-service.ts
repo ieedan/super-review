@@ -1218,11 +1218,12 @@ export async function createReviewComment(
 	repo: string,
 	input: NewReviewCommentInput,
 	accountId?: string | null,
-	// SHA of the commit the on-screen diff was rendered from (the local
-	// `pr/<n>/head` snapshot). Anchoring the comment here — rather than the PR's
-	// live head — guarantees the line/side the user clicked resolve against the
-	// same diff they're looking at, even if the PR gained commits since it loaded.
-	// Falls back to the live head when the snapshot can't be resolved.
+	// SHA of the commit the on-screen diff was rendered from — `pr/<n>/head` for a
+	// PR view, or the branch tip for a Branch view. Anchoring the comment here —
+	// rather than the PR's live head — guarantees the line/side the user clicked
+	// resolve against the same diff they're looking at. On the Branch tab the
+	// branch tip (once pushed) is itself the PR's live head, so the comment isn't
+	// born "Outdated". Falls back to the live head when this can't be resolved.
 	commitId?: string | null
 ): Promise<PRReviewComment> {
 	const viewer = resolveAccount(accountId);
@@ -1247,17 +1248,22 @@ export async function createReviewComment(
 		// PR's diff at the anchored commit with a 422 "could not be resolved". It
 		// reports the unresolvable anchor on either the `.path` or the `.line`
 		// field of `pull_request_review_thread` (the `.line` variant is what you
-		// get when the path matches but the specific line doesn't). Both mean the
-		// same thing: the on-screen diff disagrees with the PR's diff at its head —
-		// the PR was rebased/force-pushed since it loaded, or (in the Branch tab)
-		// the local branch has changes that aren't pushed to the PR yet. Surface
-		// something actionable instead of the raw API validation JSON.
+		// get when the path matches but the specific line doesn't). A third case:
+		// when we anchor to a Branch view's tip that hasn't been pushed yet, GitHub
+		// doesn't know that commit and rejects it on the `.commit_id` field. All
+		// mean the same thing: the on-screen diff disagrees with the PR's diff at
+		// its head — the PR was rebased/force-pushed since it loaded, or (in the
+		// Branch tab) the local branch has changes that aren't pushed to the PR
+		// yet. Surface something actionable instead of the raw API validation JSON.
 		const status = (err as { status?: number }).status;
 		const errors = (
 			err as { response?: { data?: { errors?: Array<{ field?: string; code?: string }> } } }
 		).response?.data?.errors;
 		const unresolvableAnchor = errors?.some(
-			(e) => e.field?.endsWith('.path') || e.field?.endsWith('.line')
+			(e) =>
+				e.field?.endsWith('.path') ||
+				e.field?.endsWith('.line') ||
+				e.field?.endsWith('.commit_id')
 		);
 		if (status === 422 && unresolvableAnchor) {
 			throw new Error(

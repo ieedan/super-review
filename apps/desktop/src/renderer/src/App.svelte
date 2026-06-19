@@ -401,8 +401,15 @@
 				autoSaveId="sr-main-layout"
 				class="h-full w-full"
 			>
+				<!-- Stable `id` + `order` are required because the comments pane is
+				     conditionally rendered: without them PaneForge re-indexes the group
+				     when that pane mounts/unmounts and misfires this pane's
+				     onCollapse/onExpand, which is what tied the left/right sidebar
+				     toggles together. -->
 				<Resizable.Pane
 					bind:this={sidebarPane}
+					id="sidebar-pane"
+					order={1}
 					defaultSize={Math.max(22, sidebarMinSize)}
 					minSize={sidebarMinSize}
 					maxSize={50}
@@ -414,7 +421,7 @@
 					<FileList />
 				</Resizable.Pane>
 				<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
-				<Resizable.Pane defaultSize={app.commentsSidebarOpen ? 56 : 78}>
+				<Resizable.Pane id="main-pane" order={2} defaultSize={app.commentsSidebarOpen ? 56 : 78}>
 					{#if app.contextTab === 'sessions' && !app.activeSessionId}
 						<SessionsEmptyState />
 					{:else}
@@ -423,7 +430,7 @@
 				</Resizable.Pane>
 				{#if app.commentsSidebarOpen}
 					<Resizable.Handle class="transition-colors hover:bg-foreground/20" />
-					<Resizable.Pane defaultSize={22} minSize={15} maxSize={40}>
+					<Resizable.Pane id="comments-pane" order={3} defaultSize={22} minSize={15} maxSize={40}>
 						<CommentsPanel />
 					</Resizable.Pane>
 				{/if}
