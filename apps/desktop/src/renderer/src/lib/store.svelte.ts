@@ -3801,6 +3801,20 @@ export const actions = {
 		if (tab === 'conversation') actions.ensurePRConversationLoaded();
 	},
 
+	// Open the sidebar straight to the Comments tab (default Cmd/Ctrl+L). Mirror
+	// of openConversationSidebar: closes only when already parked on the Comments
+	// tab, otherwise switches to it (opening if needed). The toggle-only feel
+	// stays on the sidebar buttons (toggleCommentsSidebar); this is what lets
+	// Ctrl+L pull you back from the Conversation tab instead of just dismissing.
+	openCommentsSidebar(): void {
+		if (app.commentsSidebarOpen && app.commentsSidebarTab === 'comments') {
+			actions.setCommentsSidebarOpen(false);
+			return;
+		}
+		actions.setCommentsSidebarTab('comments');
+		if (!app.commentsSidebarOpen) actions.setCommentsSidebarOpen(true);
+	},
+
 	// Open the sidebar straight to the Conversation tab (default Cmd/Ctrl+Shift+L).
 	// Toggles closed when it's already open on that tab, mirroring the Comments
 	// hotkey's open/close feel.
@@ -3855,12 +3869,14 @@ export const actions = {
 		await actions.copyToClipboard(formatPRCommentPrompt(comment));
 	},
 
-	// Copy every unresolved PR review thread (one entry per root comment) as a
-	// markdown task list.
+	// Copy every actionable PR review thread (one entry per root comment) as a
+	// markdown task list. Only unresolved threads still anchored to a live line
+	// qualify: resolved threads are done, and outdated/file-level ones (no live
+	// `line`) point at code the agent can no longer act on directly.
 	async copyAllUnresolvedPRComments(): Promise<void> {
 		const roots = Object.values(app.prComments)
 			.flat()
-			.filter((c) => c.inReplyTo == null && (c.line != null || c.isOutdated) && !c.isResolved);
+			.filter((c) => c.inReplyTo == null && c.line != null && !c.isResolved);
 		if (roots.length === 0) return;
 		await actions.copyToClipboard(formatPRCommentsPrompt(roots));
 	},

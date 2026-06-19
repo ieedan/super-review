@@ -64,9 +64,12 @@
 	});
 
 	const totalCount = $derived(isPR ? prThreads.length : app.localComments.length);
-	const unresolvedCount = $derived(
+	// Gates the "copy all" button. Mirrors exactly what copyAll* will emit: for
+	// PRs that's unresolved threads still anchored to a live line (outdated and
+	// file-level roots are skipped); locally it's every unresolved comment.
+	const copyableCount = $derived(
 		isPR
-			? prThreads.filter((t) => !t.root.isResolved).length
+			? prThreads.filter((t) => !t.root.isResolved && t.root.line != null).length
 			: app.localComments.filter((c) => c.resolvedAt == null).length
 	);
 
@@ -169,7 +172,7 @@
 				size="icon-sm"
 				class="shrink-0 text-muted-foreground"
 				title="Copy all unresolved comments as a prompt"
-				disabled={unresolvedCount === 0}
+				disabled={copyableCount === 0}
 				onclick={copyAll}
 			>
 				{#if copiedKey === 'all'}

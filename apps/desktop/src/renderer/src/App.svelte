@@ -141,11 +141,13 @@
 			if (app.sidebarCollapsed) sidebarPane.expand();
 			else sidebarPane.collapse();
 		},
-		// Open/close the right-hand comments sidebar (default Cmd/Ctrl+L).
+		// Open the comments sidebar straight to the Comments tab (default Cmd/Ctrl+L).
+		// Pulls you to Comments from the Conversation tab; toggles closed only when
+		// already on the Comments tab.
 		toggleCommentsSidebar: (e) => {
 			if (!app.activeRepo) return;
 			e.preventDefault();
-			actions.toggleCommentsSidebar();
+			actions.openCommentsSidebar();
 		},
 		// Open the comments sidebar straight to the PR Conversation tab (default
 		// Cmd/Ctrl+Shift+L). Toggles closed when already open on that tab.

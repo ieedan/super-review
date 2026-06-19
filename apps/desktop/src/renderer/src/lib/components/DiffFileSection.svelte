@@ -1881,29 +1881,32 @@
 				</span>
 			{/if}
 			{#if file.isBinary}
-				<Badge variant="muted">binary</Badge>
+				<Badge variant="muted" class="@max-[440px]:hidden">binary</Badge>
 			{/if}
 			{#if isPRContext && commentCount > 0}
-				<Badge variant="muted">{commentCount} comment{commentCount === 1 ? '' : 's'}</Badge>
+				<Badge variant="muted" class="@max-[440px]:hidden">
+					{commentCount} comment{commentCount === 1 ? '' : 's'}
+				</Badge>
 			{/if}
 		</div>
 		<div class="flex items-center gap-2 text-[10px] tabular-nums">
 			{#if !file.isBinary}
 				{#if file.additions > 0}
-					<span class="text-success">+{file.additions}</span>
+					<span class="text-success @max-[360px]:hidden">+{file.additions}</span>
 				{/if}
 				{#if file.deletions > 0}
-					<span class="text-destructive">−{file.deletions}</span>
+					<span class="text-destructive @max-[360px]:hidden">−{file.deletions}</span>
 				{/if}
 			{/if}
 			{#if anyEditorAvailable}
-				<!-- When the diff pane gets cramped (e.g. comments panel open), drop the
-				     secondary actions so the file name keeps its room. The editor button
-				     goes first, then Mark seen; its ⌘↵ hotkey still works either way. -->
+				<!-- As the diff pane gets cramped (e.g. comments panel open), elements
+				     drop right-to-left so the file name keeps its room, widest first:
+				     Mark seen (<500, ⌘↵ still works) → badges (<440) → this editor
+				     button (<400) → the +/- counts (<360). -->
 				<Button
 					variant="ghost"
 					size="icon-sm"
-					class="@max-[440px]:hidden"
+					class="@max-[400px]:hidden"
 					onclick={() => actions.openInEditor(file.path)}
 					title={editor ? `Open in ${editorLabels[editor]}` : 'Open in editor'}
 				>
@@ -1940,7 +1943,7 @@
 			<Button
 				variant={isSeen ? 'secondary' : 'outline'}
 				size="sm"
-				class="@max-[340px]:hidden"
+				class="@max-[500px]:hidden"
 				onclick={handleMarkSeen}
 			>
 				{#if isSeen}
