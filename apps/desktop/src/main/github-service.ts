@@ -1413,13 +1413,16 @@ function mapTimelineItem(
 			// so there's no reliable avatar. The SHA is GitHub's `sha`; `verification`
 			// mirrors the commit-signing state GitHub shows as a "Verified" badge.
 			const sha: string = e.sha ?? '';
-			const message: string = (e.message ?? '').split('\n')[0];
+			const lines: string[] = (e.message ?? '').split('\n');
+			const message = lines[0] ?? '';
+			const body = lines.slice(1).join('\n').trim();
 			return {
 				kind: 'commit',
 				key: `commit-${sha}`,
 				sha,
 				shortSha: sha.slice(0, 7),
 				message,
+				body: body || undefined,
 				author: e.author?.name ?? e.committer?.name ?? 'unknown',
 				verified: e.verification?.verified === true,
 				url: e.html_url ?? undefined,

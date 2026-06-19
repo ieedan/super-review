@@ -16,7 +16,16 @@
 	import MarkdownView from './MarkdownView.svelte';
 	import { actions, app } from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
+	import { SvelteSet } from 'svelte/reactivity';
 	import type { PRConversationItem, PRConversationReview } from '@shared/types';
+
+	// Commit keys whose extended description is expanded (the "…" toggle), like
+	// GitHub's expandable commit message.
+	const expandedCommits = new SvelteSet<string>();
+	function toggleCommit(key: string): void {
+		if (expandedCommits.has(key)) expandedCommits.delete(key);
+		else expandedCommits.add(key);
+	}
 
 	// The PR whose conversation we're showing. In a `pr` review context that's
 	// `activePR`; in the Branch tab with an open PR for the checked-out branch it's
@@ -210,7 +219,7 @@
 									{#if item.url || item.canDelete}
 										<DropdownMenu.Root>
 											<DropdownMenu.Trigger
-												class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground group-hover:opacity-100"
+												class="-mr-1 grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground data-[state=open]:opacity-100"
 												aria-label="More actions"
 											>
 												<MoreHorizontal class="size-4" />
@@ -297,34 +306,61 @@
 							>
 								<GitCommitHorizontal class="size-3.5" />
 							</div>
-							<button
-								type="button"
-								class="flex min-h-6 min-w-0 flex-1 items-center gap-2 rounded text-left text-xs hover:text-foreground disabled:cursor-default disabled:hover:text-current"
-								disabled={!item.url}
-								onclick={() => item.url && viewOnGithub(item.url)}
-								title={item.url ? `${item.author} · view commit on GitHub` : item.author}
-							>
-								{#if item.authorAvatarUrl}
-									<img
-										class="size-4 shrink-0 rounded-full"
-										src={item.authorAvatarUrl}
-										alt={item.author}
-									/>
-								{/if}
-								<span class="truncate">{item.message}</span>
-								<div class="flex-1"></div>
-								{#if item.verified}
-									<span
-										class="inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-px text-[10px] font-medium"
-										style="border-color: color-mix(in srgb, var(--color-success) 50%, transparent); color: var(--color-success);"
+							<div class="min-w-0 flex-1">
+								<div class="flex min-h-6 items-center gap-2 text-xs">
+									{#if item.authorAvatarUrl}
+										<img
+											class="size-4 shrink-0 rounded-full"
+											src={item.authorAvatarUrl}
+											alt={item.author}
+										/>
+									{/if}
+									<button
+										type="button"
+										class="truncate text-left hover:text-foreground disabled:hover:text-current"
+										disabled={!item.url}
+										onclick={() => item.url && viewOnGithub(item.url)}
+										title={item.url ? `${item.author} · view commit on GitHub` : item.author}
 									>
-										<ShieldCheck class="size-2.5" /> Verified
-									</span>
+										{item.message}
+									</button>
+									{#if item.body}
+										<button
+											type="button"
+											class={[
+												'grid h-4 shrink-0 place-items-center rounded border border-border px-1 text-muted-foreground hover:bg-accent hover:text-foreground',
+												expandedCommits.has(item.key) && 'bg-accent text-foreground'
+											]}
+											title="Toggle commit description"
+											aria-expanded={expandedCommits.has(item.key)}
+											onclick={() => toggleCommit(item.key)}
+										>
+											<MoreHorizontal class="size-3" />
+										</button>
+									{/if}
+									<div class="flex-1"></div>
+									{#if item.verified}
+										<span
+											class="inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-px text-[10px] font-medium"
+											style="border-color: color-mix(in srgb, var(--color-success) 50%, transparent); color: var(--color-success);"
+										>
+											<ShieldCheck class="size-2.5" /> Verified
+										</span>
+									{/if}
+									<button
+										type="button"
+										class="shrink-0 font-mono text-[11px] text-muted-foreground hover:text-foreground disabled:hover:text-current"
+										disabled={!item.url}
+										onclick={() => item.url && viewOnGithub(item.url)}
+									>
+										{item.shortSha}
+									</button>
+								</div>
+								{#if item.body && expandedCommits.has(item.key)}
+									<pre
+										class="mt-1 max-h-60 overflow-auto rounded border border-border bg-card px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">{item.body}</pre>
 								{/if}
-								<span class="shrink-0 font-mono text-[11px] text-muted-foreground">
-									{item.shortSha}
-								</span>
-							</button>
+							</div>
 						</div>
 					{:else}
 						<!-- Lightweight timeline event. -->

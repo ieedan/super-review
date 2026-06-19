@@ -481,8 +481,12 @@ export interface PRConversationCommit extends PRConversationBase {
 	kind: 'commit';
 	sha: string;
 	shortSha: string;
-	// First line of the commit message.
+	// First line of the commit message (the subject).
 	message: string;
+	// The rest of the commit message (everything after the first line), trimmed.
+	// Undefined for a single-line commit. Surfaced behind a "…" toggle, like
+	// GitHub's expandable commit description.
+	body?: string;
 	author: string;
 	authorAvatarUrl?: string;
 	// True when GitHub verified the commit's signature (renders a "Verified" badge,
