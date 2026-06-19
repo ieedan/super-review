@@ -8,7 +8,6 @@
 	import TerminalButton from './TerminalButton.svelte';
 	import ChangesetButton from './ChangesetButton.svelte';
 	import RefreshButton from './RefreshButton.svelte';
-	import * as DropdownMenu from './ui/dropdown-menu';
 	import { useSidebar } from './ui/sidebar';
 	import CornerUpLeft from '@lucide/svelte/icons/corner-up-left';
 	import PanelLeft from '@lucide/svelte/icons/panel-left';
@@ -20,25 +19,8 @@
 	// Sidebar context provided in App.svelte; the left toggle reads + flips it.
 	const sidebar = useSidebar();
 
-	// Right-click anywhere on the header to customize which optional controls
-	// show. The menu is a controlled dropdown anchored to the cursor via a
-	// virtual element (no visible trigger). `menuPos` is read lazily inside
-	// getBoundingClientRect, so it always reflects the latest right-click.
-	let menuOpen = $state(false);
-	let menuPos = $state({ x: 0, y: 0 });
-	const menuAnchor = {
-		getBoundingClientRect: () => new DOMRect(menuPos.x, menuPos.y, 0, 0)
-	};
-
-	function onHeaderContextMenu(e: MouseEvent): void {
-		// Nothing to toggle until a repo is open (the items only render then).
-		if (!app.activeRepo) return;
-		e.preventDefault();
-		menuPos = { x: e.clientX, y: e.clientY };
-		menuOpen = true;
-	}
-
-	// Each entry in the right-click menu: the pref key it toggles and its label.
+	// Each entry in the header's right-click menu: the pref key it toggles and
+	// its label.
 	const menuItems: { key: keyof HeaderItemVisibility; label: string }[] = [
 		{ key: 'changesToggle', label: 'Changes sidebar toggle' },
 		{ key: 'commentsToggle', label: 'Comments sidebar toggle' },
@@ -46,6 +28,24 @@
 		{ key: 'editor', label: 'Open in editor' },
 		{ key: 'terminal', label: 'Open in terminal' }
 	];
+
+	// Right-click anywhere on the header to customize which optional controls
+	// show, via a native context menu. Each item is a checkbox reflecting its
+	// current visibility; toggling one persists the new state. A native menu
+	// closes on each click, so we apply the single item it reports back.
+	async function onHeaderContextMenu(e: MouseEvent): Promise<void> {
+		// Nothing to toggle until a repo is open (the items only render then).
+		if (!app.activeRepo) return;
+		e.preventDefault();
+		const result = await window.api.menu.showHeaderContextMenu({
+			items: menuItems.map((it) => ({
+				key: it.key,
+				label: it.label,
+				checked: app.headerItems[it.key]
+			}))
+		});
+		if (result) actions.setHeaderItem(result.key, result.checked);
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -99,15 +99,18 @@
 	<div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
 		{#if app.activeRepo}
 			<RefreshButton />
+			<!-- Adding a changeset edits the checked-out working tree, which is
+			     valid regardless of what's on screen — keep it available in
+			     read-only views and on every tab. Hidable via the header menu. -->
+			{#if app.headerItems.changeset}
+				<ChangesetButton />
+			{/if}
 			<!-- Update-branch, editor and terminal all act on the *checked-out*
 			     branch / working tree — not what a read-only view shows. Hide them
 			     there so we don't operate on (or send the user to) the wrong branch,
 			     or imply the view is writable. -->
 			{#if !isReadOnlyView()}
 				<UpdateBranchButton />
-				{#if app.headerItems.changeset}
-					<ChangesetButton />
-				{/if}
 				{#if app.headerItems.editor}
 					<EditorButton />
 				{/if}
@@ -142,23 +145,3 @@
 		{/if}
 	</div>
 </header>
-
-<!-- Header customization menu (right-click). Controlled open + cursor anchor;
-     each item toggles one optional control's visibility, persisted in prefs. -->
-<DropdownMenu.Root bind:open={menuOpen}>
-	<DropdownMenu.Content customAnchor={menuAnchor} align="start" class="w-56">
-		<DropdownMenu.Group>
-			<DropdownMenu.GroupHeading>Show in header</DropdownMenu.GroupHeading>
-			<DropdownMenu.Separator />
-			{#each menuItems as item (item.key)}
-				<DropdownMenu.CheckboxItem
-					checked={app.headerItems[item.key]}
-					closeOnSelect={false}
-					onCheckedChange={(checked) => actions.setHeaderItem(item.key, checked)}
-				>
-					{item.label}
-				</DropdownMenu.CheckboxItem>
-			{/each}
-		</DropdownMenu.Group>
-	</DropdownMenu.Content>
-</DropdownMenu.Root>

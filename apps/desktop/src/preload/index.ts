@@ -22,6 +22,7 @@ import type {
 	DiffLineContextMenuAction,
 	EditorKind,
 	FileContextMenuAction,
+	HeaderContextMenuResult,
 	GithubAccount,
 	GithubAuthError,
 	GithubOrg,
@@ -380,6 +381,8 @@ const api: PreloadAPI = {
 				'menu:showRepoContextMenu',
 				params
 			) as Promise<RepoContextMenuAction | null>,
+		showHeaderContextMenu: (params) =>
+			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
 		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
 		setRepositoryState: (state: RepositoryMenuState) =>
 			ipcRenderer.send('menu:setRepositoryState', state)

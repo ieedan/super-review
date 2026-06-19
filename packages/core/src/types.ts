@@ -555,6 +555,27 @@ export type PRContextMenuAction = 'view' | 'copyUrl' | 'openOnGitHub';
 // means the menu was dismissed without a choice.
 export type RepoContextMenuAction = 'copyPath' | 'reveal' | 'remove' | 'settings';
 
+// A single toggle in the header's "Show in header" native context menu. `key`
+// is the HeaderItemVisibility field it controls; `checked` is its current state.
+export interface HeaderContextMenuItem {
+	key: keyof HeaderItemVisibility;
+	label: string;
+	checked: boolean;
+}
+
+// Params for the header's native context menu: the toggle items to show, in
+// order, each carrying its current checked state.
+export interface HeaderContextMenuParams {
+	items: HeaderContextMenuItem[];
+}
+
+// What the header context menu returns: the toggled item's key and its new
+// checked state. `null` (from the IPC) means the menu was dismissed.
+export type HeaderContextMenuResult = {
+	key: keyof HeaderItemVisibility;
+	checked: boolean;
+} | null;
+
 // Items in the native application menu's "Branch" submenu. The main process
 // sends the chosen action to the focused renderer, which runs the matching
 // store flow (some open a confirm dialog first).
@@ -1400,6 +1421,9 @@ export interface PreloadAPI {
 		// Pop up a native OS context menu for a repo row in the picker. Resolves to
 		// the chosen action, or null when the menu is dismissed without a selection.
 		showRepoContextMenu(params: RepoContextMenuParams): Promise<RepoContextMenuAction | null>;
+		// Pop up the header's "Show in header" customization context menu. Resolves
+		// to the toggled item and its new state, or null when dismissed.
+		showHeaderContextMenu(params: HeaderContextMenuParams): Promise<HeaderContextMenuResult>;
 		// Push the latest Branch-menu enablement/labels to the main process so it
 		// can rebuild the native application menu. Fire-and-forget.
 		setBranchState(state: BranchMenuState): void;

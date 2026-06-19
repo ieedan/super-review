@@ -44,6 +44,8 @@ import type {
 	PushStatus,
 	RepoContextMenuAction,
 	RepoContextMenuParams,
+	HeaderContextMenuParams,
+	HeaderContextMenuResult,
 	RepoInfo,
 	Session,
 	SessionSummary,
@@ -1523,6 +1525,36 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<RepoContextMenuAction | null>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// Header "Show in header" customization menu (right-click anywhere on the top
+	// bar). Native checkbox items reflecting each optional control's visibility;
+	// the renderer persists the toggle. A native menu closes on each click, so we
+	// return the single item that was toggled and its new state.
+	ipcMain.handle(
+		'menu:showHeaderContextMenu',
+		async (e, params: HeaderContextMenuParams): Promise<HeaderContextMenuResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: HeaderContextMenuResult = null;
+			const template: MenuItemConstructorOptions[] = params.items.map(
+				(it): MenuItemConstructorOptions => ({
+					label: it.label,
+					type: 'checkbox',
+					checked: it.checked,
+					click: (menuItem) => {
+						chosen = { key: it.key, checked: menuItem.checked };
+					}
+				})
+			);
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<HeaderContextMenuResult>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)

@@ -1940,6 +1940,9 @@ async function refreshFiles(): Promise<void> {
 		app.localComments = [];
 		app.localCommentsContextKey = null;
 		void refreshUnstagedCount();
+		// The header's changeset button keys off `installed`, which must hold on
+		// every tab — keep it fresh even on the bare sessions list.
+		void refreshChangesetStatus(app.activeRepo.id);
 		return;
 	}
 	const repoId = app.activeRepo.id;
@@ -2054,14 +2057,15 @@ async function refreshFiles(): Promise<void> {
 		if (ctx.kind === 'workingTree') {
 			app.unstagedFileCount = files.length;
 			setRepoDirty(repoId, files.length > 0);
-			// Keep the "Add a changeset?" prompt in sync with the working tree.
-			void refreshChangesetStatus(repoId);
 		} else {
 			void refreshUnstagedCount();
-			// The commit box (and its changeset prompt) only show for the working
-			// tree, so don't compute changeset status in other contexts.
-			app.changesetStatus = null;
 		}
+		// Keep the changeset status fresh in every context. The "Add a changeset?"
+		// prompt only mounts on the Unstaged tab, so the status's working-tree
+		// prompt fields stay invisible elsewhere — but the header's changeset
+		// button keys off `installed`, a repo-level fact that must hold on every
+		// tab. Nulling it here used to hide the button on the Branch/PR tabs.
+		void refreshChangesetStatus(repoId);
 
 		app.lastRefreshAt = Date.now();
 		// Load the local comments pinned to this context's diff (cheap; reads the
