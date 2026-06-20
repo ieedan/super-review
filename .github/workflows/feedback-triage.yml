@@ -1,0 +1,120 @@
+name: Feedback triage
+
+# Triage issues filed through the in-app feedback flow (they carry the `feedback`
+# label). Depending on the `TRIAGE_AGENT` repository variable an AI agent reads
+# the issue and either categorizes it (feature/other) or — for a bug — attempts a
+# fix and opens a draft PR.
+#
+# Configure once under Settings → Secrets and variables → Actions:
+#   Variable  TRIAGE_AGENT       "claude" (default) or "cursor"
+#   Secret    ANTHROPIC_API_KEY  required when TRIAGE_AGENT=claude
+#   Secret    CURSOR_API_KEY     required when TRIAGE_AGENT=cursor
+#
+# Each job no-ops gracefully when its key is absent, so enabling the flow is just
+# a matter of adding the relevant secret.
+
+on:
+  issues:
+    types: [opened, labeled]
+
+# Only act on feedback issues, and avoid the double-fire from an `opened` event
+# that already carries the label plus a later `labeled` event.
+run-name: Triage feedback issue #${{ github.event.issue.number }}
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  claude:
+    name: Triage with Claude Code
+    if: >-
+      (vars.TRIAGE_AGENT == 'claude' || vars.TRIAGE_AGENT == '') &&
+      (
+        (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'feedback')) ||
+        (github.event.action == 'labeled' && github.event.label.name == 'feedback')
+      )
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Triage
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are triaging issue #${{ github.event.issue.number }} ("${{ github.event.issue.title }}")
+            in this repository. It was filed through the app's in-app feedback flow.
+
+            Steps:
+            1. Read the issue title and body (including any attached screenshots/videos).
+            2. Decide its category: a bug, a feature request, or general/other feedback.
+            3. Make the labels reflect that category: ensure `bug`, `enhancement`, or
+               `question` is set, and add a short `triaged` label. Keep the `feedback` label.
+            4. If it is a FEATURE or OTHER: post one concise comment acknowledging it and
+               summarizing the request/decision. Do NOT open a pull request.
+            5. If it is a BUG: investigate the codebase. If you find a clear, low-risk fix,
+               create a new branch, make the change, and open a DRAFT pull request whose
+               body contains "Fixes #${{ github.event.issue.number }}". If the fix is risky,
+               large, or unclear, instead post a comment with the root cause and what a fix
+               would involve — do not open a PR.
+
+            Be concise. Prefer one comment and (for bugs) one small PR.
+          claude_args: '--allowedTools "Bash,Read,Edit,Write,Glob,Grep"'
+
+  cursor:
+    name: Triage with Cursor
+    if: >-
+      vars.TRIAGE_AGENT == 'cursor' &&
+      (
+        (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'feedback')) ||
+        (github.event.action == 'labeled' && github.event.label.name == 'feedback')
+      )
+    runs-on: ubuntu-latest
+    env:
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+    steps:
+      - name: Launch Cursor background agent
+        if: ${{ env.CURSOR_API_KEY != '' }}
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Cursor's Background Agent API runs Composer in the cloud against the repo.
+          # It reads the issue, labels it, and opens a PR for bugs. The prompt mirrors
+          # the Claude job above. See https://docs.cursor.com/background-agent/api.
+          read -r -d '' PROMPT <<EOF || true
+          Triage GitHub issue #${ISSUE_NUMBER} ("${ISSUE_TITLE}") in ${REPO}, filed via
+          the app's in-app feedback flow. Categorize it (bug / feature / other) and set
+          the matching label (bug / enhancement / question) plus a 'triaged' label, keeping
+          'feedback'. For a feature or other: leave one concise comment, no PR. For a bug:
+          investigate and, if a clear low-risk fix exists, open a draft PR that says
+          "Fixes #${ISSUE_NUMBER}"; otherwise comment with the root cause.
+
+          Issue body:
+          ${ISSUE_BODY}
+          EOF
+
+          jq -n \
+            --arg prompt "$PROMPT" \
+            --arg repo "https://github.com/${REPO}" \
+            '{prompt: {text: $prompt}, source: {repository: $repo, ref: "main"}}' \
+          > payload.json
+
+          curl --fail-with-body -sS -X POST "https://api.cursor.com/v0/agents" \
+            -H "Authorization: Bearer ${CURSOR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data @payload.json

@@ -1,0 +1,315 @@
+<script lang="ts">
+	import Bug from '@lucide/svelte/icons/bug';
+	import Lightbulb from '@lucide/svelte/icons/lightbulb';
+	import MessageSquare from '@lucide/svelte/icons/message-square';
+	import X from '@lucide/svelte/icons/x';
+	import FileVideo from '@lucide/svelte/icons/file-video';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
+	import CircleCheck from '@lucide/svelte/icons/circle-check';
+	import * as Dialog from './ui/dialog';
+	import { Button } from './ui/button';
+	import { Input } from './ui/input';
+	import { Textarea } from './ui/textarea';
+	import { FileDropZone, displaySize, type FileRejectedReason } from './ui/file-drop-zone';
+	import { actions, app } from '$lib/store.svelte';
+	import { cn } from '$lib/utils';
+	import type { FeedbackConfig, FeedbackKind } from '@shared/types';
+
+	// One staged attachment: the File plus a preview object URL (revoked on
+	// removal/close) and whether it renders as a video vs an image.
+	interface Staged {
+		file: File;
+		previewUrl: string;
+		isVideo: boolean;
+	}
+
+	const KINDS: { value: FeedbackKind; label: string; icon: typeof Bug }[] = [
+		{ value: 'bug', label: 'Bug', icon: Bug },
+		{ value: 'feature', label: 'Feature', icon: Lightbulb },
+		{ value: 'other', label: 'Other', icon: MessageSquare }
+	];
+
+	let config = $state<FeedbackConfig | null>(null);
+	let kind = $state<FeedbackKind>('other');
+	let title = $state('');
+	let body = $state('');
+	let diagnostics = $state<string | null>(null);
+	let staged = $state<Staged[]>([]);
+	let submitting = $state(false);
+	let error = $state<string | null>(null);
+	// Set to the created issue on success so we can show a confirmation + link
+	// instead of the form.
+	let result = $state<{ url: string; number: number } | null>(null);
+
+	const open = $derived(app.feedback.open);
+
+	// Accept string for the dropzone's hidden input, built from the configured
+	// image/video MIME types.
+	const acceptTypes = $derived(
+		config ? [...config.imageTypes, ...config.videoTypes].join(',') : ''
+	);
+	const videoTypeSet = $derived(new Set(config?.videoTypes ?? []));
+
+	function reset(): void {
+		for (const s of staged) URL.revokeObjectURL(s.previewUrl);
+		kind = 'other';
+		title = '';
+		body = '';
+		diagnostics = null;
+		staged = [];
+		error = null;
+		result = null;
+		submitting = false;
+	}
+
+	// On open: load capabilities/limits and apply any prefill (error reports seed
+	// kind + diagnostics). On close: revoke previews and clear the form.
+	$effect(() => {
+		if (!open) return;
+		reset();
+		const prefill = app.feedback.prefill;
+		if (prefill) {
+			if (prefill.kind) kind = prefill.kind;
+			if (prefill.title) title = prefill.title;
+			if (prefill.body) body = prefill.body;
+			if (prefill.diagnostics) diagnostics = prefill.diagnostics;
+		}
+		void window.api.feedback.getConfig().then((c) => (config = c));
+	});
+
+	function onUpload(files: File[]): void {
+		error = null;
+		const next = files.map((file) => ({
+			file,
+			previewUrl: URL.createObjectURL(file),
+			isVideo: videoTypeSet.has(file.type)
+		}));
+		staged = [...staged, ...next];
+	}
+
+	function onFileRejected({ file, reason }: { file: File; reason: FileRejectedReason }): void {
+		const why =
+			reason === 'File too large'
+				? `it's over the size limit (${displaySize(file.size)})`
+				: reason === 'Maximum files'
+					? `you can attach at most ${config?.maxFiles} files`
+					: `that file type isn't supported`;
+		error = `Couldn't attach "${file.name}" — ${why}.`;
+	}
+
+	function removeStaged(index: number): void {
+		const s = staged[index];
+		if (s) URL.revokeObjectURL(s.previewUrl);
+		staged = staged.filter((_, i) => i !== index);
+	}
+
+	async function submit(e?: Event): Promise<void> {
+		e?.preventDefault();
+		if (submitting) return;
+		if (!title.trim()) {
+			error = 'Please add a short title.';
+			return;
+		}
+		submitting = true;
+		error = null;
+		try {
+			const attachments = await Promise.all(
+				staged.map(async (s) => ({
+					name: s.file.name,
+					mimeType: s.file.type,
+					bytes: new Uint8Array(await s.file.arrayBuffer())
+				}))
+			);
+			result = await window.api.feedback.submit({
+				kind,
+				title: title.trim(),
+				body,
+				attachments,
+				diagnostics: diagnostics ?? undefined
+			});
+		} catch (err) {
+			error = err instanceof Error ? err.message : String(err);
+		} finally {
+			submitting = false;
+		}
+	}
+
+	const mediaDisabled = $derived(!config?.uploadConfigured);
+	const canSubmit = $derived(!!config?.signedIn && !submitting);
+</script>
+
+<Dialog.Root {open} onOpenChange={(o) => (o ? undefined : actions.closeFeedbackDialog())}>
+	<Dialog.Content class="flex max-h-[85vh] w-[560px] max-w-[92vw] flex-col gap-4 overflow-hidden">
+		{#if result}
+			<!-- Success state: confirm and link to the filed issue. -->
+			<div class="flex flex-col items-center gap-3 py-4 text-center">
+				<CircleCheck class="size-10 text-success" />
+				<div class="space-y-1">
+					<h2 class="text-base font-semibold">Thanks for the feedback!</h2>
+					<p class="text-sm text-muted-foreground">
+						We filed issue #{result.number}. You can track it on GitHub.
+					</p>
+				</div>
+				<div class="flex gap-2">
+					<Button
+						variant="secondary"
+						size="sm"
+						onclick={() => window.api.shell.openExternal(result!.url)}
+					>
+						<ExternalLink class="size-4" />
+						View issue
+					</Button>
+					<Button size="sm" onclick={() => actions.closeFeedbackDialog()}>Done</Button>
+				</div>
+			</div>
+		{:else}
+			<Dialog.Header>
+				<Dialog.Title>Send feedback</Dialog.Title>
+				<Dialog.Description>
+					Report a bug, request a feature, or share a thought. This opens an issue on the
+					super-review repository.
+				</Dialog.Description>
+			</Dialog.Header>
+
+			<form onsubmit={submit} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+				<!-- Kind selector -->
+				<div class="grid grid-cols-3 gap-2">
+					{#each KINDS as k (k.value)}
+						{@const Icon = k.icon}
+						<button
+							type="button"
+							onclick={() => (kind = k.value)}
+							class={cn(
+								'flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-sm transition-colors',
+								kind === k.value
+									? 'border-primary bg-primary/10 text-foreground'
+									: 'border-border text-muted-foreground hover:bg-accent'
+							)}
+							aria-pressed={kind === k.value}
+						>
+							<Icon class="size-4" />
+							{k.label}
+						</button>
+					{/each}
+				</div>
+
+				<div class="space-y-1.5">
+					<label for="feedback-title" class="text-xs font-medium text-muted-foreground">
+						Title
+					</label>
+					<Input
+						id="feedback-title"
+						bind:value={title}
+						placeholder="Short summary"
+						maxlength={256}
+						autocomplete="off"
+					/>
+				</div>
+
+				<div class="space-y-1.5">
+					<label for="feedback-body" class="text-xs font-medium text-muted-foreground">
+						Description <span class="font-normal">(Markdown supported)</span>
+					</label>
+					<Textarea
+						id="feedback-body"
+						bind:value={body}
+						placeholder="What happened? What did you expect? Steps to reproduce…"
+						class="min-h-28"
+					/>
+				</div>
+
+				<!-- Attachments -->
+				<div class="space-y-1.5">
+					<span class="text-xs font-medium text-muted-foreground">
+						Screenshots & screen recordings
+					</span>
+					{#if mediaDisabled}
+						<p
+							class="rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground"
+						>
+							Attachment uploads aren't configured for this build, so you can only send text.
+						</p>
+					{:else}
+						<FileDropZone
+							accept={acceptTypes}
+							maxFiles={config?.maxFiles}
+							fileCount={staged.length}
+							maxFileSize={config?.maxVideoBytes}
+							{onUpload}
+							{onFileRejected}
+						/>
+						{#if config}
+							<p class="text-xs text-muted-foreground">
+								Images up to {displaySize(config.maxImageBytes)}, videos up to
+								{displaySize(config.maxVideoBytes)}. Max {config.maxFiles} files.
+							</p>
+						{/if}
+					{/if}
+
+					{#if staged.length > 0}
+						<div class="grid grid-cols-3 gap-2 pt-1">
+							{#each staged as s, i (s.previewUrl)}
+								<div
+									class="group relative aspect-video overflow-hidden rounded-md border border-border bg-muted"
+								>
+									{#if s.isVideo}
+										<div
+											class="flex h-full w-full flex-col items-center justify-center gap-1 p-1 text-muted-foreground"
+										>
+											<FileVideo class="size-5" />
+											<span class="line-clamp-1 text-[10px]">{s.file.name}</span>
+										</div>
+									{:else}
+										<img src={s.previewUrl} alt={s.file.name} class="h-full w-full object-cover" />
+									{/if}
+									<button
+										type="button"
+										onclick={() => removeStaged(i)}
+										class="absolute top-1 right-1 rounded bg-background/80 p-0.5 text-foreground opacity-0 group-hover:opacity-100"
+										aria-label="Remove attachment"
+									>
+										<X class="size-3.5" />
+									</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				{#if diagnostics}
+					<p class="text-xs text-muted-foreground">
+						The captured error details will be attached automatically.
+					</p>
+				{/if}
+
+				{#if !config?.signedIn}
+					<p class="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
+						Sign in to GitHub (Repository → settings) to send feedback.
+					</p>
+				{/if}
+
+				{#if error}
+					<p
+						class="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
+					>
+						{error}
+					</p>
+				{/if}
+
+				<Dialog.Footer>
+					<Button
+						type="button"
+						variant="secondary"
+						size="sm"
+						onclick={() => actions.closeFeedbackDialog()}
+					>
+						Cancel
+					</Button>
+					<Button type="submit" size="sm" disabled={!canSubmit}>
+						{submitting ? 'Sending…' : 'Send feedback'}
+					</Button>
+				</Dialog.Footer>
+			</form>
+		{/if}
+	</Dialog.Content>
+</Dialog.Root>

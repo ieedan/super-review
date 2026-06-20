@@ -30,6 +30,7 @@
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
 	import RepositorySettingsDialog from '$lib/components/RepositorySettingsDialog.svelte';
 	import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
+	import FeedbackDialog from '$lib/components/FeedbackDialog.svelte';
 	import { ConfirmDeleteDialog } from '$lib/components/ui/confirm-delete-dialog';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import * as Sidebar from '$lib/components/ui/sidebar';
@@ -297,6 +298,12 @@
 			actions.onGithubAuthChanged(errors);
 		});
 
+		// The native Help menu's "Send Feedback…" (Cmd/Ctrl+Shift+F) opens the
+		// feedback dialog.
+		const offHelpMenuAction = window.api.events.onHelpMenuAction((action) => {
+			if (action === 'sendFeedback') actions.openFeedbackDialog();
+		});
+
 		// Center the traffic lights once now; the resize binding handles every
 		// subsequent zoom change.
 		syncWindowControls();
@@ -322,6 +329,7 @@
 			offSessionsChanged();
 			offCommentsChanged();
 			offGithubAuthChanged();
+			offHelpMenuAction();
 			stopPoll();
 			window.clearInterval(tickId);
 			window.clearInterval(checksId);
@@ -448,6 +456,12 @@
 				>
 					{errorDetailsOpen ? 'Hide Details' : 'Show Details'}
 				</button>
+				<button
+					class="rounded border border-destructive/50 px-2 py-1 text-xs hover:bg-destructive/20"
+					onclick={() => app.error && actions.reportErrorAsFeedback(app.error)}
+				>
+					Report
+				</button>
 				<Tooltip.Provider delayDuration={150}>
 					<Tooltip.Root>
 						<Tooltip.Trigger>
@@ -501,6 +515,7 @@
 <CleanupBranchesDialog />
 <SettingsDialog />
 <GithubSignInDialog />
+<FeedbackDialog />
 <CommandPalette />
 <ConfirmDeleteDialog />
 

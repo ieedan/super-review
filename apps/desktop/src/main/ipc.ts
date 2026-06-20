@@ -17,6 +17,9 @@ import type {
 	CommitDraft,
 	CommitFileSelection,
 	CommitResult,
+	FeedbackConfig,
+	FeedbackSubmission,
+	FeedbackSubmissionResult,
 	DeviceFlowStart,
 	DeviceFlowStatus,
 	DiffContext,
@@ -107,6 +110,7 @@ import {
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import { getNpmPackageInfo } from './npm-service.js';
 import * as gh from './github-service.js';
+import * as feedback from './feedback-service.js';
 import {
 	clearSessions,
 	countSessions,
@@ -1362,6 +1366,17 @@ export function registerIpc(): void {
 		): Promise<ReleaseNotesRangeResult> => {
 			return gh.getReleaseNotesRange(repositoryUrl, packageName, fromVersion, toVersion);
 		}
+	);
+
+	// ─── Feedback ──────────────────────────────────────────────────────────
+	ipcMain.handle(
+		'feedback:getConfig',
+		async (): Promise<FeedbackConfig> => feedback.getFeedbackConfig()
+	);
+	ipcMain.handle(
+		'feedback:submit',
+		async (_e, input: FeedbackSubmission): Promise<FeedbackSubmissionResult> =>
+			feedback.submitFeedback(input)
 	);
 
 	// ─── Shell ─────────────────────────────────────────────────────────────

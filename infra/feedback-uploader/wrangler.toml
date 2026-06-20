@@ -1,0 +1,19 @@
+name = "super-review-feedback-uploader"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# The R2 bucket attachments are stored in. Create it first:
+#   pnpm wrangler r2 bucket create super-review-feedback
+[[r2_buckets]]
+binding = "FEEDBACK_BUCKET"
+bucket_name = "super-review-feedback"
+
+[vars]
+# Public origin returned URLs point at. Leave commented to serve objects through
+# this Worker's own GET /feedback/* route. Set it to a custom domain or the
+# bucket's r2.dev URL once you've enabled public access. No trailing slash.
+# PUBLIC_BASE_URL = "https://feedback.super-review.dev"
+
+# Optional — override the per-file size caps (bytes). Defaults: 10MB / 50MB.
+# MAX_IMAGE_BYTES = "10485760"
+# MAX_VIDEO_BYTES = "52428800"

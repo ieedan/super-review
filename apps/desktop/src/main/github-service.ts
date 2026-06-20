@@ -1332,3 +1332,34 @@ export async function findPRForBranch(
 	if (!pr) return null;
 	return toPRSummary(pr);
 }
+
+// ─── Feedback ────────────────────────────────────────────────────────────────
+
+// The active account's raw token, for authenticating uploads to the feedback
+// broker (which verifies the user's identity before accepting media). Returns
+// null when signed out. Deliberately the ONLY place a token leaves this module
+// for a non-GitHub host — used solely by feedback-service for the R2 broker.
+export function getActiveAccountToken(): string | null {
+	return getActiveGithubAccount()?.token ?? null;
+}
+
+// File a feedback issue on the target repo as the signed-in user. Missing labels
+// are created automatically by GitHub. Throws (via resolveAccount) when no
+// account is signed in. Returns the new issue's URL and number.
+export async function createFeedbackIssue(opts: {
+	owner: string;
+	repo: string;
+	title: string;
+	body: string;
+	labels: string[];
+}): Promise<{ url: string; number: number }> {
+	const o = octokit(resolveAccount());
+	const res = await o.issues.create({
+		owner: opts.owner,
+		repo: opts.repo,
+		title: opts.title,
+		body: opts.body,
+		labels: opts.labels
+	});
+	return { url: res.data.html_url, number: res.data.number };
+}

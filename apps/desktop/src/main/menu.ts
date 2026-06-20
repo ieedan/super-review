@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'e
 import type {
 	BranchMenuAction,
 	BranchMenuState,
+	HelpMenuAction,
 	RepositoryMenuAction,
 	RepositoryMenuState
 } from '../shared/types.js';
@@ -43,6 +44,25 @@ function sendRepositoryAction(action: RepositoryMenuAction): void {
 	win?.webContents.send('menu:repository-action', action);
 }
 
+function sendHelpAction(action: HelpMenuAction): void {
+	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+	win?.webContents.send('menu:help-action', action);
+}
+
+// App-global "Help" submenu. Unlike Repository/Branch it carries no enablement
+// state — its items work regardless of the active repo. "Send Feedback…" is the
+// canonical Cmd/Ctrl+Shift+F entry point; the same dialog also backs the error
+// toast's "Report this error" button.
+function buildHelpSubmenu(): MenuItemConstructorOptions[] {
+	return [
+		{
+			label: 'Send Feedback…',
+			accelerator: 'Shift+CmdOrCtrl+F',
+			click: () => sendHelpAction('sendFeedback')
+		}
+	];
+}
+
 // Build the "Repository" submenu from repoState — mirrors GitHub Desktop's
 // Repository menu. Items whose dynamic label is null (no editor/terminal
 // detected) are omitted entirely so the menu matches what's available.
@@ -71,7 +91,10 @@ function buildRepositorySubmenu(): MenuItemConstructorOptions[] {
 		...(s.terminalLabel
 			? [item(`Open in ${s.terminalLabel}`, 'openInTerminal', s.hasRepo, 'Control+`')]
 			: []),
-		item(s.revealLabel, 'showInFinder', s.hasRepo, 'Shift+CmdOrCtrl+F'),
+		// Reveal-in-file-manager moved off Shift+CmdOrCtrl+F so that combo can be the
+		// global "Send Feedback…" shortcut (see buildHelpSubmenu); Alt+CmdOrCtrl+R
+		// ("Reveal") is free across the role menus.
+		item(s.revealLabel, 'showInFinder', s.hasRepo, 'Alt+CmdOrCtrl+R'),
 		...(s.editorLabel
 			? [item(`Open in ${s.editorLabel}`, 'openInEditor', s.hasRepo, 'Shift+CmdOrCtrl+A')]
 			: []),
@@ -152,7 +175,8 @@ function buildAppMenu(): void {
 		{ role: 'viewMenu' },
 		{ label: 'Repository', submenu: buildRepositorySubmenu() },
 		{ label: 'Branch', submenu: buildBranchSubmenu() },
-		{ role: 'windowMenu' }
+		{ role: 'windowMenu' },
+		{ label: 'Help', submenu: buildHelpSubmenu() }
 	];
 
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));

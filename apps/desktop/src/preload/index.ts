@@ -21,7 +21,11 @@ import type {
 	DiffData,
 	DiffLineContextMenuAction,
 	EditorKind,
+	FeedbackConfig,
+	FeedbackSubmission,
+	FeedbackSubmissionResult,
 	FileContextMenuAction,
+	HelpMenuAction,
 	HeaderContextMenuResult,
 	GithubAccount,
 	GithubAuthError,
@@ -353,6 +357,11 @@ const api: PreloadAPI = {
 				toVersion
 			) as Promise<ReleaseNotesRangeResult>
 	},
+	feedback: {
+		getConfig: () => ipcRenderer.invoke('feedback:getConfig') as Promise<FeedbackConfig>,
+		submit: (input: FeedbackSubmission) =>
+			ipcRenderer.invoke('feedback:submit', input) as Promise<FeedbackSubmissionResult>
+	},
 	shell: {
 		openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,
 		showItemInFolder: (fullPath) =>
@@ -415,6 +424,11 @@ const api: PreloadAPI = {
 				handler(action);
 			ipcRenderer.on('menu:repository-action', listener);
 			return () => ipcRenderer.off('menu:repository-action', listener);
+		},
+		onHelpMenuAction(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, action: HelpMenuAction) => handler(action);
+			ipcRenderer.on('menu:help-action', listener);
+			return () => ipcRenderer.off('menu:help-action', listener);
 		},
 		onRepoTrashFailed(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, name: string) => handler(name);

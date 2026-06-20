@@ -19,3 +19,8 @@ apps/docs/build/
 # frozen snapshots; they travel with the PR for review but aren't hand-edited,
 # so don't gate them on our formatting rules.
 .super-review/
+
+# Standalone Cloudflare Worker(s) — deployed separately with their own toolchain
+# (Cloudflare Workers types/globals), outside the pnpm workspace. Not gated by
+# the app's prettier/eslint config.
+infra/

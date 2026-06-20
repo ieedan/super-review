@@ -13,6 +13,9 @@ const gitignorePath = fileURLToPath(new URL('./.gitignore', import.meta.url));
 
 export default ts.config(
 	includeIgnoreFile(gitignorePath),
+	// Standalone Cloudflare Worker(s): deployed separately with their own tsconfig
+	// and Workers-runtime globals, outside this workspace's lint surface.
+	{ ignores: ['infra/**'] },
 	js.configs.recommended,
 	...ts.configs.recommended,
 	...svelte.configs['flat/recommended'],

@@ -11,6 +11,7 @@ import type {
 	DiffData,
 	DiffLayout,
 	EditorKind,
+	FeedbackKind,
 	FileListLayout,
 	AnimationMode,
 	CustomFileIcon,
@@ -106,6 +107,18 @@ export interface GithubSignInState {
 	// True while we're polling GitHub for the user to authorize the code.
 	polling: boolean;
 	error: string | null;
+}
+
+// Seed values for the feedback dialog when it's opened pre-filled (currently only
+// from the error toast's "Report this error"). Every field is optional so callers
+// set just what they know.
+export interface FeedbackPrefill {
+	kind?: FeedbackKind;
+	title?: string;
+	body?: string;
+	// Verbatim diagnostics (e.g. an error stack) appended to the issue in a
+	// collapsed block; never shown in the editable body.
+	diagnostics?: string;
 }
 
 interface AppState {
@@ -397,6 +410,13 @@ interface AppState {
 	// Whether the "Clean Up Local Branches" dialog is open. The dialog itself
 	// loads the local-only branch candidates when it opens.
 	cleanupBranchesDialogOpen: boolean;
+	// Feedback dialog (Cmd/Ctrl+Shift+F, or "Report this error" from the error
+	// toast). `prefill` seeds the form when launched from an error report; null for
+	// a blank dialog. The dialog reads it once on open.
+	feedback: {
+		open: boolean;
+		prefill: FeedbackPrefill | null;
+	};
 	// The branch the create-branch dialog was opened from, snapshotted on open so
 	// the dialog's "based on…" options stay fixed for its lifetime. Creating with
 	// checkout switches app.currentBranch to the new branch mid-flow; reading that
@@ -720,6 +740,7 @@ const initial: AppState = {
 	publishDialogOpen: false,
 	createBranchDialogOpen: false,
 	cleanupBranchesDialogOpen: false,
+	feedback: { open: false, prefill: null },
 	createBranchFrom: null,
 	push: { inProgress: false, stage: 'idle', intent: 'push', op: 'push', error: null },
 	conflictFiles: [],
@@ -3764,6 +3785,24 @@ export const actions = {
 	},
 	closeCleanupBranchesDialog(): void {
 		app.cleanupBranchesDialogOpen = false;
+	},
+
+	// Open the feedback dialog, optionally pre-filled (the error toast passes a
+	// bug kind + the error text as diagnostics). The dialog consumes `prefill` on
+	// open and resets the field afterward.
+	openFeedbackDialog(prefill: FeedbackPrefill | null = null): void {
+		app.feedback.prefill = prefill;
+		app.feedback.open = true;
+	},
+	closeFeedbackDialog(): void {
+		app.feedback.open = false;
+		app.feedback.prefill = null;
+	},
+	// "Report this error" from the error toast: open feedback as a bug with the
+	// error message captured as diagnostics, then dismiss the toast.
+	reportErrorAsFeedback(message: string): void {
+		actions.openFeedbackDialog({ kind: 'bug', diagnostics: message });
+		app.error = null;
 	},
 
 	// Delete the chosen local-only branches in one pass (none of them is the

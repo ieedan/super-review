@@ -622,6 +622,11 @@ export type RepositoryMenuAction =
 	| 'cleanupBranches'
 	| 'settings';
 
+// Items in the native application menu's "Help" submenu. App-global (not tied to
+// the active repo), so unlike the Repository/Branch menus there's no enablement
+// state to push up — the main process just forwards the chosen action.
+export type HelpMenuAction = 'sendFeedback';
+
 // Renderer-computed state deciding which "Repository" menu items are enabled and
 // their dynamic labels. Items whose label is null are hidden (no editor/terminal
 // detected), matching the rest of the menu's "show what applies" behavior.
@@ -1087,6 +1092,75 @@ export type ReleaseNotesRangeResult =
 	| { ok: true; releases: ReleaseNotes[]; truncated: boolean }
 	| { ok: false; error: string };
 
+// ─── Feedback ────────────────────────────────────────────────────────────────
+// In-app feedback (Cmd/Ctrl+Shift+F, or "Report this error" from the error
+// toast) becomes a GitHub Issue on the super-review repo. Attached images/video
+// are uploaded to an R2-backed broker first (GitHub's API can't take media), and
+// the returned URLs are embedded as markdown in the issue body. A workflow on
+// the repo then triages the new issue (label a feature, open a fix PR for a bug).
+
+// Where feedback issues are filed. Hardcoded to the project's own repo — feedback
+// is about super-review itself, not whatever repo the user happens to have open.
+// Overridable via env for forks/self-hosting (see feedback-service).
+export const FEEDBACK_REPO = { owner: 'ieedan', repo: 'super-review' } as const;
+
+// Upper bounds enforced on both ends (renderer rejects before upload; the broker
+// re-checks). Kept deliberately modest so a single issue can't balloon R2 usage.
+export const FEEDBACK_MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB per image
+export const FEEDBACK_MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50 MB per video
+export const FEEDBACK_MAX_FILES = 6; // attachments per submission
+export const FEEDBACK_MAX_TOTAL_BYTES = 100 * 1024 * 1024; // all attachments combined
+
+export const FEEDBACK_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+export const FEEDBACK_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'] as const;
+
+// What the user is reporting. Drives the issue's title prefix and labels, and
+// whether the triage workflow attempts an auto-fix (bug) or just categorizes
+// (feature/other).
+export type FeedbackKind = 'bug' | 'feature' | 'other';
+
+// A single attachment as it travels renderer → main, before upload. `bytes` is
+// the raw file content (Electron IPC structured-clones the Uint8Array intact).
+export interface FeedbackAttachmentInput {
+	name: string;
+	mimeType: string;
+	bytes: Uint8Array;
+}
+
+// The feedback the renderer submits. `diagnostics` is appended in a collapsed
+// <details> block (app version, platform, and — for an error report — the stack).
+export interface FeedbackSubmission {
+	kind: FeedbackKind;
+	title: string;
+	// Markdown. May reference attachments; the main process appends the uploaded
+	// media after this body.
+	body: string;
+	attachments: FeedbackAttachmentInput[];
+	diagnostics?: string;
+}
+
+// The created issue.
+export interface FeedbackSubmissionResult {
+	url: string;
+	number: number;
+}
+
+// Capabilities/limits the renderer reads on open so it can disable the dropzone
+// (and say why) when no upload broker is configured, and surface the size caps.
+export interface FeedbackConfig {
+	// Whether an R2 upload broker URL is configured. When false the dialog still
+	// works for text, but image/video attachments are turned off.
+	uploadConfigured: boolean;
+	// Whether a GitHub account is signed in (required to file the issue).
+	signedIn: boolean;
+	maxImageBytes: number;
+	maxVideoBytes: number;
+	maxFiles: number;
+	maxTotalBytes: number;
+	imageTypes: string[];
+	videoTypes: string[];
+}
+
 export interface PreloadAPI {
 	platform: AppPlatform;
 	repos: {
@@ -1427,6 +1501,13 @@ export interface PreloadAPI {
 			toVersion: string
 		): Promise<ReleaseNotesRangeResult>;
 	};
+	feedback: {
+		// Capabilities + size limits, read when the feedback dialog opens.
+		getConfig(): Promise<FeedbackConfig>;
+		// Upload any attachments to the R2 broker, then file the GitHub issue.
+		// Rejects if no account is signed in or an attachment exceeds its limit.
+		submit(input: FeedbackSubmission): Promise<FeedbackSubmissionResult>;
+	};
 	shell: {
 		openExternal(url: string): Promise<void>;
 		// Reveal a file in the OS file manager (Finder / Explorer), selecting it.
@@ -1471,6 +1552,9 @@ export interface PreloadAPI {
 		onBranchMenuAction(handler: (action: BranchMenuAction) => void): () => void;
 		// A native "Repository" menu item was chosen. Returns an unsubscribe fn.
 		onRepositoryMenuAction(handler: (action: RepositoryMenuAction) => void): () => void;
+		// A native "Help" menu item was chosen (e.g. "Send Feedback…"). Returns an
+		// unsubscribe fn.
+		onHelpMenuAction(handler: (action: HelpMenuAction) => void): () => void;
 		// A background "move to Trash" (after removing a repo) failed; the payload
 		// is the repo's name. Returns an unsubscribe fn.
 		onRepoTrashFailed(handler: (name: string) => void): () => void;
