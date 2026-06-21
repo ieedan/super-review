@@ -28,6 +28,15 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 	}
 });
 
+// Keep local-attachment image URLs (sr-asset://) through sanitization so a
+// pasted local image renders in the preview. The scheme is served read-only by
+// the main process from the repo's attachments dir (see attachments-service).
+DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+	if (data.attrName === 'src' && data.attrValue.startsWith('sr-asset://')) {
+		data.forceKeepAttr = true;
+	}
+});
+
 export const carta = new Carta({
 	// Carta operates on raw markdown and injects the result via {@html}; sanitize
 	// before it reaches the DOM. The app already ships DOMPurify (see markdown.ts)

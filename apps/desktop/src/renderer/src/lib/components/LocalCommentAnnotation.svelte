@@ -20,7 +20,8 @@
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Textarea } from './ui/textarea';
 	import HarnessLogo from './HarnessLogo.svelte';
-	import { actions, app, composerKey } from '$lib/store.svelte';
+	import { actions, app, composerKey, setError } from '$lib/store.svelte';
+	import { attachImageUpload } from '$lib/markdown-image-upload';
 	import { formatRelative } from '$lib/utils';
 
 	interface Props {
@@ -38,6 +39,21 @@
 		if (meta.kind !== 'local-composer') return null;
 		const key = composerKey(meta.filePath, meta.side, meta.line);
 		return { key, value: app.localComposers[key] ?? null };
+	});
+
+	// Pasted/dropped images on a local comment save to disk and embed an
+	// sr-asset:// URL — no upload, since local comments never leave the machine.
+	$effect(() => {
+		const textarea = textareaEl;
+		const state = composerState;
+		const repoId = app.activeRepo?.id;
+		if (!textarea || !state || !repoId) return;
+		return attachImageUpload(textarea, {
+			target: { mode: 'local', repoId },
+			getValue: () => state.value?.draft ?? '',
+			setValue: (v) => actions.setLocalComposerDraft(state.key, v),
+			onError: setError
+		});
 	});
 
 	const resolved = $derived(meta.kind === 'local-comment' && meta.comment.resolvedAt != null);

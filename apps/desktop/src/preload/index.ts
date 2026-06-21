@@ -26,6 +26,7 @@ import type {
 	FeedbackSubmissionResult,
 	FileContextMenuAction,
 	HelpMenuAction,
+	ImageUploadInput,
 	HeaderContextMenuResult,
 	GithubAccount,
 	GithubAuthError,
@@ -431,6 +432,14 @@ const api: PreloadAPI = {
 		getConfig: () => ipcRenderer.invoke('feedback:getConfig') as Promise<FeedbackConfig>,
 		submit: (input: FeedbackSubmission) =>
 			ipcRenderer.invoke('feedback:submit', input) as Promise<FeedbackSubmissionResult>
+	},
+	uploads: {
+		uploadImage: (input: ImageUploadInput) =>
+			ipcRenderer.invoke('uploads:uploadImage', input) as Promise<string>
+	},
+	attachments: {
+		saveLocal: (repoId: string, input: ImageUploadInput) =>
+			ipcRenderer.invoke('attachments:saveLocal', repoId, input) as Promise<string>
 	},
 	shell: {
 		openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,

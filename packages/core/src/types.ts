@@ -1326,6 +1326,26 @@ export interface FeedbackSubmissionResult {
 	number: number;
 }
 
+// ─── Markdown image attachments ──────────────────────────────────────────────
+// Image paste/drop in the app's markdown composers. GitHub-bound text (PR
+// comments, changesets, feedback) uploads to the R2 broker for a hosted URL;
+// local-only review comments save to disk and reference an sr-asset:// URL.
+
+// Raw image payload for an upload (renderer → main). Electron IPC structured-
+// clones the Uint8Array intact.
+export interface ImageUploadInput {
+	name: string;
+	mimeType: string;
+	bytes: Uint8Array;
+}
+
+// Custom URL scheme the main process serves local review-comment image
+// attachments from — read-only, out of each repo's git-ignored
+// `.super-review/attachments` dir. Registered as a privileged scheme so
+// `<img src="sr-asset://…">` loads in the renderer. Shape:
+// `sr-asset://<repoId>/<filename>`.
+export const LOCAL_ATTACHMENT_SCHEME = 'sr-asset';
+
 // Capabilities/limits the renderer reads on open so it can disable the dropzone
 // (and say why) when no upload broker is configured, and surface the size caps.
 export interface FeedbackConfig {
@@ -1765,6 +1785,20 @@ export interface PreloadAPI {
 		// Upload any attachments to the R2 broker, then file the GitHub issue.
 		// Rejects if no account is signed in or an attachment exceeds its limit.
 		submit(input: FeedbackSubmission): Promise<FeedbackSubmissionResult>;
+	};
+	uploads: {
+		// Upload an image to the R2 broker and return its public URL, for embedding
+		// in GitHub-bound markdown (PR comments, changesets, feedback). Rejects when
+		// signed out, the broker is unconfigured, or the file is too large / not an
+		// image.
+		uploadImage(input: ImageUploadInput): Promise<string>;
+	};
+	attachments: {
+		// Save an image into the repo's local (git-ignored) attachments dir and
+		// return an sr-asset:// URL the renderer can render. For local-only review
+		// comments, so they never hit the network. Rejects on an unknown repo or a
+		// too-large / non-image file.
+		saveLocal(repoId: string, input: ImageUploadInput): Promise<string>;
 	};
 	shell: {
 		openExternal(url: string): Promise<void>;

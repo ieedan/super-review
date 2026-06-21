@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { MarkdownEditor } from 'carta-md';
 	import { carta, CARTA_THEME } from '$lib/carta';
+	import { attachImageUpload, type ImageUploadTarget } from '$lib/markdown-image-upload';
 	import 'carta-md/default.css';
 	import '$lib/carta-theme.css';
 
@@ -15,6 +16,10 @@
 		// Bubbled-up keydown from the editor so callers can wire ⌘⏎ submit / Esc
 		// cancel, mirroring the previous plain-textarea behavior.
 		onkeydown?: (e: KeyboardEvent) => void;
+		// Enables image paste/drop. Omit to leave the composer text-only.
+		imageUpload?: ImageUploadTarget;
+		// Reports an image upload failure so the caller can surface it.
+		onImageError?: (message: string) => void;
 	}
 
 	let {
@@ -22,7 +27,9 @@
 		placeholder = '',
 		disabled = false,
 		autofocus = false,
-		onkeydown
+		onkeydown,
+		imageUpload,
+		onImageError
 	}: Props = $props();
 
 	// Carta's `autoFocus` only fires on initial page load, so it misses an editor
@@ -35,6 +42,30 @@
 		const el = wrapper;
 		const id = requestAnimationFrame(() => el.querySelector('textarea')?.focus());
 		return () => cancelAnimationFrame(id);
+	});
+
+	// Wire paste/drop image upload onto Carta's internal <textarea> once it exists
+	// (Carta renders it during its own mount, hence the rAF, like autofocus above).
+	$effect(() => {
+		const cfg = imageUpload;
+		if (!cfg || !wrapper) return;
+		const el = wrapper;
+		let cleanup: (() => void) | undefined;
+		const id = requestAnimationFrame(() => {
+			const textarea = el.querySelector('textarea');
+			if (textarea) {
+				cleanup = attachImageUpload(textarea, {
+					target: cfg,
+					getValue: () => value,
+					setValue: (v) => (value = v),
+					onError: onImageError
+				});
+			}
+		});
+		return () => {
+			cancelAnimationFrame(id);
+			cleanup?.();
+		};
 	});
 </script>
 

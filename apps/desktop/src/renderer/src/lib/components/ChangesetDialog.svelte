@@ -8,7 +8,7 @@
 	import MarkdownComposer from './MarkdownComposer.svelte';
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import ChangesetPreview from './ChangesetPreview.svelte';
-	import { actions, app } from '$lib/store.svelte';
+	import { actions, app, setError } from '$lib/store.svelte';
 	import { formatChangesetFile, randomChangesetName } from '$lib/changeset';
 	import FileIcon from './FileIcon.svelte';
 	import type { WorkspacePackage } from '@shared/types';
@@ -233,6 +233,8 @@
 								disabled={busy}
 								autofocus
 								onkeydown={onDescriptionKeydown}
+								imageUpload={{ mode: 'remote' }}
+								onImageError={setError}
 							/>
 						{/if}
 					</div>

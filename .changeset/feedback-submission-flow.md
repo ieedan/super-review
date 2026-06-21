@@ -12,3 +12,9 @@ files a labeled GitHub issue on the super-review repo. The error toast gains a
 one-click "Report" button that opens the same flow pre-filled with the error
 details. A new repository workflow triages incoming feedback issues with Claude
 Code or Cursor — categorizing features and opening fix PRs for bugs.
+
+Markdown composers (PR review comments, changeset summaries, the feedback
+dialog) now accept pasted/dropped images: GitHub-bound text uploads to the R2
+broker, while local-only review comments save the image to the repo's
+git-ignored `.super-review/attachments` dir and reference it through a privileged
+`sr-asset://` URL — so local comments stay offline and free.

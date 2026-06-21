@@ -1,13 +1,25 @@
-import { app, BrowserWindow, ipcMain, nativeImage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage, protocol, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fixPath from 'fix-path';
 import { registerIpc } from './ipc.js';
 import { registerGitCredentials } from './github-service.js';
+import { registerAttachmentProtocol } from './attachments-service.js';
 import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
 import { getPrefs, flushStore } from './store.js';
-import { WINDOW_BOUNDS } from '@shared/types.js';
+import { LOCAL_ATTACHMENT_SCHEME, WINDOW_BOUNDS } from '@shared/types.js';
+
+// Register the local-attachment scheme as privileged BEFORE the app is ready, so
+// `<img src="sr-asset://…">` (local review-comment images) loads like a normal
+// secure origin. `standard` makes URLs parse host/path the way the handler
+// expects; `secure`/`supportFetchAPI` let it load under the renderer's CSP.
+protocol.registerSchemesAsPrivileged([
+	{
+		scheme: LOCAL_ATTACHMENT_SCHEME,
+		privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+	}
+]);
 
 // macOS/Linux GUI launchers (Finder, Dock, Spotlight) start apps with a minimal
 // PATH that excludes Homebrew, asdf, mise, etc. The git subprocesses we spawn —
@@ -156,6 +168,7 @@ void app.whenReady().then(() => {
 		if (!img.isEmpty()) app.dock?.setIcon(img);
 	}
 	setupPermissions();
+	registerAttachmentProtocol();
 	registerGitCredentials();
 	registerIpc();
 	setupAppMenu();

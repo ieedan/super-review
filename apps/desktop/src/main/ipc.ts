@@ -20,6 +20,7 @@ import type {
 	FeedbackConfig,
 	FeedbackSubmission,
 	FeedbackSubmissionResult,
+	ImageUploadInput,
 	DeviceFlowStart,
 	DeviceFlowStatus,
 	DiffContext,
@@ -115,6 +116,8 @@ import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './
 import { getNpmPackageInfo } from './npm-service.js';
 import * as gh from './github-service.js';
 import * as feedback from './feedback-service.js';
+import { uploadImage } from './uploads-service.js';
+import { saveLocalAttachment } from './attachments-service.js';
 import {
 	clearSessions,
 	countSessions,
@@ -1541,6 +1544,17 @@ export function registerIpc(): void {
 		'feedback:submit',
 		async (_e, input: FeedbackSubmission): Promise<FeedbackSubmissionResult> =>
 			feedback.submitFeedback(input)
+	);
+
+	// ─── Markdown image attachments ─────────────────────────────────────────
+	ipcMain.handle(
+		'uploads:uploadImage',
+		async (_e, input: ImageUploadInput): Promise<string> => uploadImage(input)
+	);
+	ipcMain.handle(
+		'attachments:saveLocal',
+		async (_e, repoId: string, input: ImageUploadInput): Promise<string> =>
+			saveLocalAttachment(repoId, input)
 	);
 
 	// ─── Shell ─────────────────────────────────────────────────────────────

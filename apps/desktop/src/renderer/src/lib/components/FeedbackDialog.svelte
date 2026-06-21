@@ -12,6 +12,7 @@
 	import { Textarea } from './ui/textarea';
 	import { FileDropZone, displaySize, type FileRejectedReason } from './ui/file-drop-zone';
 	import { actions, app } from '$lib/store.svelte';
+	import { attachImageUpload } from '$lib/markdown-image-upload';
 	import { cn } from '$lib/utils';
 	import type { FeedbackConfig, FeedbackKind } from '@shared/types';
 
@@ -136,6 +137,20 @@
 
 	const mediaDisabled = $derived(!config?.uploadConfigured);
 	const canSubmit = $derived(!!config?.signedIn && !submitting);
+
+	// Let users paste/drop an image straight into the description; it uploads to
+	// the broker and embeds a markdown image, same as the comment composers.
+	let bodyEl = $state<HTMLTextAreaElement | null>(null);
+	$effect(() => {
+		const textarea = bodyEl;
+		if (!textarea || !config?.uploadConfigured) return;
+		return attachImageUpload(textarea, {
+			target: { mode: 'remote' },
+			getValue: () => body,
+			setValue: (v) => (body = v),
+			onError: (msg) => (error = msg)
+		});
+	});
 </script>
 
 <Dialog.Root {open} onOpenChange={(o) => (o ? undefined : actions.closeFeedbackDialog())}>
@@ -212,6 +227,7 @@
 					</label>
 					<Textarea
 						id="feedback-body"
+						bind:ref={bodyEl}
 						bind:value={body}
 						placeholder="What happened? What did you expect? Steps to reproduce…"
 						class="min-h-28"

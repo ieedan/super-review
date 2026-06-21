@@ -16,7 +16,8 @@
 		app,
 		composerKey,
 		effectiveGithubAccount,
-		prThreadCollapsed
+		prThreadCollapsed,
+		setError
 	} from '$lib/store.svelte';
 	import { formatRelative } from '$lib/utils';
 	import { renderMarkdown } from '$lib/markdown';
@@ -330,6 +331,8 @@
 							disabled={replySubmitting}
 							autofocus
 							onkeydown={onReplyKeydown}
+							imageUpload={{ mode: 'remote' }}
+							onImageError={setError}
 						/>
 						<div class="composer-footer">
 							<div class="actions">
@@ -397,6 +400,8 @@
 					disabled={composer.submitting}
 					autofocus
 					onkeydown={onKeydown}
+					imageUpload={{ mode: 'remote' }}
+					onImageError={setError}
 				/>
 				<div class="composer-footer">
 					<div class="actions">

@@ -14,18 +14,7 @@ import {
 	type FeedbackSubmissionResult
 } from '@shared/types.js';
 import { createFeedbackIssue, getActiveAccountToken } from './github-service.js';
-
-// URL of the R2-backed upload broker (a Cloudflare Worker — see
-// infra/feedback-uploader). Defaults to the project's deployed broker so shipped
-// builds get media uploads out of the box; an env var overrides it for
-// forks/self-hosting. Mirrors the SUPER_REVIEW_GH_CLIENT_ID default pattern in
-// github-service. Set the env var to an empty string to disable uploads (the
-// dialog then files text-only issues). A trailing slash is tolerated.
-const DEFAULT_UPLOAD_URL = 'https://super-review-feedback-uploader.aidanbleser35.workers.dev';
-const UPLOAD_URL = (process.env.SUPER_REVIEW_FEEDBACK_UPLOAD_URL ?? DEFAULT_UPLOAD_URL).replace(
-	/\/+$/,
-	''
-);
+import { isUploadConfigured, uploadToBroker } from './upload-broker.js';
 
 // Lets a fork/self-host redirect feedback to its own repo without a rebuild,
 // e.g. SUPER_REVIEW_FEEDBACK_REPO="acme/super-review".
@@ -50,7 +39,7 @@ function isVideo(mimeType: string): boolean {
 
 export function getFeedbackConfig(): FeedbackConfig {
 	return {
-		uploadConfigured: !!UPLOAD_URL,
+		uploadConfigured: isUploadConfigured(),
 		signedIn: !!getActiveAccountToken(),
 		maxImageBytes: FEEDBACK_MAX_IMAGE_BYTES,
 		maxVideoBytes: FEEDBACK_MAX_VIDEO_BYTES,
@@ -122,34 +111,14 @@ interface UploadedMedia {
 	url: string;
 }
 
-// Push one attachment to the broker, which validates the bearer token (the user's
-// GitHub token) before storing the bytes in R2 and returning a public URL.
+// Push one attachment to the broker and tag the result with its type so the
+// markdown renderer can pick an image vs video embed.
 async function uploadAttachment(
 	att: FeedbackAttachmentInput,
 	token: string
 ): Promise<UploadedMedia> {
-	if (!UPLOAD_URL) throw new Error('Attachment uploads are not configured.');
-	// Copy into a fresh ArrayBuffer so a SharedArrayBuffer-backed view (or a
-	// partial view over a larger buffer) is sent as exactly these bytes.
-	const body = att.bytes.slice().buffer;
-	const res = await fetch(`${UPLOAD_URL}/upload`, {
-		method: 'POST',
-		headers: {
-			Authorization: `Bearer ${token}`,
-			'Content-Type': att.mimeType,
-			'X-Filename': encodeURIComponent(att.name)
-		},
-		body
-	});
-	if (!res.ok) {
-		const detail = await res.text().catch(() => '');
-		throw new Error(
-			`Upload failed for "${att.name}" (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`
-		);
-	}
-	const data = (await res.json()) as { url?: string };
-	if (!data.url) throw new Error(`Upload of "${att.name}" returned no URL.`);
-	return { name: att.name, mimeType: att.mimeType, url: data.url };
+	const url = await uploadToBroker(att, token);
+	return { name: att.name, mimeType: att.mimeType, url };
 }
 
 // Render uploaded media as a markdown "Attachments" section: images inline,

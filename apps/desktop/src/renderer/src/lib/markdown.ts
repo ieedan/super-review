@@ -64,6 +64,15 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 	}
 });
 
+// Keep our local-attachment scheme on <img src>; DOMPurify strips unknown
+// schemes by default. sr-asset:// is served read-only by the main process from
+// the repo's local attachments dir (see attachments-service), so it's safe.
+DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+	if (data.attrName === 'src' && data.attrValue.startsWith('sr-asset://')) {
+		data.forceKeepAttr = true;
+	}
+});
+
 // Highlighted HTML for each code token, populated by the async `walkTokens`
 // pass and read back in the (synchronous) `code` renderer. Keyed by the token
 // object itself so concurrent renders don't collide.
