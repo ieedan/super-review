@@ -1603,13 +1603,13 @@ export function registerIpc(): void {
 				// groups.
 				const n = params.selectedCount;
 				const groups: MenuItemConstructorOptions[][] = [];
+				if (params.canDiscard) {
+					groups.push([item(`Discard ${n} Selected Files`, 'discardSelected')]);
+				}
 				groups.push([
 					item(`Mark ${n} Selected Files as Seen`, 'markSelectedSeen'),
 					item(`Mark ${n} Selected Files as Unseen`, 'markSelectedUnseen')
 				]);
-				if (params.canDiscard) {
-					groups.push([item(`Discard ${n} Selected Files`, 'discardSelected')]);
-				}
 				if (params.canInclude) {
 					groups.push([
 						item(`Include ${n} Selected Files`, 'includeSelected'),

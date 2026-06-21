@@ -173,6 +173,10 @@ interface AppState {
 	// while unknown (no active repo, or the check hasn't returned yet); false
 	// drives the "Install skill" prompts in the header and sessions empty state.
 	skillInstalled: boolean | null;
+	// Whether the user dismissed the "Install the skill" notice above the commit
+	// box. In-memory only and reset on every repo switch, so it stays hidden while
+	// you work in this repo but returns if the skill is still missing next time.
+	skillInstallDismissed: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
 	// changeset?" prompt above the commit box). null while unknown / not the
 	// working-tree context.
@@ -685,6 +689,7 @@ const initial: AppState = {
 	commits: [],
 	activeCommit: null,
 	skillInstalled: null,
+	skillInstallDismissed: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
 	changesetPromptDismissed: false,
@@ -1269,6 +1274,9 @@ async function refreshRepos(): Promise<void> {
 async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.activeRepo = repo;
 	repoFrecency.use(repo.id);
+	// Kick off the local skill check immediately — it only needs activeRepo and is
+	// a single filesystem stat, so don't strand it behind the slow network work below.
+	void refreshSkillInstalled();
 	applyContextTab('unstaged');
 	app.diffContext = { kind: 'workingTree' };
 	// A read-only view (branch or PR) belongs to the previous repo — drop it.
@@ -1294,7 +1302,6 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	// the slow network PR lookup below.
 	await hydrateRememberedBranchBase();
 	await refreshBranchPR();
-	void refreshSkillInstalled();
 }
 
 async function refreshBranches(): Promise<void> {
@@ -2441,6 +2448,9 @@ export const actions = {
 	dismissChangesetWarning(): void {
 		app.changesetWarningDismissed = true;
 	},
+	dismissSkillInstall(): void {
+		app.skillInstallDismissed = true;
+	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;
 	},
@@ -2548,6 +2558,9 @@ export const actions = {
 		app.activeRepo = await window.api.repos.getActive();
 		if (app.activeRepo) {
 			repoFrecency.use(app.activeRepo.id);
+			// Local filesystem stat — fire it now so it isn't stranded behind the tab
+			// restore + network PR lookup below.
+			void refreshSkillInstalled();
 			// Restore the last tab. The 'branch' tab needs `currentBranch` to build
 			// its DiffContext, so refresh branches first when restoring it.
 			const savedTab = app.prefs.contextTab;
@@ -2588,7 +2601,6 @@ export const actions = {
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 			}
 			await refreshBranchPR();
-			void refreshSkillInstalled();
 		}
 		// Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
 		// of init so its per-repo `git status` flood doesn't compete with — and
@@ -2618,9 +2630,10 @@ export const actions = {
 			app.activeRepo = await window.api.repos.getActive();
 			if (app.activeRepo) {
 				repoFrecency.use(app.activeRepo.id);
+				// Local filesystem stat — fire it now, not behind the network PR lookup.
+				void refreshSkillInstalled();
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 				await refreshBranchPR();
-				void refreshSkillInstalled();
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -2644,9 +2657,10 @@ export const actions = {
 			app.activeRepo = await window.api.repos.getActive();
 			if (app.activeRepo) {
 				repoFrecency.use(app.activeRepo.id);
+				// Local filesystem stat — fire it now, not behind the network PR lookup.
+				void refreshSkillInstalled();
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 				await refreshBranchPR();
-				void refreshSkillInstalled();
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -2674,6 +2688,9 @@ export const actions = {
 		if (repo) {
 			app.activeRepo = repo;
 			repoFrecency.use(repo.id);
+			// Local filesystem stat — fire it now so the skill banner resolves without
+			// waiting on the network PR lookup below.
+			void refreshSkillInstalled();
 			applyContextTab('unstaged');
 			app.diffContext = { kind: 'workingTree' };
 			app.viewBranch = null;
@@ -2690,6 +2707,7 @@ export const actions = {
 			app.activeCommit = null;
 			app.commits = [];
 			app.skillInstalled = null;
+			app.skillInstallDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
 			app.prs = [];
@@ -2703,7 +2721,6 @@ export const actions = {
 			app.repoPushAccess = null;
 			await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
 			await refreshBranchPR();
-			void refreshSkillInstalled();
 		}
 	},
 
@@ -2726,6 +2743,7 @@ export const actions = {
 			app.branches = [];
 			app.selectedFile = null;
 			app.skillInstalled = null;
+			app.skillInstallDismissed = false;
 		}
 	},
 
@@ -3001,6 +3019,9 @@ export const actions = {
 		try {
 			await window.api.skill.install(app.activeRepo.id);
 			await refreshSkillInstalled();
+			// Installing writes the skill files into the working tree — surface them
+			// as unstaged changes right away instead of waiting for the next poll.
+			await refreshFiles();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}

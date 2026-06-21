@@ -15,7 +15,7 @@ addCollection(materialIconTheme);
 // full coral/white coloring (no `currentColor`), so it reads as the app logo
 // rather than a themed glyph. Used for the session manifests we write under
 // `.super-review/sessions/` — see SUPER_REVIEW_ICON below.
-const SUPER_REVIEW_ICON = 'super-review:logo';
+export const SUPER_REVIEW_ICON = 'super-review:logo';
 addCollection({
 	prefix: 'super-review',
 	width: 512,

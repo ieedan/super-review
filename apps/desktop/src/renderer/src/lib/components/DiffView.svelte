@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import DiffFileSection from './DiffFileSection.svelte';
 	import SessionStepHeader from './SessionStepHeader.svelte';
@@ -103,6 +103,44 @@
 		displayPlan.reduce((acc, it, i) => (it.kind === 'file' ? i : acc), -1)
 	);
 
+	// Incremental mounting (scroll layout only). A `DiffFileSection` is heavy —
+	// Pierre imports, a fan-out of derived/effects, an observer registration — so
+	// mounting one per file up front freezes the app on a huge diff (7000+ files).
+	// Instead we mount only the first `renderLimit` plan items and grow the window
+	// as the user scrolls toward the end (the sentinel below) or jumps to a file
+	// past it (the scroll-request effect). The window only ever grows, so section
+	// heights never shift under the user and the active-file / find / pin-to-top
+	// machinery keeps working on whatever is mounted. The single-file layout already
+	// renders just the active file (+neighbours), so it opts out.
+	const INITIAL_RENDER = 80;
+	const RENDER_CHUNK = 60;
+	let renderLimit = $state(INITIAL_RENDER);
+	const windowedPlan = $derived(
+		app.diffLayout === 'single' ? displayPlan : displayPlan.slice(0, renderLimit)
+	);
+	const hasMoreToRender = $derived(windowedPlan.length < displayPlan.length);
+
+	// Restart the window at the top whenever the rendered set itself is rebuilt —
+	// search filter, tab switch, refresh, layout toggle. Marking files seen (and
+	// other state that doesn't rebuild `renderPlan`) leaves a scrolled-open window
+	// intact. Doesn't read `renderLimit`, so writing it here can't loop.
+	$effect(() => {
+		void renderPlan;
+		void app.diffLayout;
+		renderLimit = INITIAL_RENDER;
+	});
+
+	// The plan index of a scroll request's target (file path or step), or -1.
+	function planIndexForRequest(req: { path?: string | null; stepId?: string | null }): number {
+		if (req.stepId) {
+			return displayPlan.findIndex((it) => it.kind === 'step' && it.id === req.stepId);
+		}
+		if (req.path) {
+			return displayPlan.findIndex((it) => it.kind === 'file' && it.file.path === req.path);
+		}
+		return -1;
+	}
+
 	// "You've seen it all" completion state: shown over the diff list once every
 	// change on the Branch tab is marked seen, until the reviewer dismisses it
 	// with "Keep Reviewing". Re-arm it whenever the branch drops back below
@@ -116,7 +154,27 @@
 
 	let scrollContainer = $state<HTMLElement | null>(null);
 	let observer = $state<IntersectionObserver | null>(null);
+	let loadMoreSentinel = $state<HTMLElement | null>(null);
 	let lastNonce = 0;
+
+	// Grow the incremental render window when the bottom sentinel nears the
+	// viewport. The generous bottom rootMargin mounts the next batch a screen ahead
+	// of the scroll, so a fast scroll doesn't outrun it into blank space. As the
+	// window grows the sentinel moves down off-screen and this stops firing.
+	$effect(() => {
+		const sentinel = loadMoreSentinel;
+		if (!sentinel || !scrollContainer) return;
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) {
+					renderLimit = Math.min(displayPlan.length, renderLimit + RENDER_CHUNK);
+				}
+			},
+			{ root: scrollContainer, rootMargin: '1200px 0px', threshold: 0 }
+		);
+		io.observe(sentinel);
+		return () => io.disconnect();
+	});
 
 	// Shared observer for all file sections. Each section flips its `inView` flag
 	// through a setter stashed on its root element when it enters the rootMargin
@@ -225,15 +283,34 @@
 		if (!req || req.nonce === lastNonce || !scrollContainer) return;
 		lastNonce = req.nonce;
 		if (req.calloutId) return;
+		void revealAndScrollTo(req);
+	});
+
+	// Scroll to a sidebar-requested file/step, first growing the incremental
+	// window to include it when it sits past what's mounted — otherwise its section
+	// wouldn't be in the DOM to scroll to. After bumping the limit we await `tick`
+	// so the newly-appended section exists before we query for it.
+	async function revealAndScrollTo(req: {
+		path?: string | null;
+		stepId?: string | null;
+	}): Promise<void> {
 		const selector = req.stepId
 			? `[data-step-id="${CSS.escape(req.stepId)}"]`
 			: req.path
 				? `[data-file-path="${CSS.escape(req.path)}"]`
 				: null;
-		if (!selector) return;
+		if (!selector || !scrollContainer) return;
+		if (app.diffLayout !== 'single') {
+			const idx = planIndexForRequest(req);
+			if (idx >= renderLimit) {
+				renderLimit = idx + RENDER_CHUNK;
+				await tick();
+				if (!scrollContainer) return;
+			}
+		}
 		const target = scrollContainer.querySelector(selector) as HTMLElement | null;
 		if (target) pinToTop(target);
-	});
+	}
 
 	// Track which file section is currently being viewed so the sidebar can
 	// highlight it. The "active" section is the one whose top has most recently
@@ -392,7 +469,7 @@
 			</div>
 		{/if}
 
-		{#each displayPlan as item, i (item.kind === 'step' ? `step:${item.id}` : `file:${item.file.path}`)}
+		{#each windowedPlan as item, i (item.kind === 'step' ? `step:${item.id}` : `file:${item.file.path}`)}
 			{#if item.kind === 'step'}
 				<SessionStepHeader
 					id={item.id}
@@ -418,6 +495,13 @@
 				</div>
 			{/if}
 		{/each}
+
+		<!-- Grows the incremental window as it nears the viewport, so the next
+		     batch of sections mounts a screen or so before the user reaches them.
+		     Only present while there's more of the plan left to render. -->
+		{#if hasMoreToRender}
+			<div bind:this={loadMoreSentinel} class="h-px w-full" aria-hidden="true"></div>
+		{/if}
 	</div>
 
 	{#if showComplete}

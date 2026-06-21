@@ -320,6 +320,31 @@ function octokit(account: StoredGithubAccount): Octokit {
 	return o;
 }
 
+// How many authors we probe against the GitHub API at once. A long branch can
+// have dozens of distinct author emails the email alone can't decode (the
+// History tab resolves the whole list at once), and firing every `getCommit` in
+// parallel both saturates the main process and trips GitHub's secondary (abuse)
+// rate limit — a stalled main process freezes all IPC, so the whole app appears
+// to hang. A small pool keeps resolution responsive and background-y instead.
+const AUTHOR_RESOLVE_CONCURRENCY = 6;
+
+// Run `task` over `items` with at most `limit` running at once. Workers pull
+// from a shared cursor, so a slow author doesn't hold up the rest of the pool.
+async function mapPooled<T>(
+	items: T[],
+	limit: number,
+	task: (item: T) => Promise<void>
+): Promise<void> {
+	let cursor = 0;
+	const worker = async (): Promise<void> => {
+		while (cursor < items.length) {
+			const item = items[cursor++];
+			await task(item);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 // Resolve commit authors to GitHub accounts the way GitHub's commit list does:
 // ask the API for a specific commit and read the `author` it mapped the commit
 // email to. The email alone isn't enough — `noreply@anthropic.com`, say, only
@@ -327,7 +352,8 @@ function octokit(account: StoredGithubAccount): Octokit {
 // pairs an author email with a few of their commit SHAs (newest first); we probe
 // them in order and take the first that GitHub can resolve, so an unpushed tip
 // commit (which the API doesn't know) falls through to an older pushed one. The
-// per-SHA `getCommit` calls (one per author, not per commit) keep this cheap.
+// per-SHA `getCommit` calls (one per author, not per commit) keep this cheap, and
+// the pool caps how many run at once so a big branch can't flood the API.
 export async function resolveCommitAuthors(
 	owner: string,
 	repo: string,
@@ -337,25 +363,23 @@ export async function resolveCommitAuthors(
 	const viewer = resolveAccount(accountId);
 	const o = octokit(viewer);
 	const out: Record<string, CommitAuthorIdentity> = {};
-	await Promise.all(
-		candidates.map(async ({ email, shas }) => {
-			for (const sha of shas.slice(0, 5)) {
-				try {
-					const res = await o.repos.getCommit({ owner, repo, ref: sha });
-					const author = res.data.author;
-					if (author?.login) {
-						out[email.trim().toLowerCase()] = {
-							login: author.login,
-							avatarUrl: author.avatar_url
-						};
-						return;
-					}
-				} catch {
-					// SHA not on GitHub (unpushed) or a transient error — try the next.
+	await mapPooled(candidates, AUTHOR_RESOLVE_CONCURRENCY, async ({ email, shas }) => {
+		for (const sha of shas.slice(0, 5)) {
+			try {
+				const res = await o.repos.getCommit({ owner, repo, ref: sha });
+				const author = res.data.author;
+				if (author?.login) {
+					out[email.trim().toLowerCase()] = {
+						login: author.login,
+						avatarUrl: author.avatar_url
+					};
+					return;
 				}
+			} catch {
+				// SHA not on GitHub (unpushed) or a transient error — try the next.
 			}
-		})
-	);
+		}
+	});
 	return out;
 }
 
