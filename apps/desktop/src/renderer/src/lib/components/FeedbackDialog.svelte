@@ -167,127 +167,133 @@
 				</Dialog.Description>
 			</Dialog.Header>
 
-			<form onsubmit={submit} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-				<!-- Kind selector -->
-				<div class="grid grid-cols-3 gap-2">
-					{#each KINDS as k (k.value)}
-						{@const Icon = k.icon}
-						<button
-							type="button"
-							onclick={() => (kind = k.value)}
-							class={cn(
-								'flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-sm transition-colors',
-								kind === k.value
-									? 'border-primary bg-primary/10 text-foreground'
-									: 'border-border text-muted-foreground hover:bg-accent'
-							)}
-							aria-pressed={kind === k.value}
-						>
-							<Icon class="size-4" />
-							{k.label}
-						</button>
-					{/each}
-				</div>
+			<form onsubmit={submit} class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+				<div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+					<!-- Kind selector -->
+					<div class="grid grid-cols-3 gap-2">
+						{#each KINDS as k (k.value)}
+							{@const Icon = k.icon}
+							<button
+								type="button"
+								onclick={() => (kind = k.value)}
+								class={cn(
+									'flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-sm transition-colors',
+									kind === k.value
+										? 'border-primary bg-primary/10 text-foreground'
+										: 'border-border text-muted-foreground hover:bg-accent'
+								)}
+								aria-pressed={kind === k.value}
+							>
+								<Icon class="size-4" />
+								{k.label}
+							</button>
+						{/each}
+					</div>
 
-				<div class="space-y-1.5">
-					<label for="feedback-title" class="text-xs font-medium text-muted-foreground">
-						Title
-					</label>
-					<Input
-						id="feedback-title"
-						bind:value={title}
-						placeholder="Short summary"
-						maxlength={256}
-						autocomplete="off"
-					/>
-				</div>
+					<div class="space-y-1.5">
+						<label for="feedback-title" class="text-xs font-medium text-muted-foreground">
+							Title
+						</label>
+						<Input
+							id="feedback-title"
+							bind:value={title}
+							placeholder="Short summary"
+							maxlength={256}
+							autocomplete="off"
+						/>
+					</div>
 
-				<div class="space-y-1.5">
-					<span class="text-xs font-medium text-muted-foreground">
-						Description <span class="font-normal">(Markdown — paste or drop images to attach)</span>
-					</span>
-					<MarkdownComposer
-						bind:value={body}
-						placeholder="What happened? What did you expect? Steps to reproduce…"
-						onkeydown={onComposerKeydown}
-					/>
-				</div>
+					<div class="space-y-1.5">
+						<span class="text-xs font-medium text-muted-foreground">
+							Description <span class="font-normal"
+								>(Markdown — paste or drop images to attach)</span
+							>
+						</span>
+						<MarkdownComposer
+							bind:value={body}
+							placeholder="What happened? What did you expect? Steps to reproduce…"
+							onkeydown={onComposerKeydown}
+						/>
+					</div>
 
-				<!-- Screen recordings only — images go inline in the description above.
+					<!-- Screen recordings only — images go inline in the description above.
 				     Video is the one thing the composer can't embed, so it stays as a
 				     compact attach rather than the old full dropzone. -->
-				<div class="space-y-1.5">
-					{#if mediaDisabled}
-						<p
-							class="rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground"
-						>
-							Attachment uploads aren't configured for this build, so you can only send text.
-						</p>
-					{:else}
-						<FileDropZone
-							accept={videoAccept}
-							maxFiles={config?.maxFiles}
-							fileCount={stagedVideos.length}
-							maxFileSize={config?.maxVideoBytes}
-							{onUpload}
-							{onFileRejected}
-							class="flex-row justify-start gap-2 px-3 py-2.5 text-left text-xs"
-						>
-							<FileVideo class="size-4 shrink-0" />
-							<span>
-								<span class="font-medium text-foreground">Attach a screen recording</span>
-								— or drag and drop
-								{#if config}
-									<span class="text-muted-foreground"
-										>(up to {displaySize(config.maxVideoBytes)})</span
+					<div class="space-y-1.5">
+						{#if mediaDisabled}
+							<p
+								class="rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground"
+							>
+								Attachment uploads aren't configured for this build, so you can only send text.
+							</p>
+						{:else}
+							<FileDropZone
+								accept={videoAccept}
+								maxFiles={config?.maxFiles}
+								fileCount={stagedVideos.length}
+								maxFileSize={config?.maxVideoBytes}
+								{onUpload}
+								{onFileRejected}
+								class="flex-row justify-start gap-2 px-3 py-2.5 text-left text-xs"
+							>
+								<FileVideo class="size-4 shrink-0" />
+								<span>
+									<span class="font-medium text-foreground">Attach a screen recording</span>
+									— or drag and drop
+									{#if config}
+										<span class="text-muted-foreground"
+											>(up to {displaySize(config.maxVideoBytes)})</span
+										>
+									{/if}
+								</span>
+							</FileDropZone>
+						{/if}
+
+						{#if stagedVideos.length > 0}
+							<div class="space-y-1 pt-1">
+								{#each stagedVideos as file, i (file.name + file.size + i)}
+									<div
+										class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs"
 									>
-								{/if}
-							</span>
-						</FileDropZone>
+										<FileVideo class="size-4 shrink-0 text-muted-foreground" />
+										<span class="line-clamp-1 flex-1">{file.name}</span>
+										<span class="shrink-0 text-muted-foreground">{displaySize(file.size)}</span>
+										<button
+											type="button"
+											onclick={() => removeStaged(i)}
+											class="rounded p-0.5 hover:bg-accent"
+											aria-label="Remove attachment"
+										>
+											<X class="size-3.5" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+
+					{#if diagnostics}
+						<p class="text-xs text-muted-foreground">
+							The captured error details will be attached automatically.
+						</p>
 					{/if}
 
-					{#if stagedVideos.length > 0}
-						<div class="space-y-1 pt-1">
-							{#each stagedVideos as file, i (file.name + file.size + i)}
-								<div
-									class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs"
-								>
-									<FileVideo class="size-4 shrink-0 text-muted-foreground" />
-									<span class="line-clamp-1 flex-1">{file.name}</span>
-									<span class="shrink-0 text-muted-foreground">{displaySize(file.size)}</span>
-									<button
-										type="button"
-										onclick={() => removeStaged(i)}
-										class="rounded p-0.5 hover:bg-accent"
-										aria-label="Remove attachment"
-									>
-										<X class="size-3.5" />
-									</button>
-								</div>
-							{/each}
-						</div>
+					{#if !config?.signedIn}
+						<p
+							class="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground"
+						>
+							Sign in to GitHub (Repository → settings) to send feedback.
+						</p>
+					{/if}
+
+					{#if error}
+						<p
+							class="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
+						>
+							{error}
+						</p>
 					{/if}
 				</div>
-
-				{#if diagnostics}
-					<p class="text-xs text-muted-foreground">
-						The captured error details will be attached automatically.
-					</p>
-				{/if}
-
-				{#if !config?.signedIn}
-					<p class="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
-						Sign in to GitHub (Repository → settings) to send feedback.
-					</p>
-				{/if}
-
-				{#if error}
-					<p
-						class="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
-					>
-						{error}
-					</p>
-				{/if}
 
 				<Dialog.Footer>
 					<Button
