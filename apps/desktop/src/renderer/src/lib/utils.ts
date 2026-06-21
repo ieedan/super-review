@@ -117,6 +117,7 @@ export function authorInitials(name: string): string {
 	const parts = name.trim().split(/\s+/).filter(Boolean);
 	if (parts.length === 0) return '?';
 	const letters = parts.map((p) => p.match(/[\p{L}\p{N}]/u)?.[0] ?? '');
-	const initials = (letters[0] ?? '') + (parts.length > 1 ? (letters[letters.length - 1] ?? '') : '');
+	const initials =
+		(letters[0] ?? '') + (parts.length > 1 ? (letters[letters.length - 1] ?? '') : '');
 	return (initials || '?').toUpperCase();
 }
