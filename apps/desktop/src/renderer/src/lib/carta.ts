@@ -4,16 +4,24 @@
 // and this avoids re-instantiating Shiki + the plugins on every comment box.
 //
 // Plugins mirror GitHub's comment editor experience:
-//   - code:  Shiki syntax highlighting in the preview pane
-//   - emoji: `:emoji:` autocomplete picker
-//   - slash: `/` command menu for inserting markdown snippets
+//   - code:       Shiki syntax highlighting in the preview pane
+//   - emoji:      `:emoji:` autocomplete picker
+//   - slash:      `/` command menu for inserting markdown snippets
+//   - attachment: paste/drop/click image upload to the R2 broker
 //
-// We deliberately omit plugin-attachment: it requires an upload endpoint to
-// return a hosted URL, which this desktop app doesn't have.
+// `attachment` was previously omitted for lack of an upload endpoint; the feedback
+// broker (see infra/feedback-uploader) now provides one. Every Carta composer is
+// GitHub-bound (PR comments, changeset summaries), so a single remote upload
+// function serves them all — no per-composer routing needed. Local-only review
+// comments use a plain textarea + the markdown-image-upload util instead, since
+// they save to disk rather than uploading.
 import { Carta } from 'carta-md';
 import { code } from '@cartamd/plugin-code';
 import { emoji } from '@cartamd/plugin-emoji';
 import { slash } from '@cartamd/plugin-slash';
+import { attachment } from '@cartamd/plugin-attachment';
+import { FEEDBACK_IMAGE_TYPES } from '@shared/types';
+import { setError } from '$lib/store.svelte';
 import DOMPurify from 'dompurify';
 
 // Force links rendered in the preview to open in a new context and never let a
@@ -48,7 +56,33 @@ export const carta = new Carta({
 	// Pass the same dual theme to the code plugin explicitly. It otherwise
 	// inherits the instance theme, but being explicit keeps the preview's fenced
 	// code blocks on the identical light/dark pair as the editor.
-	extensions: [code({ theme: { light: 'github-light', dark: 'github-dark' } }), emoji(), slash()]
+	extensions: [
+		code({ theme: { light: 'github-light', dark: 'github-dark' } }),
+		emoji(),
+		slash(),
+		attachment({
+			// Restrict to the broker's accepted image types (the plugin's default set
+			// includes svg/avif, which the broker rejects). Videos aren't pasted into
+			// comments; the feedback dialog handles those via its explicit dropzone.
+			supportedMimeTypes: [...FEEDBACK_IMAGE_TYPES],
+			// Upload to the R2 broker and return the hosted URL. The plugin inserts an
+			// uploading placeholder and swaps in `![](url)` on success; returning null
+			// removes the placeholder. It doesn't surface errors, so we do.
+			async upload(file) {
+				try {
+					const bytes = new Uint8Array(await file.arrayBuffer());
+					return await window.api.uploads.uploadImage({
+						name: file.name,
+						mimeType: file.type,
+						bytes
+					});
+				} catch (err) {
+					setError(err instanceof Error ? err.message : String(err));
+					return null;
+				}
+			}
+		})
+	]
 });
 
 // CSS class Carta applies to the editor and the plugin popups when we pass

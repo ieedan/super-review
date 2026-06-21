@@ -20,6 +20,7 @@
 		"typecheck": "pnpm typecheck:node && pnpm typecheck:web"
 	},
 	"dependencies": {
+		"@cartamd/plugin-attachment": "^4.2.0",
 		"@cartamd/plugin-code": "^4.2.0",
 		"@cartamd/plugin-emoji": "^4.3.0",
 		"@cartamd/plugin-slash": "^4.2.0",

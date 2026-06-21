@@ -59,6 +59,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@cartamd/plugin-attachment':
+        specifier: ^4.2.0
+        version: 4.2.0(carta-md@4.11.2(svelte@5.56.1(@typescript-eslint/types@8.60.1)))
       '@cartamd/plugin-code':
         specifier: ^4.2.0
         version: 4.2.0(carta-md@4.11.2(svelte@5.56.1(@typescript-eslint/types@8.60.1)))
@@ -404,6 +407,11 @@ packages:
   '@babel/types@8.0.0-rc.6':
     resolution: {integrity: sha512-p7/ABylAYlexb31wtRdIfH9L9A0Z2T/9H6zAqzqndkY2PLkvNNc580wGhp/gGKN4Sp9sQvSkhc6Oga8/O+wTyw==}
     engines: {node: ^22.18.0 || >=24.11.0}
+
+  '@cartamd/plugin-attachment@4.2.0':
+    resolution: {integrity: sha512-KdQBfcFdBlr7WVrZoCkf6KinIpb2ZsFP5TqZa+K4fNPEVMgLngbODs9l83zmgqEdI8YdDcsTEONMaHUa/qH3Og==}
+    peerDependencies:
+      carta-md: ^4.0.0
 
   '@cartamd/plugin-code@4.2.0':
     resolution: {integrity: sha512-rqv/Ol0kZQ4Z3+RmvT9l+CqkdYCDaDBO4ExpYu8+KmP3pgKWSFaJ2Cv1maZFZLGqUF6rWFPd1AcjeCxwY5nCWQ==}
@@ -4804,6 +4812,10 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 8.0.0-rc.6
       '@babel/helper-validator-identifier': 8.0.0-rc.6
+
+  '@cartamd/plugin-attachment@4.2.0(carta-md@4.11.2(svelte@5.56.1(@typescript-eslint/types@8.60.1)))':
+    dependencies:
+      carta-md: 4.11.2(svelte@5.56.1(@typescript-eslint/types@8.60.1))
 
   '@cartamd/plugin-code@4.2.0(carta-md@4.11.2(svelte@5.56.1(@typescript-eslint/types@8.60.1)))':
     dependencies:
