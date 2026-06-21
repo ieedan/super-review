@@ -111,6 +111,26 @@ export async function listCommentsForContext(
 	return rows.map(rowToComment);
 }
 
+// The desktop app files each comment under a diff-context key (see DiffContext /
+// diffContextKey): `workingTree`, `branch:<base>..<head>`, `pr:<n>`, and so on.
+// The CLI only surfaces the local review of the branch you're on — its
+// working-tree diff plus any branch diff whose head is this branch. The base the
+// reviewer diffed against is irrelevant here — the agent is on one branch and
+// only wants its own comments — so we match on the head alone. A null branch
+// (detached HEAD) leaves just the working-tree comments.
+export async function listLocalComments(
+	repoPath: string,
+	branch: string | null
+): Promise<LocalComment[]> {
+	const all = await listComments(repoPath);
+	const headSuffix = branch ? `..${branch}` : null;
+	return all.filter(
+		(c) =>
+			c.contextKey === 'workingTree' ||
+			(headSuffix !== null && c.contextKey.startsWith('branch:') && c.contextKey.endsWith(headSuffix))
+	);
+}
+
 export async function getComment(repoPath: string, id: string): Promise<LocalComment | null> {
 	const db = await getDb();
 	const rows = await db

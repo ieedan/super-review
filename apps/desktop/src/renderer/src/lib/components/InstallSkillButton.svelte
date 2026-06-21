@@ -4,7 +4,7 @@
 	import { Button } from './ui/button';
 	import { actions } from '$lib/store.svelte';
 
-	// Installs the document-session skill into the active repo. Visibility is the
+	// Installs the super-review skill into the active repo. Visibility is the
 	// caller's call (e.g. the sessions empty state only shows it when the skill
 	// is missing) — this is just the button.
 	let installing = $state(false);

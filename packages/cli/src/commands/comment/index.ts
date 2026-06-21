@@ -4,11 +4,11 @@ import { resolve, unresolve } from './resolve';
 
 // Extra help shown under `comment --help`: where comments live and who writes them.
 const COMMENT_HELP = `
-Local review comments are stored in the repo under .super-review/comments/, one
-JSON file per comment, so they travel with a branch/PR like sessions. Humans
-leave comments in the super-review desktop app; agents read them here (use
-"comment list --unresolved" to find work) and mark them resolved with
-"comment resolve <id> --harness <kind> [--session <id>]".`;
+Humans leave review comments in the super-review desktop app; agents read and
+resolve them through this CLI. "comment list" shows the comments on the branch
+you're on (use "--unresolved" to find work), then "comment resolve <id> --harness
+<kind> [--session <id>]" marks each one resolved. These comments live on the
+reviewer's machine, so an agent running remotely (a fresh checkout) finds none.`;
 
 export const comment = new Command('comment')
 	.description('list and resolve local review comments')

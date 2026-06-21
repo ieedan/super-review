@@ -168,7 +168,7 @@ interface AppState {
 	// The commit whose diff is currently open, or null when the History tab is
 	// showing the list. Ephemeral — not persisted across launches.
 	activeCommit: CommitInfo | null;
-	// Whether the document-session skill is installed in the active repo. null
+	// Whether the super-review skill is installed in the active repo. null
 	// while unknown (no active repo, or the check hasn't returned yet); false
 	// drives the "Install skill" prompts in the header and sessions empty state.
 	skillInstalled: boolean | null;
@@ -2079,7 +2079,7 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 	return sections.join('\n').trim();
 }
 
-// Check whether the document-session skill is installed in the active repo and
+// Check whether the super-review skill is installed in the active repo and
 // store the result. Failure-silent — leaves the answer unknown (null) so the
 // install prompts stay hidden rather than flashing on a transient error.
 async function refreshSkillInstalled(): Promise<void> {
@@ -2966,13 +2966,13 @@ export const actions = {
 		app.diffContext = { kind: 'workingTree' };
 	},
 
-	// Re-check whether the document-session skill is installed in the active repo
+	// Re-check whether the super-review skill is installed in the active repo
 	// (e.g. after the repo's `.agents/skills` dir may have changed on disk).
 	async refreshSkillInstalled(): Promise<void> {
 		await refreshSkillInstalled();
 	},
 
-	// Install the document-session skill into the active repo, then re-check so
+	// Install the super-review skill into the active repo, then re-check so
 	// the "Install skill" prompts clear once it's in place.
 	async installSkill(): Promise<void> {
 		if (!app.activeRepo) return;

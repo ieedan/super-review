@@ -2001,7 +2001,8 @@ export function registerIpc(): void {
 	ipcMain.handle('comments:unwatch', (e): void => clearCommentWatch(e.sender.id));
 
 	// ─── Skill ─────────────────────────────────────────────────────────────
-	// The document-session skill teaches an agent how/when to record a session.
+	// The super-review skill teaches an agent how/when to record a session and
+	// resolve review comments.
 	// The UI checks whether it's installed in the active repo and offers to drop
 	// it in when it isn't.
 	ipcMain.handle(

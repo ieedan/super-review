@@ -1,8 +1,3 @@
----
-name: document-session
-description: Document changes you made in your session in a Super Review tour to make them easier for users to parse and understand.
----
-
 # Document a Super Review session
 
 A **session** is a guided **tour** of the changes you made, written for a human
@@ -113,3 +108,7 @@ super-review session save --committed --key "<run id>" --tour '{ ... }'
 
 Tour `files`/`callouts` work the same way - they just refer to files in the
 committed diff instead of the working tree.
+
+Once you've documented the fixes for a batch of review comments, mark those
+comments resolved and link them back to this session — see
+[resolve-comments.md](resolve-comments.md).
