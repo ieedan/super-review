@@ -767,6 +767,27 @@ export type HeaderContextMenuResult = {
 	checked: boolean;
 } | null;
 
+// A single toggle in the sidebar tab strip's "Show tab" native context menu.
+// `key` is the SidebarTabVisibility field it controls; `checked` is its state.
+export interface TabsContextMenuItem {
+	key: keyof SidebarTabVisibility;
+	label: string;
+	checked: boolean;
+}
+
+// Params for the tab strip's native context menu: the toggle items to show, in
+// order, each carrying its current checked state.
+export interface TabsContextMenuParams {
+	items: TabsContextMenuItem[];
+}
+
+// What the tab strip context menu returns: the toggled tab's key and its new
+// checked state. `null` (from the IPC) means the menu was dismissed.
+export type TabsContextMenuResult = {
+	key: keyof SidebarTabVisibility;
+	checked: boolean;
+} | null;
+
 // Items in the native application menu's "Branch" submenu. The main process
 // sends the chosen action to the focused renderer, which runs the matching
 // store flow (some open a confirm dialog first).
@@ -1080,6 +1101,22 @@ export const DEFAULT_HEADER_ITEMS: HeaderItemVisibility = {
 	terminal: true
 };
 
+// Which of the sidebar's optional file-list tabs are shown. The Unstaged and
+// Branch tabs have their own contextual visibility (a read-only view hides
+// Unstaged; a default-branch checkout hides Branch), so only Sessions and
+// History are user-toggleable — hidden/shown via the tab strip's right-click
+// native context menu, mirroring the header's "Show in header" menu.
+export interface SidebarTabVisibility {
+	sessions: boolean;
+	history: boolean;
+}
+
+// Both optional tabs shown by default; the user hides what they don't want.
+export const DEFAULT_SIDEBAR_TABS: SidebarTabVisibility = {
+	sessions: true,
+	history: true
+};
+
 export interface UserPrefs {
 	viewMode: ViewMode;
 	// Whether the diff view scrolls through all files at once ('scroll') or shows
@@ -1182,6 +1219,10 @@ export interface UserPrefs {
 	// right-click menu. Missing keys fall back to DEFAULT_HEADER_ITEMS so older
 	// persisted prefs (and any future additions) default to visible.
 	headerItems: HeaderItemVisibility;
+	// Which optional sidebar tabs (Sessions, History) are shown. Toggled from the
+	// tab strip's right-click menu. Missing keys fall back to DEFAULT_SIDEBAR_TABS
+	// so older persisted prefs (and any future additions) default to visible.
+	sidebarTabs?: SidebarTabVisibility;
 }
 
 // A user-registered file icon: every file whose path matches `pattern` is
@@ -1733,6 +1774,9 @@ export interface PreloadAPI {
 		// Pop up the header's "Show in header" customization context menu. Resolves
 		// to the toggled item and its new state, or null when dismissed.
 		showHeaderContextMenu(params: HeaderContextMenuParams): Promise<HeaderContextMenuResult>;
+		// Pop up the sidebar tab strip's "Show tab" customization context menu.
+		// Resolves to the toggled tab and its new state, or null when dismissed.
+		showTabsContextMenu(params: TabsContextMenuParams): Promise<TabsContextMenuResult>;
 		// Push the latest Branch-menu enablement/labels to the main process so it
 		// can rebuild the native application menu. Fire-and-forget.
 		setBranchState(state: BranchMenuState): void;

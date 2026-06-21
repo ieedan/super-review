@@ -51,6 +51,7 @@ import type {
 	RepoInfo,
 	Session,
 	SessionSummary,
+	TabsContextMenuResult,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -461,6 +462,8 @@ const api: PreloadAPI = {
 			) as Promise<RepoContextMenuAction | null>,
 		showHeaderContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
+		showTabsContextMenu: (params) =>
+			ipcRenderer.invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
 		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
 		setRepositoryState: (state: RepositoryMenuState) =>
 			ipcRenderer.send('menu:setRepositoryState', state)

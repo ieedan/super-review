@@ -34,11 +34,12 @@ import type {
 	Session,
 	SessionSummary,
 	HeaderItemVisibility,
+	SidebarTabVisibility,
 	TerminalKind,
 	UserPrefs,
 	ViewMode
 } from '@shared/types';
-import { DEFAULT_HEADER_ITEMS, WINDOW_BOUNDS } from '@shared/types';
+import { DEFAULT_HEADER_ITEMS, DEFAULT_SIDEBAR_TABS, WINDOW_BOUNDS } from '@shared/types';
 import { diffContextKey, reviewContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
@@ -257,6 +258,9 @@ interface AppState {
 	// Visibility of the optional header controls (sidebar toggles, changeset,
 	// editor, terminal), toggled from the header's right-click menu.
 	headerItems: HeaderItemVisibility;
+	// Visibility of the optional sidebar tabs (Sessions, History), toggled from
+	// the tab strip's right-click menu.
+	sidebarTabs: SidebarTabVisibility;
 	// Initial window bounds, applied on the next launch (see UserPrefs).
 	windowWidth: number;
 	windowHeight: number;
@@ -716,6 +720,7 @@ const initial: AppState = {
 	recentRepoCount: 5,
 	hotkeys: DEFAULT_HOTKEYS,
 	headerItems: { ...DEFAULT_HEADER_ITEMS },
+	sidebarTabs: { ...DEFAULT_SIDEBAR_TABS },
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
 	startMaximized: false,
@@ -2403,6 +2408,22 @@ export const actions = {
 			headerItems: { ...app.headerItems }
 		});
 	},
+
+	// Show/hide an optional sidebar tab (Sessions, History) from the tab strip's
+	// right-click menu. Updates the local copy first so the strip reacts instantly,
+	// then persists. Hiding the tab you're currently on would strand you on a tab
+	// whose trigger is gone, so fall back to a still-visible tab first.
+	async setSidebarTab(key: keyof SidebarTabVisibility, value: boolean): Promise<void> {
+		if (!value && app.contextTab === key) {
+			// Unstaged is the universal home; while a branch/PR is viewed read-only it's
+			// hidden, so the Branch tab (always present in that view) takes its place.
+			await actions.setContextTab(isReadOnlyView() ? 'branch' : 'unstaged');
+		}
+		app.sidebarTabs = { ...app.sidebarTabs, [key]: value };
+		app.prefs = await window.api.state.setPrefs({
+			sidebarTabs: { ...app.sidebarTabs }
+		});
+	},
 	async setChangesetsEnabled(value: boolean): Promise<void> {
 		app.changesetsEnabled = value;
 		app.prefs = await window.api.state.setPrefs({ changesetsEnabled: value });
@@ -2499,6 +2520,7 @@ export const actions = {
 			app.sidebarCollapsed;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
+		app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...app.prefs.sidebarTabs };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
 		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;
@@ -2543,7 +2565,7 @@ export const actions = {
 					app.diffContext = { kind: 'workingTree' };
 				}
 				await Promise.all([refreshFiles(), refreshPushStatus()]);
-			} else if (savedTab === 'sessions') {
+			} else if (savedTab === 'sessions' && app.sidebarTabs.sessions) {
 				app.contextTab = 'sessions';
 				// The Sessions tab shows the documented-sessions list (in the sidebar),
 				// not a working-tree file list — load the sessions. Still fetch the
@@ -2554,7 +2576,7 @@ export const actions = {
 					refreshUnstagedCount(),
 					actions.loadSessions()
 				]);
-			} else if (savedTab === 'history') {
+			} else if (savedTab === 'history' && app.sidebarTabs.history) {
 				app.contextTab = 'history';
 				// The History tab shows the commit list (in the sidebar), not a
 				// working-tree file list. loadCommits needs branches resolved first so
