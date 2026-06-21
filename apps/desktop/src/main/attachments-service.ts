@@ -79,7 +79,10 @@ export function registerAttachmentProtocol(): void {
 			const ext = filename.slice(filename.lastIndexOf('.') + 1).toLowerCase();
 			const headers = new Headers();
 			if (CONTENT_TYPES[ext]) headers.set('content-type', CONTENT_TYPES[ext]);
-			headers.set('cache-control', 'no-cache');
+			// Filenames are UUIDs, so the bytes at a URL never change — cache them
+			// immutably so the renderer doesn't re-invoke this handler each time a
+			// comment scrolls back into view.
+			headers.set('cache-control', 'public, max-age=31536000, immutable');
 			return new Response(res.body, { headers });
 		} catch {
 			return new Response('Not found', { status: 404 });
