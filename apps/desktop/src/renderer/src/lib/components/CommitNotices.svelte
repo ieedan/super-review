@@ -8,8 +8,9 @@
 	//    so coding agents can't document their changes here for review.
 	// They render through NoticeStack, which arranges them like a Sonner stack
 	// (hover to expand, dismiss one by one).
-	import Sparkles from '@lucide/svelte/icons/sparkles';
+	import OfflineIcon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { actions, app } from '$lib/store.svelte';
+	import { SUPER_REVIEW_ICON } from '$lib/file-icons';
 	import { Button } from './ui/button';
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import InstallSkillButton from './InstallSkillButton.svelte';
@@ -101,9 +102,9 @@
 					tooltip="Install the super-review skill so coding agents can document their changes here for review."
 				>
 					{#snippet logo()}
-						<Sparkles class="size-4 shrink-0 text-primary" />
+						<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-4 shrink-0" />
 					{/snippet}
-					Install the skill to document agent changes
+					Install the skill
 					{#snippet action()}
 						<InstallSkillButton size="xs" variant="outline" label="Install" />
 					{/snippet}
