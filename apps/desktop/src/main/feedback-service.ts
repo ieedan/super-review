@@ -16,9 +16,16 @@ import {
 import { createFeedbackIssue, getActiveAccountToken } from './github-service.js';
 
 // URL of the R2-backed upload broker (a Cloudflare Worker — see
-// infra/feedback-uploader). When unset, the dialog still files text-only issues
-// but image/video attachments are disabled. A trailing slash is tolerated.
-const UPLOAD_URL = process.env.SUPER_REVIEW_FEEDBACK_UPLOAD_URL?.replace(/\/+$/, '');
+// infra/feedback-uploader). Defaults to the project's deployed broker so shipped
+// builds get media uploads out of the box; an env var overrides it for
+// forks/self-hosting. Mirrors the SUPER_REVIEW_GH_CLIENT_ID default pattern in
+// github-service. Set the env var to an empty string to disable uploads (the
+// dialog then files text-only issues). A trailing slash is tolerated.
+const DEFAULT_UPLOAD_URL = 'https://super-review-feedback-uploader.aidanbleser35.workers.dev';
+const UPLOAD_URL = (process.env.SUPER_REVIEW_FEEDBACK_UPLOAD_URL ?? DEFAULT_UPLOAD_URL).replace(
+	/\/+$/,
+	''
+);
 
 // Lets a fork/self-host redirect feedback to its own repo without a rebuild,
 // e.g. SUPER_REVIEW_FEEDBACK_REPO="acme/super-review".

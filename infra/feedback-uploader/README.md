@@ -43,11 +43,15 @@ pnpm deploy
 
 ## Wiring it to the desktop app
 
-Set the Worker URL on the environment the desktop app runs in:
+The desktop app ships with the project's deployed broker URL baked in as the
+default (`DEFAULT_UPLOAD_URL` in `apps/desktop/src/main/feedback-service.ts`), so
+released builds get media uploads with no configuration.
+
+To point a fork/self-host at a different broker, override it via env:
 
 ```bash
 SUPER_REVIEW_FEEDBACK_UPLOAD_URL="https://super-review-feedback-uploader.<account>.workers.dev"
 ```
 
-When that variable is unset the feedback dialog still works for text-only issues;
-the image/video dropzone is disabled and says so.
+Set the variable to an empty string to disable uploads entirely — the feedback
+dialog then files text-only issues and the dropzone is hidden with a note.
