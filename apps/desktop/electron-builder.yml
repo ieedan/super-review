@@ -6,13 +6,13 @@ directories:
 files:
   - out
   - package.json
-# Ship the document-session skill's real files so "Install skill" can copy them
+# Ship the super-review skill's real files so "Install skill" can copy them
 # straight out of the app instead of writing an inlined copy embedded in code.
-# Lands at <resources>/skills/document-session, unpacked from the asar so it's a
-# real directory on disk (see bundledSkillDir in document-session-skill.ts).
+# Lands at <resources>/skills/super-review, unpacked from the asar so it's a
+# real directory on disk (see bundledSkillDir in super-review-skill.ts).
 extraResources:
-  - from: ../../.agents/skills/document-session
-    to: skills/document-session
+  - from: ../../.agents/skills/super-review
+    to: skills/super-review
 extraMetadata:
   main: out/main/index.js
 asar: true

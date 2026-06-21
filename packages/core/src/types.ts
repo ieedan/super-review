@@ -1647,10 +1647,10 @@ export interface PreloadAPI {
 		unwatch(): Promise<void>;
 	};
 	skill: {
-		// Whether the document-session skill is installed in the repo
-		// (`.agents/skills/document-session/SKILL.md` exists).
+		// Whether the super-review skill is installed in the repo
+		// (`.agents/skills/super-review/SKILL.md` exists).
 		isInstalled(repoId: string): Promise<boolean>;
-		// Write the bundled document-session skill into the repo.
+		// Write the bundled super-review skill into the repo.
 		install(repoId: string): Promise<void>;
 	};
 	npm: {
