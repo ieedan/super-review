@@ -50,14 +50,17 @@ function sendHelpAction(action: HelpMenuAction): void {
 }
 
 // App-global "Help" submenu. Unlike Repository/Branch it carries no enablement
-// state — its items work regardless of the active repo. "Send Feedback…" is the
-// canonical Cmd/Ctrl+Shift+F entry point; the same dialog also backs the error
-// toast's "Report this error" button.
+// state — its items work regardless of the active repo. The keyboard shortcut for
+// "Send Feedback…" is owned by the renderer's configurable hotkey system (so it
+// shows in Settings and is rebindable, default Cmd/Ctrl+Shift+F); we deliberately
+// set NO accelerator here, since a native accelerator would shadow the renderer
+// binding and wouldn't track a user's rebind. The menu item stays as a
+// discoverable click target. The same dialog also backs the error toast's
+// "Report this error" button.
 function buildHelpSubmenu(): MenuItemConstructorOptions[] {
 	return [
 		{
 			label: 'Send Feedback…',
-			accelerator: 'Shift+CmdOrCtrl+F',
 			click: () => sendHelpAction('sendFeedback')
 		}
 	];

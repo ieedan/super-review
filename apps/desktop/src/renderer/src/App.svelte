@@ -172,6 +172,13 @@
 			if (isEditableTarget(e.target) || !app.selectedFile) return;
 			e.preventDefault();
 			void actions.markSeenAndAdvance(app.selectedFile);
+		},
+		// Open the feedback dialog from anywhere (default Cmd/Ctrl+Shift+F). Fires
+		// even while typing — it's a deliberate modifier combo — so a user can report
+		// something about the field they're in.
+		submitFeedback: (e) => {
+			e.preventDefault();
+			actions.openFeedbackDialog();
 		}
 	};
 

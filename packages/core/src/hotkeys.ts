@@ -21,7 +21,8 @@ export const HOTKEY_ACTIONS = [
 	'toggleCommentsSidebar',
 	'openConversationSidebar',
 	'openSettings',
-	'markSeenNext'
+	'markSeenNext',
+	'submitFeedback'
 ] as const;
 
 export type HotkeyAction = (typeof HOTKEY_ACTIONS)[number];
@@ -56,6 +57,10 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 	markSeenNext: {
 		label: 'Mark seen & next',
 		description: 'Mark the current change as seen and jump to the next change.'
+	},
+	submitFeedback: {
+		label: 'Send feedback',
+		description: 'Open the feedback dialog to report a bug or request a feature.'
 	}
 };
 
@@ -66,7 +71,8 @@ export const DEFAULT_HOTKEYS: Hotkeys = {
 	toggleCommentsSidebar: { key: 'l', mod: true },
 	openConversationSidebar: { key: 'l', mod: true, shift: true },
 	openSettings: { key: ',', mod: true },
-	markSeenNext: { key: 'Enter', mod: true }
+	markSeenNext: { key: 'Enter', mod: true },
+	submitFeedback: { key: 'f', mod: true, shift: true }
 };
 
 // Collapse a KeyboardEvent.key into our canonical form: single characters are
