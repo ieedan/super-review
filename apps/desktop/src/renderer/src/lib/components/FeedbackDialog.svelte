@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Bug from '@lucide/svelte/icons/bug';
 	import Lightbulb from '@lucide/svelte/icons/lightbulb';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -63,19 +64,24 @@
 		submitting = false;
 	}
 
-	// On open: load capabilities/limits and apply any prefill (error reports seed
-	// kind + diagnostics). On close: revoke previews and clear the form.
+	// On open: reset the form, apply any prefill (error reports seed kind +
+	// diagnostics), and load capabilities/limits. `open` is the only dependency —
+	// the body is untracked so reset()'s read+write of `staged` (and the other
+	// field writes) don't make this effect depend on the state it sets, which
+	// would loop (effect_update_depth_exceeded).
 	$effect(() => {
 		if (!open) return;
-		reset();
-		const prefill = app.feedback.prefill;
-		if (prefill) {
-			if (prefill.kind) kind = prefill.kind;
-			if (prefill.title) title = prefill.title;
-			if (prefill.body) body = prefill.body;
-			if (prefill.diagnostics) diagnostics = prefill.diagnostics;
-		}
-		void window.api.feedback.getConfig().then((c) => (config = c));
+		untrack(() => {
+			reset();
+			const prefill = app.feedback.prefill;
+			if (prefill) {
+				if (prefill.kind) kind = prefill.kind;
+				if (prefill.title) title = prefill.title;
+				if (prefill.body) body = prefill.body;
+				if (prefill.diagnostics) diagnostics = prefill.diagnostics;
+			}
+			void window.api.feedback.getConfig().then((c) => (config = c));
+		});
 	});
 
 	function onUpload(files: File[]): void {
