@@ -17,6 +17,19 @@ name = "UPLOAD_RATE_LIMIT"
 namespace_id = "1001"
 simple = { limit = 30, period = 60 }
 
+# Per-user daily quota counters. Create the namespace, then uncomment with the id
+# it prints (the Worker enforces the quota only once this is bound — without it
+# uploads still work, just unmetered):
+#   npx wrangler kv namespace create FEEDBACK_QUOTA
+# [[kv_namespaces]]
+# binding = "FEEDBACK_QUOTA"
+# id = "<paste-id-from-the-create-command>"
+
+# Optional quota overrides (defaults: 50 files / 250 MB per user per day):
+# [vars]
+# MAX_FILES_PER_DAY = "50"
+# MAX_BYTES_PER_DAY = "262144000"
+
 [vars]
 # Public origin returned URLs point at. Leave commented to serve objects through
 # this Worker's own GET /feedback/* route. Set it to a custom domain or the

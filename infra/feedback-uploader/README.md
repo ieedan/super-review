@@ -31,6 +31,20 @@ The limiter is created automatically on `wrangler deploy`; no separate resource
 to provision. Reads (`GET /feedback/*`) are intentionally not IP-limited because
 GitHub's image proxy serves all viewers from a few shared IPs.
 
+### Per-user daily quota (optional, KV)
+
+To also cap total volume per GitHub user per day (defends against a determined
+authenticated user dripping uploads under the rate limit), bind a KV namespace:
+
+```bash
+npx wrangler kv namespace create FEEDBACK_QUOTA
+```
+
+Uncomment the `[[kv_namespaces]]` block in `wrangler.toml`, paste in the printed
+id, and redeploy. Defaults are 50 files / 250 MB per user per day (override via
+`MAX_FILES_PER_DAY` / `MAX_BYTES_PER_DAY`). Until the namespace is bound the
+quota is simply not enforced — uploads still work.
+
 ## Setup
 
 ```bash
