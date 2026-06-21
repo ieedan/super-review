@@ -47,13 +47,21 @@
 		void window.api.state.getCommitDraft(repoId).then((draft) => {
 			// A faster switch may have superseded this load — ignore stale results.
 			if (app.activeRepo?.id !== repoId) return;
+			// A persisted `changesetPath` marks a draft whose text we auto-filled from a
+			// changeset. We don't restore those: the message is re-derived live from the
+			// working tree (see the effect below), so it only reappears while the changeset
+			// is still an unstaged change. Restoring it here would resurrect the message
+			// even after the changeset has been committed. Drop the stale draft.
+			if (draft.changesetPath) {
+				summary = '';
+				description = '';
+				detectedChangeset = null;
+				clearDraft(repoId);
+				return;
+			}
 			summary = draft.summary;
 			description = draft.description;
-			// Restore changeset provenance so "remove the message when its changeset is
-			// removed" keeps working after returning to the repo.
-			detectedChangeset = draft.changesetPath
-				? { path: draft.changesetPath, summary: draft.summary, description: draft.description }
-				: null;
+			detectedChangeset = null;
 		});
 	});
 
@@ -151,20 +159,17 @@
 		const repoId = app.activeRepo?.id;
 		if (!repoId) return;
 		clearTimeout(saveTimer);
-		// Persist the changeset provenance with the draft so it survives leaving and
-		// returning to the repo — but only while the message still matches what we
-		// auto-filled. Checked explicitly (not just `detectedChangeset?.path`) because
-		// oninput fires before the divergence effect runs, so an edit could otherwise
-		// persist a stale path for one tick.
-		const stillMatches =
+		// Never persist an untouched auto-filled message. While the box still matches
+		// exactly what we wrote from a changeset (provenance intact), the message is
+		// re-derived live from the working tree each session — persisting it would
+		// resurrect it even after the changeset is committed. Checked explicitly (not
+		// just `detectedChangeset != null`) because oninput fires before the divergence
+		// effect runs, so an edit could otherwise look auto-filled for one tick.
+		const autoFilled =
 			detectedChangeset !== null &&
 			summary === detectedChangeset.summary &&
 			description === detectedChangeset.description;
-		const snapshot = {
-			summary,
-			description,
-			changesetPath: stillMatches ? detectedChangeset!.path : undefined
-		};
+		const snapshot = autoFilled ? { summary: '', description: '' } : { summary, description };
 		saveTimer = setTimeout(() => {
 			void window.api.state.setCommitDraft(repoId, snapshot);
 		}, 300);

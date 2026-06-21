@@ -10,7 +10,9 @@ import type {
 	CreateChangesetInput,
 	CloneResult,
 	CreateRepoDefaults,
+	CommitAuthorIdentity,
 	CommitDraft,
+	CommitInfo,
 	CommitFileSelection,
 	CommitResult,
 	CreateBranchResult,
@@ -50,6 +52,7 @@ import type {
 	RepoInfo,
 	Session,
 	SessionSummary,
+	TabsContextMenuResult,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -140,6 +143,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:commit', repoId, message, files) as Promise<CommitResult>,
 		getLastCommit: (repoId) =>
 			ipcRenderer.invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
+		listCommits: (repoId, head, limit) =>
+			ipcRenderer.invoke('git:listCommits', repoId, head, limit) as Promise<CommitInfo[]>,
 		undoLastCommit: (repoId) =>
 			ipcRenderer.invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
 		cloneRepo: (url) => ipcRenderer.invoke('git:cloneRepo', url) as Promise<CloneResult>,
@@ -194,6 +199,10 @@ const api: PreloadAPI = {
 		cancelDeviceFlow: () => ipcRenderer.invoke('github:cancelDeviceFlow') as Promise<void>,
 		listPRs: (repoId, page, source) =>
 			ipcRenderer.invoke('github:listPRs', repoId, page, source) as Promise<PRSummary[]>,
+		resolveCommitAuthors: (repoId, candidates) =>
+			ipcRenderer.invoke('github:resolveCommitAuthors', repoId, candidates) as Promise<
+				Record<string, CommitAuthorIdentity>
+			>,
 		detectUpstream: (repoId) =>
 			ipcRenderer.invoke('github:detectUpstream', repoId) as Promise<RepoInfo | null>,
 		getRepoPushAccess: (repoId) =>
@@ -458,6 +467,8 @@ const api: PreloadAPI = {
 			) as Promise<RepoContextMenuAction | null>,
 		showHeaderContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
+		showTabsContextMenu: (params) =>
+			ipcRenderer.invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
 		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
 		setRepositoryState: (state: RepositoryMenuState) =>
 			ipcRenderer.send('menu:setRepositoryState', state)

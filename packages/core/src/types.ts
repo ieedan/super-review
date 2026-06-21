@@ -56,6 +56,33 @@ export interface BranchInfo {
 	lastCommitAt?: number;
 }
 
+// A single commit in the History tab's list. Lightweight metadata only — the
+// commit's changed files and diffs are fetched lazily through a `commit`
+// DiffContext when the commit is opened.
+export interface CommitInfo {
+	// Full 40-char commit SHA. Used as the stable list key and as the ref a
+	// `commit` DiffContext diffs (`<hash>^..<hash>`).
+	hash: string;
+	// Abbreviated SHA for display.
+	shortHash: string;
+	// First line of the commit message.
+	subject: string;
+	// Author (not committer) name and email — who wrote the change.
+	authorName: string;
+	authorEmail: string;
+	// Unix epoch ms of the author date.
+	authoredAt: number;
+}
+
+// A commit author resolved to a GitHub account — login + avatar — the way
+// GitHub's own commit list resolves authors from the commit email. We can't
+// always derive this from the email (e.g. `noreply@anthropic.com` only maps to
+// the `claude` account via GitHub's user database), so it comes from the API.
+export interface CommitAuthorIdentity {
+	login: string;
+	avatarUrl: string;
+}
+
 // A local branch that no longer lives on any remote — a candidate for "Clean Up
 // Local Branches". It either never tracked a remote, or its upstream is "gone"
 // (the remote branch was deleted and pruned, e.g. after a PR merged). The
@@ -241,7 +268,12 @@ export type DiffContext =
 	// A managed stash entry, addressed by its resolved commit SHA (`ref`). The
 	// stash commit's parents back the diff: `^1` HEAD parent, `^2` index, `^3`
 	// untracked tree. Index-shift-proof because we always resolve to a SHA.
-	| { kind: 'stash'; ref: string };
+	| { kind: 'stash'; ref: string }
+	// A single commit viewed from the History tab, addressed by its SHA (`ref`).
+	// The diff is the commit against its first parent (`<ref>^..<ref>`); a root
+	// commit with no parent diffs against the empty tree. Shares the branch
+	// machinery — `ref` resolves to a base/head pair in refsForContext.
+	| { kind: 'commit'; ref: string };
 
 // A workspace package changesets can version. `dir` is the repo-relative posix
 // path to the package; `private` packages are still releasable by default
@@ -670,7 +702,7 @@ export type AnimationMode = 'none' | 'accents' | 'all';
 
 // Which tab in the file list drives `DiffContext`. Persisted so the app
 // restores the last tab on launch.
-export type ContextTab = 'unstaged' | 'branch' | 'sessions';
+export type ContextTab = 'unstaged' | 'branch' | 'sessions' | 'history';
 
 // Which GitHub repo a PR listing/checkout targets: the repo's own remote
 // ("fork") or, when the repo is a fork, its parent ("upstream").
@@ -741,6 +773,27 @@ export interface HeaderContextMenuParams {
 // checked state. `null` (from the IPC) means the menu was dismissed.
 export type HeaderContextMenuResult = {
 	key: keyof HeaderItemVisibility;
+	checked: boolean;
+} | null;
+
+// A single toggle in the sidebar tab strip's "Show tab" native context menu.
+// `key` is the SidebarTabVisibility field it controls; `checked` is its state.
+export interface TabsContextMenuItem {
+	key: keyof SidebarTabVisibility;
+	label: string;
+	checked: boolean;
+}
+
+// Params for the tab strip's native context menu: the toggle items to show, in
+// order, each carrying its current checked state.
+export interface TabsContextMenuParams {
+	items: TabsContextMenuItem[];
+}
+
+// What the tab strip context menu returns: the toggled tab's key and its new
+// checked state. `null` (from the IPC) means the menu was dismissed.
+export type TabsContextMenuResult = {
+	key: keyof SidebarTabVisibility;
 	checked: boolean;
 } | null;
 
@@ -1057,6 +1110,22 @@ export const DEFAULT_HEADER_ITEMS: HeaderItemVisibility = {
 	terminal: true
 };
 
+// Which of the sidebar's optional file-list tabs are shown. The Unstaged and
+// Branch tabs have their own contextual visibility (a read-only view hides
+// Unstaged; a default-branch checkout hides Branch), so only Sessions and
+// History are user-toggleable — hidden/shown via the tab strip's right-click
+// native context menu, mirroring the header's "Show in header" menu.
+export interface SidebarTabVisibility {
+	sessions: boolean;
+	history: boolean;
+}
+
+// Both optional tabs shown by default; the user hides what they don't want.
+export const DEFAULT_SIDEBAR_TABS: SidebarTabVisibility = {
+	sessions: true,
+	history: true
+};
+
 export interface UserPrefs {
 	viewMode: ViewMode;
 	// Whether the diff view scrolls through all files at once ('scroll') or shows
@@ -1159,6 +1228,10 @@ export interface UserPrefs {
 	// right-click menu. Missing keys fall back to DEFAULT_HEADER_ITEMS so older
 	// persisted prefs (and any future additions) default to visible.
 	headerItems: HeaderItemVisibility;
+	// Which optional sidebar tabs (Sessions, History) are shown. Toggled from the
+	// tab strip's right-click menu. Missing keys fall back to DEFAULT_SIDEBAR_TABS
+	// so older persisted prefs (and any future additions) default to visible.
+	sidebarTabs?: SidebarTabVisibility;
 }
 
 // A user-registered file icon: every file whose path matches `pattern` is
@@ -1358,6 +1431,9 @@ export interface PreloadAPI {
 		// staging) — see CommitFileSelection.
 		commit(repoId: string, message: string, files: CommitFileSelection[]): Promise<CommitResult>;
 		getLastCommit(repoId: string): Promise<LastCommit | null>;
+		// List commits reachable from `head` (defaults to the checked-out branch),
+		// newest first, capped at `limit`. Backs the History tab's commit list.
+		listCommits(repoId: string, head?: string, limit?: number): Promise<CommitInfo[]>;
 		undoLastCommit(repoId: string): Promise<CommitResult>;
 		cloneRepo(url: string): Promise<CloneResult>;
 		// Repoint `origin` at the user's fork (GitHub Desktop's fork layout). When
@@ -1408,6 +1484,16 @@ export interface PreloadAPI {
 		pollDeviceFlow(): Promise<DeviceFlowStatus>;
 		cancelDeviceFlow(): Promise<void>;
 		listPRs(repoId: string, page?: number, source?: PRSource): Promise<PRSummary[]>;
+		// Resolve commit authors to their GitHub accounts the way GitHub's commit
+		// list does — by asking the API which account each commit's email maps to,
+		// something the email alone can't always tell us. `candidates` pairs each
+		// author email with a few of their commit SHAs to probe (newest first);
+		// returns a map of lowercased email -> identity for the ones GitHub could
+		// resolve (empty when the repo isn't on GitHub or no account is signed in).
+		resolveCommitAuthors(
+			repoId: string,
+			candidates: { email: string; shas: string[] }[]
+		): Promise<Record<string, CommitAuthorIdentity>>;
 		// Resolve (and persist) the repo's upstream/parent if it's a fork. Returns
 		// the updated RepoInfo (with upstreamOwner/upstreamRepo set or cleared).
 		detectUpstream(repoId: string): Promise<RepoInfo | null>;
@@ -1707,6 +1793,9 @@ export interface PreloadAPI {
 		// Pop up the header's "Show in header" customization context menu. Resolves
 		// to the toggled item and its new state, or null when dismissed.
 		showHeaderContextMenu(params: HeaderContextMenuParams): Promise<HeaderContextMenuResult>;
+		// Pop up the sidebar tab strip's "Show tab" customization context menu.
+		// Resolves to the toggled tab and its new state, or null when dismissed.
+		showTabsContextMenu(params: TabsContextMenuParams): Promise<TabsContextMenuResult>;
 		// Push the latest Branch-menu enablement/labels to the main process so it
 		// can rebuild the native application menu. Fire-and-forget.
 		setBranchState(state: BranchMenuState): void;
