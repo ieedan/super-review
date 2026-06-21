@@ -3,6 +3,7 @@ import { Octokit } from '@octokit/rest';
 import { createOAuthDeviceAuth } from '@octokit/auth-oauth-device';
 import { shell } from 'electron';
 import type {
+	CommitAuthorIdentity,
 	CommitSigning,
 	DeviceFlowStart,
 	DeviceFlowStatus,
@@ -317,6 +318,45 @@ function octokit(account: StoredGithubAccount): Octokit {
 		throw err;
 	});
 	return o;
+}
+
+// Resolve commit authors to GitHub accounts the way GitHub's commit list does:
+// ask the API for a specific commit and read the `author` it mapped the commit
+// email to. The email alone isn't enough — `noreply@anthropic.com`, say, only
+// resolves to the `claude` account through GitHub's user database. Each candidate
+// pairs an author email with a few of their commit SHAs (newest first); we probe
+// them in order and take the first that GitHub can resolve, so an unpushed tip
+// commit (which the API doesn't know) falls through to an older pushed one. The
+// per-SHA `getCommit` calls (one per author, not per commit) keep this cheap.
+export async function resolveCommitAuthors(
+	owner: string,
+	repo: string,
+	candidates: { email: string; shas: string[] }[],
+	accountId?: string | null
+): Promise<Record<string, CommitAuthorIdentity>> {
+	const viewer = resolveAccount(accountId);
+	const o = octokit(viewer);
+	const out: Record<string, CommitAuthorIdentity> = {};
+	await Promise.all(
+		candidates.map(async ({ email, shas }) => {
+			for (const sha of shas.slice(0, 5)) {
+				try {
+					const res = await o.repos.getCommit({ owner, repo, ref: sha });
+					const author = res.data.author;
+					if (author?.login) {
+						out[email.trim().toLowerCase()] = {
+							login: author.login,
+							avatarUrl: author.avatar_url
+						};
+						return;
+					}
+				} catch {
+					// SHA not on GitHub (unpushed) or a transient error — try the next.
+				}
+			}
+		})
+	);
+	return out;
 }
 
 // ─── Release notes (package.json hover card "What's new" disclosure) ─────────

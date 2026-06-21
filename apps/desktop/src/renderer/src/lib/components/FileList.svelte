@@ -7,7 +7,6 @@
 	import FileEdit from '@lucide/svelte/icons/file-edit';
 	import Folder from '@lucide/svelte/icons/folder';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
-	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import List from '@lucide/svelte/icons/list';
 	import FolderTree from '@lucide/svelte/icons/folder-tree';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -41,11 +40,19 @@
 		isReadOnlyView,
 		type ContextTab
 	} from '$lib/store.svelte';
-	import { cn, isEditableTarget, formatRelative } from '$lib/utils';
+	import { authorInitials, cn, isEditableTarget, formatRelative } from '$lib/utils';
+	import { commitAuthorLabel, commitAvatarUrl, ensureAvatars } from '$lib/commit-identity.svelte';
+	import * as Avatar from './ui/avatar';
 	import FileIcon from './FileIcon.svelte';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { matchesFileQuery } from '$lib/file-search';
 	import type { ChangedFile } from '@shared/types';
+
+	// Resolve the open commit author's username + avatar (no-op for GitHub-noreply
+	// authors, whose identity comes straight from their email).
+	$effect(() => {
+		if (app.activeCommit) ensureAvatars(app.activeRepo?.id, [app.activeCommit]);
+	});
 
 	// Right-clicking a file row opens a native OS context menu (built in the main
 	// process). preventDefault stops the default browser menu from also showing.
@@ -823,7 +830,16 @@
 							</Tabs.Trigger>
 						{/if}
 						<!-- Sessions and History are optional tabs, shown/hidden via the
-						     tab strip's right-click menu (onTabStripContextMenu). -->
+						     tab strip's right-click menu (onTabStripContextMenu). History
+						     comes first so the commit log sits next to Branch. -->
+						{#if app.sidebarTabs.history}
+							<Tabs.Trigger
+								value="history"
+								class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+							>
+								History
+							</Tabs.Trigger>
+						{/if}
 						{#if app.sidebarTabs.sessions}
 							<Tabs.Trigger
 								value="sessions"
@@ -837,15 +853,6 @@
 										{app.sessionCount > 99 ? '99+' : app.sessionCount}
 									</span>
 								{/if}
-							</Tabs.Trigger>
-						{/if}
-						<!-- History lists the commits on the viewed branch/PR head. -->
-						{#if app.sidebarTabs.history}
-							<Tabs.Trigger
-								value="history"
-								class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-							>
-								History
 							</Tabs.Trigger>
 						{/if}
 					</Tabs.List>
@@ -949,17 +956,23 @@
 		       session's title/description uses. Shows the subject, then the author
 		       and relative time plus the short SHA. -->
 			<div class="flex items-start gap-2.5 border-b border-border px-2 py-2">
-				<div
-					class="mt-0.5 grid size-7 flex-none place-items-center rounded-md border border-border bg-card text-muted-foreground"
-				>
-					<GitCommitHorizontal class="size-4" />
-				</div>
+				<Avatar.Root class="mt-0.5 size-7 flex-none">
+					{#if commitAvatarUrl(app.activeCommit.authorEmail)}
+						<Avatar.Image
+							src={commitAvatarUrl(app.activeCommit.authorEmail)}
+							alt={commitAuthorLabel(app.activeCommit)}
+						/>
+					{/if}
+					<Avatar.Fallback class="text-xs">
+						{authorInitials(app.activeCommit.authorName)}
+					</Avatar.Fallback>
+				</Avatar.Root>
 				<div class="min-w-0 flex-1">
 					<div class="line-clamp-2 text-sm font-medium">
 						{app.activeCommit.subject}
 					</div>
 					<p class="mt-0.5 truncate text-xs text-muted-foreground">
-						{app.activeCommit.authorName} · {commitRelative(app.activeCommit.authoredAt)}
+						{commitAuthorLabel(app.activeCommit)} · {commitRelative(app.activeCommit.authoredAt)}
 						<span class="font-mono">{app.activeCommit.shortHash}</span>
 					</p>
 				</div>

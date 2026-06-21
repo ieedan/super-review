@@ -74,6 +74,15 @@ export interface CommitInfo {
 	authoredAt: number;
 }
 
+// A commit author resolved to a GitHub account — login + avatar — the way
+// GitHub's own commit list resolves authors from the commit email. We can't
+// always derive this from the email (e.g. `noreply@anthropic.com` only maps to
+// the `claude` account via GitHub's user database), so it comes from the API.
+export interface CommitAuthorIdentity {
+	login: string;
+	avatarUrl: string;
+}
+
 // A local branch that no longer lives on any remote — a candidate for "Clean Up
 // Local Branches". It either never tracked a remote, or its upstream is "gone"
 // (the remote branch was deleted and pruned, e.g. after a PR merged). The
@@ -1475,6 +1484,16 @@ export interface PreloadAPI {
 		pollDeviceFlow(): Promise<DeviceFlowStatus>;
 		cancelDeviceFlow(): Promise<void>;
 		listPRs(repoId: string, page?: number, source?: PRSource): Promise<PRSummary[]>;
+		// Resolve commit authors to their GitHub accounts the way GitHub's commit
+		// list does — by asking the API which account each commit's email maps to,
+		// something the email alone can't always tell us. `candidates` pairs each
+		// author email with a few of their commit SHAs to probe (newest first);
+		// returns a map of lowercased email -> identity for the ones GitHub could
+		// resolve (empty when the repo isn't on GitHub or no account is signed in).
+		resolveCommitAuthors(
+			repoId: string,
+			candidates: { email: string; shas: string[] }[]
+		): Promise<Record<string, CommitAuthorIdentity>>;
 		// Resolve (and persist) the repo's upstream/parent if it's a fork. Returns
 		// the updated RepoInfo (with upstreamOwner/upstreamRepo set or cleared).
 		detectUpstream(repoId: string): Promise<RepoInfo | null>;

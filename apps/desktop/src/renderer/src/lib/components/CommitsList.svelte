@@ -1,8 +1,9 @@
 <script lang="ts">
-	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import { actions, app } from '$lib/store.svelte';
-	import { formatRelative } from '$lib/utils';
+	import { commitAuthorLabel, commitAvatarUrl, ensureAvatars } from '$lib/commit-identity.svelte';
+	import { authorInitials, formatRelative } from '$lib/utils';
 	import { VirtualList } from '$lib/virtual-list';
+	import * as Avatar from './ui/avatar';
 	import type { CommitInfo } from '@shared/types';
 
 	// Virtualized list of the viewed branch/PR head's commits, shown in the sidebar
@@ -10,6 +11,11 @@
 	// diff (the commit against its first parent), which swaps this list for the
 	// commit's file list — the same way selecting a session opens its frozen diff.
 	const commits = $derived(app.commits);
+
+	// Resolve usernames + avatars for the listed authors as the list changes.
+	$effect(() => {
+		ensureAvatars(app.activeRepo?.id, commits);
+	});
 
 	// Fixed row height — drives the virtualizer's geometry. Two lines (the subject
 	// and the author/time/sha meta) plus padding.
@@ -45,6 +51,7 @@
 			>
 				{#snippet item({ index, style })}
 					{@const commit = commits[index]}
+					{@const avatarUrl = commitAvatarUrl(commit.authorEmail)}
 					<div {style}>
 						<div
 							role="button"
@@ -58,17 +65,20 @@
 								}
 							}}
 						>
-							<div
-								class="mt-0.5 grid size-6 flex-none place-items-center rounded-md border border-border bg-card text-muted-foreground"
-							>
-								<GitCommitHorizontal class="size-3.5" />
-							</div>
+							<Avatar.Root class="mt-0.5 size-6 flex-none">
+								{#if avatarUrl}
+									<Avatar.Image src={avatarUrl} alt={commitAuthorLabel(commit)} />
+								{/if}
+								<Avatar.Fallback class="text-[10px]">
+									{authorInitials(commit.authorName)}
+								</Avatar.Fallback>
+							</Avatar.Root>
 							<div class="min-w-0 flex-1">
 								<div class="truncate text-xs font-medium">{commit.subject}</div>
 								<div
 									class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground tabular-nums"
 								>
-									<span class="max-w-[10rem] truncate">{commit.authorName}</span>
+									<span class="max-w-[10rem] truncate">{commitAuthorLabel(commit)}</span>
 									<span>·</span>
 									<span>{relative(commit.authoredAt)}</span>
 									<span>·</span>

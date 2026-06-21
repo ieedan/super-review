@@ -10,6 +10,7 @@ import type {
 	CreateChangesetInput,
 	CloneResult,
 	CreateRepoDefaults,
+	CommitAuthorIdentity,
 	CommitDraft,
 	CommitInfo,
 	CommitFileSelection,
@@ -198,6 +199,10 @@ const api: PreloadAPI = {
 		cancelDeviceFlow: () => ipcRenderer.invoke('github:cancelDeviceFlow') as Promise<void>,
 		listPRs: (repoId, page, source) =>
 			ipcRenderer.invoke('github:listPRs', repoId, page, source) as Promise<PRSummary[]>,
+		resolveCommitAuthors: (repoId, candidates) =>
+			ipcRenderer.invoke('github:resolveCommitAuthors', repoId, candidates) as Promise<
+				Record<string, CommitAuthorIdentity>
+			>,
 		detectUpstream: (repoId) =>
 			ipcRenderer.invoke('github:detectUpstream', repoId) as Promise<RepoInfo | null>,
 		getRepoPushAccess: (repoId) =>

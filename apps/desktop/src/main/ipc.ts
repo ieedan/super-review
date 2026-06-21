@@ -15,6 +15,7 @@ import type {
 	CreateRepoDefaults,
 	CreateRepoOptions,
 	CommitDraft,
+	CommitAuthorIdentity,
 	CommitFileSelection,
 	CommitInfo,
 	CommitResult,
@@ -493,6 +494,25 @@ export function registerIpc(): void {
 		const accountId = repoId ? getRepo(repoId)?.githubAccountId : null;
 		return gh.listOrganizations(accountId).catch(() => []);
 	});
+
+	// Resolve the History list's commit authors to their GitHub accounts (login +
+	// avatar), the way GitHub's own commit list does. No-ops to {} when the repo
+	// isn't on GitHub or the account can't be resolved — the renderer falls back
+	// to its email heuristic / identicon.
+	ipcMain.handle(
+		'github:resolveCommitAuthors',
+		async (
+			_e,
+			repoId: string,
+			candidates: { email: string; shas: string[] }[]
+		): Promise<Record<string, CommitAuthorIdentity>> => {
+			const repo = getRepo(repoId);
+			if (!repo?.githubOwner || !repo?.githubRepo) return {};
+			return gh
+				.resolveCommitAuthors(repo.githubOwner, repo.githubRepo, candidates, repo.githubAccountId)
+				.catch(() => ({}));
+		}
+	);
 
 	// Publish a local repo to GitHub: create the remote (under the chosen org or
 	// the account), set it as `origin`, and push the current branch. Returns the
