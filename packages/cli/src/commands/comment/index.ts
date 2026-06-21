@@ -6,9 +6,9 @@ import { resolve, unresolve } from './resolve';
 const COMMENT_HELP = `
 Humans leave review comments in the super-review desktop app; agents read and
 resolve them through this CLI. "comment list" shows the comments on the branch
-you're on; add "--pr <n>" to see a pull request's comments instead. Use
-"--unresolved" to find work, then "comment resolve <id> --harness <kind>
-[--session <id>]" to mark each one resolved.`;
+you're on (use "--unresolved" to find work), then "comment resolve <id> --harness
+<kind> [--session <id>]" marks each one resolved. These comments live on the
+reviewer's machine, so an agent running remotely (a fresh checkout) finds none.`;
 
 export const comment = new Command('comment')
 	.description('list and resolve local review comments')

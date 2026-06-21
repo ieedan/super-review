@@ -117,22 +117,19 @@ committed diff instead of the working tree.
 ## Respond to review comments
 
 Reviewers leave **inline comments** on your diff in the Super Review desktop
-app. You read and resolve them from the CLI.
+app, and you read and resolve them from the CLI.
 
-A comment is scoped to where it was reviewed, which is one of two things you
-care about: the **branch** you're on, or a **pull request**. `comment list`
-defaults to the current branch (it reads the branch from git — you're only ever
-on one), so this finds the comments waiting on you:
+> **Only when running on the reviewer's machine.** These comments live locally
+> on the reviewer's computer. If you're a **cloud / remote agent** working in a
+> fresh checkout (not on the reviewer's machine), there will _never_ be any local
+> comments to read — `comment list` returns nothing, so skip this section.
+
+`comment list` shows the comments on the branch you're on — it reads the branch
+from git, so you never name it (you're only ever on one). This finds the comments
+waiting on you:
 
 ```bash
 super-review comment list --unresolved
-```
-
-Add `--pr <number>` to read the comments left while reviewing a pull request
-instead:
-
-```bash
-super-review comment list --pr 12 --unresolved
 ```
 
 `--json` emits the raw records. Each human-readable line is

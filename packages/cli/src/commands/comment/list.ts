@@ -1,15 +1,9 @@
 import { Command } from 'commander';
 import path from 'node:path';
-import {
-	getCurrentBranch,
-	listCommentsForPR,
-	listLocalComments,
-	type LocalComment
-} from '@super-review/core';
-import { fail, repoRoot } from '../../util';
+import { getCurrentBranch, listLocalComments, type LocalComment } from '@super-review/core';
+import { repoRoot } from '../../util';
 
 interface ListOptions {
-	pr?: string;
 	unresolved?: boolean;
 	json?: boolean;
 	cwd?: string;
@@ -28,22 +22,12 @@ async function runList(opts: ListOptions): Promise<void> {
 	const cwd = path.resolve(opts.cwd ?? process.cwd());
 	const root = await repoRoot(cwd);
 
-	// Two scopes only: a pull request (--pr), or — by default — the branch you're
-	// on right now. No need to name a branch: an agent is always on exactly one.
-	let comments: LocalComment[];
-	let scope: string;
-	if (opts.pr !== undefined) {
-		const n = Number(opts.pr);
-		if (!Number.isInteger(n) || n <= 0) {
-			fail(`invalid --pr "${opts.pr}": expected a positive pull-request number`);
-		}
-		comments = await listCommentsForPR(root, n);
-		scope = `PR #${n}`;
-	} else {
-		const branch = await getCurrentBranch(root);
-		comments = await listLocalComments(root, branch);
-		scope = branch ? `branch "${branch}"` : 'the working tree';
-	}
+	// Comments are scoped to the branch you're on right now — no need to name it,
+	// an agent is always on exactly one. (These live on the reviewer's machine, so
+	// a remote/cloud agent in a fresh checkout simply finds none.)
+	const branch = await getCurrentBranch(root);
+	let comments = await listLocalComments(root, branch);
+	const scope = branch ? `branch "${branch}"` : 'the working tree';
 	if (opts.unresolved) comments = comments.filter((c) => !c.resolvedAt);
 
 	if (opts.json) {
@@ -59,11 +43,7 @@ async function runList(opts: ListOptions): Promise<void> {
 }
 
 export const list = new Command('list')
-	.description('list local review comments (defaults to the current branch; use --pr for a pull request)')
-	.option(
-		'--pr <number>',
-		'List comments left while reviewing this pull request (e.g. --pr 12). Default: the branch you are on.'
-	)
+	.description("list the review comments on the branch you're on")
 	.option('--unresolved', 'Only show comments that are not yet resolved.')
 	.option('--json', 'Output the raw comment records as JSON.')
 	.option('--cwd <path>', 'Repo path (default: current directory).')

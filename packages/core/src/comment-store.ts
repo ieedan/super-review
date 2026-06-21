@@ -113,22 +113,11 @@ export async function listCommentsForContext(
 
 // The desktop app files each comment under a diff-context key (see DiffContext /
 // diffContextKey): `workingTree`, `branch:<base>..<head>`, `pr:<n>`, and so on.
-// An agent only ever acts on two of these — a pull request, or the local branch
-// it's checked out on — so these two helpers are the CLI's whole view of them.
-
-// Comments left while reviewing a pull request's diff (`pr:<n>`).
-export async function listCommentsForPR(
-	repoPath: string,
-	prNumber: number
-): Promise<LocalComment[]> {
-	return listCommentsForContext(repoPath, `pr:${prNumber}`);
-}
-
-// Comments left on the *local* review of `branch`: the working-tree diff, plus
-// any branch diff whose head is this branch. The base the reviewer diffed
-// against is irrelevant here — the agent is on one branch and only wants its own
-// comments — so we match on the head alone. A null branch (detached HEAD) leaves
-// just the working-tree comments.
+// The CLI only surfaces the local review of the branch you're on — its
+// working-tree diff plus any branch diff whose head is this branch. The base the
+// reviewer diffed against is irrelevant here — the agent is on one branch and
+// only wants its own comments — so we match on the head alone. A null branch
+// (detached HEAD) leaves just the working-tree comments.
 export async function listLocalComments(
 	repoPath: string,
 	branch: string | null
