@@ -20,7 +20,30 @@ outside the pnpm workspace (so it has no effect on the app's lockfile or CI).
 
 Limits (per file): images ≤ 10 MB, videos ≤ 50 MB. Allowed types: PNG, JPEG,
 GIF, WebP, MP4, WebM, QuickTime. These mirror the caps the desktop app enforces
-client-side (see `packages/core/src/types.ts`).
+client-side (see `packages/core/src/types.ts`). The size cap is enforced by
+reading the body as a stream and aborting the moment it's exceeded, so a client
+can't bypass it by omitting/spoofing `Content-Length`.
+
+Uploads are rate-limited per source IP (30/min by default, see `[[ratelimit]]`
+in `wrangler.toml`) — and the limit is checked *before* the GitHub token is
+verified, so a flood of bogus tokens can't amplify into a GitHub request each.
+The limiter is created automatically on `wrangler deploy`; no separate resource
+to provision. Reads (`GET /feedback/*`) are intentionally not IP-limited because
+GitHub's image proxy serves all viewers from a few shared IPs.
+
+### Per-user daily quota (optional, KV)
+
+To also cap total volume per GitHub user per day (defends against a determined
+authenticated user dripping uploads under the rate limit), bind a KV namespace:
+
+```bash
+npx wrangler kv namespace create FEEDBACK_QUOTA
+```
+
+Uncomment the `[[kv_namespaces]]` block in `wrangler.toml`, paste in the printed
+id, and redeploy. Defaults are 50 files / 250 MB per user per day (override via
+`MAX_FILES_PER_DAY` / `MAX_BYTES_PER_DAY`). Until the namespace is bound the
+quota is simply not enforced — uploads still work.
 
 ## Setup
 
@@ -43,11 +66,15 @@ pnpm deploy
 
 ## Wiring it to the desktop app
 
-Set the Worker URL on the environment the desktop app runs in:
+The desktop app ships with the project's deployed broker URL baked in as the
+default (`DEFAULT_UPLOAD_URL` in `apps/desktop/src/main/feedback-service.ts`), so
+released builds get media uploads with no configuration.
+
+To point a fork/self-host at a different broker, override it via env:
 
 ```bash
 SUPER_REVIEW_FEEDBACK_UPLOAD_URL="https://super-review-feedback-uploader.<account>.workers.dev"
 ```
 
-When that variable is unset the feedback dialog still works for text-only issues;
-the image/video dropzone is disabled and says so.
+Set the variable to an empty string to disable uploads entirely — the feedback
+dialog then files text-only issues and the dropzone is hidden with a note.
