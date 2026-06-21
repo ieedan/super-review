@@ -8,6 +8,15 @@ compatibility_date = "2024-11-01"
 binding = "FEEDBACK_BUCKET"
 bucket_name = "super-review-feedback"
 
+# Per-IP upload rate limit (sliding window). `period` must be 10 or 60 seconds.
+# 30 uploads/minute/IP is generous for a human filing feedback but caps scripted
+# abuse and the GitHub-token-verification amplification path. namespace_id is an
+# arbitrary id unique to this limiter.
+[[ratelimit]]
+name = "UPLOAD_RATE_LIMIT"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
 [vars]
 # Public origin returned URLs point at. Leave commented to serve objects through
 # this Worker's own GET /feedback/* route. Set it to a custom domain or the

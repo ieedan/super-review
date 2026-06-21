@@ -20,7 +20,16 @@ outside the pnpm workspace (so it has no effect on the app's lockfile or CI).
 
 Limits (per file): images ≤ 10 MB, videos ≤ 50 MB. Allowed types: PNG, JPEG,
 GIF, WebP, MP4, WebM, QuickTime. These mirror the caps the desktop app enforces
-client-side (see `packages/core/src/types.ts`).
+client-side (see `packages/core/src/types.ts`). The size cap is enforced by
+reading the body as a stream and aborting the moment it's exceeded, so a client
+can't bypass it by omitting/spoofing `Content-Length`.
+
+Uploads are rate-limited per source IP (30/min by default, see `[[ratelimit]]`
+in `wrangler.toml`) — and the limit is checked *before* the GitHub token is
+verified, so a flood of bogus tokens can't amplify into a GitHub request each.
+The limiter is created automatically on `wrangler deploy`; no separate resource
+to provision. Reads (`GET /feedback/*`) are intentionally not IP-limited because
+GitHub's image proxy serves all viewers from a few shared IPs.
 
 ## Setup
 

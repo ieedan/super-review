@@ -21,9 +21,19 @@
  *     Serves the stored object (used when no custom bucket domain is configured).
  */
 
+// Cloudflare's native per-Worker rate-limiting binding (configured under
+// [[ratelimit]] in wrangler.toml). Declared locally so we don't depend on the
+// exact @cloudflare/workers-types version exposing it.
+interface RateLimit {
+	limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
 export interface Env {
 	// R2 bucket binding (see wrangler.toml).
 	FEEDBACK_BUCKET: R2Bucket;
+	// Sliding-window limiter applied to uploads, keyed by client IP (see
+	// wrangler.toml [[ratelimit]]). Caps how fast any one source can POST.
+	UPLOAD_RATE_LIMIT: RateLimit;
 	// Public origin objects are served from. When set (a custom domain or the
 	// bucket's r2.dev URL) returned URLs point there; otherwise they point back at
 	// this Worker's GET route. No trailing slash.
@@ -78,7 +88,47 @@ function maxBytesFor(env: Env, mimeType: string): number {
 	return Number(env.MAX_IMAGE_BYTES) || DEFAULT_MAX_IMAGE_BYTES;
 }
 
+// Read the body while enforcing `max`, aborting the stream the moment it's
+// exceeded so a client that omits or lies about Content-Length still can't make
+// us buffer more than the cap. Returns null when the limit is breached.
+async function readLimited(request: Request, max: number): Promise<ArrayBuffer | null> {
+	// Cheap pre-reject on the declared length when present and honest.
+	const declared = Number(request.headers.get('content-length'));
+	if (declared && declared > max) return null;
+	if (!request.body) return new ArrayBuffer(0);
+
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		total += value.byteLength;
+		if (total > max) {
+			await reader.cancel();
+			return null;
+		}
+		chunks.push(value);
+	}
+
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return out.buffer;
+}
+
 async function handleUpload(request: Request, env: Env): Promise<Response> {
+	// Rate-limit by source IP FIRST — before the GitHub round-trip — so a flood of
+	// bogus tokens can't amplify into a GitHub request (and cost) per attempt.
+	const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+	const { success } = await env.UPLOAD_RATE_LIMIT.limit({ key: `upload:${ip}` });
+	if (!success) {
+		return json({ error: 'Too many uploads — slow down and try again shortly.' }, 429);
+	}
+
 	if (!(await verifyGithubToken(request.headers.get('authorization')))) {
 		return json({ error: 'Unauthorized' }, 401);
 	}
@@ -89,13 +139,8 @@ async function handleUpload(request: Request, env: Env): Promise<Response> {
 	}
 
 	const max = maxBytesFor(env, contentType);
-	const declared = Number(request.headers.get('content-length'));
-	if (declared && declared > max) {
-		return json({ error: 'File too large' }, 413);
-	}
-
-	const bytes = await request.arrayBuffer();
-	if (bytes.byteLength > max) {
+	const bytes = await readLimited(request, max);
+	if (!bytes) {
 		return json({ error: 'File too large' }, 413);
 	}
 
@@ -144,6 +189,11 @@ export default {
 			}
 		}
 
+		// Reads are deliberately NOT IP-rate-limited: GitHub renders issue images
+		// through its camo proxy, so all viewers' fetches arrive from a small pool of
+		// GitHub IPs — limiting by IP would throttle everyone at once. Egress is free
+		// on R2 and the immutable cache headers let camo/browsers cache, so reads
+		// aren't a meaningful cost vector.
 		if (request.method === 'GET' && url.pathname.startsWith('/feedback/')) {
 			return handleGet(url.pathname.slice(1), env);
 		}
