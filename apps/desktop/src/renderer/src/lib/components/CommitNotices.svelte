@@ -104,7 +104,7 @@
 					{#snippet logo()}
 						<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-4 shrink-0" />
 					{/snippet}
-					Install the skill
+					Install the skill?
 					{#snippet action()}
 						<InstallSkillButton size="xs" variant="outline" label="Install" />
 					{/snippet}
