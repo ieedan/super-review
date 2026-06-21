@@ -1588,10 +1588,6 @@ export function registerIpc(): void {
 				// groups.
 				const n = params.selectedCount;
 				const groups: MenuItemConstructorOptions[][] = [];
-				groups.push([
-					item(`Mark ${n} Selected Files as Seen`, 'markSelectedSeen'),
-					item(`Mark ${n} Selected Files as Unseen`, 'markSelectedUnseen')
-				]);
 				if (params.canDiscard) {
 					groups.push([item(`Discard ${n} Selected Files`, 'discardSelected')]);
 				}
@@ -1601,6 +1597,10 @@ export function registerIpc(): void {
 						item(`Exclude ${n} Selected Files`, 'excludeSelected')
 					]);
 				}
+				groups.push([
+					item(`Mark ${n} Selected Files as Seen`, 'markSelectedSeen'),
+					item(`Mark ${n} Selected Files as Unseen`, 'markSelectedUnseen')
+				]);
 				groups.forEach((group, i) => {
 					if (i > 0) template.push({ type: 'separator' });
 					template.push(...group);
