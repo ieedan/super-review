@@ -127,7 +127,9 @@ export async function listLocalComments(
 	return all.filter(
 		(c) =>
 			c.contextKey === 'workingTree' ||
-			(headSuffix !== null && c.contextKey.startsWith('branch:') && c.contextKey.endsWith(headSuffix))
+			(headSuffix !== null &&
+				c.contextKey.startsWith('branch:') &&
+				c.contextKey.endsWith(headSuffix))
 	);
 }
 

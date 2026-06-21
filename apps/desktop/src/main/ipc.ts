@@ -15,7 +15,9 @@ import type {
 	CreateRepoDefaults,
 	CreateRepoOptions,
 	CommitDraft,
+	CommitAuthorIdentity,
 	CommitFileSelection,
+	CommitInfo,
 	CommitResult,
 	DeviceFlowStart,
 	DeviceFlowStatus,
@@ -50,6 +52,8 @@ import type {
 	RepoContextMenuParams,
 	HeaderContextMenuParams,
 	HeaderContextMenuResult,
+	TabsContextMenuParams,
+	TabsContextMenuResult,
 	RepoInfo,
 	Session,
 	SessionSummary,
@@ -96,6 +100,7 @@ import {
 	isGitRepo,
 	isWorkingTreeDirty,
 	listBranches,
+	listCommits,
 	listLocalOnlyBranches,
 	listChangedFiles,
 	mergeIntoCurrent,
@@ -490,6 +495,25 @@ export function registerIpc(): void {
 		return gh.listOrganizations(accountId).catch(() => []);
 	});
 
+	// Resolve the History list's commit authors to their GitHub accounts (login +
+	// avatar), the way GitHub's own commit list does. No-ops to {} when the repo
+	// isn't on GitHub or the account can't be resolved — the renderer falls back
+	// to its email heuristic / identicon.
+	ipcMain.handle(
+		'github:resolveCommitAuthors',
+		async (
+			_e,
+			repoId: string,
+			candidates: { email: string; shas: string[] }[]
+		): Promise<Record<string, CommitAuthorIdentity>> => {
+			const repo = getRepo(repoId);
+			if (!repo?.githubOwner || !repo?.githubRepo) return {};
+			return gh
+				.resolveCommitAuthors(repo.githubOwner, repo.githubRepo, candidates, repo.githubAccountId)
+				.catch(() => ({}));
+		}
+	);
+
 	// Publish a local repo to GitHub: create the remote (under the chosen org or
 	// the account), set it as `origin`, and push the current branch. Returns the
 	// refreshed RepoInfo so the renderer picks up the new owner/remote.
@@ -850,6 +874,12 @@ export function registerIpc(): void {
 		'git:getLastCommit',
 		async (_e, repoId: string): Promise<LastCommit | null> =>
 			getLastCommit(repoOrThrow(repoId).path)
+	);
+
+	ipcMain.handle(
+		'git:listCommits',
+		async (_e, repoId: string, head?: string, limit?: number): Promise<CommitInfo[]> =>
+			listCommits(repoOrThrow(repoId).path, head, limit)
 	);
 
 	ipcMain.handle(
@@ -1772,6 +1802,34 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<HeaderContextMenuResult>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// The sidebar tab strip's "Show tab" menu. Same shape as the header menu: a
+	// checkbox per optional tab; the chosen item and its new state come back.
+	ipcMain.handle(
+		'menu:showTabsContextMenu',
+		async (e, params: TabsContextMenuParams): Promise<TabsContextMenuResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: TabsContextMenuResult = null;
+			const template: MenuItemConstructorOptions[] = params.items.map(
+				(it): MenuItemConstructorOptions => ({
+					label: it.label,
+					type: 'checkbox',
+					checked: it.checked,
+					click: (menuItem) => {
+						chosen = { key: it.key, checked: menuItem.checked };
+					}
+				})
+			);
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<TabsContextMenuResult>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)
