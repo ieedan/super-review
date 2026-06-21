@@ -730,6 +730,12 @@ export interface PushStatus {
 	// Usually "origin", but a checked-out PR branch tracks the PR's head repo
 	// remote. Undefined when there's no upstream. Drives accurate push labels.
 	pushRemote?: string;
+	// True when the repo is mid-merge: `MERGE_HEAD` exists, or unmerged paths are
+	// left in the index. Reported on every status refresh so the app can re-open
+	// the conflict dialog for a merge that was interrupted (app closed mid-resolve,
+	// or a merge started/left on the CLI) instead of stranding the user — the
+	// "you have not concluded your merge (MERGE_HEAD exists)" dead end.
+	mergeInProgress: boolean;
 }
 
 export interface PullPushResult {

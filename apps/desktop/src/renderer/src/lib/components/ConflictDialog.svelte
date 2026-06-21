@@ -18,7 +18,13 @@
 	// (polled below) stages it and drops it from the unresolved set. The dialog
 	// keeps showing every file, flipping its icon from alert to check.
 	const unresolved = $derived(new Set(app.conflictUnresolved));
-	const allResolved = $derived(app.conflictFiles.length > 0 && unresolved.size === 0);
+	// A recovered merge (interrupted, then re-surfaced on refresh) can already be
+	// fully resolved with no remaining conflict files — just an uncommitted
+	// MERGE_HEAD. Allow finishing in that case too, not only when files were shown.
+	const mergeInProgress = $derived(app.pushStatus?.mergeInProgress ?? false);
+	const allResolved = $derived(
+		unresolved.size === 0 && (app.conflictFiles.length > 0 || mergeInProgress)
+	);
 
 	const editorLabel = $derived(editor ? EDITOR_LABELS[editor] : null);
 
@@ -47,15 +53,23 @@
 		<Dialog.Header class="flex flex-row items-start gap-2 space-y-0 border-b border-border p-4">
 			<AlertTriangle class="mt-0.5 size-5 shrink-0 text-warning" />
 			<div class="flex-1">
-				<Dialog.Title class="text-sm font-semibold">Resolve merge conflicts</Dialog.Title>
+				<Dialog.Title class="text-sm font-semibold">
+					{app.conflictFiles.length === 0 ? 'Finish in-progress merge' : 'Resolve merge conflicts'}
+				</Dialog.Title>
 				<Dialog.Description class="mt-1 text-xs">
-					Merging produced conflicts. Open each file{editorLabel ? ` in ${editorLabel}` : ''},
-					resolve the markers, and save. Each file is checked off automatically once its markers are
-					gone.
-					{#if pushesAfterMerge}
-						Then we'll finish the merge and continue the push.
+					{#if app.conflictFiles.length === 0}
+						A merge is in progress with no remaining conflicts. Finish it to create the merge
+						commit, or abort to undo it. (Left unfinished, git reports "you have not concluded your
+						merge".)
 					{:else}
-						Then we'll finish the merge.
+						Merging produced conflicts. Open each file{editorLabel ? ` in ${editorLabel}` : ''},
+						resolve the markers, and save. Each file is checked off automatically once its markers
+						are gone.
+						{#if pushesAfterMerge}
+							Then we'll finish the merge and continue the push.
+						{:else}
+							Then we'll finish the merge.
+						{/if}
 					{/if}
 				</Dialog.Description>
 			</div>

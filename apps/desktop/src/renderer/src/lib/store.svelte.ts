@@ -1284,9 +1284,40 @@ async function refreshPushStatus(): Promise<void> {
 		]);
 		app.pushStatus = status;
 		app.lastCommit = lastCommit;
+		await reconcileMergeState(repoId, status.mergeInProgress);
 	} catch {
 		app.pushStatus = null;
 		app.lastCommit = null;
+	}
+}
+
+// Keep the conflict dialog in sync with the repo's real merge state on every
+// status refresh (focus/poll/open), so an interrupted merge can never silently
+// strand the user the way a lingering MERGE_HEAD does on the command line ("you
+// have not concluded your merge").
+//
+// Two directions:
+//   • mergeInProgress, but no live operation owns the dialog → re-open it. This
+//     catches a merge interrupted by closing the app mid-resolve, or one started
+//     or left behind on the CLI. Treated as a pull-only flow so finishing it just
+//     commits the merge (no surprise push); the dialog's continue/abort drive it.
+//   • the dialog is showing a recovered merge but the merge is gone (concluded or
+//     aborted outside the app) → dismiss it so it doesn't linger.
+//
+// A live pull/merge/push owns its own dialog (`inProgress`), and a stash-restore
+// pop reuses the conflict UI without a MERGE_HEAD — neither is touched here.
+async function reconcileMergeState(repoId: string, mergeInProgress: boolean): Promise<void> {
+	if (app.push.intent === 'stash-restore') return;
+	if (mergeInProgress) {
+		if (app.push.inProgress || app.push.stage === 'conflicts') return;
+		const conflicts = await window.api.git.getConflicts(repoId).catch(() => [] as string[]);
+		setConflicts(conflicts);
+		app.push = { inProgress: true, stage: 'conflicts', intent: 'pull', op: 'update', error: null };
+	} else if (app.push.stage === 'conflicts') {
+		// No MERGE_HEAD and no unmerged paths: the merge was concluded or aborted
+		// elsewhere while our dialog was up. Close it and return to idle.
+		clearConflicts();
+		app.push = { inProgress: false, stage: 'idle', intent: 'push', op: 'push', error: null };
 	}
 }
 

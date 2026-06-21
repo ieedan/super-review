@@ -1666,6 +1666,11 @@ export interface PushStatus {
 	aheadOfDefault: number;
 	behindDefault: number;
 	pushRemote?: string;
+	// True when the repo is mid-merge (MERGE_HEAD exists, or unmerged paths linger
+	// in the index). Lets the app re-surface an interrupted merge instead of
+	// stranding the user on a lingering MERGE_HEAD. Mirrors the renderer-facing
+	// PushStatus in types.ts.
+	mergeInProgress: boolean;
 }
 
 // Detect the repo's default branch from local refs. origin/HEAD is only set at
@@ -1769,6 +1774,11 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 	}
 	const remotes = await git.getRemotes(true).catch(() => []);
 	const hasRemote = remotes.some((r) => r.name === 'origin');
+	// A merge is "in progress" when MERGE_HEAD exists (the classic "you have not
+	// concluded your merge" state) or unmerged paths linger in the index (e.g. an
+	// autostash re-apply conflict after a fast-forward). Surfaced on every refresh
+	// so the renderer can re-open the conflict dialog for an interrupted merge.
+	const mergeInProgress = (await hasMergeHead(git)) || (await listUnmergedPaths(git)).length > 0;
 	// The caller passes the repo's cached default branch, but that's computed once
 	// at repo-add time and persisted — it can be undefined for repos added before
 	// detection improved, or stale. Resolve live when it's missing so the ahead/
@@ -1789,7 +1799,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 			hasUpstream: false,
 			hasRemote,
 			aheadOfDefault,
-			behindDefault
+			behindDefault,
+			mergeInProgress
 		};
 	}
 	let upstream: string | null;
@@ -1808,7 +1819,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 			hasUpstream: false,
 			hasRemote,
 			aheadOfDefault,
-			behindDefault
+			behindDefault,
+			mergeInProgress
 		};
 	}
 	let ahead = 0;
@@ -1838,7 +1850,8 @@ export async function getPushStatus(repoPath: string, defaultBranch?: string): P
 		hasRemote,
 		aheadOfDefault,
 		behindDefault,
-		pushRemote
+		pushRemote,
+		mergeInProgress
 	};
 }
 
