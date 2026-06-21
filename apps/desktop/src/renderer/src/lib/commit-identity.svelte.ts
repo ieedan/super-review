@@ -26,9 +26,13 @@ const identityCache = new SvelteMap<string, CommitAuthorIdentity>();
 // also reactive.
 const identiconCache = new SvelteMap<string, string>();
 // Emails we've already resolved (identity found or confirmed absent) and ones in
-// flight, so we never re-probe the API for the same author. Plain Sets: these
-// gate work, they don't drive rendering.
+// flight, so we never re-probe the API for the same author. Deliberately plain
+// (non-reactive) Sets: they gate work, they don't drive rendering, and they're
+// mutated from inside the resolving $effect — making them reactive would re-fire
+// it on every bookkeeping change.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
 const resolved = new Set<string>();
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
 const inFlight = new Set<string>();
 
 const normalize = (email: string): string => email.trim().toLowerCase();
@@ -73,7 +77,8 @@ function primeIdenticon(key: string): void {
 // map falls back to an identicon. Call from an $effect over the commits on screen.
 export function ensureAvatars(repoId: string | undefined, commits: CommitInfo[]): void {
 	// One entry per unseen, non-self-describing email: a few of that author's
-	// SHAs (newest first) for the API to probe.
+	// SHAs (newest first) for the API to probe. Transient local scratch, not state.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const candidates = new Map<string, string[]>();
 	for (const commit of commits) {
 		if (githubAvatarFromEmail(commit.authorEmail)) continue;
