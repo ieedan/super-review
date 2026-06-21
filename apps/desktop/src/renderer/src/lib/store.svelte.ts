@@ -5,6 +5,7 @@ import type {
 	ChangedFile,
 	ChangesetStatus,
 	CommitFileSelection,
+	CommitInfo,
 	ContextTab,
 	CreateRepoOptions,
 	DiffContext,
@@ -33,11 +34,12 @@ import type {
 	Session,
 	SessionSummary,
 	HeaderItemVisibility,
+	SidebarTabVisibility,
 	TerminalKind,
 	UserPrefs,
 	ViewMode
 } from '@shared/types';
-import { DEFAULT_HEADER_ITEMS, WINDOW_BOUNDS } from '@shared/types';
+import { DEFAULT_HEADER_ITEMS, DEFAULT_SIDEBAR_TABS, WINDOW_BOUNDS } from '@shared/types';
 import { diffContextKey, reviewContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
@@ -161,6 +163,12 @@ interface AppState {
 	// callouts) or "changes" (the plain file-by-file review, with search and
 	// tree/list toggle). Only meaningful while a session with steps is open.
 	sessionView: 'tour' | 'changes';
+	// Commits on the viewed branch/PR head, newest first — the History tab's list.
+	// Loaded on entering the tab / refresh. Empty on other tabs.
+	commits: CommitInfo[];
+	// The commit whose diff is currently open, or null when the History tab is
+	// showing the list. Ephemeral — not persisted across launches.
+	activeCommit: CommitInfo | null;
 	// Whether the super-review skill is installed in the active repo. null
 	// while unknown (no active repo, or the check hasn't returned yet); false
 	// drives the "Install skill" prompts in the header and sessions empty state.
@@ -254,6 +262,9 @@ interface AppState {
 	// Visibility of the optional header controls (sidebar toggles, changeset,
 	// editor, terminal), toggled from the header's right-click menu.
 	headerItems: HeaderItemVisibility;
+	// Visibility of the optional sidebar tabs (Sessions, History), toggled from
+	// the tab strip's right-click menu.
+	sidebarTabs: SidebarTabVisibility;
 	// Initial window bounds, applied on the next launch (see UserPrefs).
 	windowWidth: number;
 	windowHeight: number;
@@ -675,6 +686,8 @@ const initial: AppState = {
 	activeSessionId: null,
 	activeSessionDetail: null,
 	sessionView: 'tour',
+	commits: [],
+	activeCommit: null,
 	skillInstalled: null,
 	skillInstallDismissed: false,
 	changesetStatus: null,
@@ -712,6 +725,7 @@ const initial: AppState = {
 	recentRepoCount: 5,
 	hotkeys: DEFAULT_HOTKEYS,
 	headerItems: { ...DEFAULT_HEADER_ITEMS },
+	sidebarTabs: { ...DEFAULT_SIDEBAR_TABS },
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
 	startMaximized: false,
@@ -1768,6 +1782,14 @@ function branchDiffBaseRef(): string {
 	return app.activeRepo?.defaultBranch ?? 'main';
 }
 
+// The ref whose commit history the History tab lists: the read-only view's head
+// (a fetched PR head ref or a viewed branch) when one is set, otherwise the
+// checked-out branch. Mirrors the Branch tab's head so both follow the view.
+function historyHeadRef(): string {
+	if (app.viewPR) return `pr/${app.viewPR.number}/head`;
+	return app.viewBranch ?? app.currentBranch ?? 'HEAD';
+}
+
 // Seed `rememberedBranchBase` from disk for the checked-out branch so the first
 // Branch-tab paint targets the PR base it settled on last session, instead of
 // the local default until the ~1s network PR lookup pins the base (which would
@@ -1796,6 +1818,12 @@ function contextForTab(tab: ContextTab): DiffContext {
 			? `pr/${app.viewPR.number}/head`
 			: (app.viewBranch ?? app.currentBranch ?? 'HEAD');
 		return { kind: 'branch', base: branchDiffBaseRef(), head };
+	}
+	if (tab === 'history' && app.activeCommit) {
+		// An open commit drives its own diff (commit vs first parent). With no commit
+		// open the History tab shows the list, not a diff — fall through to the
+		// working-tree context below (unused while the list is shown).
+		return { kind: 'commit', ref: app.activeCommit.hash };
 	}
 	if (tab === 'sessions' && app.activeSessionId) {
 		// Read the open session from the viewed branch/PR's ref when reviewing
@@ -2124,10 +2152,14 @@ async function refreshFiles(): Promise<void> {
 		app.changesetStatus = null;
 		return;
 	}
-	// The Sessions tab with no session open shows the sessions list, not a file
-	// list — don't let a background refresh (focus/poll) repopulate the sidebar
-	// with working-tree files behind it. Keep the Unstaged badge fresh, though.
-	if (app.contextTab === 'sessions' && !app.activeSessionId) {
+	// The Sessions/History tabs with nothing open show a list (sessions or
+	// commits), not a file list — don't let a background refresh (focus/poll)
+	// repopulate the sidebar with working-tree files behind it. Keep the Unstaged
+	// badge fresh, though.
+	if (
+		(app.contextTab === 'sessions' && !app.activeSessionId) ||
+		(app.contextTab === 'history' && !app.activeCommit)
+	) {
 		app.changedFiles = [];
 		// The sessions list shows no diff, so there's nothing to anchor comments to.
 		app.localComments = [];
@@ -2381,6 +2413,22 @@ export const actions = {
 			headerItems: { ...app.headerItems }
 		});
 	},
+
+	// Show/hide an optional sidebar tab (Sessions, History) from the tab strip's
+	// right-click menu. Updates the local copy first so the strip reacts instantly,
+	// then persists. Hiding the tab you're currently on would strand you on a tab
+	// whose trigger is gone, so fall back to a still-visible tab first.
+	async setSidebarTab(key: keyof SidebarTabVisibility, value: boolean): Promise<void> {
+		if (!value && app.contextTab === key) {
+			// Unstaged is the universal home; while a branch/PR is viewed read-only it's
+			// hidden, so the Branch tab (always present in that view) takes its place.
+			await actions.setContextTab(isReadOnlyView() ? 'branch' : 'unstaged');
+		}
+		app.sidebarTabs = { ...app.sidebarTabs, [key]: value };
+		app.prefs = await window.api.state.setPrefs({
+			sidebarTabs: { ...app.sidebarTabs }
+		});
+	},
 	async setChangesetsEnabled(value: boolean): Promise<void> {
 		app.changesetsEnabled = value;
 		app.prefs = await window.api.state.setPrefs({ changesetsEnabled: value });
@@ -2480,6 +2528,7 @@ export const actions = {
 			app.sidebarCollapsed;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
+		app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...app.prefs.sidebarTabs };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
 		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;
@@ -2524,7 +2573,7 @@ export const actions = {
 					app.diffContext = { kind: 'workingTree' };
 				}
 				await Promise.all([refreshFiles(), refreshPushStatus()]);
-			} else if (savedTab === 'sessions') {
+			} else if (savedTab === 'sessions' && app.sidebarTabs.sessions) {
 				app.contextTab = 'sessions';
 				// The Sessions tab shows the documented-sessions list (in the sidebar),
 				// not a working-tree file list — load the sessions. Still fetch the
@@ -2535,6 +2584,14 @@ export const actions = {
 					refreshUnstagedCount(),
 					actions.loadSessions()
 				]);
+			} else if (savedTab === 'history' && app.sidebarTabs.history) {
+				app.contextTab = 'history';
+				// The History tab shows the commit list (in the sidebar), not a
+				// working-tree file list. loadCommits needs branches resolved first so
+				// historyHeadRef() can fall back to the current branch. Still fetch the
+				// Unstaged badge count so it's accurate on launch.
+				await Promise.all([refreshBranches(), refreshPushStatus(), refreshUnstagedCount()]);
+				await actions.loadCommits();
 			} else {
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 			}
@@ -2638,6 +2695,8 @@ export const actions = {
 			app.activeSessionDetail = null;
 			app.sessions = [];
 			app.sessionCount = 0;
+			app.activeCommit = null;
+			app.commits = [];
 			app.skillInstalled = null;
 			app.skillInstallDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
@@ -2714,6 +2773,18 @@ export const actions = {
 			app.collapsedFiles = new SvelteSet();
 			app.diffContext = { kind: 'workingTree' };
 			void actions.loadSessions();
+			return;
+		}
+		if (tab === 'history') {
+			// Show the commit list: clear the file list and load the commits.
+			// Selecting a commit (openCommit) is what populates the diff view.
+			app.activeCommit = null;
+			app.changedFiles = [];
+			app.selectedFile = null;
+			app.seenFiles = new SvelteSet();
+			app.collapsedFiles = new SvelteSet();
+			app.diffContext = { kind: 'workingTree' };
+			void actions.loadCommits();
 			return;
 		}
 		app.diffContext = contextForTab(tab);
@@ -2880,6 +2951,51 @@ export const actions = {
 		if (app.activeRepo?.id !== repoId) return;
 		await refreshSessionCount();
 		if (app.contextTab === 'sessions') await actions.loadSessions();
+	},
+
+	// Load the viewed branch/PR head's commit list into `app.commits`. Called on
+	// entering the History tab and on refresh, so a fresh commit (or a checkout to
+	// another branch) shows up. An open commit stays open — its SHA resolves
+	// regardless of what the refreshed list now holds.
+	async loadCommits(): Promise<void> {
+		if (!app.activeRepo) {
+			app.commits = [];
+			return;
+		}
+		const repoId = app.activeRepo.id;
+		const head = historyHeadRef();
+		const commits = await window.api.git.listCommits(repoId, head);
+		// Bail if the user switched repos / views while we were fetching.
+		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
+		app.commits = commits;
+	},
+
+	// Open a commit's diff: drives the file list + diff view through a `commit`
+	// DiffContext (the commit against its first parent), the same way the Branch
+	// tab drives a base/head diff. Swaps the commit list for the commit's files.
+	async openCommit(commit: CommitInfo): Promise<void> {
+		app.activeCommit = commit;
+		app.diffContext = { kind: 'commit', ref: commit.hash };
+		app.activePR = null;
+		app.prComments = {};
+		app.pendingComposers = {};
+		app.localComposers = {};
+		// The file search query carries no meaning into a freshly opened commit.
+		app.fileSearchQuery = '';
+		await refreshFiles();
+	},
+
+	// Leave an open commit and return to the commit list.
+	closeCommit(): void {
+		app.activeCommit = null;
+		app.changedFiles = [];
+		app.selectedFile = null;
+		app.seenFiles = new SvelteSet();
+		app.collapsedFiles = new SvelteSet();
+		app.localComments = [];
+		app.localComposers = {};
+		app.localCommentsContextKey = null;
+		app.diffContext = { kind: 'workingTree' };
 	},
 
 	// Re-check whether the super-review skill is installed in the active repo
@@ -3187,6 +3303,12 @@ export const actions = {
 			}
 			await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 			await refreshBranchPR();
+			if (app.contextTab === 'history') {
+				// The commit list follows the checked-out branch: drop any open commit
+				// and reload for the new head.
+				actions.closeCommit();
+				await actions.loadCommits();
+			}
 			if (app.contextTab === 'branch' && landingOnDefault) {
 				await actions.setContextTab('unstaged');
 			}
@@ -3235,6 +3357,11 @@ export const actions = {
 		void refreshSessionCount();
 		if (app.contextTab === 'sessions') {
 			await actions.loadSessions();
+		} else if (app.contextTab === 'history') {
+			// History follows the viewed branch: drop any open commit (it belonged to
+			// the previous view) and reload the list for the new head.
+			actions.closeCommit();
+			await actions.loadCommits();
 		} else {
 			await refreshFiles();
 		}
@@ -3276,6 +3403,11 @@ export const actions = {
 			void refreshSessionCount();
 			if (app.contextTab === 'sessions') {
 				await actions.loadSessions();
+			} else if (app.contextTab === 'history') {
+				// History follows the viewed PR head: drop any open commit and reload
+				// the list now that the PR's head ref is fetched.
+				actions.closeCommit();
+				await actions.loadCommits();
 			} else {
 				await refreshFiles();
 			}
@@ -3297,6 +3429,13 @@ export const actions = {
 		void refreshSessionCount();
 		if (app.contextTab === 'sessions') {
 			await actions.loadSessions();
+			return;
+		}
+		if (app.contextTab === 'history') {
+			// Back to the checked-out branch: drop any open commit and reload the
+			// list for the checkout's head.
+			actions.closeCommit();
+			await actions.loadCommits();
 			return;
 		}
 		// Dropping the read-only view may land us back on a plain default-branch
@@ -4283,6 +4422,8 @@ export const actions = {
 		// On the Sessions tab, reload the manifests so an agent's CLI update lands
 		// (loadSessions re-opens the active session if one is showing).
 		if (app.contextTab === 'sessions') await actions.loadSessions();
+		// On the History tab, reload the commit list so a fresh commit shows up.
+		if (app.contextTab === 'history') await actions.loadCommits();
 		await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 		await refreshBranchPR();
 	},
@@ -4303,6 +4444,8 @@ export const actions = {
 			// Mirror refresh(): on the Sessions tab, reload the manifests so an
 			// agent's CLI update lands (loadSessions re-opens the active session).
 			if (app.contextTab === 'sessions') await actions.loadSessions();
+			// On the History tab, reload the commit list so a fresh commit shows up.
+			if (app.contextTab === 'history') await actions.loadCommits();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			await refreshBranchPR();
 		} finally {

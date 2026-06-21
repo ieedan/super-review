@@ -10,6 +10,7 @@
 export type * from '@super-review/core/types';
 export {
 	DEFAULT_HEADER_ITEMS,
+	DEFAULT_SIDEBAR_TABS,
 	EDITORS_BY_PLATFORM,
 	TERMINALS_BY_PLATFORM,
 	WINDOW_BOUNDS
