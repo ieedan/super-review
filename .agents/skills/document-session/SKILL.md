@@ -119,23 +119,24 @@ committed diff instead of the working tree.
 Reviewers leave **inline comments** on your diff in the Super Review desktop
 app. You read and resolve them from the CLI.
 
-Comments are filed under the **diff context** they were made in, and
-`comment list` defaults to the working-tree context - so to see the comments a
-reviewer left on a **pull request** (or a branch diff) you must pass the
-matching `--context`:
+A comment is scoped to where it was reviewed, which is one of two things you
+care about: the **branch** you're on, or a **pull request**. `comment list`
+defaults to the current branch (it reads the branch from git — you're only ever
+on one), so this finds the comments waiting on you:
 
 ```bash
-# open comments left while reviewing PR #12
-super-review comment list --context pr:12 --unresolved
+super-review comment list --unresolved
 ```
 
-- `--context pr:<number>` - comments on a pull request (e.g. `pr:12`).
-- `--context branch:<base>..<head>` - comments on a branch diff (e.g. `branch:main..feat`).
-- `--context workingTree` - the default, uncommitted working-tree diff.
-- `--all` - list every context at once (use this if you're not sure which).
-- `--unresolved` shows only open comments; `--json` emits the raw records.
+Add `--pr <number>` to read the comments left while reviewing a pull request
+instead:
 
-Each line is `<id>  [open]  <path>:L<range>  <first line of the comment>`.
+```bash
+super-review comment list --pr 12 --unresolved
+```
+
+`--json` emits the raw records. Each human-readable line is
+`<id>  [open]  <path>:L<range>  <first line of the comment>`.
 
 Address each comment in code, then mark it resolved - and link the session that
 documents the fix so the reviewer can jump straight from the comment to your
