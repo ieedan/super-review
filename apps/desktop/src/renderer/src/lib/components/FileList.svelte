@@ -25,7 +25,7 @@
 	import * as Tabs from './ui/tabs';
 	import * as Sidebar from './ui/sidebar';
 	import CommitBox from './CommitBox.svelte';
-	import ChangesetPrompt from './ChangesetPrompt.svelte';
+	import CommitNotices from './CommitNotices.svelte';
 	import SessionsList from './SessionsList.svelte';
 	import SessionTour from './SessionTour.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
@@ -1267,7 +1267,7 @@
 					<ChevronRight class="size-4 shrink-0 text-muted-foreground" />
 				</button>
 			{/if}
-			<ChangesetPrompt />
+			<CommitNotices />
 			<CommitBox />
 		</Sidebar.Footer>
 	{/if}

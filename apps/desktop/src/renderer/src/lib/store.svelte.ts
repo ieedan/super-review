@@ -165,6 +165,10 @@ interface AppState {
 	// while unknown (no active repo, or the check hasn't returned yet); false
 	// drives the "Install skill" prompts in the header and sessions empty state.
 	skillInstalled: boolean | null;
+	// Whether the user dismissed the "Install the skill" notice above the commit
+	// box. In-memory only and reset on every repo switch, so it stays hidden while
+	// you work in this repo but returns if the skill is still missing next time.
+	skillInstallDismissed: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
 	// changeset?" prompt above the commit box). null while unknown / not the
 	// working-tree context.
@@ -672,6 +676,7 @@ const initial: AppState = {
 	activeSessionDetail: null,
 	sessionView: 'tour',
 	skillInstalled: null,
+	skillInstallDismissed: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
 	changesetPromptDismissed: false,
@@ -2393,6 +2398,9 @@ export const actions = {
 	dismissChangesetWarning(): void {
 		app.changesetWarningDismissed = true;
 	},
+	dismissSkillInstall(): void {
+		app.skillInstallDismissed = true;
+	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;
 	},
@@ -2631,6 +2639,7 @@ export const actions = {
 			app.sessions = [];
 			app.sessionCount = 0;
 			app.skillInstalled = null;
+			app.skillInstallDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
 			app.prs = [];
@@ -2667,6 +2676,7 @@ export const actions = {
 			app.branches = [];
 			app.selectedFile = null;
 			app.skillInstalled = null;
+			app.skillInstallDismissed = false;
 		}
 	},
 
