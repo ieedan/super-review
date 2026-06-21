@@ -10,20 +10,11 @@
 	import * as Dialog from './ui/dialog';
 	import { Button } from './ui/button';
 	import { Input } from './ui/input';
-	import { Textarea } from './ui/textarea';
+	import MarkdownComposer from './MarkdownComposer.svelte';
 	import { FileDropZone, displaySize, type FileRejectedReason } from './ui/file-drop-zone';
 	import { actions, app } from '$lib/store.svelte';
-	import { attachImageUpload } from '$lib/markdown-image-upload';
 	import { cn } from '$lib/utils';
 	import type { FeedbackConfig, FeedbackKind } from '@shared/types';
-
-	// One staged attachment: the File plus a preview object URL (revoked on
-	// removal/close) and whether it renders as a video vs an image.
-	interface Staged {
-		file: File;
-		previewUrl: string;
-		isVideo: boolean;
-	}
 
 	const KINDS: { value: FeedbackKind; label: string; icon: typeof Bug }[] = [
 		{ value: 'bug', label: 'Bug', icon: Bug },
@@ -36,7 +27,10 @@
 	let title = $state('');
 	let body = $state('');
 	let diagnostics = $state<string | null>(null);
-	let staged = $state<Staged[]>([]);
+	// Staged screen recordings, uploaded at submit. Images aren't staged here —
+	// they're pasted/attached straight into the description, which uploads them
+	// inline via Carta's attachment plugin.
+	let stagedVideos = $state<File[]>([]);
 	let submitting = $state(false);
 	let error = $state<string | null>(null);
 	// Set to the created issue on success so we can show a confirmation + link
@@ -45,20 +39,15 @@
 
 	const open = $derived(app.feedback.open);
 
-	// Accept string for the dropzone's hidden input, built from the configured
-	// image/video MIME types.
-	const acceptTypes = $derived(
-		config ? [...config.imageTypes, ...config.videoTypes].join(',') : ''
-	);
-	const videoTypeSet = $derived(new Set(config?.videoTypes ?? []));
+	// Accepted types for the screen-recording picker (videos only).
+	const videoAccept = $derived(config?.videoTypes.join(',') ?? '');
 
 	function reset(): void {
-		for (const s of staged) URL.revokeObjectURL(s.previewUrl);
 		kind = 'other';
 		title = '';
 		body = '';
 		diagnostics = null;
-		staged = [];
+		stagedVideos = [];
 		error = null;
 		result = null;
 		submitting = false;
@@ -66,9 +55,8 @@
 
 	// On open: reset the form, apply any prefill (error reports seed kind +
 	// diagnostics), and load capabilities/limits. `open` is the only dependency —
-	// the body is untracked so reset()'s read+write of `staged` (and the other
-	// field writes) don't make this effect depend on the state it sets, which
-	// would loop (effect_update_depth_exceeded).
+	// the body is untracked so the field writes don't make this effect depend on
+	// the state it sets (which would risk an update loop).
 	$effect(() => {
 		if (!open) return;
 		untrack(() => {
@@ -86,12 +74,7 @@
 
 	function onUpload(files: File[]): void {
 		error = null;
-		const next = files.map((file) => ({
-			file,
-			previewUrl: URL.createObjectURL(file),
-			isVideo: videoTypeSet.has(file.type)
-		}));
-		staged = [...staged, ...next];
+		stagedVideos = [...stagedVideos, ...files];
 	}
 
 	function onFileRejected({ file, reason }: { file: File; reason: FileRejectedReason }): void {
@@ -105,9 +88,7 @@
 	}
 
 	function removeStaged(index: number): void {
-		const s = staged[index];
-		if (s) URL.revokeObjectURL(s.previewUrl);
-		staged = staged.filter((_, i) => i !== index);
+		stagedVideos = stagedVideos.filter((_, i) => i !== index);
 	}
 
 	async function submit(e?: Event): Promise<void> {
@@ -121,10 +102,10 @@
 		error = null;
 		try {
 			const attachments = await Promise.all(
-				staged.map(async (s) => ({
-					name: s.file.name,
-					mimeType: s.file.type,
-					bytes: new Uint8Array(await s.file.arrayBuffer())
+				stagedVideos.map(async (file) => ({
+					name: file.name,
+					mimeType: file.type,
+					bytes: new Uint8Array(await file.arrayBuffer())
 				}))
 			);
 			result = await window.api.feedback.submit({
@@ -144,19 +125,13 @@
 	const mediaDisabled = $derived(!config?.uploadConfigured);
 	const canSubmit = $derived(!!config?.signedIn && !submitting);
 
-	// Let users paste/drop an image straight into the description; it uploads to
-	// the broker and embeds a markdown image, same as the comment composers.
-	let bodyEl = $state<HTMLTextAreaElement | null>(null);
-	$effect(() => {
-		const textarea = bodyEl;
-		if (!textarea || !config?.uploadConfigured) return;
-		return attachImageUpload(textarea, {
-			target: { mode: 'remote' },
-			getValue: () => body,
-			setValue: (v) => (body = v),
-			onError: (msg) => (error = msg)
-		});
-	});
+	// ⌘/Ctrl+Enter submits from within the description composer.
+	function onComposerKeydown(e: KeyboardEvent): void {
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			e.preventDefault();
+			void submit();
+		}
+	}
 </script>
 
 <Dialog.Root {open} onOpenChange={(o) => (o ? undefined : actions.closeFeedbackDialog())}>
@@ -228,23 +203,20 @@
 				</div>
 
 				<div class="space-y-1.5">
-					<label for="feedback-body" class="text-xs font-medium text-muted-foreground">
-						Description <span class="font-normal">(Markdown supported)</span>
-					</label>
-					<Textarea
-						id="feedback-body"
-						bind:ref={bodyEl}
+					<span class="text-xs font-medium text-muted-foreground">
+						Description <span class="font-normal">(Markdown — paste or drop images to attach)</span>
+					</span>
+					<MarkdownComposer
 						bind:value={body}
 						placeholder="What happened? What did you expect? Steps to reproduce…"
-						class="min-h-28"
+						onkeydown={onComposerKeydown}
 					/>
 				</div>
 
-				<!-- Attachments -->
+				<!-- Screen recordings only — images go inline in the description above.
+				     Video is the one thing the composer can't embed, so it stays as a
+				     compact attach rather than the old full dropzone. -->
 				<div class="space-y-1.5">
-					<span class="text-xs font-medium text-muted-foreground">
-						Screenshots & screen recordings
-					</span>
 					{#if mediaDisabled}
 						<p
 							class="rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground"
@@ -253,41 +225,40 @@
 						</p>
 					{:else}
 						<FileDropZone
-							accept={acceptTypes}
+							accept={videoAccept}
 							maxFiles={config?.maxFiles}
-							fileCount={staged.length}
+							fileCount={stagedVideos.length}
 							maxFileSize={config?.maxVideoBytes}
 							{onUpload}
 							{onFileRejected}
-						/>
-						{#if config}
-							<p class="text-xs text-muted-foreground">
-								Images up to {displaySize(config.maxImageBytes)}, videos up to
-								{displaySize(config.maxVideoBytes)}. Max {config.maxFiles} files.
-							</p>
-						{/if}
+							class="flex-row justify-start gap-2 px-3 py-2.5 text-left text-xs"
+						>
+							<FileVideo class="size-4 shrink-0" />
+							<span>
+								<span class="font-medium text-foreground">Attach a screen recording</span>
+								— or drag and drop
+								{#if config}
+									<span class="text-muted-foreground"
+										>(up to {displaySize(config.maxVideoBytes)})</span
+									>
+								{/if}
+							</span>
+						</FileDropZone>
 					{/if}
 
-					{#if staged.length > 0}
-						<div class="grid grid-cols-3 gap-2 pt-1">
-							{#each staged as s, i (s.previewUrl)}
+					{#if stagedVideos.length > 0}
+						<div class="space-y-1 pt-1">
+							{#each stagedVideos as file, i (file.name + file.size + i)}
 								<div
-									class="group relative aspect-video overflow-hidden rounded-md border border-border bg-muted"
+									class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs"
 								>
-									{#if s.isVideo}
-										<div
-											class="flex h-full w-full flex-col items-center justify-center gap-1 p-1 text-muted-foreground"
-										>
-											<FileVideo class="size-5" />
-											<span class="line-clamp-1 text-[10px]">{s.file.name}</span>
-										</div>
-									{:else}
-										<img src={s.previewUrl} alt={s.file.name} class="h-full w-full object-cover" />
-									{/if}
+									<FileVideo class="size-4 shrink-0 text-muted-foreground" />
+									<span class="line-clamp-1 flex-1">{file.name}</span>
+									<span class="shrink-0 text-muted-foreground">{displaySize(file.size)}</span>
 									<button
 										type="button"
 										onclick={() => removeStaged(i)}
-										class="absolute top-1 right-1 rounded bg-background/80 p-0.5 text-foreground opacity-0 group-hover:opacity-100"
+										class="rounded p-0.5 hover:bg-accent"
 										aria-label="Remove attachment"
 									>
 										<X class="size-3.5" />
