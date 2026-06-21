@@ -40,6 +40,9 @@ import type {
 	ReleaseNotesResult,
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
+	PRConversationItem,
+	PRMergeMethod,
+	PRMergeResult,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
@@ -85,6 +88,7 @@ import {
 	fetchOrigin,
 	fetchPRRef,
 	resolveRef,
+	refExists,
 	getConflicts,
 	getDefaultBranch,
 	recheckConflicts,
@@ -136,6 +140,8 @@ import { listTemplates } from '@super-review/core';
 import {
 	clearCollapsedFiles,
 	clearSeen,
+	getBranchBase,
+	getCachedFileList,
 	getCollapsedFiles,
 	getCommitDraft,
 	getPrefs,
@@ -144,6 +150,8 @@ import {
 	getSeenSignatures,
 	listRepos,
 	removeRepo,
+	setBranchBase,
+	setCachedFileList,
 	setCommitDraft,
 	setFileCollapsed,
 	setPrefs,
@@ -643,6 +651,10 @@ export function registerIpc(): void {
 			return listChangedFiles(repoOrThrow(repoId).path, ctx);
 		}
 	);
+
+	ipcMain.handle('git:refExists', async (_e, repoId: string, ref: string): Promise<boolean> => {
+		return refExists(repoOrThrow(repoId).path, ref);
+	});
 
 	ipcMain.handle(
 		'git:getDiff',
@@ -1266,12 +1278,17 @@ export function registerIpc(): void {
 			if (!owner || !name) {
 				throw new Error('This repository does not have a GitHub remote.');
 			}
-			// Anchor the comment to the same commit the diff was rendered from — the
-			// local `pr/<n>/head` snapshot — so the clicked line/side matches what's
-			// on screen. Null when the ref isn't present (e.g. a checked-out branch
-			// rather than a fetched PR), in which case the service falls back to the
-			// PR's live head.
-			const snapshotSha = await resolveRef(repo.path, `pr/${input.prNumber}/head`);
+			// Anchor the comment to the exact commit the on-screen diff was rendered
+			// from. The renderer passes that view's head ref (`input.headRef`):
+			// `pr/<n>/head` for a PR view, or the branch tip for a Branch view. On the
+			// Branch tab the branch tip (once pushed) IS the PR's live head, so the
+			// comment isn't born "Outdated" — anchoring to the `pr/<n>/head` snapshot
+			// instead lags commits pushed since the PR was last fetched. Fall back to
+			// the snapshot when the renderer didn't supply a ref. Null when neither
+			// resolves (e.g. an unpushed branch), in which case the service falls back
+			// to the PR's live head.
+			const anchorRef = input.headRef ?? `pr/${input.prNumber}/head`;
+			const snapshotSha = await resolveRef(repo.path, anchorRef);
 			return gh.createReviewComment(owner, name, input, repo.githubAccountId, snapshotSha);
 		}
 	);
@@ -1328,6 +1345,153 @@ export function registerIpc(): void {
 			// threadId is a global GraphQL node id, so no owner/repo is needed —
 			// only the account whose token authorizes the mutation.
 			return gh.setReviewThreadResolved(threadId, resolved, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:listConversation',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<PRConversationItem[]> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.listConversation(owner, name, prNumber, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:createIssueComment',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			body: string,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<PRConversationItem> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.createIssueComment(owner, name, prNumber, body, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:deleteIssueComment',
+		async (
+			_e,
+			repoId: string,
+			commentId: number,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<void> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			await gh.deleteIssueComment(owner, name, commentId, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:updateIssueComment',
+		async (
+			_e,
+			repoId: string,
+			commentId: number,
+			body: string,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<string> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.updateIssueComment(owner, name, commentId, body, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:updatePullRequestBody',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			body: string,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<string> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.updatePullRequestBody(owner, name, prNumber, body, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
+		'github:mergePullRequest',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			method: PRMergeMethod,
+			prOwner?: string,
+			prRepo?: string,
+			commitTitle?: string,
+			commitMessage?: string
+		): Promise<PRMergeResult> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.mergePullRequest(
+				owner,
+				name,
+				prNumber,
+				method,
+				repo.githubAccountId,
+				commitTitle,
+				commitMessage
+			);
+		}
+	);
+
+	ipcMain.handle(
+		'github:markPullRequestReady',
+		async (
+			_e,
+			repoId: string,
+			prNumber: number,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<void> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			await gh.markPullRequestReady(owner, name, prNumber, repo.githubAccountId);
 		}
 	);
 
@@ -1707,6 +1871,34 @@ export function registerIpc(): void {
 
 	ipcMain.handle('state:clearCollapsedFiles', async (_e, repoId: string, contextKey: string) =>
 		clearCollapsedFiles(repoId, contextKey)
+	);
+
+	ipcMain.handle(
+		'state:getCachedFileList',
+		async (_e, repoId: string, contextKey: string): Promise<ChangedFile[]> => {
+			return getCachedFileList(repoId, contextKey);
+		}
+	);
+
+	ipcMain.handle(
+		'state:setCachedFileList',
+		async (_e, repoId: string, contextKey: string, files: ChangedFile[]) => {
+			setCachedFileList(repoId, contextKey, files);
+		}
+	);
+
+	ipcMain.handle(
+		'state:getBranchBase',
+		async (_e, repoId: string, branch: string): Promise<string | null> => {
+			return getBranchBase(repoId, branch);
+		}
+	);
+
+	ipcMain.handle(
+		'state:setBranchBase',
+		async (_e, repoId: string, branch: string, base: string | null) => {
+			setBranchBase(repoId, branch, base);
+		}
 	);
 
 	ipcMain.handle(

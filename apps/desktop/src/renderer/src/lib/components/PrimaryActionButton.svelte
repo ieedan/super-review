@@ -136,8 +136,8 @@
 	// CI checks are polled only for the checked-out branch's PR, so don't try to
 	// show them in a read-only view (the button there is a plain "open PR" link).
 	const checks = $derived(
-		!readOnly && app.branchPRChecks && app.branchPRChecks.number === app.branchPR?.number
-			? app.branchPRChecks.summary
+		!readOnly && app.prChecks && app.prChecks.number === app.branchPR?.number
+			? app.prChecks.summary
 			: null
 	);
 	const checksState = $derived(checks && checks.state !== 'none' ? checks.state : null);

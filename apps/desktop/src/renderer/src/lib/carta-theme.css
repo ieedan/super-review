@@ -27,7 +27,7 @@
 
 .carta-theme__github .carta-input,
 .carta-theme__github .carta-renderer {
-	min-height: 100px;
+	min-height: 60px;
 	max-height: 320px;
 	overflow: auto;
 }

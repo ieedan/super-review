@@ -11,10 +11,15 @@ import type {
 	GithubAuthError,
 	GithubOrg,
 	NewReviewCommentInput,
+	PRConversationItem,
+	PRConversationReference,
+	PRConversationReview,
 	PRCheck,
 	PRChecksState,
 	PRChecksSummary,
 	PRDeployment,
+	PRMergeMethod,
+	PRMergeResult,
 	PRReviewComment,
 	PRSummary,
 	ReleaseNotes,
@@ -695,6 +700,7 @@ function toPRSummary(
 		body: pr.body ?? '',
 		author: pr.user?.login ?? 'unknown',
 		authorAvatarUrl: pr.user?.avatar_url ?? '',
+		authorAssociation: pr.author_association ?? undefined,
 		headRef: pr.head.ref,
 		baseRef: pr.base.ref,
 		headSha: pr.head.sha,
@@ -702,6 +708,7 @@ function toPRSummary(
 		url: pr.html_url,
 		draft: pr.draft ?? false,
 		updatedAt: pr.updated_at,
+		createdAt: pr.created_at,
 		state: pr.state as 'open' | 'closed',
 		merged: pr.merged_at != null,
 		headRepoCloneUrl: pr.head.repo?.clone_url ?? undefined,
@@ -709,7 +716,11 @@ function toPRSummary(
 		headRepoName: pr.head.repo?.name ?? undefined,
 		maintainerCanModify: pr.maintainer_can_modify ?? undefined,
 		repoOwner: pr.base.repo?.owner?.login ?? undefined,
-		repoName: pr.base.repo?.name ?? undefined
+		repoName: pr.base.repo?.name ?? undefined,
+		// Present only on single-PR (pulls.get) responses — absent on list rows.
+		// Keep null (GitHub still computing) distinct from undefined (not fetched).
+		mergeable: pr.mergeable === undefined ? undefined : pr.mergeable,
+		mergeableState: pr.mergeable_state ?? undefined
 	};
 }
 
@@ -1027,7 +1038,10 @@ export async function getChecks(
 			name: run.name,
 			state: checkRunState(run.status, run.conclusion),
 			durationMs,
-			avatarUrl: run.app?.owner?.avatar_url ?? null
+			avatarUrl: run.app?.owner?.avatar_url ?? null,
+			// `details_url` is the specific job/run page (what GitHub links the row
+			// to); `html_url` is the check-run itself. Prefer the former.
+			url: run.details_url ?? run.html_url ?? null
 		});
 	}
 
@@ -1041,7 +1055,8 @@ export async function getChecks(
 				name: s.context,
 				state,
 				durationMs: null,
-				avatarUrl: s.avatar_url ?? null
+				avatarUrl: s.avatar_url ?? null,
+				url: s.target_url ?? null
 			});
 		}
 	}
@@ -1214,11 +1229,12 @@ export async function createReviewComment(
 	repo: string,
 	input: NewReviewCommentInput,
 	accountId?: string | null,
-	// SHA of the commit the on-screen diff was rendered from (the local
-	// `pr/<n>/head` snapshot). Anchoring the comment here — rather than the PR's
-	// live head — guarantees the line/side the user clicked resolve against the
-	// same diff they're looking at, even if the PR gained commits since it loaded.
-	// Falls back to the live head when the snapshot can't be resolved.
+	// SHA of the commit the on-screen diff was rendered from — `pr/<n>/head` for a
+	// PR view, or the branch tip for a Branch view. Anchoring the comment here —
+	// rather than the PR's live head — guarantees the line/side the user clicked
+	// resolve against the same diff they're looking at. On the Branch tab the
+	// branch tip (once pushed) is itself the PR's live head, so the comment isn't
+	// born "Outdated". Falls back to the live head when this can't be resolved.
 	commitId?: string | null
 ): Promise<PRReviewComment> {
 	const viewer = resolveAccount(accountId);
@@ -1243,17 +1259,20 @@ export async function createReviewComment(
 		// PR's diff at the anchored commit with a 422 "could not be resolved". It
 		// reports the unresolvable anchor on either the `.path` or the `.line`
 		// field of `pull_request_review_thread` (the `.line` variant is what you
-		// get when the path matches but the specific line doesn't). Both mean the
-		// same thing: the on-screen diff disagrees with the PR's diff at its head —
-		// the PR was rebased/force-pushed since it loaded, or (in the Branch tab)
-		// the local branch has changes that aren't pushed to the PR yet. Surface
-		// something actionable instead of the raw API validation JSON.
+		// get when the path matches but the specific line doesn't). A third case:
+		// when we anchor to a Branch view's tip that hasn't been pushed yet, GitHub
+		// doesn't know that commit and rejects it on the `.commit_id` field. All
+		// mean the same thing: the on-screen diff disagrees with the PR's diff at
+		// its head — the PR was rebased/force-pushed since it loaded, or (in the
+		// Branch tab) the local branch has changes that aren't pushed to the PR
+		// yet. Surface something actionable instead of the raw API validation JSON.
 		const status = (err as { status?: number }).status;
 		const errors = (
 			err as { response?: { data?: { errors?: Array<{ field?: string; code?: string }> } } }
 		).response?.data?.errors;
 		const unresolvableAnchor = errors?.some(
-			(e) => e.field?.endsWith('.path') || e.field?.endsWith('.line')
+			(e) =>
+				e.field?.endsWith('.path') || e.field?.endsWith('.line') || e.field?.endsWith('.commit_id')
 		);
 		if (status === 422 && unresolvableAnchor) {
 			throw new Error(
@@ -1362,4 +1381,396 @@ export async function createFeedbackIssue(opts: {
 		labels: opts.labels
 	});
 	return { url: res.data.html_url, number: res.data.number };
+}
+
+// ─── PR conversation timeline ────────────────────────────────────────────────
+// The "Conversation" tab feed: the PR's top-level discussion — issue comments,
+// submitted reviews, commits, and lighter timeline events (merged, labeled, …) —
+// flattened into one chronologically-ordered list. We read GitHub's unified
+// issue-timeline endpoint, which already interleaves these in order, and map the
+// handful of event kinds we render. Unknown events are dropped so the feed stays
+// signal over noise. Line-anchored review comments are deliberately excluded —
+// those belong to the Comments tab (`listReviewComments`).
+
+// Review-event states GitHub reports, lower-cased. 'pending' (an unsubmitted
+// draft review) never appears on the timeline, so it isn't in our union.
+function reviewState(state: unknown): PRConversationReview['state'] | null {
+	switch (String(state).toLowerCase()) {
+		case 'approved':
+			return 'approved';
+		case 'changes_requested':
+			return 'changes_requested';
+		case 'commented':
+			return 'commented';
+		case 'dismissed':
+			return 'dismissed';
+		default:
+			return null;
+	}
+}
+
+// Map a single raw timeline event to a conversation item, or null to drop it
+// (unknown event, or a contentless one we don't surface). `viewerLogin` decides
+// delete permission on the viewer's own comments.
+function mapTimelineItem(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	e: any,
+	viewerLogin: string | null
+): PRConversationItem | null {
+	switch (e.event) {
+		case 'commented': {
+			const author = e.user?.login ?? 'unknown';
+			return {
+				kind: 'comment',
+				key: `comment-${e.id}`,
+				id: e.id,
+				author,
+				authorAvatarUrl: e.user?.avatar_url ?? '',
+				authorAssociation: e.author_association ?? undefined,
+				body: e.body ?? '',
+				url: e.html_url ?? '',
+				createdAt: e.created_at,
+				canDelete: viewerLogin ? author === viewerLogin : false
+			};
+		}
+		case 'reviewed': {
+			const state = reviewState(e.state);
+			if (!state) return null;
+			// A bare "commented" review with no summary body is just the wrapper around
+			// inline comments (shown on the Comments tab) — drop it so the feed isn't
+			// littered with empty review rows. Approvals / change-requests are kept even
+			// without a body since their verdict is the content.
+			if (state === 'commented' && !(e.body ?? '').trim()) return null;
+			return {
+				kind: 'review',
+				key: `review-${e.id}`,
+				id: e.id,
+				author: e.user?.login ?? 'unknown',
+				authorAvatarUrl: e.user?.avatar_url ?? '',
+				authorAssociation: e.author_association ?? undefined,
+				body: e.body ?? '',
+				state,
+				url: e.html_url ?? '',
+				createdAt: e.submitted_at ?? e.created_at
+			};
+		}
+		case 'committed': {
+			// `committed` events carry the git identity (name/date), not a GitHub user,
+			// so there's no reliable avatar. The SHA is GitHub's `sha`; `verification`
+			// mirrors the commit-signing state GitHub shows as a "Verified" badge.
+			const sha: string = e.sha ?? '';
+			const lines: string[] = (e.message ?? '').split('\n');
+			const message = lines[0] ?? '';
+			const body = lines.slice(1).join('\n').trim();
+			return {
+				kind: 'commit',
+				key: `commit-${sha}`,
+				sha,
+				shortSha: sha.slice(0, 7),
+				message,
+				body: body || undefined,
+				author: e.author?.name ?? e.committer?.name ?? 'unknown',
+				verified: e.verification?.verified === true,
+				url: e.html_url ?? undefined,
+				createdAt: e.author?.date ?? e.committer?.date ?? ''
+			};
+		}
+		// Lighter activity events rendered as a one-line entry. Anything not listed
+		// here falls through to `null` and is dropped.
+		case 'merged':
+		case 'closed':
+		case 'reopened':
+		case 'locked':
+		case 'unlocked':
+		case 'head_ref_force_pushed':
+		case 'head_ref_deleted':
+		case 'head_ref_restored':
+		case 'convert_to_draft':
+		case 'ready_for_review':
+		case 'labeled':
+		case 'unlabeled':
+		case 'renamed':
+		case 'review_requested':
+		case 'review_request_removed':
+		case 'assigned':
+		case 'unassigned': {
+			let detail: string | undefined;
+			let labelColor: string | undefined;
+			let renamedFrom: string | undefined;
+			if (e.event === 'labeled' || e.event === 'unlabeled') {
+				detail = e.label?.name;
+				labelColor = e.label?.color ?? undefined;
+			} else if (e.event === 'renamed') {
+				detail = e.rename?.to;
+				renamedFrom = e.rename?.from;
+			} else if (e.event === 'review_requested' || e.event === 'review_request_removed')
+				detail = e.requested_reviewer?.login ?? e.requested_team?.name;
+			else if (e.event === 'assigned' || e.event === 'unassigned') detail = e.assignee?.login;
+			return {
+				kind: 'event',
+				key: `event-${e.id ?? `${e.event}-${e.created_at}`}`,
+				event: e.event,
+				actor: e.actor?.login ?? 'unknown',
+				actorAvatarUrl: e.actor?.avatar_url ?? undefined,
+				detail,
+				renamedFrom,
+				labelColor,
+				// The merge commit's short SHA, surfaced so the row reads "merged commit
+				// <sha> into <base>". `commitUrl` is filled in by the caller, which has
+				// the repo coordinates.
+				commitSha:
+					e.event === 'merged' && typeof e.commit_id === 'string'
+						? e.commit_id.slice(0, 7)
+						: undefined,
+				createdAt: e.created_at
+			};
+		}
+		// Another issue/PR referenced this one ("X mentioned this pull request").
+		case 'cross-referenced': {
+			const src = e.source?.issue;
+			if (!src || typeof src.number !== 'number') return null;
+			const isPullRequest = !!src.pull_request;
+			let refState: PRConversationReference['refState'];
+			if (isPullRequest && src.pull_request?.merged_at) refState = 'merged';
+			else if (src.draft) refState = 'draft';
+			else refState = src.state === 'closed' ? 'closed' : 'open';
+			return {
+				kind: 'reference',
+				key: `xref-${src.id ?? src.number}-${e.created_at}`,
+				actor: e.actor?.login ?? src.user?.login ?? 'unknown',
+				actorAvatarUrl: e.actor?.avatar_url ?? undefined,
+				refNumber: src.number,
+				refTitle: src.title ?? '',
+				refUrl: src.html_url ?? '',
+				isPullRequest,
+				refState,
+				createdAt: e.created_at
+			};
+		}
+		default:
+			return null;
+	}
+}
+
+export async function listConversation(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	accountId?: string | null
+): Promise<PRConversationItem[]> {
+	const viewer = resolveAccount(accountId);
+	const o = octokit(viewer);
+	// The PR's issue number equals its PR number; the timeline lives on the issue.
+	// In parallel, list the PR's commits — the timeline's `committed` events carry
+	// only a git identity (no GitHub user), so we map each SHA to its author's
+	// avatar here to render the same avatars GitHub shows. Best-effort: a failed
+	// commit listing just leaves commits without avatars. We also fetch the PR
+	// itself for its `created_at`, used below to flag auto-requested Copilot
+	// reviews; a failed fetch just disables that flag.
+	const [events, commits, prCreatedAt] = await Promise.all([
+		o.paginate(o.issues.listEventsForTimeline, {
+			owner,
+			repo,
+			issue_number: prNumber,
+			per_page: 100
+		}),
+		o
+			.paginate(o.pulls.listCommits, { owner, repo, pull_number: prNumber, per_page: 100 })
+			.catch(() => [] as Array<{ sha: string; author: unknown; committer: unknown }>),
+		o.pulls
+			.get({ owner, repo, pull_number: prNumber })
+			.then((r) => r.data.created_at)
+			.catch(() => null)
+	]);
+	const commitAvatars = new Map<string, string>();
+	for (const c of commits) {
+		const avatar =
+			(c.author as { avatar_url?: string } | null)?.avatar_url ??
+			(c.committer as { avatar_url?: string } | null)?.avatar_url;
+		if (avatar) commitAvatars.set(c.sha, avatar);
+	}
+
+	// GitHub's "automatically request Copilot review" setting fires a
+	// `review_requested` for Copilot right after the PR opens or is marked
+	// ready-for-review — within a second or two, by the same actor. No API field
+	// distinguishes it from a manual request (REST, GraphQL and
+	// `performed_via_github_app` are all identical), so we infer it from that
+	// timing: a Copilot request landing within the window after a "ready" moment.
+	const AUTO_REVIEW_WINDOW_MS = 30_000;
+	const readyTimes: number[] = [];
+	if (prCreatedAt) readyTimes.push(Date.parse(prCreatedAt));
+	for (const e of events as Array<{ event?: string; created_at?: string }>) {
+		if (e.event === 'ready_for_review' && e.created_at) readyTimes.push(Date.parse(e.created_at));
+	}
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const isAutoCopilotRequest = (e: any): boolean => {
+		if (e.event !== 'review_requested') return false;
+		const r = e.requested_reviewer;
+		if (!r || r.type !== 'Bot' || r.login !== 'Copilot') return false;
+		const t = e.created_at ? Date.parse(e.created_at) : NaN;
+		if (Number.isNaN(t)) return false;
+		return readyTimes.some((rt) => t >= rt && t - rt <= AUTO_REVIEW_WINDOW_MS);
+	};
+
+	const items: PRConversationItem[] = [];
+	for (const e of events) {
+		const mapped = mapTimelineItem(e, viewer?.login ?? null);
+		if (!mapped) continue;
+		if (mapped.kind === 'commit') {
+			mapped.authorAvatarUrl = commitAvatars.get(mapped.sha) ?? mapped.authorAvatarUrl;
+		}
+		// Re-attribute an auto-requested Copilot review to the reviewer, mirroring
+		// GitHub: it shows "Copilot review requested due to automatic review
+		// settings" rather than crediting the user who tripped the setting.
+		if (mapped.kind === 'event' && isAutoCopilotRequest(e)) {
+			const reviewer = (e as { requested_reviewer?: { login: string; avatar_url?: string } })
+				.requested_reviewer;
+			mapped.auto = true;
+			if (reviewer) {
+				mapped.actor = reviewer.login;
+				mapped.actorAvatarUrl = reviewer.avatar_url ?? mapped.actorAvatarUrl;
+			}
+		}
+		// Link the merge commit to its page on GitHub (the timeline gives only the
+		// API url, so build the html one from the repo coordinates + SHA).
+		if (
+			mapped.kind === 'event' &&
+			mapped.event === 'merged' &&
+			typeof (e as { commit_id?: string }).commit_id === 'string'
+		) {
+			mapped.commitUrl = `https://github.com/${owner}/${repo}/commit/${(e as { commit_id: string }).commit_id}`;
+		}
+		items.push(mapped);
+	}
+	// GitHub emits both a `merged` and a `closed` event when a PR is merged; the two
+	// say the same thing, so collapse to just the richer `merged` row (which carries
+	// the commit + base). A plain-closed PR keeps its `closed` event.
+	const merged = items.some((i) => i.kind === 'event' && i.event === 'merged');
+	const deduped = merged
+		? items.filter((i) => !(i.kind === 'event' && i.event === 'closed'))
+		: items;
+	// The timeline is roughly chronological already, but mixing `created_at`,
+	// `submitted_at` and commit dates can interleave slightly out of order — sort
+	// to be safe. Items with no usable timestamp sink to the bottom.
+	deduped.sort((a, b) => {
+		const at = a.createdAt ? Date.parse(a.createdAt) : Infinity;
+		const bt = b.createdAt ? Date.parse(b.createdAt) : Infinity;
+		return at - bt;
+	});
+	return deduped;
+}
+
+export async function createIssueComment(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	body: string,
+	accountId?: string | null
+): Promise<PRConversationItem> {
+	const viewer = resolveAccount(accountId);
+	const o = octokit(viewer);
+	const res = await o.issues.createComment({
+		owner,
+		repo,
+		issue_number: prNumber,
+		body
+	});
+	const c = res.data;
+	return {
+		kind: 'comment',
+		key: `comment-${c.id}`,
+		id: c.id,
+		author: c.user?.login ?? viewer.login,
+		authorAvatarUrl: c.user?.avatar_url ?? '',
+		body: c.body ?? body,
+		url: c.html_url ?? '',
+		createdAt: c.created_at,
+		canDelete: true
+	};
+}
+
+export async function deleteIssueComment(
+	owner: string,
+	repo: string,
+	commentId: number,
+	accountId?: string | null
+): Promise<void> {
+	const o = octokit(resolveAccount(accountId));
+	await o.issues.deleteComment({ owner, repo, comment_id: commentId });
+}
+
+// Edit a conversation comment's body (the user editing their own comment, or a
+// task-list checkbox toggle rewriting the markdown). Returns the new body as
+// GitHub stored it.
+export async function updateIssueComment(
+	owner: string,
+	repo: string,
+	commentId: number,
+	body: string,
+	accountId?: string | null
+): Promise<string> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.issues.updateComment({ owner, repo, comment_id: commentId, body });
+	return res.data.body ?? body;
+}
+
+// Edit the PR's description (its body) — used by the Conversation tab's
+// description card edit and its task-list checkbox toggles. Returns the new body.
+export async function updatePullRequestBody(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	body: string,
+	accountId?: string | null
+): Promise<string> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.pulls.update({ owner, repo, pull_number: prNumber, body });
+	return res.data.body ?? body;
+}
+
+// Merge a PR with the given method. GitHub returns `merged: false` (rather than
+// throwing) when it declines a mergeable-looking PR, so the caller surfaces
+// `message` instead of treating it as a hard error.
+export async function mergePullRequest(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	method: PRMergeMethod,
+	accountId?: string | null,
+	// Commit title/message for the merge commit (squash/merge methods only; rebase
+	// ignores them). Undefined lets GitHub fall back to its own defaults.
+	commitTitle?: string,
+	commitMessage?: string
+): Promise<PRMergeResult> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.pulls.merge({
+		owner,
+		repo,
+		pull_number: prNumber,
+		merge_method: method,
+		...(commitTitle ? { commit_title: commitTitle } : {}),
+		...(commitMessage != null ? { commit_message: commitMessage } : {})
+	});
+	return { merged: res.data.merged, message: res.data.message, sha: res.data.sha };
+}
+
+// Take a draft PR out of draft. REST has no "undraft" endpoint, so we use the
+// GraphQL markPullRequestReadyForReview mutation, which keys off the PR's global
+// node id — fetched here since our PRSummary doesn't carry it.
+export async function markPullRequestReady(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	accountId?: string | null
+): Promise<void> {
+	const o = octokit(resolveAccount(accountId));
+	const { data } = await o.pulls.get({ owner, repo, pull_number: prNumber });
+	await o.graphql(
+		`mutation ($id: ID!) {
+       markPullRequestReadyForReview(input: { pullRequestId: $id }) {
+         pullRequest { id isDraft }
+       }
+     }`,
+		{ id: data.node_id }
+	);
 }

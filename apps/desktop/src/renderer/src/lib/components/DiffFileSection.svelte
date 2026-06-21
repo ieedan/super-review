@@ -1648,15 +1648,22 @@
 	onMount(() => {
 		const el = pathEl;
 		if (!el) return;
-		const measure = (): void => {
+		// Font (weight + family) comes from the label's CSS classes and never
+		// changes while the user resizes, so resolve it once up front. Keeping
+		// getComputedStyle out of the resize path matters: every visible section
+		// runs this observer, and a forced style recalc per file per resize pixel
+		// is what made dragging the panes lag.
+		const cs = window.getComputedStyle(el);
+		// text-xs is 12px in Tailwind; pair it with the label's resolved
+		// (monospace) family for a canvas-compatible font shorthand.
+		pathFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
+		// Seed the width synchronously so the first truncation pass has a real
+		// value instead of waiting for the observer's async initial callback.
+		pathWidth = el.clientWidth;
+		// The observer now only reads clientWidth, a cheap cached layout property.
+		const ro = new ResizeObserver(() => {
 			pathWidth = el.clientWidth;
-			const cs = window.getComputedStyle(el);
-			// text-xs is 12px in Tailwind; pair it with the label's resolved
-			// (monospace) family for a canvas-compatible font shorthand.
-			pathFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
-		};
-		measure();
-		const ro = new ResizeObserver(measure);
+		});
 		ro.observe(el);
 		return () => ro.disconnect();
 	});
@@ -1837,7 +1844,7 @@
 >
 	<header
 		class={[
-			'sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
+			'@container sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
 		]}
 	>
 		<!-- The visible chevron stays size-5, but a transparent ::before stretches the
@@ -1881,25 +1888,32 @@
 				</span>
 			{/if}
 			{#if file.isBinary}
-				<Badge variant="muted">binary</Badge>
+				<Badge variant="muted" class="@max-[440px]:hidden">binary</Badge>
 			{/if}
 			{#if isPRContext && commentCount > 0}
-				<Badge variant="muted">{commentCount} comment{commentCount === 1 ? '' : 's'}</Badge>
+				<Badge variant="muted" class="@max-[440px]:hidden">
+					{commentCount} comment{commentCount === 1 ? '' : 's'}
+				</Badge>
 			{/if}
 		</div>
 		<div class="flex items-center gap-2 text-[10px] tabular-nums">
 			{#if !file.isBinary}
 				{#if file.additions > 0}
-					<span class="text-success">+{file.additions}</span>
+					<span class="text-success @max-[360px]:hidden">+{file.additions}</span>
 				{/if}
 				{#if file.deletions > 0}
-					<span class="text-destructive">−{file.deletions}</span>
+					<span class="text-destructive @max-[360px]:hidden">−{file.deletions}</span>
 				{/if}
 			{/if}
 			{#if anyEditorAvailable}
+				<!-- As the diff pane gets cramped (e.g. comments panel open), elements
+				     drop right-to-left so the file name keeps its room, widest first:
+				     Mark seen (<500, ⌘↵ still works) → badges (<440) → this editor
+				     button (<400) → the +/- counts (<360). -->
 				<Button
 					variant="ghost"
 					size="icon-sm"
+					class="@max-[400px]:hidden"
 					onclick={() => actions.openInEditor(file.path)}
 					title={editor ? `Open in ${editorLabels[editor]}` : 'Open in editor'}
 				>
@@ -1933,7 +1947,12 @@
 					{/if}
 				</Button>
 			{/if}
-			<Button variant={isSeen ? 'secondary' : 'outline'} size="sm" onclick={handleMarkSeen}>
+			<Button
+				variant={isSeen ? 'secondary' : 'outline'}
+				size="sm"
+				class="@max-[500px]:hidden"
+				onclick={handleMarkSeen}
+			>
 				{#if isSeen}
 					<Check class="size-3.5" /> Seen
 				{:else}
