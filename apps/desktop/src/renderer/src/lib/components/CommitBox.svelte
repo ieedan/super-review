@@ -289,7 +289,10 @@
 	}
 </script>
 
-<form class="flex flex-col gap-1.5 border-t border-border bg-card/40 p-2" onsubmit={submit}>
+<form
+	class="flex flex-col gap-1.5 border-t border-border bg-card/75 p-2 backdrop-blur-md"
+	onsubmit={submit}
+>
 	<div class="flex items-center gap-2">
 		<AccountSwitcher
 			align="start"
@@ -427,7 +430,9 @@
 </form>
 
 {#if canUndo && lastCommit}
-	<div class="flex items-center gap-2 border-t border-border bg-card/40 px-2 py-1.5">
+	<div
+		class="flex items-center gap-2 border-t border-border bg-card/75 px-2 py-1.5 backdrop-blur-md"
+	>
 		<div class="min-w-0 flex-1">
 			<p class="truncate text-[11px] text-muted-foreground">
 				Committed {lastCommit.relativeTime}

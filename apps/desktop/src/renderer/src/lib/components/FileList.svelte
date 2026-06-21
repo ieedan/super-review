@@ -643,6 +643,28 @@
 		};
 	});
 
+	// The commit-box footer floats over the file list (frosted, so the changes
+	// show through behind it). Measure its height so the list reserves matching
+	// bottom padding — otherwise the last rows would scroll under the box and be
+	// unreachable. offsetHeight tracks the collapsed layout height; the notice
+	// stack expanding on hover uses transforms, which don't change it.
+	let footerEl = $state<HTMLElement | null>(null);
+	let footerHeight = $state(0);
+	$effect(() => {
+		const el = footerEl;
+		if (!el) {
+			footerHeight = 0;
+			return;
+		}
+		const update = (): void => {
+			footerHeight = el.offsetHeight;
+		};
+		update();
+		const ro = new ResizeObserver(update);
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+
 	// Approximate width available for the path text in a list-layout row, after
 	// subtracting fixed UI chrome (checkbox, optional file icon, gaps, padding,
 	// and a generous reserve for the +/- stats span). One shared value across
@@ -738,7 +760,7 @@
      doubled-up line at the window edge. -->
 <Sidebar.Root
 	collapsible="none"
-	class={`h-full w-full bg-card/30 ${app.sidebarCollapsed ? '' : 'border-r border-sidebar-border'}`}
+	class={`relative h-full w-full bg-card/30 ${app.sidebarCollapsed ? '' : 'border-r border-sidebar-border'}`}
 >
 	<Sidebar.Header class="gap-0 p-0">
 		<!-- Combined header — context tabs on the left, then seen/total + adds/dels
@@ -1090,7 +1112,7 @@
 		{/if}
 	</Sidebar.Header>
 
-	<Sidebar.Content bind:ref={scrollRoot}>
+	<Sidebar.Content bind:ref={scrollRoot} style={`padding-bottom:${footerHeight}px`}>
 		{#if app.contextTab === 'sessions' && !app.activeSessionId}
 			<!-- Sessions tab with no session open: list the documented sessions. -->
 			<SessionsList />
@@ -1345,14 +1367,14 @@
 	</Sidebar.Content>
 
 	{#if app.contextTab === 'unstaged' && !app.stashView}
-		<Sidebar.Footer class="gap-0 p-0">
+		<Sidebar.Footer bind:ref={footerEl} class="absolute inset-x-0 bottom-0 z-20 gap-0 p-0">
 			{#if app.stash}
 				<!-- The branch's managed stash: click to enter the stash view (its
              diff + Restore/Discard actions). Sits above the commit box, like
              GitHub Desktop's "Stashed Changes" entry. -->
 				<button
 					type="button"
-					class="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm hover:bg-accent/50"
+					class="flex w-full items-center gap-2 border-t border-border bg-card/75 px-3 py-2 text-left text-sm backdrop-blur-md hover:bg-accent/50"
 					onclick={() => actions.openStashView()}
 				>
 					<Archive class="size-4 shrink-0 text-muted-foreground" />
