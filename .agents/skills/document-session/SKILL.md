@@ -117,10 +117,7 @@ committed diff instead of the working tree.
 ## Respond to review comments
 
 Reviewers leave **inline comments** on your diff in the Super Review desktop
-app. They're stored locally on your machine in a SQLite database
-(`~/.super-review/comments.db`) that the desktop app and this CLI share - a
-personal, per-machine review aid, _not_ committed to the repo. You read and
-resolve them from the CLI.
+app. You read and resolve them from the CLI.
 
 Comments are filed under the **diff context** they were made in, and
 `comment list` defaults to the working-tree context - so to see the comments a
