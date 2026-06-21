@@ -14,7 +14,7 @@ pnpx super-review session save --key "<your conversation/run id>" --tour '<tour 
 ```
 
 For the tour JSON shape, callouts, and all flags, see
-[.agents/skills/document-session/SKILL.md](.agents/skills/document-session/SKILL.md).
+[.agents/skills/super-review/document-session.md](.agents/skills/super-review/document-session.md).
 
 ## Use native context menus
 
