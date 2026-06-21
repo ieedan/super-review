@@ -117,20 +117,28 @@ committed diff instead of the working tree.
 ## Respond to review comments
 
 Reviewers leave **inline comments** on your diff in the Super Review desktop
-app. They're stored in the repo under `.super-review/comments/` (one JSON file
-each), so they travel with the branch/PR just like sessions - and you read and
-resolve them from the same CLI.
+app. They're stored locally on your machine in a SQLite database
+(`~/.super-review/comments.db`) that the desktop app and this CLI share - a
+personal, per-machine review aid, _not_ committed to the repo. You read and
+resolve them from the CLI.
 
-Find the comments waiting on you:
+Comments are filed under the **diff context** they were made in, and
+`comment list` defaults to the working-tree context - so to see the comments a
+reviewer left on a **pull request** (or a branch diff) you must pass the
+matching `--context`:
 
 ```bash
-super-review comment list --unresolved
+# open comments left while reviewing PR #12
+super-review comment list --context pr:12 --unresolved
 ```
 
-Each line is `<id>  [open]  <path>:L<range>  <first line of the comment>`. By
-default it lists the working-tree context; add `--all` to span every diff
-context, `--context <key>` to target a specific one (e.g. `branch:main..feat`,
-`pr:12`), or `--json` for the raw records.
+- `--context pr:<number>` - comments on a pull request (e.g. `pr:12`).
+- `--context branch:<base>..<head>` - comments on a branch diff (e.g. `branch:main..feat`).
+- `--context workingTree` - the default, uncommitted working-tree diff.
+- `--all` - list every context at once (use this if you're not sure which).
+- `--unresolved` shows only open comments; `--json` emits the raw records.
+
+Each line is `<id>  [open]  <path>:L<range>  <first line of the comment>`.
 
 Address each comment in code, then mark it resolved - and link the session that
 documents the fix so the reviewer can jump straight from the comment to your
