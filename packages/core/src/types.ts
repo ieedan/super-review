@@ -139,6 +139,9 @@ export interface PRSummary {
 	body: string;
 	author: string;
 	authorAvatarUrl: string;
+	// The PR author's relationship to the repo (Owner/Member/Contributor/…), shown
+	// as a small badge on the Conversation tab's description card.
+	authorAssociation?: GithubAuthorAssociation;
 	headRef: string;
 	baseRef: string;
 	headSha: string;
@@ -147,6 +150,9 @@ export interface PRSummary {
 	draft: boolean;
 	updatedAt: string;
 	state: 'open' | 'closed';
+	// When the PR was opened (ISO 8601). Drives the "opened …" line on the
+	// Conversation tab's description card.
+	createdAt: string;
 	// True when the PR has been merged. `state` is "closed" for both merged and
 	// plain-closed PRs, so this distinguishes the two for the status icon.
 	merged: boolean;
@@ -167,6 +173,27 @@ export interface PRSummary {
 	// the fork, so PR operations must target it rather than the active repo.
 	repoOwner?: string;
 	repoName?: string;
+	// GitHub's mergeability for the PR, from the single-PR endpoint only — the
+	// list endpoint omits these, so both are undefined for PRs we've only listed.
+	// `mergeable` is null while GitHub is still computing the answer. Drives the
+	// Conversation tab's merge box "conflicts" row.
+	mergeable?: boolean | null;
+	// Raw merge state: 'clean' | 'dirty' | 'blocked' | 'behind' | 'unstable' |
+	// 'unknown' | 'draft' | 'has_hooks'. 'dirty' means the branch conflicts with
+	// its base.
+	mergeableState?: string;
+}
+
+// How GitHub should combine the PR's commits when merging from the merge box.
+export type PRMergeMethod = 'merge' | 'squash' | 'rebase';
+
+// Result of a merge attempt. `merged` is false when GitHub declined (e.g. the
+// branch became unmergeable between the page render and the click); `message`
+// carries GitHub's explanation for the toast.
+export interface PRMergeResult {
+	merged: boolean;
+	message: string;
+	sha?: string;
 }
 
 // Aggregated CI/workflow status for a PR's head commit. Mirrors GitHub's
@@ -186,6 +213,10 @@ export interface PRCheck {
 	// Avatar of the app/integration that reported the check (e.g. GitHub
 	// Actions), or null when unavailable.
 	avatarUrl: string | null;
+	// Link to the check's own page on GitHub — the workflow-run/job for a
+	// check-run, or the status's target URL for a legacy commit status. null when
+	// the source didn't provide one (the row then isn't clickable).
+	url: string | null;
 }
 
 // A deployment created against the PR's head commit (e.g. a preview or
@@ -431,6 +462,143 @@ export interface NewReviewCommentInput {
 	body: string;
 	line: number;
 	side: 'LEFT' | 'RIGHT';
+	// Git ref of the commit the on-screen diff was rendered from, so the comment
+	// anchors to exactly what the user is looking at. `pr/<n>/head` for a PR view,
+	// or the branch tip for a Branch view. On the Branch tab the branch tip (once
+	// pushed) IS the PR's live head, so the comment isn't born "Outdated" — unlike
+	// anchoring to a `pr/<n>/head` snapshot that lags commits pushed since the PR
+	// was last fetched. Omitted for views with no committed head (e.g. working
+	// tree), where the main process falls back to `pr/<n>/head` then the live head.
+	headRef?: string;
+}
+
+// ─── PR conversation timeline ─────────────────────────────────────────────────
+// The PR's top-level conversation — what GitHub shows on the "Conversation" tab —
+// as a single chronologically-ordered feed. Distinct from the line-anchored
+// review comments in `PRReviewComment[]`: these are the issue comments, review
+// summaries, commits and timeline events that make up the discussion around the
+// PR as a whole. A discriminated union so the renderer can render each kind with
+// its own chrome.
+export type PRConversationItem =
+	| PRConversationComment
+	| PRConversationReview
+	| PRConversationCommit
+	| PRConversationEvent
+	| PRConversationReference;
+
+interface PRConversationBase {
+	// Stable, unique key for the renderer's keyed `{#each}`.
+	key: string;
+	// ISO 8601 timestamp the feed is ordered by.
+	createdAt: string;
+}
+
+// The commenter's relationship to the repo, as GitHub reports it
+// (`author_association`). Drives the small "Owner"/"Member"/"Contributor" badge
+// next to a name. 'NONE' (and anything we don't badge) renders nothing.
+export type GithubAuthorAssociation =
+	| 'OWNER'
+	| 'MEMBER'
+	| 'COLLABORATOR'
+	| 'CONTRIBUTOR'
+	| 'FIRST_TIME_CONTRIBUTOR'
+	| 'FIRST_TIMER'
+	| 'MANNEQUIN'
+	| 'NONE';
+
+// A top-level issue comment posted to the PR conversation.
+export interface PRConversationComment extends PRConversationBase {
+	kind: 'comment';
+	id: number;
+	author: string;
+	authorAvatarUrl: string;
+	authorAssociation?: GithubAuthorAssociation;
+	body: string;
+	url: string;
+	// True when authored by the active GitHub account (so it can be deleted).
+	canDelete: boolean;
+}
+
+// A submitted review (its summary body + verdict). Inline review comments live in
+// `PRReviewComment[]`, not here; an empty-body "commented" review is dropped by
+// the service so it doesn't show up as a contentless row.
+export interface PRConversationReview extends PRConversationBase {
+	kind: 'review';
+	id: number;
+	author: string;
+	authorAvatarUrl: string;
+	authorAssociation?: GithubAuthorAssociation;
+	body: string;
+	state: 'approved' | 'changes_requested' | 'commented' | 'dismissed';
+	url: string;
+}
+
+// A commit pushed to the PR's head branch.
+export interface PRConversationCommit extends PRConversationBase {
+	kind: 'commit';
+	sha: string;
+	shortSha: string;
+	// First line of the commit message (the subject).
+	message: string;
+	// The rest of the commit message (everything after the first line), trimmed.
+	// Undefined for a single-line commit. Surfaced behind a "…" toggle, like
+	// GitHub's expandable commit description.
+	body?: string;
+	author: string;
+	authorAvatarUrl?: string;
+	// True when GitHub verified the commit's signature (renders a "Verified" badge,
+	// mirroring GitHub's commit list).
+	verified: boolean;
+	url?: string;
+}
+
+// A lighter-weight timeline event (merged, closed, reopened, labeled, renamed,
+// review requested, …) rendered as a one-line activity entry. `event` is the raw
+// GitHub event name; `detail` carries any supplemental text (a label name, the
+// new title for a rename, the requested reviewer).
+export interface PRConversationEvent extends PRConversationBase {
+	kind: 'event';
+	event: string;
+	actor: string;
+	actorAvatarUrl?: string;
+	detail?: string;
+	// For a `renamed` event: the previous title (GitHub's `rename.from`). `detail`
+	// carries the new title, so the row can show the old title struck through, like
+	// GitHub.
+	renamedFrom?: string;
+	// For label events: the label's hex color (no leading '#'), so it renders as a
+	// colored chip like GitHub rather than plain text.
+	labelColor?: string;
+	// True for a Copilot `review_requested` that GitHub auto-created from a repo's
+	// "automatically request Copilot review" setting (inferred from the request
+	// landing within seconds of the PR opening / being marked ready). GitHub shows
+	// these as "Copilot review requested due to automatic review settings" with the
+	// reviewer (not the triggering user) as the subject.
+	auto?: boolean;
+	// For the `merged` event: the short SHA of the merge commit, so the row can
+	// read "merged commit <sha> into <base>" like GitHub. Undefined otherwise.
+	commitSha?: string;
+	// For the `merged` event: a link to the merge commit on GitHub, opened when the
+	// SHA is clicked.
+	commitUrl?: string;
+}
+
+// A cross-reference: another issue or PR that mentioned this one (GitHub's
+// `cross-referenced` timeline event, rendered as "X mentioned this pull request"
+// with a link to the referencing item and its status badge).
+export interface PRConversationReference extends PRConversationBase {
+	kind: 'reference';
+	actor: string;
+	actorAvatarUrl?: string;
+	// The referencing issue/PR.
+	refNumber: number;
+	refTitle: string;
+	refUrl: string;
+	// True when the referencing item is a PR (vs a plain issue) — drives the icon
+	// and the "pull request" / "issue" wording.
+	isPullRequest: boolean;
+	// Status of the referencing item, for the trailing badge.
+	refState: 'open' | 'closed' | 'merged' | 'draft';
 }
 
 // ─── Local review comments ───────────────────────────────────────────────────
@@ -990,6 +1158,13 @@ export interface UserPrefs {
 	// (true = collapsed); `commentsSidebarOpen` is the right comments panel.
 	sidebarCollapsed: boolean;
 	commentsSidebarOpen: boolean;
+	// Which tab the comments sidebar reopens on — the line/review Comments list or
+	// the PR Conversation feed. Persisted so the choice survives a restart.
+	commentsSidebarTab: 'comments' | 'conversation';
+	// When true, the comments panel takes over the whole work area (the diff pane
+	// is collapsed to zero). Only reachable while the left sidebar is collapsed;
+	// reopening the left sidebar exits it. Persisted so it survives a restart.
+	conversationFullscreen: boolean;
 	// How many recently opened repositories the repo picker's "Recent" section
 	// lists. 0 hides the section entirely.
 	recentRepoCount: number;
@@ -1161,6 +1336,9 @@ export interface PreloadAPI {
 			opts: { deleteRemote: boolean; upstream?: string }
 		): Promise<DeleteBranchResult>;
 		listChangedFiles(repoId: string, ctx: DiffContext): Promise<ChangedFile[]>;
+		// Whether a ref resolves to a commit locally. Used on a cold start to
+		// confirm a remembered branch base still exists before diffing against it.
+		refExists(repoId: string, ref: string): Promise<boolean>;
 		getDiff(repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData>;
 		fetchOrigin(repoId: string): Promise<{ ok: boolean; error?: string }>;
 		getPushStatus(repoId: string): Promise<PushStatus>;
@@ -1321,6 +1499,69 @@ export interface PreloadAPI {
 			owner?: string,
 			repo?: string
 		): Promise<void>;
+		// The PR's top-level conversation timeline (issue comments, review summaries,
+		// commits and events) in chronological order. Drives the Conversation tab.
+		listConversation(
+			repoId: string,
+			prNumber: number,
+			owner?: string,
+			repo?: string
+		): Promise<PRConversationItem[]>;
+		// Post a top-level comment to the PR conversation and return the created item.
+		createIssueComment(
+			repoId: string,
+			prNumber: number,
+			body: string,
+			owner?: string,
+			repo?: string
+		): Promise<PRConversationItem>;
+		// Delete one of the viewer's own conversation comments.
+		deleteIssueComment(
+			repoId: string,
+			commentId: number,
+			owner?: string,
+			repo?: string
+		): Promise<void>;
+		// Edit a conversation comment's body (user edit, or a task-list checkbox
+		// toggle). Returns the body as GitHub stored it.
+		updateIssueComment(
+			repoId: string,
+			commentId: number,
+			body: string,
+			owner?: string,
+			repo?: string
+		): Promise<string>;
+		// Edit the PR description (its body) — the description card's edit and its
+		// task-list checkbox toggles. Returns the new body.
+		updatePullRequestBody(
+			repoId: string,
+			prNumber: number,
+			body: string,
+			owner?: string,
+			repo?: string
+		): Promise<string>;
+		// Merge the PR with the chosen method (merge commit / squash / rebase).
+		// Targets the PR's host (base) repo. Returns GitHub's result; `merged` is
+		// false when GitHub declined rather than throwing.
+		mergePullRequest(
+			repoId: string,
+			prNumber: number,
+			method: PRMergeMethod,
+			owner?: string,
+			repo?: string,
+			// Commit title/message for the merge commit (squash/merge only; rebase
+			// ignores them). Omitted lets GitHub use its own defaults.
+			commitTitle?: string,
+			commitMessage?: string
+		): Promise<PRMergeResult>;
+		// Take a draft PR out of draft ("Ready for review"). Uses the GraphQL
+		// markPullRequestAsReady mutation (REST has no equivalent).
+		markPullRequestReady(
+			repoId: string,
+			prNumber: number,
+			owner?: string,
+			repo?: string
+		): Promise<void>;
 		// Resolve or unresolve a review thread by its GraphQL node id. Returns the
 		// thread's resolved state as reported back by GitHub.
 		setReviewThreadResolved(
@@ -1362,6 +1603,17 @@ export interface PreloadAPI {
 			collapsed: boolean
 		): Promise<void>;
 		clearCollapsedFiles(repoId: string, contextKey: string): Promise<void>;
+		// The last-computed changed-file list for a context, persisted so a cold
+		// start can paint the sidebar (with seen markers) instantly while the git
+		// diff revalidates in the background. Empty array if none is cached.
+		getCachedFileList(repoId: string, contextKey: string): Promise<ChangedFile[]>;
+		setCachedFileList(repoId: string, contextKey: string, files: ChangedFile[]): Promise<void>;
+		// The non-default base ref the Branch diff last used for a checked-out
+		// branch (a pinned `pr/<n>/base`), remembered so a cold start targets it
+		// from the first paint instead of flipping off the local default branch
+		// once the async PR lookup lands. Null when none was remembered.
+		getBranchBase(repoId: string, branch: string): Promise<string | null>;
+		setBranchBase(repoId: string, branch: string, base: string | null): Promise<void>;
 		getCommitDraft(repoId: string): Promise<CommitDraft>;
 		setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
 	};

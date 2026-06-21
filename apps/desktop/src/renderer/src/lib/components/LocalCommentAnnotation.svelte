@@ -175,7 +175,7 @@
 			<div class="composer-footer">
 				<div class="actions">
 					<Button variant="ghost" size="sm" type="button" onclick={cancel}>
-						Cancel <kbd class="kbd">esc</kbd>
+						Cancel <span class="ml-1 text-muted-foreground">esc</span>
 					</Button>
 					<Button
 						variant="default"
@@ -184,7 +184,7 @@
 						disabled={!composer.draft.trim() || composer.submitting}
 					>
 						{composer.submitting ? 'Saving…' : 'Comment'}
-						<kbd class="kbd">⌘⏎</kbd>
+						<span class="ml-1 text-muted-foreground">⌘⏎</span>
 					</Button>
 				</div>
 			</div>
@@ -280,14 +280,5 @@
 	.actions {
 		display: flex;
 		gap: 4px;
-	}
-	.kbd {
-		font-family: inherit;
-		font-size: 10px;
-		line-height: 1;
-		padding: 2px 4px;
-		border-radius: 4px;
-		background: hsl(var(--foreground) / 0.08);
-		opacity: 0.7;
 	}
 </style>

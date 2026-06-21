@@ -711,12 +711,18 @@
   collapses to 0 width on Cmd+B or drag, which unmounts this visually — so
   we no longer need an in-list "expand from collapsed" branch.
 -->
-<Sidebar.Root collapsible="none" class="h-full w-full border-r border-sidebar-border bg-card/30">
+<!-- Drop the right border when collapsed: the pane is 0-width then, so the border
+     would just stack against the sidebar/diff resize handle and read as a darker,
+     doubled-up line at the window edge. -->
+<Sidebar.Root
+	collapsible="none"
+	class={`h-full w-full bg-card/30 ${app.sidebarCollapsed ? '' : 'border-r border-sidebar-border'}`}
+>
 	<Sidebar.Header class="gap-0 p-0">
 		<!-- Combined header — context tabs on the left, then seen/total + adds/dels
          totals, and the collapse trigger pinned right. Matches the diff sticky
          header height so their bottom borders line up across panes. -->
-		<div class="flex h-11 items-center gap-2 border-b border-border px-2">
+		<div class="@container flex h-11 items-center gap-2 border-b border-border px-2">
 			{#if app.stashView}
 				<!-- Viewing the managed stash: the tab strip is replaced with a back
              button returning to the working tree, and a label. The Restore /
@@ -823,16 +829,21 @@
 				</Tabs.Root>
 			{/if}
 
-			{#if app.changedFiles.length > 0 && app.contextTab !== 'unstaged'}
-				<span class="text-xs text-muted-foreground tabular-nums">
-					<span class="font-medium">{seenDisplay}/{app.changedFiles.length}</span>
-				</span>
-			{/if}
+			<!-- Seen/total + adds/dels totals. Hidden via a container query once the
+			     sidebar is too narrow to fit them beside the tabs, so the floor only
+			     needs to cover the tabs + collapse trigger. -->
 			{#if app.changedFiles.length > 0}
-				<span class="text-[11px] tabular-nums">
-					<span class="text-success">+{addDisplay}</span>
-					<span class="ml-0.5 text-destructive">−{delDisplay}</span>
-				</span>
+				<div class="flex shrink-0 items-center gap-2 @max-[400px]:hidden">
+					{#if app.contextTab !== 'unstaged'}
+						<span class="text-xs text-muted-foreground tabular-nums">
+							<span class="font-medium">{seenDisplay}/{app.changedFiles.length}</span>
+						</span>
+					{/if}
+					<span class="text-[11px] tabular-nums">
+						<span class="text-success">+{addDisplay}</span>
+						<span class="ml-0.5 text-destructive">−{delDisplay}</span>
+					</span>
+				</div>
 			{/if}
 			<Button
 				variant="ghost"

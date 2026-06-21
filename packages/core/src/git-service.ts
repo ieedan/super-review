@@ -1010,6 +1010,13 @@ export async function resolveRef(repoPath: string, ref: string): Promise<string 
 	}
 }
 
+// Whether a ref resolves to a commit in this repo. Used on a cold start to
+// confirm a remembered branch base (a `pr/<n>/base` ref fetched in a prior
+// session) still exists locally before the diff targets it.
+export async function refExists(repoPath: string, ref: string): Promise<boolean> {
+	return (await resolveRef(repoPath, ref)) !== null;
+}
+
 // Resolve a branch-diff base to its remote-tracking copy when one exists, so the
 // comparison uses the up-to-date remote tip (`origin/main`) — matching how
 // GitHub computes a PR/branch diff — instead of a possibly-stale local default

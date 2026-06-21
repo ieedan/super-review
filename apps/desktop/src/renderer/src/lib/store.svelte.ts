@@ -22,6 +22,8 @@ import type {
 	LocalCommentAuthor,
 	ManagedStash,
 	PRChecksSummary,
+	PRConversationItem,
+	PRMergeMethod,
 	PRReviewComment,
 	PRSource,
 	PRSummary,
@@ -37,7 +39,7 @@ import type {
 	ViewMode
 } from '@shared/types';
 import { DEFAULT_HEADER_ITEMS, WINDOW_BOUNDS } from '@shared/types';
-import { diffContextKey } from '@shared/diff-context';
+import { diffContextKey, reviewContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
 	buildFilteredPatch,
@@ -320,10 +322,18 @@ interface AppState {
 	// may be an upstream/non-default branch — rather than the local default) only
 	// once it's in here, otherwise it would reference a ref git can't resolve.
 	fetchedPRBases: Set<number>;
-	// CI/workflow status for `branchPR`'s head commit — aggregate plus the
-	// individual checks for a hover breakdown. Keyed by PR number so a stale poll
-	// result can't paint the wrong PR. Polled on an interval while a PR is shown.
-	branchPRChecks: { number: number; summary: PRChecksSummary } | null;
+	// The non-default base ref the checked-out branch was last diffed against
+	// (a `pr/<n>/base`), seeded from disk on a cold start once we've confirmed the
+	// ref still exists locally. Lets branchDiffBaseRef target the PR base from the
+	// first paint — before the async PR lookup resolves — so the Branch diff's
+	// seen-state context key doesn't flip ~1s in. Null when none is remembered.
+	rememberedBranchBase: string | null;
+	// CI/workflow status for the focused PR's head commit (`activePR ?? branchPR`)
+	// — aggregate plus the individual checks for a hover breakdown. The single
+	// source the header button AND the Conversation merge box both read, so they
+	// never skew. Keyed by PR number so a stale poll can't paint the wrong PR;
+	// polled on an interval while a PR is shown.
+	prChecks: { number: number; summary: PRChecksSummary } | null;
 	// Whether the active account can push commits to `branchPR`'s head branch.
 	// null while unknown / not applicable; drives the commit-box warning so it
 	// only fires when a push would actually be rejected.
@@ -373,6 +383,30 @@ interface AppState {
 	// Review comments for the active PR, indexed by file path.
 	prComments: Record<string, PRReviewComment[]>;
 	loadingComments: boolean;
+	// The active PR's top-level conversation timeline (issue comments, reviews,
+	// commits, events), chronological. Drives the Conversation tab. Loaded lazily
+	// the first time that tab is shown for a PR; see `prConversationLoadedFor`.
+	prConversation: PRConversationItem[];
+	loadingConversation: boolean;
+	// The PR number `prConversation` was loaded for, so switching to a different PR
+	// (or away) knows the cached feed is stale. Null when nothing's loaded.
+	prConversationLoadedFor: number | null;
+	// Which tab the comments sidebar shows. 'conversation' only renders in a PR
+	// context; the panel falls back to 'comments' (local/review comments) otherwise.
+	// Ephemeral (per launch).
+	commentsSidebarTab: 'comments' | 'conversation';
+	// Mergeability for the focused PR (`activePR ?? branchPR`). Checks live in the
+	// shared `prChecks` store, not here, so the merge box and header button can't
+	// disagree. Fetched on demand when the Conversation panel is shown.
+	mergeBox: {
+		number: number;
+		mergeable: boolean | null;
+		mergeableState: string;
+	} | null;
+	loadingMergeBox: boolean;
+	// Set while a merge / ready-for-review action is in flight so the merge box's
+	// buttons can disable + spin. Cleared when the action settles.
+	mergeBoxBusy: 'merge' | 'ready' | null;
 	// Thread collapse overrides, keyed by the root comment id (`pr-<rootId>`).
 	// Absence ⇒ use the default (collapsed when the thread is resolved or outdated,
 	// expanded otherwise), so resolving a thread auto-collapses it; an explicit
@@ -391,6 +425,9 @@ interface AppState {
 	localComposers: Record<string, LocalComposer>;
 	// Whether the right-hand comments sidebar is open. Ephemeral (per launch).
 	commentsSidebarOpen: boolean;
+	// When true, the comments panel fills the whole work area (diff pane collapsed
+	// to zero). Only enterable while the left sidebar is collapsed.
+	conversationFullscreen: boolean;
 	// A comment the sidebar asked the diff view to scroll to, bumped on each
 	// request so repeated clicks on the same row re-trigger the scroll.
 	// A comment the sidebar asked the diff to scroll to. `key` matches the
@@ -510,6 +547,16 @@ export function isPRCommentContext(): boolean {
 	);
 }
 
+// The tab the Comments sidebar actually shows. Outside a PR context the
+// Conversation tab doesn't exist, so the panel always displays Comments even
+// when `commentsSidebarTab` still remembers 'conversation' from a PR view. The
+// hotkeys (openCommentsSidebar) must reason about this effective tab, not the
+// raw remembered one, or Ctrl+L thinks it's on the Conversation tab and needs a
+// second press to close.
+export function effectiveCommentsSidebarTab(): 'comments' | 'conversation' {
+	return isPRCommentContext() ? app.commentsSidebarTab : 'comments';
+}
+
 // Whether the Comments sidebar has UNRESOLVED comments in the current context —
 // PR review comments in a PR view, local comments otherwise. Drives the header
 // toggle's notification dot, which should only show when there's something left
@@ -565,11 +612,13 @@ export function uiPR(): PRSummary | null {
 
 // Resolve which PR the comment surface should target.
 // - `kind: 'pr'` context: the PR being reviewed (its number lives on the ctx).
-// - any other context with a known `branchPR`: comment against that PR. The
-//   local diff is computed against working-tree / branch refs, so line
-//   numbers may not align with what GitHub has — uncommitted changes shift
-//   positions, for instance. GitHub will mark the resulting comment outdated
-//   in that case, same as commenting from a stale web view.
+// - any other context with a known `branchPR`: comment against that PR. We anchor
+//   the comment to the branch tip the diff was rendered from (see
+//   `commentAnchorRef`), so when the branch is pushed and in sync with the PR
+//   head the comment lands current. If the local branch has commits GitHub hasn't
+//   seen yet (unpushed) the line numbers won't align with the PR's diff, and the
+//   comment is rejected with an actionable "push your branch" error rather than
+//   silently landing outdated.
 export function commentablePRNumber(): number | null {
 	if (app.diffContext.kind === 'pr') return app.diffContext.prNumber;
 	// `branchPR` tracks the checked-out branch; while reviewing a *different*
@@ -577,6 +626,21 @@ export function commentablePRNumber(): number | null {
 	// screen, so don't offer commenting against it.
 	if (app.branchPR && !isReadOnlyView()) return app.branchPR.number;
 	return null;
+}
+
+// Git ref of the commit the on-screen diff was rendered from, used to anchor a
+// new review comment to exactly what's visible. Mirrors the head `refsForContext`
+// picks: `pr/<n>/head` for a PR view, the branch tip for a Branch view. On the
+// Branch tab the branch tip (once pushed) is the PR's live head, so the comment
+// isn't born "Outdated"; the old code always anchored to the `pr/<n>/head`
+// snapshot, which lags a branch that's had commits pushed since the PR was last
+// fetched. Undefined for contexts with no committed head (working tree), where
+// the main process falls back to the snapshot then the live head.
+function commentAnchorRef(): string | undefined {
+	const ctx = app.diffContext;
+	if (ctx.kind === 'pr') return `pr/${ctx.prNumber}/head`;
+	if (ctx.kind === 'branch') return ctx.head;
+	return undefined;
 }
 
 // The PR the comment/checks surface currently targets (the one being reviewed,
@@ -705,7 +769,8 @@ const initial: AppState = {
 	lastCommit: null,
 	branchPR: null,
 	fetchedPRBases: new Set<number>(),
-	branchPRChecks: null,
+	rememberedBranchBase: null,
+	prChecks: null,
 	branchPRPushAccess: null,
 	repoPushAccess: null,
 	forkPrompt: null,
@@ -718,12 +783,20 @@ const initial: AppState = {
 	activePR: null,
 	prComments: {},
 	loadingComments: false,
+	prConversation: [],
+	loadingConversation: false,
+	prConversationLoadedFor: null,
+	commentsSidebarTab: 'comments',
+	mergeBox: null,
+	loadingMergeBox: false,
+	mergeBoxBusy: null,
 	commentCollapse: new SvelteMap(),
 	pendingComposers: {},
 	localComments: [],
 	localCommentsContextKey: null,
 	localComposers: {},
 	commentsSidebarOpen: false,
+	conversationFullscreen: false,
 	commentScrollTarget: null,
 	addRepoDialogOpen: false,
 	publishDialogOpen: false,
@@ -1208,8 +1281,13 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.sessions = [];
 	app.sessionCount = 0;
 	app.branchPR = null;
+	app.rememberedBranchBase = null;
 	app.switchBranchPrompt = null;
 	await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
+	// Seed the remembered Branch base now (refreshBranches just resolved
+	// currentBranch) so it's ready before the user opens the Branch tab, ahead of
+	// the slow network PR lookup below.
+	await hydrateRememberedBranchBase();
 	await refreshBranchPR();
 	void refreshSkillInstalled();
 }
@@ -1226,6 +1304,9 @@ async function refreshBranches(): Promise<void> {
 		if (app.currentBranch !== prevBranch) {
 			app.changesetPromptDismissed = false;
 			app.changesetWarningDismissed = false;
+			// New checked-out branch → re-seed its remembered Branch base so the diff
+			// targets the right PR base without waiting on the network PR lookup.
+			void hydrateRememberedBranchBase();
 		}
 		// The managed stash is keyed by the current branch, so a branch/repo switch
 		// (which always refreshes branches) should re-resolve it. Fire-and-forget —
@@ -1453,10 +1534,10 @@ async function refreshBranchPR(): Promise<void> {
 		}
 	}
 	// Drop any status for a PR we're no longer showing, then refresh.
-	if (app.branchPRChecks && app.branchPRChecks.number !== app.branchPR?.number) {
-		app.branchPRChecks = null;
+	if (app.prChecks && app.prChecks.number !== mergeBoxPR()?.number) {
+		app.prChecks = null;
 	}
-	await refreshBranchPRChecks();
+	await refreshPrChecks();
 	void refreshBranchPRPushAccess();
 }
 
@@ -1486,13 +1567,15 @@ async function resolveViewBranchPR(branch: string): Promise<void> {
 	}
 }
 
-// Poll the CI/workflow status for the current branch PR's head commit. Cheap
-// and failure-silent — the button just hides the status indicator on error or
-// when nothing reports. Called after `refreshBranchPR` and on a timer.
-async function refreshBranchPRChecks(): Promise<void> {
-	const pr = app.branchPR;
+// Poll the CI/workflow status for the focused PR's head commit (`activePR ??
+// branchPR`) — the single fetch that feeds both the header button and the
+// Conversation merge box. Cheap and failure-silent: the button just hides the
+// indicator on error or when nothing reports. Called after `refreshBranchPR`,
+// when the Conversation panel opens, and on a timer.
+async function refreshPrChecks(): Promise<void> {
+	const pr = mergeBoxPR();
 	if (!app.activeRepo || !pr) {
-		app.branchPRChecks = null;
+		app.prChecks = null;
 		return;
 	}
 	try {
@@ -1501,13 +1584,91 @@ async function refreshBranchPRChecks(): Promise<void> {
 			pr.headSha,
 			...prHostArgs(pr)
 		);
-		// The PR may have changed while the request was in flight; only apply the
-		// result if it still matches what we're showing.
-		if (app.branchPR?.number === pr.number) {
-			app.branchPRChecks = { number: pr.number, summary };
+		// The focused PR may have changed while the request was in flight; only
+		// apply the result if it still matches what we're showing.
+		if (mergeBoxPR()?.number === pr.number) {
+			app.prChecks = { number: pr.number, summary };
 		}
 	} catch (err) {
-		console.error('[branchPR] checks lookup threw:', err);
+		console.error('[prChecks] checks lookup threw:', err);
+	}
+}
+
+// The PR the Conversation tab's merge box acts on — the one reviewed in a PR
+// context, else the checked-out branch's PR. Mirrors ConversationPanel's own
+// `pr = activePR ?? branchPR`.
+function mergeBoxPR(): PRSummary | null {
+	return app.activePR ?? app.branchPR;
+}
+
+// Fold a freshly-fetched PR's status fields back into whichever summaries hold
+// it (activePR and/or branchPR), so the header pill and merge box reflect
+// reality without a full reload. Leaves `body` alone — it's edited through its
+// own optimistic flow and a refetch here could clobber an in-progress edit.
+function applyPRStatus(full: PRSummary): void {
+	const patch = {
+		title: full.title,
+		state: full.state,
+		draft: full.draft,
+		merged: full.merged,
+		mergeable: full.mergeable,
+		mergeableState: full.mergeableState
+	};
+	if (app.activePR && app.activePR.number === full.number) {
+		app.activePR = { ...app.activePR, ...patch };
+	}
+	if (app.branchPR && app.branchPR.number === full.number) {
+		app.branchPR = { ...app.branchPR, ...patch };
+	}
+}
+
+// PR number we've already scheduled a single mergeability re-poll for, so an
+// "unknown" (still-computing) result retries once rather than looping forever.
+let mergeBoxRetriedFor: number | null = null;
+
+// Fetch mergeability (single-PR endpoint) for the merge box's PR, then fold the
+// fresh status back into the PR summaries. CI checks come from the shared
+// `prChecks` store (refreshed in parallel here so opening the panel doesn't wait
+// a poll cycle), not from here. Guarded against a stale result landing after the
+// user switched PRs. Failure-silent — the box just shows whatever it last had.
+async function refreshMergeBox(): Promise<void> {
+	const pr = mergeBoxPR();
+	if (!app.activeRepo || !pr) {
+		app.mergeBox = null;
+		return;
+	}
+	const repoId = app.activeRepo.id;
+	app.loadingMergeBox = true;
+	// Keep the shared checks store in lockstep with the merge box so the panel's
+	// CI rows are current the moment it opens.
+	void refreshPrChecks();
+	try {
+		const full = await window.api.github.getPR(repoId, pr.number, ...prHostArgs(pr));
+		// Bail if the panel's PR changed while the request was in flight.
+		const cur = mergeBoxPR();
+		if (app.activeRepo?.id !== repoId || !cur || cur.number !== pr.number) return;
+		const mergeable = full ? (full.mergeable ?? null) : null;
+		app.mergeBox = {
+			number: pr.number,
+			mergeable,
+			mergeableState: full?.mergeableState ?? 'unknown'
+		};
+		if (full) applyPRStatus(full);
+		// GitHub computes mergeability asynchronously; a freshly-opened PR can come
+		// back null/'unknown'. Re-poll once after a beat so the box settles on its
+		// own rather than needing a manual refresh.
+		if (mergeable === null && mergeBoxRetriedFor !== pr.number) {
+			mergeBoxRetriedFor = pr.number;
+			setTimeout(() => {
+				if (mergeBoxPR()?.number === pr.number) void refreshMergeBox();
+			}, 2500);
+		} else if (mergeable !== null) {
+			mergeBoxRetriedFor = null;
+		}
+	} catch (err) {
+		console.error('[mergeBox] refresh threw:', err);
+	} finally {
+		app.loadingMergeBox = false;
 	}
 }
 
@@ -1602,6 +1763,12 @@ function sessionRef(): string | null {
 function branchDiffBaseRef(): string {
 	const pr = uiPR();
 	if (pr && app.fetchedPRBases.has(pr.number)) return `pr/${pr.number}/base`;
+	// Cold start: the network PR lookup hasn't resolved yet (`pr` is null), but if
+	// we remembered — and just re-verified — the base this checked-out branch was
+	// diffed against last session, reuse it so the diff and its seen-state context
+	// key don't flip when the lookup lands. Only for the checked-out branch; a
+	// read-only view drives its base off `uiPR()` above.
+	if (!isReadOnlyView() && app.rememberedBranchBase) return app.rememberedBranchBase;
 	return app.activeRepo?.defaultBranch ?? 'main';
 }
 
@@ -1611,6 +1778,24 @@ function branchDiffBaseRef(): string {
 function historyHeadRef(): string {
 	if (app.viewPR) return `pr/${app.viewPR.number}/head`;
 	return app.viewBranch ?? app.currentBranch ?? 'HEAD';
+}
+
+// Seed `rememberedBranchBase` from disk for the checked-out branch so the first
+// Branch-tab paint targets the PR base it settled on last session, instead of
+// the local default until the ~1s network PR lookup pins the base (which would
+// load seen markers under the wrong context key, then flip). Cheap and local: a
+// store read plus, only when a base was remembered, one `rev-parse` to confirm
+// the `pr/<n>/base` ref still exists. Bails if the user switched away mid-read.
+async function hydrateRememberedBranchBase(): Promise<void> {
+	const repo = app.activeRepo;
+	const branch = app.currentBranch;
+	app.rememberedBranchBase = null;
+	if (!repo || !branch) return;
+	const base = await window.api.state.getBranchBase(repo.id, branch);
+	if (!base || app.activeRepo?.id !== repo.id || app.currentBranch !== branch) return;
+	if (!(await window.api.git.refExists(repo.id, base))) return;
+	if (app.activeRepo?.id !== repo.id || app.currentBranch !== branch) return;
+	app.rememberedBranchBase = base;
 }
 
 // Resolve which DiffContext the current tab should drive.
@@ -1980,33 +2165,41 @@ async function refreshFiles(): Promise<void> {
 	const cacheKey = filesCacheKey(repoId, ctx);
 	const hadCache = filesCache.has(cacheKey);
 
-	// Cache miss → show the loading state. Cache hit → silent background refresh
-	// (the caller has already hydrated `app.changedFiles` from cache).
-	if (!hadCache) {
-		app.loading.files = true;
-	}
-	try {
-		// Kick off the IPC calls in parallel — the state reads are just store
-		// lookups but each still costs a context bridge roundtrip. The seen
-		// signatures ride along so we can clear seen marks on files that changed
-		// since they were marked (see below).
-		const ctxKey = diffContextKey(ctx);
-		const [raw, seenList, seenSigs, collapsedList] = await Promise.all([
-			window.api.git.listChangedFiles(repoId, ctx),
-			window.api.state.getSeenFiles(repoId, ctxKey),
-			window.api.state.getSeenSignatures(repoId, ctxKey),
-			window.api.state.getCollapsedFiles(repoId, ctxKey)
-		]);
+	const ctxKey = diffContextKey(ctx);
+	// Review state (seen / collapsed) is keyed independent of the diff base so it
+	// loads under a stable key from the first paint, regardless of when the base
+	// resolves. The file-list cache stays on `ctxKey` (it really does depend on
+	// the base).
+	const reviewKey = reviewContextKey(ctx);
+	// Whether we've already put a file list on screen (in-memory cache hit, or a
+	// cold-start paint from the persisted list). Drives error handling: if the git
+	// diff fails we keep what's shown rather than wiping to an error state.
+	let hydrated = hadCache;
+
+	// True once the user has switched repo/context out from under an await, so we
+	// drop a stale result instead of painting it over the new context.
+	const stale = (): boolean =>
+		!app.activeRepo ||
+		app.activeRepo.id !== repoId ||
+		filesCacheKey(repoId, $state.snapshot(app.diffContext) as DiffContext) !== cacheKey;
+
+	// Paint the sidebar from a changed-file list plus the authoritative
+	// seen/collapsed state. Shared by the instant cold-start paint (from the
+	// persisted list) and the post-git-diff paint. `unmarkChanged` runs the
+	// "clear seen on changed files" pass — only meaningful against the fresh git
+	// list, so the cold-start paint skips it (its list may predate new commits).
+	const paint = (
+		rawList: ChangedFile[],
+		seenList: string[],
+		seenSigs: Record<string, string>,
+		collapsedList: string[],
+		unmarkChanged: boolean
+	): ChangedFile[] => {
 		// Sort by path so the diff view and the sidebar tree agree on order —
 		// otherwise the "first file in the tree" can land mid-list in the diff
 		// view, and scrolling past it jumps to whatever git happened to list
 		// before/after instead of feeling like you're at the boundary.
-		const files = [...raw].sort((a, b) => comparePathsVSCodeStyle(a.path, b.path));
-		// Bail if the user switched tabs / repos while we were fetching.
-		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
-		const currentCtx = $state.snapshot(app.diffContext) as DiffContext;
-		if (filesCacheKey(repoId, currentCtx) !== cacheKey) return;
-
+		const files = [...rawList].sort((a, b) => comparePathsVSCodeStyle(a.path, b.path));
 		const seenSet = new SvelteSet(seenList);
 		const collapsedSet = new SvelteSet(collapsedList);
 
@@ -2016,14 +2209,14 @@ async function refreshFiles(): Promise<void> {
 		// time against the current one; a missing/empty stored signature (older
 		// data) is left alone since we have no baseline. Persist each clear so the
 		// mark stays gone across refreshes. Opt-out via the unmarkSeenOnChange pref.
-		if (app.unmarkSeenOnChange) {
+		if (unmarkChanged && app.unmarkSeenOnChange) {
 			for (const file of files) {
 				if (!seenSet.has(file.path)) continue;
 				const prevSig = seenSigs[file.path];
 				const curSig = fileContentSig(file);
 				if (prevSig && sigsComparable(prevSig, curSig) && prevSig !== curSig) {
 					seenSet.delete(file.path);
-					void window.api.state.setFileSeen(repoId, ctxKey, file.path, false);
+					void window.api.state.setFileSeen(repoId, reviewKey, file.path, false);
 				}
 			}
 		}
@@ -2038,6 +2231,67 @@ async function refreshFiles(): Promise<void> {
 		app.seenFiles = seenSet;
 		app.collapsedFiles = collapsedSet;
 		app.selectedFile = nextSelected;
+		filesCache.set(cacheKey, {
+			changedFiles: files,
+			seenFiles: new Set(seenSet),
+			collapsedFiles: new Set(collapsedSet),
+			selectedFile: nextSelected
+		});
+		// There's content on screen now — drop any loading spinner the caller (or
+		// the cold-start fallback below) turned on.
+		app.loading.files = false;
+		return files;
+	};
+
+	try {
+		// Read the cheap, authoritative review state first. These are just store
+		// lookups — they return in well under a frame, unlike the branch git diff —
+		// so on a cold start we can paint the sidebar (with correct seen markers)
+		// from the file list we persisted last time, instead of sitting on a
+		// spinner while git computes the diff. The persisted list rides along in
+		// the same batch, but only when the in-memory cache missed.
+		const [seenList, seenSigs, collapsedList, persisted] = await Promise.all([
+			window.api.state.getSeenFiles(repoId, reviewKey),
+			window.api.state.getSeenSignatures(repoId, reviewKey),
+			window.api.state.getCollapsedFiles(repoId, reviewKey),
+			hadCache
+				? Promise.resolve<ChangedFile[]>([])
+				: window.api.state.getCachedFileList(repoId, ctxKey)
+		]);
+		// Bail if the user switched tabs / repos while we were fetching.
+		if (stale()) return;
+
+		// Cold start: paint the persisted list instantly so seen markers show right
+		// away, then let the git diff below revalidate. Fall back to the spinner
+		// only when there's nothing on disk to show either.
+		if (!hadCache) {
+			if (persisted.length) {
+				paint(persisted, seenList, seenSigs, collapsedList, false);
+				hydrated = true;
+			} else {
+				app.loading.files = true;
+			}
+		}
+
+		const raw = await window.api.git.listChangedFiles(repoId, ctx);
+		if (stale()) return;
+		const files = paint(raw, seenList, seenSigs, collapsedList, true);
+		// Persist the fresh list so the next cold start can paint it immediately.
+		void window.api.state.setCachedFileList(repoId, ctxKey, files);
+		// Remember the checked-out branch's base so the next cold start targets the
+		// same (PR) base from the first paint, keeping the seen-state context key
+		// stable. Clear it when the diff fell back to the default branch (e.g. the
+		// PR merged) so a stale `pr/<n>/base` isn't reused. Only write when the base
+		// actually changed — refreshFiles runs often and each store write rewrites
+		// the whole config file.
+		if (ctx.kind === 'branch' && !isReadOnlyView()) {
+			const def = app.activeRepo?.defaultBranch ?? 'main';
+			const nextBase = ctx.base === def ? null : ctx.base;
+			if (nextBase !== app.rememberedBranchBase) {
+				app.rememberedBranchBase = nextBase;
+				void window.api.state.setBranchBase(repoId, ctx.head, nextBase);
+			}
+		}
 
 		// Drop any multi-selection entries for files that left this context (got
 		// committed, discarded, or changed tabs) so bulk actions never target a
@@ -2074,13 +2328,6 @@ async function refreshFiles(): Promise<void> {
 			}
 		}
 
-		filesCache.set(cacheKey, {
-			changedFiles: files,
-			seenFiles: new Set(seenSet),
-			collapsedFiles: new Set(collapsedSet),
-			selectedFile: nextSelected
-		});
-
 		// Keep the Unstaged tab badge in sync. When the active context already is
 		// the working tree, the fetched list IS the unstaged count; otherwise we
 		// need a separate fetch since the active tab isn't tracking it.
@@ -2102,9 +2349,9 @@ async function refreshFiles(): Promise<void> {
 		// small per-comment JSON set). Fire-and-forget so it never blocks the files.
 		void loadLocalComments();
 	} catch (err) {
-		// On error, keep showing whatever cache we hydrated from. Only surface
-		// the error when we had nothing to show.
-		if (!hadCache) {
+		// On error, keep showing whatever we hydrated from (in-memory or the
+		// persisted list). Only surface the error when we had nothing to show.
+		if (!hydrated) {
 			setError(err instanceof Error ? err.message : String(err));
 			app.changedFiles = [];
 			app.selectedFile = null;
@@ -2242,6 +2489,14 @@ export const actions = {
 		app.startMaximized = app.prefs.startMaximized ?? false;
 		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
 		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
+		app.commentsSidebarTab = app.prefs.commentsSidebarTab ?? 'comments';
+		// Fullscreen only makes sense with the comments panel open and the left
+		// sidebar collapsed; clamp away inconsistent persisted combinations so the
+		// layout never restores with the diff hidden and no way to bring it back.
+		app.conversationFullscreen =
+			(app.prefs.conversationFullscreen ?? false) &&
+			app.commentsSidebarOpen &&
+			app.sidebarCollapsed;
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
 		app.theme = app.prefs.theme;
@@ -2831,7 +3086,13 @@ export const actions = {
 		const file = app.changedFiles.find((f) => f.path === filePath);
 		const sig = next && file ? fileContentSig(file) : undefined;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
-		await window.api.state.setFileSeen(app.activeRepo.id, diffContextKey(ctx), filePath, next, sig);
+		await window.api.state.setFileSeen(
+			app.activeRepo.id,
+			reviewContextKey(ctx),
+			filePath,
+			next,
+			sig
+		);
 	},
 
 	// The changed files in the order the user is currently viewing them: filtered
@@ -2881,7 +3142,7 @@ export const actions = {
 	async clearSeen(): Promise<void> {
 		if (!app.activeRepo) return;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
-		await window.api.state.clearSeen(app.activeRepo.id, diffContextKey(ctx));
+		await window.api.state.clearSeen(app.activeRepo.id, reviewContextKey(ctx));
 		app.seenFiles.clear();
 	},
 
@@ -2985,7 +3246,12 @@ export const actions = {
 		if (next) app.collapsedFiles.add(filePath);
 		else app.collapsedFiles.delete(filePath);
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
-		await window.api.state.setFileCollapsed(app.activeRepo.id, diffContextKey(ctx), filePath, next);
+		await window.api.state.setFileCollapsed(
+			app.activeRepo.id,
+			reviewContextKey(ctx),
+			filePath,
+			next
+		);
 	},
 
 	async checkoutBranch(branch: string): Promise<boolean> {
@@ -3395,9 +3661,16 @@ export const actions = {
 			app.activePR =
 				summary ?? (await window.api.github.getPR(app.activeRepo.id, prNumber, ...host));
 			app.prComments = {};
+			app.prConversation = [];
+			app.prConversationLoadedFor = null;
 			app.pendingComposers = {};
 			await actions.setDiffContext({ kind: 'pr', prNumber });
 			void actions.refreshPRComments();
+			// If the sidebar is already parked on the Conversation tab, load it now so
+			// switching PRs doesn't leave a stale/empty feed until the tab is re-clicked.
+			if (app.commentsSidebarOpen && app.commentsSidebarTab === 'conversation') {
+				void actions.refreshPRConversation();
+			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
@@ -3428,6 +3701,230 @@ export const actions = {
 			setError(err instanceof Error ? err.message : String(err));
 		} finally {
 			app.loadingComments = false;
+		}
+	},
+
+	// ─── PR conversation (Conversation tab) ────────────────────────────────────
+
+	// Fetch the active PR's top-level conversation timeline. Lazy: callers gate on
+	// staleness so we don't hit the API for users who never open the tab. Marks the
+	// loaded PR so a later context switch can tell the cached feed is stale.
+	async refreshPRConversation(): Promise<void> {
+		if (!app.activeRepo) return;
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return;
+		const host = prHostArgs(commentablePR());
+		app.loadingConversation = true;
+		try {
+			const items = await window.api.github.listConversation(app.activeRepo.id, prNumber, ...host);
+			app.prConversation = items;
+			app.prConversationLoadedFor = prNumber;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			app.loadingConversation = false;
+		}
+	},
+
+	// Load the conversation if it hasn't been loaded for the current PR yet. Called
+	// when the Conversation tab becomes visible so its data arrives on demand.
+	ensurePRConversationLoaded(): void {
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return;
+		if (app.loadingConversation) return;
+		if (app.prConversationLoadedFor === prNumber) return;
+		void actions.refreshPRConversation();
+	},
+
+	// Post a top-level comment to the PR conversation. Appends optimistically on
+	// success (the created item comes back from GitHub) rather than refetching the
+	// whole timeline. Returns true so the composer can clear itself.
+	async postConversationComment(body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return false;
+		const trimmed = body.trim();
+		if (!trimmed) return false;
+		const host = prHostArgs(commentablePR());
+		try {
+			const created = await window.api.github.createIssueComment(
+				app.activeRepo.id,
+				prNumber,
+				trimmed,
+				...host
+			);
+			app.prConversation = [...app.prConversation, created];
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	// Delete one of the viewer's own conversation comments. Optimistic with
+	// rollback, mirroring deleteComment for review comments.
+	async deleteConversationComment(commentId: number): Promise<void> {
+		if (!app.activeRepo) return;
+		const prev = app.prConversation;
+		app.prConversation = prev.filter((i) => !(i.kind === 'comment' && i.id === commentId));
+		try {
+			await window.api.github.deleteIssueComment(
+				app.activeRepo.id,
+				commentId,
+				...prHostArgs(commentablePR())
+			);
+		} catch (err) {
+			app.prConversation = prev;
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Edit a conversation comment's body — both the explicit "Edit" action and a
+	// task-list checkbox toggle route through here. Optimistic, reconciling to the
+	// body GitHub returns. Returns true on success so the editor can close.
+	async editConversationComment(commentId: number, body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const prev = app.prConversation;
+		app.prConversation = prev.map((i) =>
+			i.kind === 'comment' && i.id === commentId ? { ...i, body } : i
+		);
+		try {
+			const saved = await window.api.github.updateIssueComment(
+				app.activeRepo.id,
+				commentId,
+				body,
+				...prHostArgs(commentablePR())
+			);
+			app.prConversation = app.prConversation.map((i) =>
+				i.kind === 'comment' && i.id === commentId ? { ...i, body: saved } : i
+			);
+			return true;
+		} catch (err) {
+			app.prConversation = prev;
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	// Edit the PR description (body) — the description card's edit and its task-list
+	// checkbox toggles. Updates whichever summary holds the PR (activePR in a PR
+	// view, branchPR on the Branch tab). Optimistic with rollback.
+	async editPRDescription(body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const prNumber = commentablePRNumber();
+		if (prNumber == null) return false;
+		const prevActive = app.activePR;
+		const prevBranch = app.branchPR;
+		if (app.activePR) app.activePR = { ...app.activePR, body };
+		if (app.branchPR && app.branchPR.number === prNumber) {
+			app.branchPR = { ...app.branchPR, body };
+		}
+		try {
+			const saved = await window.api.github.updatePullRequestBody(
+				app.activeRepo.id,
+				prNumber,
+				body,
+				...prHostArgs(commentablePR())
+			);
+			if (app.activePR) app.activePR = { ...app.activePR, body: saved };
+			if (app.branchPR && app.branchPR.number === prNumber) {
+				app.branchPR = { ...app.branchPR, body: saved };
+			}
+			return true;
+		} catch (err) {
+			app.activePR = prevActive;
+			app.branchPR = prevBranch;
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
+	// ─── Merge box (Conversation tab) ──────────────────────────────────────────
+
+	// Load the merge box (mergeability) for the panel's PR if we don't already
+	// have it. Called when the Conversation tab is shown / the PR changes; gated
+	// on PR number so re-renders don't refetch. `refreshMergeBox` also kicks the
+	// shared `prChecks` fetch, so the panel's CI rows fill in on open too.
+	ensureMergeBox(prNumber: number): void {
+		if (app.loadingMergeBox) return;
+		if (app.mergeBox?.number === prNumber) return;
+		void refreshMergeBox();
+	},
+
+	// Force a merge-box refetch (e.g. after a merge / ready action).
+	async refreshMergeBox(): Promise<void> {
+		await refreshMergeBox();
+	},
+
+	// Poll the merge box's mergeability so the Conversation tab stays current while
+	// GitHub recomputes it. Gated on the Conversation tab actually being shown
+	// (sidebar tab or fullscreen) so we don't fetch getPR when nobody's looking.
+	// Checks aren't polled here — they ride the always-on `refreshPrChecks` poll.
+	pollMergeBox(): void {
+		if (!app.mergeBox) return;
+		const showing =
+			app.conversationFullscreen ||
+			(app.commentsSidebarOpen && effectiveCommentsSidebarTab() === 'conversation');
+		if (!showing) return;
+		void refreshMergeBox();
+	},
+
+	// Merge the panel's PR with the chosen method. Returns true on success. On a
+	// soft refusal (GitHub returns merged:false) or error, surfaces the message
+	// and leaves the box as-is.
+	async mergePullRequest(
+		method: PRMergeMethod,
+		commitTitle?: string,
+		commitMessage?: string
+	): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const pr = mergeBoxPR();
+		if (!pr) return false;
+		app.mergeBoxBusy = 'merge';
+		try {
+			const res = await window.api.github.mergePullRequest(
+				app.activeRepo.id,
+				pr.number,
+				method,
+				...prHostArgs(pr),
+				commitTitle,
+				commitMessage
+			);
+			if (!res.merged) {
+				setError(res.message || 'GitHub declined to merge this pull request.');
+				return false;
+			}
+			// Reflect the merge immediately, then refetch the authoritative status
+			// and the conversation (so the "merged" event shows up).
+			applyPRStatus({ ...pr, state: 'closed', merged: true });
+			void refreshMergeBox();
+			void actions.refreshPRConversation();
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		} finally {
+			app.mergeBoxBusy = null;
+		}
+	},
+
+	// Take the panel's draft PR out of draft ("Ready for review").
+	async markPullRequestReady(): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const pr = mergeBoxPR();
+		if (!pr) return false;
+		app.mergeBoxBusy = 'ready';
+		try {
+			await window.api.github.markPullRequestReady(app.activeRepo.id, pr.number, ...prHostArgs(pr));
+			applyPRStatus({ ...pr, draft: false });
+			void refreshMergeBox();
+			void actions.refreshPRConversation();
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		} finally {
+			app.mergeBoxBusy = null;
 		}
 	},
 
@@ -3485,7 +3982,8 @@ export const actions = {
 							path: c.filePath,
 							line: c.line,
 							side: c.side,
-							body: c.draft.trim()
+							body: c.draft.trim(),
+							headRef: commentAnchorRef()
 						},
 						...host
 					);
@@ -3728,15 +4226,79 @@ export const actions = {
 	},
 
 	toggleCommentsSidebar(): void {
+		// Opening always lands on the Comments tab (the Conversation tab has its own
+		// hotkey). Closing leaves the remembered tab alone.
+		if (!app.commentsSidebarOpen) actions.setCommentsSidebarTab('comments');
 		actions.setCommentsSidebarOpen(!app.commentsSidebarOpen);
+	},
+
+	// Switch the sidebar's active tab, loading the Conversation feed on demand the
+	// first time it's shown for the current PR. Persisted so the tab the user left
+	// on reopens with the app.
+	setCommentsSidebarTab(tab: 'comments' | 'conversation'): void {
+		if (app.commentsSidebarTab !== tab) {
+			app.commentsSidebarTab = tab;
+			void window.api.state.setPrefs({ commentsSidebarTab: tab }).then((prefs) => {
+				app.prefs = prefs;
+			});
+		}
+		if (tab === 'conversation') actions.ensurePRConversationLoaded();
+	},
+
+	// Open the sidebar straight to the Comments tab (default Cmd/Ctrl+L). Mirror
+	// of openConversationSidebar: closes only when already parked on the Comments
+	// tab, otherwise switches to it (opening if needed). The toggle-only feel
+	// stays on the sidebar buttons (toggleCommentsSidebar); this is what lets
+	// Ctrl+L pull you back from the Conversation tab instead of just dismissing.
+	openCommentsSidebar(): void {
+		if (app.commentsSidebarOpen && effectiveCommentsSidebarTab() === 'comments') {
+			actions.setCommentsSidebarOpen(false);
+			return;
+		}
+		actions.setCommentsSidebarTab('comments');
+		if (!app.commentsSidebarOpen) actions.setCommentsSidebarOpen(true);
+	},
+
+	// Open the sidebar straight to the Conversation tab (default Cmd/Ctrl+Shift+L).
+	// Toggles closed when it's already open on that tab, mirroring the Comments
+	// hotkey's open/close feel.
+	openConversationSidebar(): void {
+		if (app.commentsSidebarOpen && app.commentsSidebarTab === 'conversation') {
+			actions.setCommentsSidebarOpen(false);
+			return;
+		}
+		actions.setCommentsSidebarTab('conversation');
+		if (!app.commentsSidebarOpen) actions.setCommentsSidebarOpen(true);
 	},
 
 	setCommentsSidebarOpen(open: boolean): void {
 		app.commentsSidebarOpen = open;
+		// Closing the panel can't leave fullscreen dangling — there'd be nothing on
+		// screen but a collapsed diff. Drop it (which also re-expands the diff).
+		if (!open && app.conversationFullscreen) actions.setConversationFullscreen(false);
 		// Persist so the panel reopens (or stays closed) on the next launch.
 		void window.api.state.setPrefs({ commentsSidebarOpen: open }).then((prefs) => {
 			app.prefs = prefs;
 		});
+	},
+
+	// Fullscreen the comments panel (collapse the diff pane to zero). Entering
+	// fullscreen collapses the left sidebar automatically — that's driven by the
+	// pane $effect in App.svelte, which closes the sidebar before collapsing the
+	// diff. So the only requirement here is that the comments panel is actually
+	// open. Idempotent so the $effect and the drag-to-collapse handler can both
+	// route through it without ping-ponging.
+	setConversationFullscreen(on: boolean): void {
+		const next = on && app.commentsSidebarOpen;
+		if (app.conversationFullscreen === next) return;
+		app.conversationFullscreen = next;
+		void window.api.state.setPrefs({ conversationFullscreen: next }).then((prefs) => {
+			app.prefs = prefs;
+		});
+	},
+
+	toggleConversationFullscreen(): void {
+		actions.setConversationFullscreen(!app.conversationFullscreen);
 	},
 
 	// Left file-list sidebar collapse state. Routed through here (rather than
@@ -3744,6 +4306,9 @@ export const actions = {
 	// hotkey, or dragging the handle shut — persists for the next launch.
 	setSidebarCollapsed(collapsed: boolean): void {
 		app.sidebarCollapsed = collapsed;
+		// Reopening the left sidebar exits fullscreen — the two can't coexist, since
+		// fullscreen requires the sidebar to be out of the way.
+		if (!collapsed && app.conversationFullscreen) actions.setConversationFullscreen(false);
 		void window.api.state.setPrefs({ sidebarCollapsed: collapsed }).then((prefs) => {
 			app.prefs = prefs;
 		});
@@ -3773,12 +4338,14 @@ export const actions = {
 		await actions.copyToClipboard(formatPRCommentPrompt(comment));
 	},
 
-	// Copy every unresolved PR review thread (one entry per root comment) as a
-	// markdown task list.
+	// Copy every actionable PR review thread (one entry per root comment) as a
+	// markdown task list. Only unresolved threads still anchored to a live line
+	// qualify: resolved threads are done, and outdated/file-level ones (no live
+	// `line`) point at code the agent can no longer act on directly.
 	async copyAllUnresolvedPRComments(): Promise<void> {
 		const roots = Object.values(app.prComments)
 			.flat()
-			.filter((c) => c.inReplyTo == null && (c.line != null || c.isOutdated) && !c.isResolved);
+			.filter((c) => c.inReplyTo == null && c.line != null && !c.isResolved);
 		if (roots.length === 0) return;
 		await actions.copyToClipboard(formatPRCommentsPrompt(roots));
 	},
@@ -5160,8 +5727,8 @@ export const actions = {
 		app.nowTick++;
 	},
 
-	async refreshBranchPRChecks(): Promise<void> {
-		await refreshBranchPRChecks();
+	async refreshPrChecks(): Promise<void> {
+		await refreshPrChecks();
 	},
 
 	async refreshGithubAccounts(): Promise<void> {

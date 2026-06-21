@@ -6,7 +6,7 @@ import { registerIpc } from './ipc.js';
 import { registerGitCredentials } from './github-service.js';
 import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
-import { getPrefs } from './store.js';
+import { getPrefs, flushStore } from './store.js';
 import { WINDOW_BOUNDS } from '@shared/types.js';
 
 // macOS/Linux GUI launchers (Finder, Dock, Spotlight) start apps with a minimal
@@ -168,4 +168,9 @@ void app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
 	if (process.platform !== 'darwin') app.quit();
+});
+
+// Persist any debounced store write (the file-list cache) before exiting.
+app.on('before-quit', () => {
+	flushStore();
 });

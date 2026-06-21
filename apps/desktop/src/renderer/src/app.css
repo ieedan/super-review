@@ -26,6 +26,8 @@
 	--color-ring: hsl(11 100% 60%);
 	--color-success: hsl(142 76% 36%);
 	--color-warning: hsl(38 92% 50%);
+	/* GitHub's accent blue, used for the "in progress" merge-box state. */
+	--color-info: hsl(212 92% 45%);
 	--color-merged: hsl(265 60% 52%);
 	--color-sidebar: hsl(0 0% 98%);
 	--color-sidebar-foreground: hsl(0 0% 3.9%);
@@ -66,6 +68,7 @@
 	--color-ring: hsl(11 100% 60%);
 	--color-success: hsl(142 70% 45%);
 	--color-warning: hsl(38 92% 60%);
+	--color-info: hsl(215 92% 60%);
 	--color-merged: hsl(265 70% 65%);
 	--color-sidebar: hsl(0 0% 7%);
 	--color-sidebar-foreground: hsl(0 0% 98%);

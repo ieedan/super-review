@@ -19,6 +19,7 @@ export const HOTKEY_ACTIONS = [
 	'searchFilesSidebar',
 	'toggleSidebar',
 	'toggleCommentsSidebar',
+	'openConversationSidebar',
 	'openSettings',
 	'markSeenNext'
 ] as const;
@@ -44,6 +45,10 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 		label: 'Toggle comments sidebar',
 		description: 'Open or close the comments sidebar.'
 	},
+	openConversationSidebar: {
+		label: 'Open PR conversation',
+		description: "Open the comments sidebar to a pull request's Conversation tab."
+	},
 	openSettings: {
 		label: 'Open settings',
 		description: 'Open the settings dialog.'
@@ -59,6 +64,7 @@ export const DEFAULT_HOTKEYS: Hotkeys = {
 	searchFilesSidebar: { key: '/' },
 	toggleSidebar: { key: 'b', mod: true },
 	toggleCommentsSidebar: { key: 'l', mod: true },
+	openConversationSidebar: { key: 'l', mod: true, shift: true },
 	openSettings: { key: ',', mod: true },
 	markSeenNext: { key: 'Enter', mod: true }
 };
