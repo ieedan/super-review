@@ -51,6 +51,8 @@ import type {
 	RepoContextMenuParams,
 	HeaderContextMenuParams,
 	HeaderContextMenuResult,
+	TabsContextMenuParams,
+	TabsContextMenuResult,
 	RepoInfo,
 	Session,
 	SessionSummary,
@@ -1780,6 +1782,34 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<HeaderContextMenuResult>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// The sidebar tab strip's "Show tab" menu. Same shape as the header menu: a
+	// checkbox per optional tab; the chosen item and its new state come back.
+	ipcMain.handle(
+		'menu:showTabsContextMenu',
+		async (e, params: TabsContextMenuParams): Promise<TabsContextMenuResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: TabsContextMenuResult = null;
+			const template: MenuItemConstructorOptions[] = params.items.map(
+				(it): MenuItemConstructorOptions => ({
+					label: it.label,
+					type: 'checkbox',
+					checked: it.checked,
+					click: (menuItem) => {
+						chosen = { key: it.key, checked: menuItem.checked };
+					}
+				})
+			);
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<TabsContextMenuResult>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)

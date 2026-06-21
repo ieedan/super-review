@@ -561,6 +561,21 @@
 		void actions.setContextTab(v as ContextTab);
 	}
 
+	// Right-click the tab strip to show/hide the optional Sessions / History tabs,
+	// via a native context menu — the same pattern as the header's customization
+	// menu. Each item is a checkbox reflecting its current visibility; the native
+	// menu reports back the single item toggled, which we persist.
+	async function onTabStripContextMenu(e: MouseEvent): Promise<void> {
+		e.preventDefault();
+		const result = await window.api.menu.showTabsContextMenu({
+			items: [
+				{ key: 'sessions', label: 'Sessions', checked: app.sidebarTabs.sessions },
+				{ key: 'history', label: 'History', checked: app.sidebarTabs.history }
+			]
+		});
+		if (result) void actions.setSidebarTab(result.key, result.checked);
+	}
+
 	// The session whose diff is currently open (Sessions tab). When set, the
 	// header swaps its tab strip for a back button + session name.
 	const activeSession = $derived(
@@ -771,8 +786,11 @@
 			{:else}
 				<!-- Tab strip: drives which diff context fuels the file list. -->
 				<Tabs.Root value={app.contextTab} onValueChange={setTab} class="min-w-0 flex-1 gap-0">
+					<!-- Right-click the strip to show/hide the optional Sessions / History
+					     tabs, via a native context menu (mirrors the header's menu). -->
 					<Tabs.List
 						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
+						oncontextmenu={onTabStripContextMenu}
 					>
 						<!-- Unstaged is the working tree of the checked-out branch. While a
 						     branch or PR is being reviewed read-only there's no working tree
@@ -804,27 +822,32 @@
 								Branch
 							</Tabs.Trigger>
 						{/if}
-						<Tabs.Trigger
-							value="sessions"
-							class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-						>
-							Sessions
-							{#if app.sessionCount > 0}
-								<span
-									class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
-								>
-									{app.sessionCount > 99 ? '99+' : app.sessionCount}
-								</span>
-							{/if}
-						</Tabs.Trigger>
-						<!-- History lists the commits on the viewed branch/PR head. Always
-						     available — every checkout has a history to look back through. -->
-						<Tabs.Trigger
-							value="history"
-							class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-						>
-							History
-						</Tabs.Trigger>
+						<!-- Sessions and History are optional tabs, shown/hidden via the
+						     tab strip's right-click menu (onTabStripContextMenu). -->
+						{#if app.sidebarTabs.sessions}
+							<Tabs.Trigger
+								value="sessions"
+								class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+							>
+								Sessions
+								{#if app.sessionCount > 0}
+									<span
+										class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
+									>
+										{app.sessionCount > 99 ? '99+' : app.sessionCount}
+									</span>
+								{/if}
+							</Tabs.Trigger>
+						{/if}
+						<!-- History lists the commits on the viewed branch/PR head. -->
+						{#if app.sidebarTabs.history}
+							<Tabs.Trigger
+								value="history"
+								class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+							>
+								History
+							</Tabs.Trigger>
+						{/if}
 					</Tabs.List>
 				</Tabs.Root>
 			{/if}
