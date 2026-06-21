@@ -18,8 +18,9 @@
 // The HTML is sanitized with DOMPurify before it reaches `{@html}` — repo
 // contents are untrusted (often agent-written), and this runs in the Electron
 // renderer where an injected script would be dangerous.
-import { marked, type Tokens } from 'marked';
+import { marked, type RendererThis, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
+import { emojify } from 'node-emoji';
 import { getSharedHighlighter } from '@pierre/diffs';
 
 type ShikiTheme = 'github-dark' | 'github-light';
@@ -77,9 +78,31 @@ function escapeHtml(s: string): string {
 	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// GitHub-Flavored-Markdown alerts: a blockquote whose first line is a marker
+// like `> [!NOTE]` renders as a colored callout instead of a plain quote. The
+// marker must be the whole first line; anything else is a normal blockquote.
+// https://docs.github.com/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts
+const ALERT_RE = /^[ \t]*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\r?\n|$)/i;
+const ALERT_TITLES: Record<string, string> = {
+	note: 'Note',
+	tip: 'Tip',
+	important: 'Important',
+	warning: 'Warning',
+	caution: 'Caution'
+};
+
 marked.use({
 	async: true,
 	async walkTokens(token) {
+		// Replace GitHub `:shortcode:` emoji with the unicode glyph, GitHub-style.
+		// Scoped to leaf text tokens so shortcodes inside code spans / fenced blocks
+		// (types 'codespan' / 'code') are left verbatim. A text token that owns child
+		// tokens renders those, not `.text`, so mutating it there is a harmless no-op.
+		if (token.type === 'text') {
+			const t = token as Tokens.Text;
+			if (t.text.includes(':')) t.text = emojify(t.text);
+			return;
+		}
 		if (token.type !== 'code') return;
 		const code = token as Tokens.Code;
 		const lang = (code.lang ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
@@ -94,6 +117,19 @@ marked.use({
 				return html;
 			}
 			return `<pre><code>${escapeHtml(token.text)}</code></pre>`;
+		},
+		blockquote(this: RendererThis, token: Tokens.Blockquote) {
+			const m = ALERT_RE.exec(token.text);
+			if (!m) return `<blockquote>\n${this.parser.parse(token.tokens)}</blockquote>\n`;
+			const type = m[1].toLowerCase();
+			// Re-lex the quote body with its marker line removed so the callout's
+			// contents render as normal Markdown inside the styled box.
+			const body = this.parser.parse(marked.lexer(token.text.slice(m[0].length)));
+			return (
+				`<div class="markdown-alert markdown-alert-${type}">` +
+				`<p class="markdown-alert-title"><span class="markdown-alert-icon"></span>${ALERT_TITLES[type]}</p>` +
+				`${body}</div>\n`
+			);
 		}
 	}
 });
@@ -157,6 +193,19 @@ export function isMarkdownPath(path: string): boolean {
  * Render Markdown source to sanitized, GFM-compatible HTML with Shiki-
  * highlighted code blocks. `theme` selects the Shiki theme to match the app.
  */
+// Flip the Nth GFM task-list checkbox in `src` to `checked`, returning the new
+// markdown. Matches `- [ ]` / `* [x]` / `1. [ ]` item markers in document order —
+// the same order the rendered checkboxes appear — so `index` lines up with the
+// clicked input. Returns `src` unchanged when `index` is out of range.
+export function toggleTaskListItem(src: string, index: number, checked: boolean): string {
+	let n = -1;
+	return src.replace(/^(\s*(?:[-*+]|\d+\.)\s+\[)([ xX])(\])/gm, (m, pre, _mark, post) => {
+		n++;
+		if (n !== index) return m;
+		return `${pre}${checked ? 'x' : ' '}${post}`;
+	});
+}
+
 export async function renderMarkdown(src: string, theme: 'light' | 'dark'): Promise<string> {
 	currentShikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
 	const fm = extractFrontmatter(src);

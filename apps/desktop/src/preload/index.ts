@@ -37,6 +37,8 @@ import type {
 	ReleaseNotesResult,
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
+	PRConversationItem,
+	PRMergeResult,
 	PRReviewComment,
 	PRSummary,
 	PreloadAPI,
@@ -91,6 +93,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:deleteBranch', repoId, name, opts) as Promise<DeleteBranchResult>,
 		listChangedFiles: (repoId, ctx: DiffContext) =>
 			ipcRenderer.invoke('git:listChangedFiles', repoId, ctx) as Promise<ChangedFile[]>,
+		refExists: (repoId, ref) =>
+			ipcRenderer.invoke('git:refExists', repoId, ref) as Promise<boolean>,
 		getDiff: (repoId, filePath, ctx: DiffContext) =>
 			ipcRenderer.invoke('git:getDiff', repoId, filePath, ctx) as Promise<DiffData>,
 		fetchOrigin: (repoId) =>
@@ -254,6 +258,64 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('github:setReviewThreadResolved', repoId, threadId, resolved) as Promise<{
 				isResolved: boolean;
 			}>,
+		listConversation: (repoId, prNumber, owner, repo) =>
+			ipcRenderer.invoke('github:listConversation', repoId, prNumber, owner, repo) as Promise<
+				PRConversationItem[]
+			>,
+		createIssueComment: (repoId, prNumber, body, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:createIssueComment',
+				repoId,
+				prNumber,
+				body,
+				owner,
+				repo
+			) as Promise<PRConversationItem>,
+		deleteIssueComment: (repoId, commentId, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:deleteIssueComment',
+				repoId,
+				commentId,
+				owner,
+				repo
+			) as Promise<void>,
+		updateIssueComment: (repoId, commentId, body, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:updateIssueComment',
+				repoId,
+				commentId,
+				body,
+				owner,
+				repo
+			) as Promise<string>,
+		updatePullRequestBody: (repoId, prNumber, body, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:updatePullRequestBody',
+				repoId,
+				prNumber,
+				body,
+				owner,
+				repo
+			) as Promise<string>,
+		mergePullRequest: (repoId, prNumber, method, owner, repo, commitTitle, commitMessage) =>
+			ipcRenderer.invoke(
+				'github:mergePullRequest',
+				repoId,
+				prNumber,
+				method,
+				owner,
+				repo,
+				commitTitle,
+				commitMessage
+			) as Promise<PRMergeResult>,
+		markPullRequestReady: (repoId, prNumber, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:markPullRequestReady',
+				repoId,
+				prNumber,
+				owner,
+				repo
+			) as Promise<void>,
 		getAuthErrors: () => ipcRenderer.invoke('github:getAuthErrors') as Promise<GithubAuthError[]>,
 		validateAccounts: () =>
 			ipcRenderer.invoke('github:validateAccounts') as Promise<GithubAuthError[]>
@@ -290,6 +352,14 @@ const api: PreloadAPI = {
 			) as Promise<void>,
 		clearCollapsedFiles: (repoId, contextKey) =>
 			ipcRenderer.invoke('state:clearCollapsedFiles', repoId, contextKey) as Promise<void>,
+		getCachedFileList: (repoId, contextKey) =>
+			ipcRenderer.invoke('state:getCachedFileList', repoId, contextKey) as Promise<ChangedFile[]>,
+		setCachedFileList: (repoId, contextKey, files) =>
+			ipcRenderer.invoke('state:setCachedFileList', repoId, contextKey, files) as Promise<void>,
+		getBranchBase: (repoId, branch) =>
+			ipcRenderer.invoke('state:getBranchBase', repoId, branch) as Promise<string | null>,
+		setBranchBase: (repoId, branch, base) =>
+			ipcRenderer.invoke('state:setBranchBase', repoId, branch, base) as Promise<void>,
 		getCommitDraft: (repoId) =>
 			ipcRenderer.invoke('state:getCommitDraft', repoId) as Promise<CommitDraft>,
 		setCommitDraft: (repoId, draft) =>
