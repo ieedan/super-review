@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'e
 import type {
 	BranchMenuAction,
 	BranchMenuState,
+	HelpMenuAction,
 	RepositoryMenuAction,
 	RepositoryMenuState
 } from '../shared/types.js';
@@ -41,6 +42,25 @@ function sendBranchAction(action: BranchMenuAction): void {
 function sendRepositoryAction(action: RepositoryMenuAction): void {
 	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
 	win?.webContents.send('menu:repository-action', action);
+}
+
+function sendHelpAction(action: HelpMenuAction): void {
+	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+	win?.webContents.send('menu:help-action', action);
+}
+
+// Build the "Help" submenu. Static (no per-repo state) — "Send Feedback" is
+// always available since it files against the project's own repo. Its
+// accelerator (⇧⌘/) doubles as the global feedback shortcut, so the renderer
+// needs no separate keybinding.
+function buildHelpSubmenu(): MenuItemConstructorOptions[] {
+	return [
+		{
+			label: 'Send Feedback…',
+			accelerator: 'Shift+CmdOrCtrl+/',
+			click: () => sendHelpAction('sendFeedback')
+		}
+	];
 }
 
 // Build the "Repository" submenu from repoState — mirrors GitHub Desktop's
@@ -152,7 +172,8 @@ function buildAppMenu(): void {
 		{ role: 'viewMenu' },
 		{ label: 'Repository', submenu: buildRepositorySubmenu() },
 		{ label: 'Branch', submenu: buildBranchSubmenu() },
-		{ role: 'windowMenu' }
+		{ role: 'windowMenu' },
+		{ role: 'help', submenu: buildHelpSubmenu() }
 	];
 
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));

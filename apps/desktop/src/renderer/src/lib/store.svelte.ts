@@ -12,6 +12,8 @@ import type {
 	DiffData,
 	DiffLayout,
 	EditorKind,
+	FeedbackInput,
+	FeedbackResult,
 	FileListLayout,
 	AnimationMode,
 	CustomFileIcon,
@@ -317,6 +319,8 @@ interface AppState {
 	settingsDialogScrollNonce: number;
 	// Whether the per-repo Repository Settings dialog is open (Fork Behavior, …).
 	repoSettingsDialogOpen: boolean;
+	// Whether the in-app feedback dialog is open (Help ▸ Send Feedback, ⇧⌘/).
+	feedbackDialogOpen: boolean;
 	// Cmd/Ctrl+K fuzzy file-search palette. Opened from the header search box or
 	// the global shortcut; selecting a file scrolls the diff to it.
 	commandMenuOpen: boolean;
@@ -772,6 +776,7 @@ const initial: AppState = {
 	settingsDialogScrollTo: null,
 	settingsDialogScrollNonce: 0,
 	repoSettingsDialogOpen: false,
+	feedbackDialogOpen: false,
 	commandMenuOpen: false,
 	focusSidebarSearchNonce: 0,
 	githubSignIn: {
@@ -5725,6 +5730,19 @@ export const actions = {
 	},
 	closeSettingsDialog(): void {
 		app.settingsDialogOpen = false;
+	},
+
+	openFeedbackDialog(): void {
+		app.feedbackDialogOpen = true;
+	},
+	closeFeedbackDialog(): void {
+		app.feedbackDialogOpen = false;
+	},
+	// File the feedback as a GitHub issue on the project's own repo. Returns the
+	// created issue so the dialog can link to it; throws on failure so the dialog
+	// can show the error inline without losing the user's typed text.
+	async submitFeedback(input: FeedbackInput): Promise<FeedbackResult> {
+		return window.api.feedback.submit(input);
 	},
 
 	openRepoSettingsDialog(): void {

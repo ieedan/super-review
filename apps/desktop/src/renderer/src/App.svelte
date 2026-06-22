@@ -29,6 +29,7 @@
 	import CreateBranchDialog from '$lib/components/CreateBranchDialog.svelte';
 	import CleanupBranchesDialog from '$lib/components/CleanupBranchesDialog.svelte';
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
+	import FeedbackDialog from '$lib/components/FeedbackDialog.svelte';
 	import RepositorySettingsDialog from '$lib/components/RepositorySettingsDialog.svelte';
 	import GithubSignInDialog from '$lib/components/GithubSignInDialog.svelte';
 	import { ConfirmDeleteDialog } from '$lib/components/ui/confirm-delete-dialog';
@@ -365,6 +366,12 @@
 			actions.onGithubAuthChanged(errors);
 		});
 
+		// A native "Help" menu item was chosen. "Send Feedback" (also bound to
+		// ⇧⌘/ as the item's accelerator) opens the in-app feedback dialog.
+		const offHelpMenuAction = window.api.events.onHelpMenuAction((action) => {
+			if (action === 'sendFeedback') actions.openFeedbackDialog();
+		});
+
 		// Center the traffic lights once now; the resize binding handles every
 		// subsequent zoom change.
 		syncWindowControls();
@@ -394,6 +401,7 @@
 			offSessionsChanged();
 			offCommentsChanged();
 			offGithubAuthChanged();
+			offHelpMenuAction();
 			stopPoll();
 			window.clearInterval(tickId);
 			window.clearInterval(checksId);
@@ -609,6 +617,7 @@
 <CreateBranchDialog />
 <CleanupBranchesDialog />
 <SettingsDialog />
+<FeedbackDialog />
 <GithubSignInDialog />
 <CommandPalette />
 <ConfirmDeleteDialog />

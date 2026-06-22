@@ -845,6 +845,31 @@ export type RepositoryMenuAction =
 	| 'cleanupBranches'
 	| 'settings';
 
+// Items in the native application menu's "Help" submenu. The main process sends
+// the chosen action to the focused renderer, which runs the matching store flow.
+export type HelpMenuAction = 'sendFeedback';
+
+// How the user classified their feedback — woven into the issue's title and an
+// extra label so triage can route it.
+export type FeedbackCategory = 'bug' | 'idea' | 'other';
+
+// What the feedback dialog hands the main process to open an issue on the app's
+// own repository.
+export interface FeedbackInput {
+	category: FeedbackCategory;
+	// One-line summary (becomes the issue title).
+	title: string;
+	// Free-form details (becomes the issue body; app/system metadata is appended
+	// in the main process so the renderer can't spoof it).
+	body: string;
+}
+
+// The created feedback issue, so the renderer can link the user to it.
+export interface FeedbackResult {
+	url: string;
+	number: number;
+}
+
 // Renderer-computed state deciding which "Repository" menu items are enabled and
 // their dynamic labels. Items whose label is null are hidden (no editor/terminal
 // detected), matching the rest of the menu's "show what applies" behavior.
@@ -1770,6 +1795,12 @@ export interface PreloadAPI {
 			toVersion: string
 		): Promise<ReleaseNotesRangeResult>;
 	};
+	feedback: {
+		// Open a GitHub issue on the app's own repository (always the project repo,
+		// not the repo the user is reviewing), tagged `in-app-feedback` so a triage
+		// workflow can pick it up. App version + OS are appended in the main process.
+		submit(input: FeedbackInput): Promise<FeedbackResult>;
+	};
 	shell: {
 		openExternal(url: string): Promise<void>;
 		// Reveal a file in the OS file manager (Finder / Explorer), selecting it.
@@ -1817,6 +1848,9 @@ export interface PreloadAPI {
 		onBranchMenuAction(handler: (action: BranchMenuAction) => void): () => void;
 		// A native "Repository" menu item was chosen. Returns an unsubscribe fn.
 		onRepositoryMenuAction(handler: (action: RepositoryMenuAction) => void): () => void;
+		// A native "Help" menu item was chosen (e.g. Send Feedback). Returns an
+		// unsubscribe fn.
+		onHelpMenuAction(handler: (action: HelpMenuAction) => void): () => void;
 		// A background "move to Trash" (after removing a repo) failed; the payload
 		// is the repo's name. Returns an unsubscribe fn.
 		onRepoTrashFailed(handler: (name: string) => void): () => void;

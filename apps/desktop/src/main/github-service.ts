@@ -7,6 +7,8 @@ import type {
 	CommitSigning,
 	DeviceFlowStart,
 	DeviceFlowStatus,
+	FeedbackInput,
+	FeedbackResult,
 	GitIdentity,
 	GithubAccount,
 	GithubAuthError,
@@ -55,6 +57,25 @@ const CLIENT_ID = process.env.SUPER_REVIEW_GH_CLIENT_ID ?? '178c6fc778ccc68e1d6a
 // scope was added lack it — see flagAccountsMissingSigningScope.
 const SCOPES = ['repo', 'read:user', 'write:ssh_signing_key'];
 const SIGNING_SCOPE = 'write:ssh_signing_key';
+
+// In-app feedback always opens an issue on the project's own repository — never
+// whatever repo the user happens to be reviewing. Overridable via env for forks
+// or self-hosted builds; defaults to the (currently private) project repo.
+const FEEDBACK_REPO = (() => {
+	const override = process.env.SUPER_REVIEW_FEEDBACK_REPO?.split('/');
+	if (override?.length === 2 && override[0] && override[1]) {
+		return { owner: override[0], repo: override[1] };
+	}
+	return { owner: 'ieedan', repo: 'super-review' };
+})();
+// The label a triage workflow watches for. Created on the fly by GitHub if it
+// doesn't exist yet.
+const FEEDBACK_LABEL = 'in-app-feedback';
+const FEEDBACK_CATEGORY_LABELS: Record<FeedbackInput['category'], string> = {
+	bug: 'Bug',
+	idea: 'Idea',
+	other: 'Feedback'
+};
 
 interface PendingDeviceFlow {
 	cancel: () => void;
@@ -1691,6 +1712,39 @@ export async function listConversation(
 		return at - bt;
 	});
 	return deduped;
+}
+
+// Open a feedback issue on the project's own repo (FEEDBACK_REPO), tagged
+// `in-app-feedback` so a triage workflow can pick it up. Authed with the active
+// account — the renderer can't pass arbitrary coordinates, and the app/system
+// metadata is appended here so it's trustworthy. Throws if not signed in.
+export async function createFeedbackIssue(
+	input: FeedbackInput,
+	meta: { appVersion: string; platform: string; osRelease: string }
+): Promise<FeedbackResult> {
+	const viewer = resolveAccount(null);
+	const o = octokit(viewer);
+	const categoryLabel = FEEDBACK_CATEGORY_LABELS[input.category];
+	const title = `[${categoryLabel}] ${input.title.trim()}`;
+	const body = [
+		input.body.trim(),
+		'',
+		'---',
+		`- **Category:** ${categoryLabel}`,
+		`- **App version:** ${meta.appVersion}`,
+		`- **Platform:** ${meta.platform} (${meta.osRelease})`,
+		`- **Reported by:** @${viewer.login}`,
+		'',
+		'_Filed from the in-app feedback dialog._'
+	].join('\n');
+	const res = await o.issues.create({
+		owner: FEEDBACK_REPO.owner,
+		repo: FEEDBACK_REPO.repo,
+		title,
+		body,
+		labels: [FEEDBACK_LABEL]
+	});
+	return { url: res.data.html_url, number: res.data.number };
 }
 
 export async function createIssueComment(

@@ -1,6 +1,7 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
+import os from 'node:os';
 import { readFile } from 'node:fs/promises';
 import type {
 	BranchContextMenuAction,
@@ -21,6 +22,8 @@ import type {
 	CommitResult,
 	DeviceFlowStart,
 	DeviceFlowStatus,
+	FeedbackInput,
+	FeedbackResult,
 	DiffContext,
 	DiffData,
 	DiffLineContextMenuAction,
@@ -1419,6 +1422,14 @@ export function registerIpc(): void {
 			return gh.createIssueComment(owner, name, prNumber, body, repo.githubAccountId);
 		}
 	);
+
+	ipcMain.handle('feedback:submit', async (_e, input: FeedbackInput): Promise<FeedbackResult> => {
+		return gh.createFeedbackIssue(input, {
+			appVersion: app.getVersion(),
+			platform: process.platform,
+			osRelease: os.release()
+		});
+	});
 
 	ipcMain.handle(
 		'github:deleteIssueComment',
