@@ -3971,6 +3971,20 @@ export const actions = {
 			applyPRStatus({ ...pr, state: 'closed', merged: true });
 			void refreshMergeBox();
 			void actions.refreshPRConversation();
+			// We caused this merge, so drive the post-merge flow (the switch-back /
+			// remove-branch prompt) right now instead of waiting for the next
+			// branch-PR poll to notice the unmerged → merged transition. Only fires
+			// when the merged PR is the checked-out branch's PR — reviewing someone
+			// else's PR shouldn't move our working tree. We disarm the polling watcher
+			// so detectBranchPRMerge doesn't run the same flow a second time later.
+			if (app.currentBranch && app.branchPR?.number === pr.number) {
+				if (watchedOpenPR?.number === pr.number) watchedOpenPR = null;
+				await onBranchPRMerged(
+					app.currentBranch,
+					pr.number,
+					app.activeRepo.defaultBranch ?? 'main'
+				);
+			}
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
