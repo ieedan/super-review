@@ -624,10 +624,10 @@ function nextTourStepHeader(fromPath: string, toPath: string): string | null {
 		: app.changedFiles;
 	const groups = tourGroups(app.activeSessionDetail, visible);
 	if (!groups) return null;
-	const groupOf = new Map<string, string>();
-	for (const g of groups) for (const f of g.files) groupOf.set(f.path, g.id);
-	const toGroup = groupOf.get(toPath);
-	if (!toGroup || toGroup === groupOf.get(fromPath)) return null;
+	const groupOf = (path: string): string | undefined =>
+		groups.find((g) => g.files.some((f) => f.path === path))?.id;
+	const toGroup = groupOf(toPath);
+	if (!toGroup || toGroup === groupOf(fromPath)) return null;
 	return toGroup;
 }
 
