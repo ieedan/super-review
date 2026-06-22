@@ -2,12 +2,22 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { app } from '$lib/store.svelte';
 	import { Chart, Svg, Calendar } from 'layerchart/svg';
+	import { timeWeek } from 'd3-time';
 
 	const hasCommits = $derived(app.commits.length > 0);
 
 	const now = new Date();
 	const rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 	const rangeStart = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+
+	const CELL_SIZE = 14;
+	const LABEL_HEIGHT = 22;
+	// +1 ensures the last partial week column is included in the width estimate.
+	const calWidth = (timeWeek.count(rangeStart, rangeEnd) + 1) * CELL_SIZE;
+	const chartHeight = 7 * CELL_SIZE + LABEL_HEIGHT;
+
+	let containerWidth = $state(0);
+	const centerOffset = $derived(Math.max(0, (containerWidth - calWidth) / 2));
 
 	type DayData = { date: Date; count: number };
 
@@ -44,23 +54,25 @@
 					Choose a commit from the sidebar to review the files it changed.
 				</p>
 			</div>
-			<div class="h-40 w-full">
-				<Chart data={calendarData} x={(d: DayData) => d.date} padding={{ top: 20 }}>
+			<div class="w-full" style="height: {chartHeight}px" bind:clientWidth={containerWidth}>
+				<Chart data={calendarData} x={(d: DayData) => d.date} padding={{ top: LABEL_HEIGHT }}>
 					<Svg>
-						<Calendar start={rangeStart} end={rangeEnd} monthLabel>
-							{#snippet children({ cells, cellSize })}
-								{#each cells as cell (cell.x + '-' + cell.y)}
-									<rect
-										x={cell.x + 1}
-										y={cell.y + 1}
-										width={Math.max(0, cellSize[0] - 2)}
-										height={Math.max(0, cellSize[1] - 2)}
-										rx="2"
-										style="fill: {cellFill(cell.data?.count ?? 0)}"
-									/>
-								{/each}
-							{/snippet}
-						</Calendar>
+						<g transform="translate({centerOffset}, 0)">
+							<Calendar start={rangeStart} end={rangeEnd} monthLabel cellSize={CELL_SIZE}>
+								{#snippet children({ cells, cellSize })}
+									{#each cells as cell (cell.x + '-' + cell.y)}
+										<rect
+											x={cell.x + 1}
+											y={cell.y + 1}
+											width={Math.max(0, cellSize[0] - 2)}
+											height={Math.max(0, cellSize[1] - 2)}
+											rx="2"
+											style="fill: {cellFill(cell.data?.count ?? 0)}"
+										/>
+									{/each}
+								{/snippet}
+							</Calendar>
+						</g>
 					</Svg>
 				</Chart>
 			</div>

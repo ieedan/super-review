@@ -69,85 +69,87 @@
 	<!-- Fills the sidebar content height; the VirtualList scrolls internally. -->
 	<div class="h-full" bind:clientHeight={viewportHeight}>
 		{#if viewportHeight > 0}
-			<VirtualList
-				width="100%"
-				height={viewportHeight}
-				itemCount={commits.length}
-				{itemSize}
-				overscanCount={6}
-			>
-				{#snippet item({ index, style })}
-					{@const commit = commits[index]}
-					{@const avatarUrl = commitAvatarUrl(commit.authorEmail)}
-					<div {style}>
-						{#if index === forkIndex}
-							<!-- Divergence point: commits above belong to this branch. -->
-							<div
-								class="flex items-center gap-2 px-3 pt-2 pb-1"
-								style="height: {DIVIDER_HEIGHT}px"
-							>
-								<div class="h-px flex-1 bg-border"></div>
-								<span class="flex-none text-[10px] text-muted-foreground">
-									Branched from <span class="font-mono text-foreground">{forkPoint?.baseLabel}</span
-									>
-								</span>
-								<div class="h-px flex-1 bg-border"></div>
-							</div>
-						{/if}
-						<div
-							role="button"
-							tabindex="0"
-							style="height: {ROW_HEIGHT}px"
-							class="group flex cursor-pointer items-start gap-2.5 border-b border-border/50 px-3 py-2 text-left transition-colors hover:bg-accent"
-							onclick={() => open(commit)}
-							oncontextmenu={(e) => showContextMenu(e, commit)}
-							onkeydown={(e) => {
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.preventDefault();
-									open(commit);
-								}
-							}}
-						>
-							<Avatar.Root class="mt-0.5 size-6 flex-none">
-								{#if avatarUrl}
-									<Avatar.Image src={avatarUrl} alt={commitAuthorLabel(commit)} />
-								{/if}
-								<Avatar.Fallback class="text-[10px]">
-									{authorInitials(commit.authorName)}
-								</Avatar.Fallback>
-							</Avatar.Root>
-							<div class="min-w-0 flex-1">
-								<div class="truncate text-xs font-medium">{commit.subject}</div>
+			{#key forkIndex}
+				<VirtualList
+					width="100%"
+					height={viewportHeight}
+					itemCount={commits.length}
+					{itemSize}
+					overscanCount={6}
+				>
+					{#snippet item({ index, style })}
+						{@const commit = commits[index]}
+						{@const avatarUrl = commitAvatarUrl(commit.authorEmail)}
+						<div {style}>
+							{#if index === forkIndex}
+								<!-- Divergence point: commits above belong to this branch. -->
 								<div
-									class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground tabular-nums"
+									class="flex items-center gap-2 px-3 pt-2 pb-1"
+									style="height: {DIVIDER_HEIGHT}px"
 								>
-									<span class="max-w-[10rem] truncate">{commitAuthorLabel(commit)}</span>
-									<span>·</span>
-									<span>{relative(commit.authoredAt)}</span>
-									<span>·</span>
-									<span
-										role="button"
-										tabindex="0"
-										class="cursor-copy font-mono hover:text-foreground"
-										title="Click to copy hash"
-										onclick={(e) => {
-											e.stopPropagation();
-											void actions.copyToClipboard(commit.hash);
-										}}
-										onkeydown={(e) => {
-											if (e.key === 'Enter' || e.key === ' ') {
-												e.preventDefault();
+									<div class="h-px flex-1 bg-border"></div>
+									<span class="flex-none text-[10px] text-muted-foreground">
+										Branched from <span class="font-mono text-foreground">{forkPoint?.baseLabel}</span
+										>
+									</span>
+									<div class="h-px flex-1 bg-border"></div>
+								</div>
+							{/if}
+							<div
+								role="button"
+								tabindex="0"
+								style="height: {ROW_HEIGHT}px"
+								class="group flex cursor-pointer items-start gap-2.5 border-b border-border/50 px-3 py-2 text-left transition-colors hover:bg-accent"
+								onclick={() => open(commit)}
+								oncontextmenu={(e) => showContextMenu(e, commit)}
+								onkeydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault();
+										open(commit);
+									}
+								}}
+							>
+								<Avatar.Root class="mt-0.5 size-6 flex-none">
+									{#if avatarUrl}
+										<Avatar.Image src={avatarUrl} alt={commitAuthorLabel(commit)} />
+									{/if}
+									<Avatar.Fallback class="text-[10px]">
+										{authorInitials(commit.authorName)}
+									</Avatar.Fallback>
+								</Avatar.Root>
+								<div class="min-w-0 flex-1">
+									<div class="truncate text-xs font-medium">{commit.subject}</div>
+									<div
+										class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground tabular-nums"
+									>
+										<span class="max-w-[10rem] truncate">{commitAuthorLabel(commit)}</span>
+										<span>·</span>
+										<span>{relative(commit.authoredAt)}</span>
+										<span>·</span>
+										<span
+											role="button"
+											tabindex="0"
+											class="cursor-copy font-mono hover:text-foreground"
+											title="Click to copy hash"
+											onclick={(e) => {
 												e.stopPropagation();
 												void actions.copyToClipboard(commit.hash);
-											}
-										}}>{commit.shortHash}</span
-									>
+											}}
+											onkeydown={(e) => {
+												if (e.key === 'Enter' || e.key === ' ') {
+													e.preventDefault();
+													e.stopPropagation();
+													void actions.copyToClipboard(commit.hash);
+												}
+											}}>{commit.shortHash}</span
+										>
+									</div>
 								</div>
 							</div>
 						</div>
-					</div>
-				{/snippet}
-			</VirtualList>
+					{/snippet}
+				</VirtualList>
+			{/key}
 		{/if}
 	</div>
 {/if}

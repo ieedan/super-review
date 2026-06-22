@@ -54,6 +54,7 @@
 		"@sveltejs/vite-plugin-svelte": "^5.0.3",
 		"@tailwindcss/vite": "^4.1.7",
 		"@tsconfig/svelte": "^5.0.4",
+		"@types/d3-time": "^3.0.4",
 		"@types/node": "^24.0.0",
 		"@types/picomatch": "^4.0.3",
 		"autoprefixer": "^10.4.20",
