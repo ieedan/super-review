@@ -32,6 +32,7 @@
 		"@pierre/diffs": "^1.2.3",
 		"@super-review/core": "workspace:*",
 		"carta-md": "^4.11.2",
+		"d3-time": "^3.1.0",
 		"dompurify": "^3.4.7",
 		"drizzle-orm": "^0.45.2",
 		"electron-store": "^10.0.1",
