@@ -27,9 +27,7 @@
 	// everything from it down is shared base history. We tack the divider onto the
 	// top of this one row so the divergence point reads inline with the list.
 	const forkPoint = $derived(app.historyForkPoint);
-	const forkIndex = $derived(
-		forkPoint ? commits.findIndex((c) => c.hash === forkPoint.sha) : -1
-	);
+	const forkIndex = $derived(forkPoint ? commits.findIndex((c) => c.hash === forkPoint.sha) : -1);
 
 	// Per-index sizing: the fork-point row is taller to fit the divider above it.
 	// A $derived (not a plain function) so the reference changes when forkIndex
@@ -53,6 +51,16 @@
 	function open(commit: CommitInfo): void {
 		void actions.openCommit(commit);
 	}
+
+	async function showContextMenu(e: MouseEvent, commit: CommitInfo): Promise<void> {
+		e.preventDefault();
+		const action = await window.api.menu.showCommitContextMenu();
+		if (action === 'copyShortHash') {
+			await actions.copyToClipboard(commit.shortHash);
+		} else if (action === 'copyFullHash') {
+			await actions.copyToClipboard(commit.hash);
+		}
+	}
 </script>
 
 {#if commits.length === 0}
@@ -65,7 +73,7 @@
 				width="100%"
 				height={viewportHeight}
 				itemCount={commits.length}
-				itemSize={itemSize}
+				{itemSize}
 				overscanCount={6}
 			>
 				{#snippet item({ index, style })}
@@ -74,10 +82,14 @@
 					<div {style}>
 						{#if index === forkIndex}
 							<!-- Divergence point: commits above belong to this branch. -->
-							<div class="flex items-center gap-2 px-3 pt-2 pb-1" style="height: {DIVIDER_HEIGHT}px">
+							<div
+								class="flex items-center gap-2 px-3 pt-2 pb-1"
+								style="height: {DIVIDER_HEIGHT}px"
+							>
 								<div class="h-px flex-1 bg-border"></div>
 								<span class="flex-none text-[10px] text-muted-foreground">
-									Branched from <span class="font-mono text-foreground">{forkPoint?.baseLabel}</span>
+									Branched from <span class="font-mono text-foreground">{forkPoint?.baseLabel}</span
+									>
 								</span>
 								<div class="h-px flex-1 bg-border"></div>
 							</div>
@@ -88,6 +100,7 @@
 							style="height: {ROW_HEIGHT}px"
 							class="group flex cursor-pointer items-start gap-2.5 border-b border-border/50 px-3 py-2 text-left transition-colors hover:bg-accent"
 							onclick={() => open(commit)}
+							oncontextmenu={(e) => showContextMenu(e, commit)}
 							onkeydown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
@@ -112,7 +125,23 @@
 									<span>·</span>
 									<span>{relative(commit.authoredAt)}</span>
 									<span>·</span>
-									<span class="font-mono">{commit.shortHash}</span>
+									<span
+										role="button"
+										tabindex="0"
+										class="cursor-copy font-mono hover:text-foreground"
+										title="Click to copy hash"
+										onclick={(e) => {
+											e.stopPropagation();
+											void actions.copyToClipboard(commit.hash);
+										}}
+										onkeydown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												e.stopPropagation();
+												void actions.copyToClipboard(commit.hash);
+											}
+										}}>{commit.shortHash}</span
+									>
 								</div>
 							</div>
 						</div>
