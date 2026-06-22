@@ -3352,6 +3352,15 @@ export const actions = {
 			if (app.contextTab === 'branch' && landingOnDefault) {
 				await actions.setContextTab('unstaged');
 			}
+			// Switching onto the default branch auto-refreshes it from upstream, so
+			// `main` is never left stale after a switch (it's the branch you return to
+			// expecting the latest). Fire-and-forget: pull() drives its own progress and
+			// conflict UI (intent 'pull'), so we don't block the checkout on a network
+			// round-trip. Guarded on an upstream existing (refreshPushStatus just ran)
+			// so a local-only default branch doesn't error on a pull with no remote.
+			if (landingOnDefault && app.pushStatus?.hasUpstream) {
+				void actions.pull();
+			}
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
