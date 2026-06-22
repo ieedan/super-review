@@ -12,10 +12,12 @@
 	const open = $derived(app.changesetReviewOpen);
 	const changedSet = $derived(new Set(app.changesetStatus?.changedPackages ?? []));
 
-	// Changesets that bump at least one package with no changes on this branch.
+	// Changesets *newly added* on this branch that bump at least one package with no
+	// changes here. Edits to pre-existing changesets are left alone — we only review
+	// the ones we'd have prompted to add.
 	const suspicious = $derived(
-		(app.changesetStatus?.branchChangesets ?? []).filter((cs) =>
-			cs.packages.some((p) => !changedSet.has(p))
+		(app.changesetStatus?.branchChangesets ?? []).filter(
+			(cs) => cs.added && cs.packages.some((p) => !changedSet.has(p))
 		)
 	);
 

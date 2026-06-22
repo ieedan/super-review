@@ -297,10 +297,12 @@ export interface ChangesetStatus {
 	coveredPackages: string[];
 	// installed && some changed package isn't covered yet.
 	needsChangeset: boolean;
-	// Changesets introduced on this branch (file path + the packages each bumps).
-	// Lets the UI list the ones that look unnecessary — a changeset whose package
-	// has no actual change — and offer to remove them.
-	branchChangesets: { path: string; packages: string[] }[];
+	// Changesets touched on this branch (file path + the packages each bumps).
+	// `added` is true when the changeset is new on this branch, false when it was
+	// already here and only edited. Lets the UI flag the ones that look unnecessary
+	// — a *newly added* changeset whose package has no actual change — and offer to
+	// remove them, without nagging about edits to pre-existing changesets.
+	branchChangesets: { path: string; packages: string[]; added: boolean }[];
 }
 
 // Input for writing a new changeset: one bump type applied to every selected

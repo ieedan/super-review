@@ -215,7 +215,13 @@ async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 // the configured/default base (committed-on-branch + uncommitted tracked edits),
 // plus untracked files. Falls back to just the working-tree status when there's
 // no usable base (detached, no default branch, unborn branch on a fresh repo).
-async function changedFilesOnBranch(git: SimpleGit, config: ChangesetConfig): Promise<string[]> {
+// `added` is the subset of `files` that didn't exist at the base (new on this
+// branch, vs. edited) — lets the caller tell a brand-new changeset apart from an
+// edit to one that was already here.
+async function changedFilesOnBranch(
+	git: SimpleGit,
+	config: ChangesetConfig
+): Promise<{ files: string[]; added: Set<string> }> {
 	const baseName =
 		config.baseBranch ?? (await detectDefaultBranch(git).catch(() => undefined)) ?? 'main';
 	const baseRef = (await revExists(git, `origin/${baseName}`))
@@ -225,6 +231,7 @@ async function changedFilesOnBranch(git: SimpleGit, config: ChangesetConfig): Pr
 			: null;
 
 	const paths = new Set<string>();
+	const added = new Set<string>();
 	let mergeBase: string | null = null;
 	if (baseRef) {
 		try {
@@ -234,20 +241,39 @@ async function changedFilesOnBranch(git: SimpleGit, config: ChangesetConfig): Pr
 		}
 	}
 	if (mergeBase) {
-		const diff = await git.raw(['diff', '--name-only', mergeBase]).catch(() => '');
-		for (const p of diff.split('\n')) if (p.trim()) paths.add(p.trim());
+		const diff = await git.raw(['diff', '--name-status', mergeBase]).catch(() => '');
+		for (const line of diff.split('\n')) {
+			if (!line.trim()) continue;
+			const parts = line.split('\t');
+			const status = parts[0];
+			const file = parts[parts.length - 1]?.trim();
+			if (!file) continue;
+			paths.add(file);
+			if (status.startsWith('A')) added.add(file);
+		}
 	} else {
 		// No base to diff against — consider just the working tree.
 		const status = await git.raw(['status', '--porcelain', '-z']).catch(() => '');
 		for (const entry of status.split('\0')) {
-			if (entry.length > 3) paths.add(entry.slice(3));
+			if (entry.length > 3) {
+				const file = entry.slice(3);
+				const code = entry.slice(0, 2);
+				paths.add(file);
+				if (code === '??' || code[0] === 'A') added.add(file);
+			}
 		}
 	}
-	// Untracked files aren't in `diff`; add them explicitly.
+	// Untracked files aren't in `diff`; add them explicitly — and they're new.
 	const untracked = await git.raw(['ls-files', '--others', '--exclude-standard']).catch(() => '');
-	for (const p of untracked.split('\n')) if (p.trim()) paths.add(p.trim());
+	for (const p of untracked.split('\n')) {
+		const file = p.trim();
+		if (file) {
+			paths.add(file);
+			added.add(file);
+		}
+	}
 
-	return [...paths];
+	return { files: [...paths], added };
 }
 
 // A `.changeset/<name>.md` file (paths from git are repo-root-relative, and the
@@ -295,14 +321,15 @@ function packagesInChangeset(src: string): string[] {
 // on the base branch for unrelated, unreleased work must not count here.
 async function branchChangesetFiles(
 	repoPath: string,
-	files: string[]
-): Promise<{ path: string; packages: string[] }[]> {
-	const out: { path: string; packages: string[] }[] = [];
+	files: string[],
+	added: Set<string>
+): Promise<{ path: string; packages: string[]; added: boolean }[]> {
+	const out: { path: string; packages: string[]; added: boolean }[] = [];
 	for (const file of files) {
 		if (!isChangesetFile(file)) continue;
 		try {
 			const src = await fs.readFile(path.join(repoPath, file), 'utf8');
-			out.push({ path: file, packages: packagesInChangeset(src) });
+			out.push({ path: file, packages: packagesInChangeset(src), added: added.has(file) });
 		} catch {
 			// deleted on the branch / unreadable — covers nothing.
 		}
@@ -326,15 +353,16 @@ export async function getChangesetStatus(repoPath: string): Promise<ChangesetSta
 	if (!config) return empty;
 
 	const git = simpleGit(repoPath);
-	const [packages, changedFiles] = await Promise.all([
+	const [packages, changed] = await Promise.all([
 		listWorkspacePackages(repoPath, config),
 		changedFilesOnBranch(git, config)
 	]);
+	const changedFiles = changed.files;
 
 	// "Covered" means a changeset *added on this branch* — not one that was already
 	// on the base branch — so existing changesets for other work don't suppress the
 	// prompt.
-	const branchChangesets = await branchChangesetFiles(repoPath, changedFiles);
+	const branchChangesets = await branchChangesetFiles(repoPath, changedFiles, changed.added);
 	const covered = [...new Set(branchChangesets.flatMap((c) => c.packages))];
 	const changedPackages = packagesForFiles(changedFiles, packages);
 	const coveredSet = new Set(covered);

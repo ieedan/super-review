@@ -21,13 +21,17 @@
 		(app.changesetStatus?.needsChangeset ?? false) && !app.changesetPromptDismissed
 	);
 
-	// Packages with a changeset (introduced on this branch) but no actual changes —
-	// the changeset bumping them is likely unnecessary.
+	// Packages bumped by a changeset *newly added* on this branch but with no actual
+	// changes — that changeset is likely unnecessary. Editing the bumps of a changeset
+	// that was already here doesn't count: we only flag a changeset we'd offer to add.
 	const unnecessary = $derived.by(() => {
 		const s = app.changesetStatus;
 		if (!s) return [];
 		const changed = new Set(s.changedPackages);
-		return s.coveredPackages.filter((p) => !changed.has(p));
+		const addedCovered = new Set(
+			s.branchChangesets.filter((c) => c.added).flatMap((c) => c.packages)
+		);
+		return [...addedCovered].filter((p) => !changed.has(p));
 	});
 	const showWarning = $derived(unnecessary.length > 0 && !app.changesetWarningDismissed);
 
