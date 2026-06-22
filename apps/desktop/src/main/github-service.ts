@@ -55,7 +55,9 @@ const CLIENT_ID = process.env.SUPER_REVIEW_GH_CLIENT_ID ?? '178c6fc778ccc68e1d6a
 // `write:ssh_signing_key` lets the app register each account's commit-signing
 // key so signed commits show "Verified" on GitHub. Tokens minted before this
 // scope was added lack it — see flagAccountsMissingSigningScope.
-const SCOPES = ['repo', 'read:user', 'write:ssh_signing_key'];
+// `workflow` is required to push commits that add or change files under
+// `.github/workflows/`; without it GitHub rejects the push outright.
+const SCOPES = ['repo', 'read:user', 'workflow', 'write:ssh_signing_key'];
 const SIGNING_SCOPE = 'write:ssh_signing_key';
 
 // In-app feedback always opens an issue on the project's own repository — never
