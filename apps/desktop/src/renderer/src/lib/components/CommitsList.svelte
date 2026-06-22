@@ -89,7 +89,8 @@
 								>
 									<div class="h-px flex-1 bg-border"></div>
 									<span class="flex-none text-[10px] text-muted-foreground">
-										Branched from <span class="font-mono text-foreground">{forkPoint?.baseLabel}</span
+										Branched from <span class="font-mono text-foreground"
+											>{forkPoint?.baseLabel}</span
 										>
 									</span>
 									<div class="h-px flex-1 bg-border"></div>
