@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SvelteMap } from 'svelte/reactivity';
 	import { app } from '$lib/store.svelte';
 	import { Chart, Svg, Calendar } from 'layerchart/svg';
 
@@ -11,7 +12,7 @@
 	type DayData = { date: Date; count: number };
 
 	const calendarData = $derived.by((): DayData[] => {
-		const map = new Map<number, DayData>();
+		const map = new SvelteMap<number, DayData>();
 		for (const commit of app.commits) {
 			const d = new Date(commit.authoredAt);
 			const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -48,7 +49,7 @@
 					<Svg>
 						<Calendar start={rangeStart} end={rangeEnd} monthLabel>
 							{#snippet children({ cells, cellSize })}
-								{#each cells as cell}
+								{#each cells as cell (cell.x + '-' + cell.y)}
 									<rect
 										x={cell.x + 1}
 										y={cell.y + 1}
