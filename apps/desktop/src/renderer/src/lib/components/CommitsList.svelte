@@ -27,9 +27,7 @@
 	// everything from it down is shared base history. We tack the divider onto the
 	// top of this one row so the divergence point reads inline with the list.
 	const forkPoint = $derived(app.historyForkPoint);
-	const forkIndex = $derived(
-		forkPoint ? commits.findIndex((c) => c.hash === forkPoint.sha) : -1
-	);
+	const forkIndex = $derived(forkPoint ? commits.findIndex((c) => c.hash === forkPoint.sha) : -1);
 
 	// Per-index sizing: the fork-point row is taller to fit the divider above it.
 	// A $derived (not a plain function) so the reference changes when forkIndex
@@ -75,7 +73,7 @@
 				width="100%"
 				height={viewportHeight}
 				itemCount={commits.length}
-				itemSize={itemSize}
+				{itemSize}
 				overscanCount={6}
 			>
 				{#snippet item({ index, style })}
@@ -84,10 +82,14 @@
 					<div {style}>
 						{#if index === forkIndex}
 							<!-- Divergence point: commits above belong to this branch. -->
-							<div class="flex items-center gap-2 px-3 pt-2 pb-1" style="height: {DIVIDER_HEIGHT}px">
+							<div
+								class="flex items-center gap-2 px-3 pt-2 pb-1"
+								style="height: {DIVIDER_HEIGHT}px"
+							>
 								<div class="h-px flex-1 bg-border"></div>
 								<span class="flex-none text-[10px] text-muted-foreground">
-									Branched from <span class="font-mono text-foreground">{forkPoint?.baseLabel}</span>
+									Branched from <span class="font-mono text-foreground">{forkPoint?.baseLabel}</span
+									>
 								</span>
 								<div class="h-px flex-1 bg-border"></div>
 							</div>
@@ -138,8 +140,8 @@
 												e.stopPropagation();
 												void actions.copyToClipboard(commit.hash);
 											}
-										}}
-										>{commit.shortHash}</span>
+										}}>{commit.shortHash}</span
+									>
 								</div>
 							</div>
 						</div>
