@@ -1,5 +1,15 @@
 # @super-review/core
 
+## 0.1.7
+
+### Patch Changes
+
+- feat: Show when current branch diverged from default in the history view ([`ad0d518`](https://github.com/ieedan/super-review/commit/ad0d5184e55213b20c7cf9943c1cd610813a831f))
+
+- feat: Feedback dialog and issue triage workflow ([`7b78701`](https://github.com/ieedan/super-review/commit/7b78701e06e13fe741ee3280e38af0b34a2ee875))
+
+- feat: one-click copy commit hash in history view ([#89](https://github.com/ieedan/super-review/pull/89))
+
 ## 0.1.6
 
 ### Patch Changes
