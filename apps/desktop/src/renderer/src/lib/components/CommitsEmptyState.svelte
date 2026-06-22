@@ -8,7 +8,7 @@
 
 	const now = new Date();
 	const rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-	const rangeStart = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+	const rangeStart = new Date(now.getFullYear(), now.getMonth() - 5, now.getDate());
 
 	const CELL_SIZE = 14;
 	const LABEL_HEIGHT = 22;
