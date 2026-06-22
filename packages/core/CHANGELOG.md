@@ -1,5 +1,31 @@
 # @super-review/core
 
+## 0.1.6
+
+### Patch Changes
+
+- feat: Add PR conversation view to right sidebar ([#77](https://github.com/ieedan/super-review/pull/77))
+
+- feat: allow users to have custom file extensions ([#78](https://github.com/ieedan/super-review/pull/78))
+
+- feat: `comment list` now shows the review comments on the branch you're on — the branch is read from git, so you never name it, and there are no `--context`/`--pr` flags to reason about. Backed by a new `listLocalComments` helper in core. (These comments live on the reviewer's machine, so a remote/cloud agent finds none.) ([#82](https://github.com/ieedan/super-review/pull/82))
+
+- feat: add a History tab that lists the branch's commits and opens each commit's changed files for review. The Sessions and History tabs can be shown/hidden from the tab strip's right-click native context menu. ([#80](https://github.com/ieedan/super-review/pull/80))
+
+- feat: hover details in package.json files ([#75](https://github.com/ieedan/super-review/pull/75))
+
+- feat: Add ui for creating a changeset in the app ([`3138873`](https://github.com/ieedan/super-review/commit/31388730e05e4caf275cf4a0fb2058a44865d757))
+
+- feat: warn users of useless changesets ([`1676785`](https://github.com/ieedan/super-review/commit/167678559dbf578845406e6a7ea308d9efe48d81))
+
+- feat: signed commits by default ([`5673aa2`](https://github.com/ieedan/super-review/commit/5673aa22973838bb7f5ed27c6d0d9469b8ea8743))
+
+- fix: improve logo detection & detect light/dark variants ([`fcb9a16`](https://github.com/ieedan/super-review/commit/fcb9a16ebd7ca0a741b53a5c65b59caa258a9c1f))
+
+- feat: better transition settings ([`e1d7ac2`](https://github.com/ieedan/super-review/commit/e1d7ac27ee15d30c92bfd9facf0817391e5099a3))
+
+- feat: allow for customization of header items ([#76](https://github.com/ieedan/super-review/pull/76))
+
 ## 0.1.5
 
 ### Patch Changes

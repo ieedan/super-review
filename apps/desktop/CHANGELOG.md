@@ -1,5 +1,60 @@
 # @super-review/desktop
 
+## 0.1.12
+
+### Patch Changes
+
+- feat: Add PR conversation view to right sidebar ([#77](https://github.com/ieedan/super-review/pull/77))
+
+- fix: Ensure clicking on the last unseen change will wrap around to the next unseen change ([`b14c1cd`](https://github.com/ieedan/super-review/commit/b14c1cdb239a1c88f437a9ee39f9f737df27e99c))
+
+- feat: add a History tab that lists the branch's commits and opens each commit's changed files for review. The Sessions and History tabs can be shown/hidden from the tab strip's right-click native context menu. ([#80](https://github.com/ieedan/super-review/pull/80))
+
+- feat: arrange the notices above the commit box into a hover-to-expand stack (like Sonner), each a dismissible card, and add a prompt to install the super-review skill when it isn't installed in the current project. ([#84](https://github.com/ieedan/super-review/pull/84))
+
+- feat: register custom icons for files matching a glob pattern. Set them under Settings → Behavior → Custom file icons; matching files use your icon (an `https://` URL or a local image path) in place of the built-in file icon everywhere icons are shown. ([#78](https://github.com/ieedan/super-review/pull/78))
+
+- fix: stop the diff view from freezing on diffs with thousands of changed files. The scroll layout mounted one `DiffFileSection` per changed file up front — 7000+ heavy sections (Pierre imports, derived/effect graphs, observer registrations) mounted synchronously on load. It now mounts an initial window and grows it as you scroll toward the end (a bottom sentinel) or jump to a file past it from the sidebar, so the initial render stays cheap regardless of file count. ([#84](https://github.com/ieedan/super-review/pull/84))
+
+- fix: render an empty diff for files with no content (e.g. a newly added empty file) instead of surfacing Pierre's "identical sides" parse error. The bogus error previously lingered and prevented the diff from rendering once the file gained content. ([#78](https://github.com/ieedan/super-review/pull/78))
+
+- fix: don't show empty state when no packages are selected ([`e848023`](https://github.com/ieedan/super-review/commit/e848023079cb8609c6e0c26bfa3a0c3ac6fef573))
+
+- feat: hover details in package.json files ([#75](https://github.com/ieedan/super-review/pull/75))
+
+- feat: Ctrl/Cmd+A to select all files ([`baf36ff`](https://github.com/ieedan/super-review/commit/baf36fffea0daf7432c0c29a87a610ae80950dec))
+
+- fix: Actually use frecency sorting ([`440e94a`](https://github.com/ieedan/super-review/commit/440e94a21542f62b05b93564ecaca60165ae07d5))
+
+- feat: Seen celebration ([`d0b1f27`](https://github.com/ieedan/super-review/commit/d0b1f27c60b8d0f6baeaf40cb9dc80c29f697516))
+
+- feat: Add ui for creating a changeset in the app ([`3138873`](https://github.com/ieedan/super-review/commit/31388730e05e4caf275cf4a0fb2058a44865d757))
+
+- feat: warn users of useless changesets ([`1676785`](https://github.com/ieedan/super-review/commit/167678559dbf578845406e6a7ea308d9efe48d81))
+
+- fix: don't reset seen files when a transient git failure drops content signatures ([`d96ac40`](https://github.com/ieedan/super-review/commit/d96ac4026419919f21adf51a11bf4be3bcd8f814))
+
+- feat: rename the bundled skill from `document-session` to `super-review`, with a routing `SKILL.md` that points to `document-session.md` (authoring a tour) and `resolve-comments.md` (reading and resolving inline review comments). "Install skill" now drops `.agents/skills/super-review/` into the repo. ([#83](https://github.com/ieedan/super-review/pull/83))
+
+- feat: signed commits by default ([`5673aa2`](https://github.com/ieedan/super-review/commit/5673aa22973838bb7f5ed27c6d0d9469b8ea8743))
+
+- fix: Don't open a second GitHub verification tab after sign-in completes ([#74](https://github.com/ieedan/super-review/pull/74))
+
+- feat: the document-session skill now covers the review-comments CLI (`comment list --unresolved` / `comment resolve --session`) so agents discover and resolve inline review comments, and "Install skill" now copies the skill's real files bundled with the app instead of an inlined copy embedded in code — a single source of truth that can grow beyond one file. ([#82](https://github.com/ieedan/super-review/pull/82))
+
+- feat: auto-fill commit message with changeset ([`b884cab`](https://github.com/ieedan/super-review/commit/b884cab3a6c267026243f79c6d40405f719867b7))
+
+- fix: improve logo detection & detect light/dark variants ([`fcb9a16`](https://github.com/ieedan/super-review/commit/fcb9a16ebd7ca0a741b53a5c65b59caa258a9c1f))
+
+- feat: better transition settings ([`e1d7ac2`](https://github.com/ieedan/super-review/commit/e1d7ac27ee15d30c92bfd9facf0817391e5099a3))
+
+- fix: stop the History tab from freezing the app on large repos. Resolving commit-author avatars fired one GitHub `getCommit` request per distinct author all at once; on a branch with dozens of authors the burst saturated the main process and tripped GitHub's secondary rate limit, stalling IPC. The probes now run through a small concurrency pool so they stay background work and the UI stays responsive. ([#84](https://github.com/ieedan/super-review/pull/84))
+
+- feat: allow for customization of header items ([#76](https://github.com/ieedan/super-review/pull/76))
+
+- Updated dependencies [[`059e6f1`](https://github.com/ieedan/super-review/commit/059e6f1f208d12ab310800ffff7286be434d9dce), [`5b5d3db`](https://github.com/ieedan/super-review/commit/5b5d3db2726539407f21cbc9175ff79d22f2f87b), [`ef7594a`](https://github.com/ieedan/super-review/commit/ef7594a6bf6f1b8a02d7d87f30c30b81d088d14b), [`6c912f5`](https://github.com/ieedan/super-review/commit/6c912f5b13be2a95d69bff536e352a7b0d1a0586), [`e0253a5`](https://github.com/ieedan/super-review/commit/e0253a5bc35642d6a07a31a3c64cc6069b286ad2), [`3138873`](https://github.com/ieedan/super-review/commit/31388730e05e4caf275cf4a0fb2058a44865d757), [`1676785`](https://github.com/ieedan/super-review/commit/167678559dbf578845406e6a7ea308d9efe48d81), [`5673aa2`](https://github.com/ieedan/super-review/commit/5673aa22973838bb7f5ed27c6d0d9469b8ea8743), [`fcb9a16`](https://github.com/ieedan/super-review/commit/fcb9a16ebd7ca0a741b53a5c65b59caa258a9c1f), [`e1d7ac2`](https://github.com/ieedan/super-review/commit/e1d7ac27ee15d30c92bfd9facf0817391e5099a3), [`3352c5d`](https://github.com/ieedan/super-review/commit/3352c5da051b54ebb61238ab7903f181d2f563d5)]:
+  - @super-review/core@0.1.6
+
 ## 0.1.11
 
 ### Patch Changes
