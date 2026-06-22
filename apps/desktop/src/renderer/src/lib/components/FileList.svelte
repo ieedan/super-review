@@ -621,11 +621,12 @@
 		rowFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
 		// Make the list a focusable tree region so arrow keys only navigate when
 		// the list has focus — elsewhere (e.g. the diff pane) arrows still scroll.
-		// Suppress the browser's default focus outline on the container itself; the
-		// cursor row carries its own subtle highlight instead.
+		// The default focus outline is suppressed via the `outline-hidden` class on
+		// the element (NOT imperatively here — Svelte's reactive `style` attribute
+		// would clobber an inline `el.style.outline`); the cursor row carries its
+		// own subtle highlight instead.
 		el.tabIndex = 0;
 		el.setAttribute('role', 'tree');
-		el.style.outline = 'none';
 		const onScroll = (): void => {
 			scrollTop = el.scrollTop;
 		};
@@ -1112,7 +1113,11 @@
 		{/if}
 	</Sidebar.Header>
 
-	<Sidebar.Content bind:ref={scrollRoot} style={`padding-bottom:${footerHeight}px`}>
+	<Sidebar.Content
+		bind:ref={scrollRoot}
+		class="outline-hidden"
+		style={`padding-bottom:${footerHeight}px`}
+	>
 		{#if app.contextTab === 'sessions' && !app.activeSessionId}
 			<!-- Sessions tab with no session open: list the documented sessions. -->
 			<SessionsList />

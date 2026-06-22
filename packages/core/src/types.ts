@@ -1436,6 +1436,9 @@ export interface PreloadAPI {
 		// List commits reachable from `head` (defaults to the checked-out branch),
 		// newest first, capped at `limit`. Backs the History tab's commit list.
 		listCommits(repoId: string, head?: string, limit?: number): Promise<CommitInfo[]>;
+		// Most-recent common ancestor of two refs (where `b` diverged from `a`), or
+		// null when they share no history. Backs the History tab's fork-point marker.
+		mergeBase(repoId: string, a: string, b: string): Promise<string | null>;
 		undoLastCommit(repoId: string): Promise<CommitResult>;
 		cloneRepo(url: string): Promise<CloneResult>;
 		// Repoint `origin` at the user's fork (GitHub Desktop's fork layout). When

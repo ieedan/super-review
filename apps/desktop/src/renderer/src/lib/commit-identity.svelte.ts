@@ -51,9 +51,18 @@ export function githubLogin(email: string): string | null {
 // email isn't a GitHub noreply address.
 function githubAvatarFromEmail(email: string): string | null {
 	const withId = email.match(GITHUB_EMAIL_WITH_ID);
-	if (withId) return `https://avatars.githubusercontent.com/u/${withId[1]}?s=80&v=4`;
+	// Bot accounts are GitHub Apps: their avatar lives at /in/<app-install-id>, not
+	// /u/<user-id>, and only the API can map it. The /u/<id> form returns a generic
+	// 200 image, which would mask the API lookup — so let bots fall through to it.
+	if (withId) {
+		if (withId[2].endsWith('[bot]')) return null;
+		return `https://avatars.githubusercontent.com/u/${withId[1]}?s=80&v=4`;
+	}
 	const withLogin = email.match(GITHUB_EMAIL_WITH_LOGIN);
-	if (withLogin) return `https://github.com/${withLogin[1]}.png?size=80`;
+	if (withLogin) {
+		if (withLogin[1].endsWith('[bot]')) return null;
+		return `https://github.com/${withLogin[1]}.png?size=80`;
+	}
 	return null;
 }
 

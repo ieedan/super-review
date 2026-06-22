@@ -166,6 +166,11 @@ interface AppState {
 	// Commits on the viewed branch/PR head, newest first — the History tab's list.
 	// Loaded on entering the tab / refresh. Empty on other tabs.
 	commits: CommitInfo[];
+	// Where the History list's head diverged from its base branch: the merge-base
+	// SHA (which appears in `commits`) plus a display label for the base. null when
+	// there's no base to compare against, the head IS the base, or it couldn't be
+	// resolved. Drives the "branched from <base>" divider in the commit list.
+	historyForkPoint: { sha: string; baseLabel: string } | null;
 	// The commit whose diff is currently open, or null when the History tab is
 	// showing the list. Ephemeral — not persisted across launches.
 	activeCommit: CommitInfo | null;
@@ -687,6 +692,7 @@ const initial: AppState = {
 	activeSessionDetail: null,
 	sessionView: 'tour',
 	commits: [],
+	historyForkPoint: null,
 	activeCommit: null,
 	skillInstalled: null,
 	skillInstallDismissed: false,
@@ -2706,6 +2712,7 @@ export const actions = {
 			app.sessionCount = 0;
 			app.activeCommit = null;
 			app.commits = [];
+			app.historyForkPoint = null;
 			app.skillInstalled = null;
 			app.skillInstallDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
@@ -2968,14 +2975,31 @@ export const actions = {
 	async loadCommits(): Promise<void> {
 		if (!app.activeRepo) {
 			app.commits = [];
+			app.historyForkPoint = null;
 			return;
 		}
 		const repoId = app.activeRepo.id;
 		const head = historyHeadRef();
+		const baseRef = branchDiffBaseRef();
 		const commits = await window.api.git.listCommits(repoId, head);
 		// Bail if the user switched repos / views while we were fetching.
 		if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 		app.commits = commits;
+		app.historyForkPoint = null;
+		// Mark where this head diverged from its base. Skip when the base is the
+		// head itself (e.g. viewing the default branch) — there's nothing to fork
+		// from. The merge-base is reachable from head, so it sits somewhere in the
+		// list; only mark divergence when it's below the tip (there are
+		// branch-unique commits above it).
+		if (baseRef && baseRef !== head) {
+			const sha = await window.api.git.mergeBase(repoId, baseRef, head);
+			if (!app.activeRepo || app.activeRepo.id !== repoId) return;
+			if (sha && commits[0]?.hash !== sha && commits.some((c) => c.hash === sha)) {
+				const pr = uiPR();
+				const baseLabel = pr && baseRef === `pr/${pr.number}/base` ? pr.baseRef : baseRef;
+				app.historyForkPoint = { sha, baseLabel };
+			}
+		}
 	},
 
 	// Open a commit's diff: drives the file list + diff view through a `commit`

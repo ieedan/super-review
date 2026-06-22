@@ -103,6 +103,7 @@ import {
 	listCommits,
 	listLocalOnlyBranches,
 	listChangedFiles,
+	mergeBase,
 	mergeIntoCurrent,
 	updateFromUpstream,
 	pinPRBaseRef,
@@ -880,6 +881,12 @@ export function registerIpc(): void {
 		'git:listCommits',
 		async (_e, repoId: string, head?: string, limit?: number): Promise<CommitInfo[]> =>
 			listCommits(repoOrThrow(repoId).path, head, limit)
+	);
+
+	ipcMain.handle(
+		'git:mergeBase',
+		async (_e, repoId: string, a: string, b: string): Promise<string | null> =>
+			mergeBase(repoOrThrow(repoId).path, a, b)
 	);
 
 	ipcMain.handle(

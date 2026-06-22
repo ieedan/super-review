@@ -145,6 +145,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
 		listCommits: (repoId, head, limit) =>
 			ipcRenderer.invoke('git:listCommits', repoId, head, limit) as Promise<CommitInfo[]>,
+		mergeBase: (repoId, a, b) =>
+			ipcRenderer.invoke('git:mergeBase', repoId, a, b) as Promise<string | null>,
 		undoLastCommit: (repoId) =>
 			ipcRenderer.invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
 		cloneRepo: (url) => ipcRenderer.invoke('git:cloneRepo', url) as Promise<CloneResult>,

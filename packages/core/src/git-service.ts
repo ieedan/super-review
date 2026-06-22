@@ -2680,6 +2680,19 @@ export async function listCommits(
 	}
 }
 
+// Merge-base (most-recent common ancestor) of two refs — the point where `b`
+// last diverged from `a`. Returns null when the refs share no history or either
+// can't be resolved. Backs the History tab's "branched from <base>" divider.
+export async function mergeBase(repoPath: string, a: string, b: string): Promise<string | null> {
+	const git = simpleGit(repoPath);
+	try {
+		const sha = (await git.raw(['merge-base', a, b])).trim();
+		return sha || null;
+	} catch {
+		return null;
+	}
+}
+
 // Undoes the last commit while keeping its changes staged in the index, the
 // same way GitHub Desktop's "Undo" affordance works (git reset --soft HEAD~1).
 // When the tip is the repo's only commit, drop the HEAD ref instead so the
