@@ -60,7 +60,7 @@ import { getDiffWorkerPool, POOL_PERSISTENT_RENDER_OPTIONS } from '$lib/diff-wor
 export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '$lib/repo-frecency.svelte';
-import { tourFileOrder } from '$lib/session-tour';
+import { tourFileOrder, tourGroups } from '$lib/session-tour';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import {
 	upstreamChecked,
@@ -3208,7 +3208,23 @@ export const actions = {
 			idx >= 0
 				? (ordered.slice(idx + 1).find(isUnseen) ?? ordered.slice(0, idx).find(isUnseen))
 				: ordered.find(isUnseen);
-		if (next) actions.scrollToFile(next.path);
+		if (!next) return;
+		// In a tour, when the next unseen file opens a new step, land on that step's
+		// header (title + body) rather than scrolling straight to the file. Otherwise
+		// "mark seen" leaps over the step commentary and the reviewer never sees the
+		// description of what's coming. The file sits just below the header.
+		const detail = app.activeSessionDetail;
+		const lead =
+			app.sessionView === 'tour' && detail
+				? tourGroups(detail, ordered)?.find((g) => g.files[0]?.path === next.path)
+				: undefined;
+		if (lead) {
+			app.selectedFile = next.path;
+			if (app.collapsedFiles.has(next.path)) void actions.toggleFileCollapsed(next.path, false);
+			actions.scrollToStep(lead.id);
+		} else {
+			actions.scrollToFile(next.path);
+		}
 	},
 
 	async clearSeen(): Promise<void> {
