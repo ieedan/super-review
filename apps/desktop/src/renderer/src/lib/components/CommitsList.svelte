@@ -53,6 +53,16 @@
 	function open(commit: CommitInfo): void {
 		void actions.openCommit(commit);
 	}
+
+	async function showContextMenu(e: MouseEvent, commit: CommitInfo): Promise<void> {
+		e.preventDefault();
+		const action = await window.api.menu.showCommitContextMenu();
+		if (action === 'copyShortHash') {
+			await actions.copyToClipboard(commit.shortHash);
+		} else if (action === 'copyFullHash') {
+			await actions.copyToClipboard(commit.hash);
+		}
+	}
 </script>
 
 {#if commits.length === 0}
@@ -88,6 +98,7 @@
 							style="height: {ROW_HEIGHT}px"
 							class="group flex cursor-pointer items-start gap-2.5 border-b border-border/50 px-3 py-2 text-left transition-colors hover:bg-accent"
 							onclick={() => open(commit)}
+							oncontextmenu={(e) => showContextMenu(e, commit)}
 							onkeydown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
@@ -112,7 +123,23 @@
 									<span>·</span>
 									<span>{relative(commit.authoredAt)}</span>
 									<span>·</span>
-									<span class="font-mono">{commit.shortHash}</span>
+									<span
+										role="button"
+										tabindex="0"
+										class="cursor-copy font-mono hover:text-foreground"
+										title="Click to copy hash"
+										onclick={(e) => {
+											e.stopPropagation();
+											void actions.copyToClipboard(commit.hash);
+										}}
+										onkeydown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												e.stopPropagation();
+												void actions.copyToClipboard(commit.hash);
+											}
+										}}
+										>{commit.shortHash}</span>
 								</div>
 							</div>
 						</div>

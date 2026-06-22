@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import type {
 	BranchContextMenuAction,
 	BranchContextMenuParams,
+	CommitContextMenuAction,
 	PRContextMenuAction,
 	PRContextMenuParams,
 	BranchInfo,
@@ -1790,6 +1791,36 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<RepoContextMenuAction | null>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// Commit row context menu (right-click a row in the History list). Offers
+	// copying the abbreviated or full commit hash; the renderer performs the copy.
+	ipcMain.handle(
+		'menu:showCommitContextMenu',
+		async (e): Promise<CommitContextMenuAction | null> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: CommitContextMenuAction | null = null;
+			const item = (
+				label: string,
+				action: CommitContextMenuAction
+			): MenuItemConstructorOptions => ({
+				label,
+				click: () => {
+					chosen = action;
+				}
+			});
+
+			const menu = Menu.buildFromTemplate([
+				item('Copy Short Hash', 'copyShortHash'),
+				item('Copy Full Hash', 'copyFullHash')
+			]);
+			return await new Promise<CommitContextMenuAction | null>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)

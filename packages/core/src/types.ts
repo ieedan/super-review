@@ -757,6 +757,10 @@ export type PRContextMenuAction = 'view' | 'copyUrl' | 'openOnGitHub';
 // means the menu was dismissed without a choice.
 export type RepoContextMenuAction = 'copyPath' | 'reveal' | 'remove' | 'settings';
 
+// Actions a commit row's native context menu can return. `null` (from the IPC)
+// means the menu was dismissed without a choice.
+export type CommitContextMenuAction = 'copyShortHash' | 'copyFullHash';
+
 // A single toggle in the header's "Show in header" native context menu. `key`
 // is the HeaderItemVisibility field it controls; `checked` is its current state.
 export interface HeaderContextMenuItem {
@@ -1826,6 +1830,9 @@ export interface PreloadAPI {
 		// Pop up a native OS context menu for a repo row in the picker. Resolves to
 		// the chosen action, or null when the menu is dismissed without a selection.
 		showRepoContextMenu(params: RepoContextMenuParams): Promise<RepoContextMenuAction | null>;
+		// Pop up a native OS context menu for a commit row in the history list.
+		// Resolves to the chosen action, or null when the menu is dismissed.
+		showCommitContextMenu(): Promise<CommitContextMenuAction | null>;
 		// Pop up the header's "Show in header" customization context menu. Resolves
 		// to the toggled item and its new state, or null when dismissed.
 		showHeaderContextMenu(params: HeaderContextMenuParams): Promise<HeaderContextMenuResult>;

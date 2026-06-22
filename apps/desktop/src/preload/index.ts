@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
 	BranchContextMenuAction,
+	CommitContextMenuAction,
 	PRContextMenuAction,
 	BranchInfo,
 	BranchMenuAction,
@@ -474,6 +475,8 @@ const api: PreloadAPI = {
 				'menu:showRepoContextMenu',
 				params
 			) as Promise<RepoContextMenuAction | null>,
+		showCommitContextMenu: () =>
+			ipcRenderer.invoke('menu:showCommitContextMenu') as Promise<CommitContextMenuAction | null>,
 		showHeaderContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
 		showTabsContextMenu: (params) =>
