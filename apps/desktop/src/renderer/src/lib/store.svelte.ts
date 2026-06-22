@@ -3343,6 +3343,16 @@ export const actions = {
 			}
 			await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 			await refreshBranchPR();
+			// Switching onto the default branch brings the working copy up to date:
+			// fetch and pull the latest from upstream automatically, the way GitHub
+			// Desktop refreshes when you land on a branch. Gated on the default branch
+			// actually tracking a remote — a local-only `main` has nothing to pull, and
+			// we don't want a routine switch to surface a "no upstream"/offline error.
+			// `pull()` reuses the shared conflict/stash flow, so a divergent or dirty
+			// tree is handled exactly like a manual pull rather than failing silently.
+			if (landingOnDefault && app.pushStatus?.hasUpstream) {
+				await actions.pull();
+			}
 			if (app.contextTab === 'history') {
 				// The commit list follows the checked-out branch: drop any open commit
 				// and reload for the new head.
