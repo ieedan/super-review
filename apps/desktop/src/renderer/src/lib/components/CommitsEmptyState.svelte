@@ -6,7 +6,7 @@
 
 	const now = new Date();
 	const rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-	const rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+	const rangeStart = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
 
 	type DayData = { date: Date; count: number };
 
@@ -36,14 +36,14 @@
 
 <div class="grid h-full w-full place-items-center p-6">
 	{#if hasCommits}
-		<div class="flex w-full max-w-sm flex-col items-center gap-4">
+		<div class="flex w-full flex-col items-center gap-4">
 			<div class="text-center">
 				<h2 class="text-lg font-semibold">Select a commit</h2>
 				<p class="mt-1 text-sm text-muted-foreground">
 					Choose a commit from the sidebar to review the files it changed.
 				</p>
 			</div>
-			<div class="h-28 w-full">
+			<div class="h-40 w-full">
 				<Chart data={calendarData} x={(d: DayData) => d.date} padding={{ top: 20 }}>
 					<Svg>
 						<Calendar start={rangeStart} end={rangeEnd} monthLabel>
