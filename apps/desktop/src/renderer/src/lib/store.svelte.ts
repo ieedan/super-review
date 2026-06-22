@@ -60,7 +60,7 @@ import { getDiffWorkerPool, POOL_PERSISTENT_RENDER_OPTIONS } from '$lib/diff-wor
 export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '$lib/repo-frecency.svelte';
-import { tourFileOrder } from '$lib/session-tour';
+import { tourFileOrder, tourGroups } from '$lib/session-tour';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import {
 	upstreamChecked,
@@ -608,6 +608,27 @@ export function allBranchChangesSeen(): boolean {
 		app.changedFiles.length > 0 &&
 		app.changedFiles.every((f) => app.seenFiles.has(f.path))
 	);
+}
+
+// When advancing from one file to another in a session's Tour view, returns the
+// id of the step header to land on instead of the file — but only when the two
+// files belong to different tour steps, so the reviewer reads the next step's
+// title/body before its diff. Returns null in the flat Changes view (no steps),
+// when the session has no tour, or when both files share a step (no title sits
+// between them, so jumping straight to the file is right).
+function nextTourStepHeader(fromPath: string, toPath: string): string | null {
+	if (app.sessionView !== 'tour') return null;
+	const q = app.fileSearchQuery.trim().toLowerCase();
+	const visible = q
+		? app.changedFiles.filter((f) => f.path.toLowerCase().includes(q))
+		: app.changedFiles;
+	const groups = tourGroups(app.activeSessionDetail, visible);
+	if (!groups) return null;
+	const groupOf = new Map<string, string>();
+	for (const g of groups) for (const f of g.files) groupOf.set(f.path, g.id);
+	const toGroup = groupOf.get(toPath);
+	if (!toGroup || toGroup === groupOf.get(fromPath)) return null;
+	return toGroup;
 }
 
 // A short label for the read-only PR being viewed (its head branch), or null
@@ -3208,7 +3229,21 @@ export const actions = {
 			idx >= 0
 				? (ordered.slice(idx + 1).find(isUnseen) ?? ordered.slice(0, idx).find(isUnseen))
 				: ordered.find(isUnseen);
-		if (next) actions.scrollToFile(next.path);
+		if (!next) return;
+		// In a session's Tour view the files sit under step headers (title + body).
+		// When the next file begins a *different* step, land on that step's header
+		// instead of the file so its narration is read first — scrolling straight to
+		// the file would skip the title and body of the upcoming step, hiding the
+		// reason for the change. Same-step advances (and the flat Changes view) jump
+		// directly to the file as before.
+		const stepHeaderId = nextTourStepHeader(filePath, next.path);
+		if (stepHeaderId) {
+			app.selectedFile = next.path;
+			if (app.collapsedFiles.has(next.path)) void actions.toggleFileCollapsed(next.path, false);
+			actions.scrollToStep(stepHeaderId);
+		} else {
+			actions.scrollToFile(next.path);
+		}
 	},
 
 	async clearSeen(): Promise<void> {
