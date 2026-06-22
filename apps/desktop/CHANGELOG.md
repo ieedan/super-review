@@ -1,5 +1,26 @@
 # @super-review/desktop
 
+## 0.1.13
+
+### Patch Changes
+
+- feat: Show when current branch diverged from default in the history view ([`ad0d518`](https://github.com/ieedan/super-review/commit/ad0d5184e55213b20c7cf9943c1cd610813a831f))
+
+- feat: 30-day commit heatmap in history empty state ([#88](https://github.com/ieedan/super-review/pull/88))
+
+- feat: Feedback dialog and issue triage workflow ([`7b78701`](https://github.com/ieedan/super-review/commit/7b78701e06e13fe741ee3280e38af0b34a2ee875))
+
+- feat: one-click copy commit hash in history view ([#89](https://github.com/ieedan/super-review/pull/89))
+
+- fix: auto-pull the default branch from upstream when switching onto it so it isn't left stale ([#94](https://github.com/ieedan/super-review/pull/94))
+
+- fix: shortcut styling on review comments ([`3e5acee`](https://github.com/ieedan/super-review/commit/3e5acee619ab0f57e1d0949d9ef4c8941c3d8ad6))
+
+- fix: trigger the merged-branch switch-back flow immediately after merging a PR from the UI instead of waiting for the next poll ([#91](https://github.com/ieedan/super-review/pull/91))
+
+- Updated dependencies [[`ad0d518`](https://github.com/ieedan/super-review/commit/ad0d5184e55213b20c7cf9943c1cd610813a831f), [`7b78701`](https://github.com/ieedan/super-review/commit/7b78701e06e13fe741ee3280e38af0b34a2ee875), [`716876c`](https://github.com/ieedan/super-review/commit/716876cfcfac56ea3da65c37e23930622ea4c27c)]:
+  - @super-review/core@0.1.7
+
 ## 0.1.12
 
 ### Patch Changes
