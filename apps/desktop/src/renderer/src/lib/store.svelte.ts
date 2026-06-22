@@ -3971,6 +3971,11 @@ export const actions = {
 			applyPRStatus({ ...pr, state: 'closed', merged: true });
 			void refreshMergeBox();
 			void actions.refreshPRConversation();
+			// We caused this merge, so fire the switch-back flow now instead of
+			// waiting for the next branch-PR poll to observe the transition. Disarm
+			// the watcher first so that poll doesn't double-prompt for the same PR.
+			if (watchedOpenPR && watchedOpenPR.number === pr.number) watchedOpenPR = null;
+			void onBranchPRMerged(pr.headRef, pr.number, app.activeRepo.defaultBranch ?? 'main');
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
