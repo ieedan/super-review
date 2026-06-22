@@ -1,6 +1,7 @@
 <script lang="ts">
 	import FileMinus from '@lucide/svelte/icons/file-minus';
 	import FileEdit from '@lucide/svelte/icons/file-edit';
+	import Check from '@lucide/svelte/icons/check';
 	import { actions, app } from '$lib/store.svelte';
 	import { cn } from '$lib/utils';
 	import FileIcon from './FileIcon.svelte';
@@ -43,36 +44,56 @@
 			<div class="mt-0.5 flex flex-col">
 				{#each group.files as file (file.path)}
 					{@const isActive = app.selectedFile === file.path}
-					<button
-						type="button"
+					{@const isSeen = app.seenFiles.has(file.path)}
+					<div
 						class={cn(
-							'flex w-full items-center gap-1.5 border-l-2 border-transparent py-1 pr-2 pl-3 text-left',
+							'flex w-full items-center gap-1.5 border-l-2 border-transparent py-1 pr-2 pl-3',
 							isActive ? 'border-l-foreground bg-accent' : 'hover:bg-accent/50'
 						)}
-						onclick={() => actions.scrollToFile(file.path)}
-						title={file.path}
 					>
-						{#if app.showFileIcons}
-							<FileIcon path={file.path} class="size-3.5 shrink-0" />
-						{/if}
-						<span class="truncate text-xs">{basename(file.path)}</span>
-						<span class="ml-auto flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums">
-							{#if file.status === 'deleted'}
-								<FileMinus class="size-3 text-destructive" />
-							{:else if file.status === 'renamed' || file.status === 'copied'}
-								<FileEdit class="size-3 text-warning" />
-							{:else if file.isBinary}
-								<span class="text-muted-foreground">bin</span>
-							{:else}
-								{#if file.additions > 0}
-									<span class="text-success">+{file.additions}</span>
-								{/if}
-								{#if file.deletions > 0}
-									<span class="text-destructive">−{file.deletions}</span>
-								{/if}
+						<button
+							class={cn(
+								'grid size-3.5 shrink-0 place-items-center rounded border outline-hidden',
+								isSeen
+									? 'text-success-foreground border-success bg-success'
+									: 'border-border hover:border-foreground'
+							)}
+							onclick={() => actions.toggleSeen(file.path)}
+							aria-label={isSeen ? 'Mark unseen' : 'Mark seen'}
+							type="button"
+						>
+							{#if isSeen}
+								<Check class="size-2.5" />
 							{/if}
-						</span>
-					</button>
+						</button>
+						<button
+							type="button"
+							class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left outline-hidden"
+							onclick={() => actions.scrollToFile(file.path)}
+							title={file.path}
+						>
+							{#if app.showFileIcons}
+								<FileIcon path={file.path} class="size-3.5 shrink-0" />
+							{/if}
+							<span class="min-w-0 flex-1 truncate text-xs">{basename(file.path)}</span>
+							<span class="flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums">
+								{#if file.status === 'deleted'}
+									<FileMinus class="size-3 text-destructive" />
+								{:else if file.status === 'renamed' || file.status === 'copied'}
+									<FileEdit class="size-3 text-warning" />
+								{:else if file.isBinary}
+									<span class="text-muted-foreground">bin</span>
+								{:else}
+									{#if file.additions > 0}
+										<span class="text-success">+{file.additions}</span>
+									{/if}
+									{#if file.deletions > 0}
+										<span class="text-destructive">−{file.deletions}</span>
+									{/if}
+								{/if}
+							</span>
+						</button>
+					</div>
 					{#each calloutsForFile(app.activeSessionDetail, file.path) as callout (callout.id)}
 						<button
 							type="button"
