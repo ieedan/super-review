@@ -17,6 +17,7 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import { Button } from './ui/button';
+	import { ShortcutHint } from './ui/shortcut-hint';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Textarea } from './ui/textarea';
 	import HarnessLogo from './HarnessLogo.svelte';
@@ -175,7 +176,7 @@
 			<div class="composer-footer">
 				<div class="actions">
 					<Button variant="ghost" size="sm" type="button" onclick={cancel}>
-						Cancel <span class="ml-1 text-muted-foreground">esc</span>
+						Cancel <ShortcutHint>esc</ShortcutHint>
 					</Button>
 					<Button
 						variant="default"
@@ -184,7 +185,7 @@
 						disabled={!composer.draft.trim() || composer.submitting}
 					>
 						{composer.submitting ? 'Saving…' : 'Comment'}
-						<span class="ml-1 text-muted-foreground">⌘⏎</span>
+						<ShortcutHint>⌘⏎</ShortcutHint>
 					</Button>
 				</div>
 			</div>

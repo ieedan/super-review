@@ -34,6 +34,7 @@
 	} from '@pierre/diffs';
 	import { Button } from './ui/button';
 	import { Badge } from './ui/badge';
+	import { ShortcutHint } from './ui/shortcut-hint';
 	import { formatHotkeyParts } from '@shared/hotkeys';
 	import {
 		actions,
@@ -1957,7 +1958,7 @@
 					<Check class="size-3.5" /> Seen
 				{:else}
 					<Eye class="size-3.5" /> Mark seen
-					<span class="ml-1 text-muted-foreground">{markSeenHotkey.join('')}</span>
+					<ShortcutHint>{markSeenHotkey.join('')}</ShortcutHint>
 				{/if}
 			</Button>
 		</div>

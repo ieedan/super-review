@@ -30,6 +30,7 @@
 	import GithubSpinner from './GithubSpinner.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Input } from './ui/input';
+	import { ShortcutHint } from './ui/shortcut-hint';
 	import { Textarea } from './ui/textarea';
 	import MarkdownComposer from './MarkdownComposer.svelte';
 	import MarkdownView from './MarkdownView.svelte';
@@ -1387,7 +1388,7 @@
 						onclick={post}
 					>
 						{submitting ? 'Posting…' : 'Comment'}
-						<span class="ml-1 opacity-70">⌘⏎</span>
+						<ShortcutHint>⌘⏎</ShortcutHint>
 					</button>
 				</div>
 			</div>
