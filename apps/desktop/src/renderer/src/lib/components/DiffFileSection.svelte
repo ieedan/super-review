@@ -740,7 +740,8 @@
 		// The staging click listener lives on the shadow root that's about to be
 		// destroyed with the container; drop our reference (and detach defensively).
 		if (stagingClickRoot) {
-			stagingClickRoot.removeEventListener('click', onStagingClick);
+			stagingClickRoot.removeEventListener('click', onStagingClick, true);
+			stagingClickRoot.removeEventListener('contextmenu', onStagingContextMenu);
 			stagingClickRoot = null;
 		}
 		staging = null;
@@ -995,9 +996,15 @@
 			root.appendChild(style);
 		}
 		if (stagingClickRoot !== root) {
-			stagingClickRoot?.removeEventListener('click', onStagingClick);
+			stagingClickRoot?.removeEventListener('click', onStagingClick, true);
 			stagingClickRoot?.removeEventListener('contextmenu', onStagingContextMenu);
-			root.addEventListener('click', onStagingClick);
+			// Capture phase: our gutter checkboxes live INSIDE Pierre's line-number
+			// cell, so a click on one also reaches Pierre's `onLineNumberClick`
+			// handler (which would open the comment composer). Pierre delegates on the
+			// shadow root and registered first (we attach via onPostRender, after its
+			// render), so a bubble-phase listener can't stopPropagation in time.
+			// Capturing lets us intercept and stop the event before Pierre sees it.
+			root.addEventListener('click', onStagingClick, true);
 			root.addEventListener('contextmenu', onStagingContextMenu);
 			stagingClickRoot = root;
 		}
@@ -1146,7 +1153,7 @@
 		const hunkBtn = target.closest<HTMLElement>('[data-sr-gutter-outer]');
 		if (hunkBtn) {
 			e.preventDefault();
-			e.stopPropagation();
+			e.stopImmediatePropagation();
 			const keys = outerKeys.get(hunkBtn) ?? [];
 			if (keys.length === 0) return;
 			const allIncluded =
@@ -1159,7 +1166,7 @@
 		const lineBtn = target.closest<HTMLElement>('[data-sr-gutter-inner]');
 		if (lineBtn) {
 			e.preventDefault();
-			e.stopPropagation();
+			e.stopImmediatePropagation();
 			const side = lineBtn.dataset.srSide as DiffSide;
 			const lineNum = Number(lineBtn.dataset.srLine);
 			const key = stagingLineKey(file.path, side, lineNum);
