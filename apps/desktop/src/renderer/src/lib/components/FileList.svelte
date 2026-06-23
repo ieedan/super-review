@@ -546,7 +546,12 @@
 
 	function toggleSeen(e: MouseEvent, f: ChangedFile): void {
 		e.stopPropagation();
+		const marking = !app.seenFiles.has(f.path);
 		void actions.toggleSeen(f.path);
+		// Mirror the diff view's "mark seen" behavior: collapse the file when
+		// marking it as seen so it folds away in the diff view. Unmarking leaves
+		// the collapsed state untouched.
+		if (marking) void actions.toggleFileCollapsed(f.path, true);
 	}
 
 	function toggleInclude(e: MouseEvent, f: ChangedFile): void {
