@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import DiffFileSection from './DiffFileSection.svelte';
 	import SessionStepHeader from './SessionStepHeader.svelte';
@@ -120,15 +120,44 @@
 	);
 	const hasMoreToRender = $derived(windowedPlan.length < displayPlan.length);
 
-	// Restart the window at the top whenever the rendered set itself is rebuilt —
-	// search filter, tab switch, refresh, layout toggle. Marking files seen (and
-	// other state that doesn't rebuild `renderPlan`) leaves a scrolled-open window
+	// Restart the window whenever the rendered set itself is rebuilt — search
+	// filter, tab switch, refresh, layout toggle. Marking files seen (and other
+	// state that doesn't rebuild `renderPlan`) leaves a scrolled-open window
 	// intact. Doesn't read `renderLimit`, so writing it here can't loop.
+	//
+	// Rebuilding the list re-mounts the DOM at scrollTop 0 — which is the scroll
+	// "jump" on refresh — so once the new list mounts we put the reviewer back at
+	// their saved position for this context. The anchor is read untracked: the
+	// scroll handler writes it continuously, and we only want to restore when the
+	// list rebuilds, not on every scroll.
 	$effect(() => {
 		void renderPlan;
 		void app.diffLayout;
 		renderLimit = INITIAL_RENDER;
+		// Untracked: restore reads (and grows) `renderLimit`/`displayPlan`, none of
+		// which should make this effect re-run — it must fire only on a rebuild.
+		const anchor = untrack(() => app.scrollAnchor);
+		if (anchor) untrack(() => void restoreScrollAnchor(anchor));
 	});
+
+	// Put the scroll container back at a saved anchor (a file + how far its top
+	// sits above the container top). Grows the incremental window first if the
+	// anchor file sits past what's currently mounted, then awaits `tick` so the
+	// section exists before we scroll to it. No-op once the file is gone.
+	async function restoreScrollAnchor(anchor: { path: string; offset: number }): Promise<void> {
+		if (!scrollContainer) return;
+		if (app.diffLayout !== 'single') {
+			const idx = displayPlan.findIndex((it) => it.kind === 'file' && it.file.path === anchor.path);
+			if (idx === -1) return;
+			if (idx >= renderLimit) renderLimit = idx + RENDER_CHUNK;
+		}
+		await tick();
+		if (!scrollContainer) return;
+		const target = scrollContainer.querySelector(
+			`[data-file-path="${CSS.escape(anchor.path)}"]`
+		) as HTMLElement | null;
+		if (target) pinToTop(target, anchor.offset);
+	}
 
 	// The plan index of a scroll request's target (file path or step), or -1.
 	function planIndexForRequest(req: { path?: string | null; stepId?: string | null }): number {
@@ -212,17 +241,23 @@
 	// sustained quiet period, and bail the moment the user scrolls or navigates
 	// themselves.
 	let cancelSettle: (() => void) | null = null;
-	function pinToTop(target: HTMLElement): void {
+	// `offset` is where the target's top should land relative to the container's
+	// top edge: 0 pins it to the very top (a sidebar jump), a negative value
+	// restores a position scrolled partway past it (an anchor restore).
+	function pinToTop(target: HTMLElement, offset = 0): void {
 		cancelSettle?.();
 		const container = scrollContainer;
 		if (!container) return;
-		const align = (): void => target.scrollIntoView({ behavior: 'auto', block: 'start' });
-		// How far the target's top sits from the container's top edge right now.
-		// Watching this directly (rather than the container's total scrollHeight)
-		// catches drift even when growth above the target is offset by a shrink
-		// elsewhere and the net height is unchanged.
+		const align = (): void => {
+			const rel = target.getBoundingClientRect().top - container.getBoundingClientRect().top;
+			container.scrollTop += rel - offset;
+		};
+		// How far the target's top sits from its intended offset right now. Watching
+		// this directly (rather than the container's total scrollHeight) catches
+		// drift even when growth above the target is offset by a shrink elsewhere and
+		// the net height is unchanged.
 		const drift = (): number =>
-			target.getBoundingClientRect().top - container.getBoundingClientRect().top;
+			target.getBoundingClientRect().top - container.getBoundingClientRect().top - offset;
 		align();
 		let raf = 0;
 		// Keep correcting until the target has sat at the top undisturbed for a
@@ -374,7 +409,13 @@
 			}
 			// Still nothing visible — anchor to the first section.
 			if (!active) active = sections[0].getAttribute('data-file-path');
-			if (active) actions.setActiveFromScroll(active);
+			if (active) {
+				actions.setActiveFromScroll(active);
+				// Remember where this file sits relative to the viewport top so the
+				// position can be restored after a refresh or a tab round-trip.
+				const sec = sections.find((s) => s.getAttribute('data-file-path') === active);
+				if (sec) actions.recordScrollAnchor(active, sec.getBoundingClientRect().top - containerTop);
+			}
 		}
 
 		function schedule(): void {

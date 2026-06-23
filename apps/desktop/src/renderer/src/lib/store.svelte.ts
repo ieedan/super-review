@@ -68,7 +68,8 @@ import {
 	filesCache,
 	diffCache,
 	prPushAccess,
-	repoPushAccessChecked
+	repoPushAccessChecked,
+	type ScrollAnchor
 } from '$lib/store-cache';
 
 // Re-export so existing component imports (`from '$lib/store.svelte'`) keep
@@ -304,6 +305,11 @@ interface AppState {
 		calloutId?: string;
 		nonce: number;
 	} | null;
+	// The reviewer's current scroll position in the diff view (file at the top of
+	// the viewport + offset), tracked live as they scroll. The diff view restores
+	// to this whenever the rendered list is rebuilt — a refresh, or returning to
+	// this tab — so the view holds its place instead of snapping back to the top.
+	scrollAnchor: ScrollAnchor | null;
 	lastRefreshAt: number | null;
 	fetchingOrigin: boolean;
 	nowTick: number;
@@ -752,6 +758,7 @@ const initial: AppState = {
 	sidebarCollapsed: false,
 	collapsedFolders: new SvelteSet(),
 	scrollRequest: null,
+	scrollAnchor: null,
 	lastRefreshAt: null,
 	fetchingOrigin: false,
 	nowTick: 0,
@@ -928,6 +935,7 @@ function hydrateFilesFromCache(): boolean {
 	app.seenFiles = new SvelteSet(cached.seenFiles);
 	app.collapsedFiles = new SvelteSet(cached.collapsedFiles);
 	app.selectedFile = cached.selectedFile;
+	app.scrollAnchor = cached.scrollAnchor ?? null;
 	return true;
 }
 
@@ -937,6 +945,9 @@ function hydrateFilesFromCache(): boolean {
 function showLoadingFiles(): void {
 	app.changedFiles = [];
 	app.selectedFile = null;
+	// New context being loaded cold — there's no place to hold, so don't let a
+	// previous context's anchor pull the fresh diff somewhere on first paint.
+	app.scrollAnchor = null;
 	app.loading.files = true;
 }
 
@@ -2254,11 +2265,18 @@ async function refreshFiles(): Promise<void> {
 		app.seenFiles = seenSet;
 		app.collapsedFiles = collapsedSet;
 		app.selectedFile = nextSelected;
+		// Carry the saved scroll position forward across the repaint, dropping it
+		// only when its file is gone, so a refresh of the *current* context lands
+		// the reviewer back where they were rather than at the top.
+		const prevAnchor = filesCache.get(cacheKey)?.scrollAnchor ?? null;
+		const scrollAnchor =
+			prevAnchor && files.some((f) => f.path === prevAnchor.path) ? prevAnchor : null;
 		filesCache.set(cacheKey, {
 			changedFiles: files,
 			seenFiles: new Set(seenSet),
 			collapsedFiles: new Set(collapsedSet),
-			selectedFile: nextSelected
+			selectedFile: nextSelected,
+			scrollAnchor
 		});
 		// There's content on screen now — drop any loading spinner the caller (or
 		// the cold-start fallback below) turned on.
@@ -2808,6 +2826,7 @@ export const actions = {
 			return;
 		}
 		app.diffContext = contextForTab(tab);
+		let restoredAnchor: ScrollAnchor | null = null;
 		if (app.activeRepo) {
 			const cached = filesCache.get(
 				filesCacheKey(app.activeRepo.id, $state.snapshot(app.diffContext) as DiffContext)
@@ -2817,8 +2836,13 @@ export const actions = {
 				app.seenFiles = new SvelteSet(cached.seenFiles);
 				app.collapsedFiles = new SvelteSet(cached.collapsedFiles);
 				app.selectedFile = cached.selectedFile;
+				restoredAnchor = cached.scrollAnchor ?? null;
 			}
 		}
+		// Hold the reviewer's previous place in this tab if we have one; the diff
+		// view reads this anchor when the rebuilt list mounts. Otherwise clear it so
+		// `scrollToFirstExpanded` below isn't overridden by a stale anchor.
+		app.scrollAnchor = restoredAnchor;
 		// Whenever the current branch has an open PR, keep comments around so
 		// they show up on whichever tab the user is on. Only clear when there's
 		// no PR for the branch (e.g. after merge / branch swap with no PR).
@@ -2829,9 +2853,10 @@ export const actions = {
 			app.pendingComposers = {};
 		}
 		await refreshFiles();
-		// Start the reviewer on real content, skipping any leading collapsed
-		// (already-seen) files this context restored from its saved state.
-		actions.scrollToFirstExpanded();
+		// With a saved scroll position the diff view restores it on its own; only
+		// when there's nothing to restore do we start the reviewer on real content,
+		// skipping any leading collapsed (already-seen) files this context restored.
+		if (!restoredAnchor) actions.scrollToFirstExpanded();
 	},
 
 	// Load the active repo's documented sessions into `app.sessions`. Called on
@@ -3088,6 +3113,20 @@ export const actions = {
 		if (app.selectedFile === path) return;
 		app.selectedFile = path;
 		if (app.selectedFiles.size <= 1) app.selectedFiles = new SvelteSet([path]);
+	},
+
+	// The diff scroll handler reports the file at the top of the viewport and how
+	// far its section's top sits above the container top, so we can put the
+	// reviewer back exactly here after a refresh or a tab round-trip. Mirror it
+	// into the per-context cache too, since that's what a later tab switch reads.
+	recordScrollAnchor(path: string, offset: number): void {
+		const anchor: ScrollAnchor = { path, offset };
+		app.scrollAnchor = anchor;
+		if (!app.activeRepo) return;
+		const entry = filesCache.get(
+			filesCacheKey(app.activeRepo.id, $state.snapshot(app.diffContext) as DiffContext)
+		);
+		if (entry) entry.scrollAnchor = anchor;
 	},
 
 	// Scroll the diff view to a tour step's header (Sessions tab).
