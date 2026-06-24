@@ -12,6 +12,9 @@ import type {
 	DiffData,
 	DiffLayout,
 	EditorKind,
+	ErrorContext,
+	ErrorToast,
+	FeedbackDraft,
 	FeedbackInput,
 	FeedbackResult,
 	FileListLayout,
@@ -327,6 +330,9 @@ interface AppState {
 	repoSettingsDialogOpen: boolean;
 	// Whether the in-app feedback dialog is open (Help ▸ Send Feedback, ⇧⌘/).
 	feedbackDialogOpen: boolean;
+	// Pre-filled fields for the feedback dialog, set when it's opened from a
+	// one-click error report. null when opened normally (blank form).
+	feedbackPrefill: FeedbackDraft | null;
 	// Cmd/Ctrl+K fuzzy file-search palette. Opened from the header search box or
 	// the global shortcut; selecting a file scrolls the diff to it.
 	commandMenuOpen: boolean;
@@ -519,7 +525,9 @@ interface AppState {
 		prs: boolean;
 		repos: boolean;
 	};
-	error: string | null;
+	// Active error toasts, newest last. Errors stack instead of overwriting so a
+	// new failure never silently replaces one the user hasn't seen yet.
+	errors: ErrorToast[];
 }
 
 export function composerKey(filePath: string, side: 'LEFT' | 'RIGHT', line: number): string {
@@ -784,6 +792,7 @@ const initial: AppState = {
 	settingsDialogScrollNonce: 0,
 	repoSettingsDialogOpen: false,
 	feedbackDialogOpen: false,
+	feedbackPrefill: null,
 	commandMenuOpen: false,
 	focusSidebarSearchNonce: 0,
 	githubSignIn: {
@@ -837,7 +846,7 @@ const initial: AppState = {
 	diffReloadToken: 0,
 	diffRevalidateToken: 0,
 	loading: { files: false, branches: false, prs: false, repos: false },
-	error: null
+	errors: []
 };
 
 export const app = $state<AppState>(initial);
@@ -1037,8 +1046,83 @@ export function setCachedDiff(
 	diffCache.set(diffCacheKeyFor(repoId, ctx, filePath), data);
 }
 
-export function setError(msg: string | null): void {
-	app.error = msg;
+// Snapshot of where the user is in the app, attached to every error toast so a
+// one-click report can describe what was happening. `action` is the operation
+// in flight, passed by the caller when known.
+function captureErrorContext(action?: string): ErrorContext {
+	const tab = app.contextTab;
+	let location: string | undefined;
+	if (tab === 'sessions' && app.activeSessionId) {
+		location = `session ${app.activeSessionId}`;
+	} else if (tab === 'history' && app.activeCommit) {
+		location = `commit ${app.activeCommit.hash.slice(0, 7)}`;
+	} else if (tab === 'branch' && app.branchPR) {
+		location = `PR #${app.branchPR.number}`;
+	}
+	return {
+		action,
+		tab,
+		repo: app.activeRepo?.name,
+		branch: app.currentBranch ?? undefined,
+		location
+	};
+}
+
+let errorSeq = 0;
+
+// Surface an error to the user. Passing a message appends a new toast (errors
+// stack rather than overwrite); passing null clears the whole stack. `action`
+// names the operation that failed so the toast's one-click report can include
+// it. Consecutive identical messages collapse to one so a retry loop doesn't
+// pile up duplicates.
+export function setError(msg: string | null, action?: string): void {
+	if (msg === null) {
+		app.errors = [];
+		return;
+	}
+	const last = app.errors[app.errors.length - 1];
+	if (last && last.message === msg) return;
+	app.errors = [
+		...app.errors,
+		{ id: `err-${++errorSeq}`, message: msg, context: captureErrorContext(action) }
+	];
+}
+
+// Dismiss a single error toast by id, leaving the rest of the stack in place.
+export function dismissError(id: string): void {
+	app.errors = app.errors.filter((e) => e.id !== id);
+}
+
+// Build a pre-filled feedback report from an error toast: a bug report whose
+// body carries the raw error plus the captured context so an agent has the
+// "what action / where in the app" detail the issue asks for.
+function feedbackDraftFromError(toast: ErrorToast): FeedbackDraft {
+	const ctx = toast.context;
+	const firstLine = toast.message.split('\n')[0].trim().slice(0, 100);
+	const lines = [
+		'An error occurred in the app.',
+		'',
+		'**Error:**',
+		'```',
+		toast.message,
+		'```',
+		''
+	];
+	const ctxLines: string[] = [];
+	if (ctx?.action) ctxLines.push(`- Action: ${ctx.action}`);
+	if (ctx?.tab) ctxLines.push(`- Tab: ${ctx.tab}`);
+	if (ctx?.repo) ctxLines.push(`- Repo: ${ctx.repo}`);
+	if (ctx?.branch) ctxLines.push(`- Branch: ${ctx.branch}`);
+	if (ctx?.location) ctxLines.push(`- Location: ${ctx.location}`);
+	if (ctxLines.length > 0) {
+		lines.push('**Context:**', ...ctxLines, '');
+	}
+	lines.push('_Reported in one click from an error toast. Please add anything else you remember._');
+	return {
+		category: 'bug',
+		title: ctx?.action ? `Error while ${ctx.action.toLowerCase()}` : `Error: ${firstLine}`,
+		body: lines.join('\n')
+	};
 }
 
 // Open the conflict dialog on `files`. Both the full list (shown per-row) and
@@ -3892,7 +3976,7 @@ export const actions = {
 			app.prConversation = [...app.prConversation, created];
 			return true;
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(err instanceof Error ? err.message : String(err), 'Posting a conversation comment');
 			return false;
 		}
 	},
@@ -4042,7 +4126,7 @@ export const actions = {
 			void onBranchPRMerged(pr.headRef, pr.number, app.activeRepo.defaultBranch ?? 'main');
 			return true;
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(err instanceof Error ? err.message : String(err), 'Merging the pull request');
 			return false;
 		} finally {
 			app.mergeBoxBusy = null;
@@ -4143,7 +4227,7 @@ export const actions = {
 			void actions.refreshPRComments();
 		} catch (err) {
 			c.submitting = false;
-			setError(err instanceof Error ? err.message : String(err));
+			setError(err instanceof Error ? err.message : String(err), 'Submitting a review comment');
 		}
 	},
 
@@ -5136,7 +5220,7 @@ export const actions = {
 			await refreshBranchPR();
 		} catch (err) {
 			app.push.error = err instanceof Error ? err.message : String(err);
-			setError(app.push.error);
+			setError(app.push.error, 'Pushing your changes');
 		} finally {
 			// Only release the lock if we're not currently waiting on conflicts.
 			if (app.push.stage !== 'conflicts') {
@@ -5801,11 +5885,23 @@ export const actions = {
 		app.settingsDialogOpen = false;
 	},
 
-	openFeedbackDialog(): void {
+	openFeedbackDialog(prefill?: FeedbackDraft): void {
+		app.feedbackPrefill = prefill ?? null;
 		app.feedbackDialogOpen = true;
 	},
 	closeFeedbackDialog(): void {
 		app.feedbackDialogOpen = false;
+		app.feedbackPrefill = null;
+	},
+	// One-click report: turn an error toast into a pre-filled feedback report and
+	// open the dialog so the user can add detail and send. The captured context
+	// (action/tab/repo/branch/location) is woven into the body so an agent
+	// triaging the issue knows what the user was doing. Dismisses the toast since
+	// it's now being acted on.
+	reportErrorToast(toast: ErrorToast): void {
+		app.feedbackPrefill = feedbackDraftFromError(toast);
+		app.feedbackDialogOpen = true;
+		dismissError(toast.id);
 	},
 	// File the feedback as a GitHub issue on the project's own repo. Returns the
 	// created issue so the dialog can link to it; throws on failure so the dialog
