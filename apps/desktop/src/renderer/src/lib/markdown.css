@@ -152,6 +152,15 @@
 .markdown-body ol {
 	padding-left: 2em;
 }
+/* Tailwind's preflight resets `ul, ol { list-style: none }`, which strips the
+   bullets/numbers GitHub shows. The `padding-left` above restores the indent but
+   not the markers, so put them back explicitly (task lists re-hide theirs below). */
+.markdown-body ul {
+	list-style-type: disc;
+}
+.markdown-body ol {
+	list-style-type: decimal;
+}
 .markdown-body li + li {
 	margin-top: 0.25em;
 }
