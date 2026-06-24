@@ -46,6 +46,7 @@
 	import FileIcon from './FileIcon.svelte';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { matchesFileQuery } from '$lib/file-search';
+	import { tourFileOrder } from '$lib/session-tour';
 	import type { ChangedFile } from '@shared/types';
 
 	// Resolve the open commit author's username + avatar (no-op for GitHub-noreply
@@ -144,6 +145,26 @@
 	// collapsed. In 'list' layout, each file gets its own row at depth 0 with
 	// its full path as the display name — no folder rows.
 	const nodes = $derived.by<Node[]>(() => {
+		// In a session's Tour view the sidebar shows the grouped SessionTour list and
+		// the diff renders files in the agent's reading (tour) order. Arrow-key
+		// navigation walks `nodes`, so build it in that same tour order here —
+		// otherwise the cursor (and the diff it scrolls to) would step through files
+		// in tree/changedFiles order while they're displayed in tour order, which
+		// reads as the selection jumping around out of sequence.
+		if (showSessionTour) {
+			const ordered = tourFileOrder(app.activeSessionDetail, filteredFiles) ?? filteredFiles;
+			return ordered.map((f) => {
+				const slash = f.path.lastIndexOf('/');
+				return {
+					kind: 'file',
+					path: f.path,
+					name: slash >= 0 ? f.path.slice(slash + 1) : f.path,
+					depth: 0,
+					file: f
+				};
+			});
+		}
+
 		if (fileListLayout === 'list') {
 			const out: Node[] = [];
 			for (const f of filteredFiles) {
