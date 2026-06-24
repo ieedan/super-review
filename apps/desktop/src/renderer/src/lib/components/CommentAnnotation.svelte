@@ -287,6 +287,20 @@
 										<Copy class="size-3.5" />
 									{/if}
 								</button>
+								<!-- Edit is a first-class action on the viewer's own comment, so it
+								     gets its own button next to Copy rather than living in the
+								     overflow menu. Hidden while already editing. -->
+								{#if c.canDelete && !editing}
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+										title="Edit comment"
+										aria-label="Edit comment"
+										onclick={() => startEdit(c)}
+									>
+										<Pencil class="size-3.5" />
+									</button>
+								{/if}
 								{#if c.url || c.canDelete}
 									<DropdownMenu.Root>
 										<DropdownMenu.Trigger
@@ -306,10 +320,6 @@
 												{#if c.url}
 													<DropdownMenu.Separator />
 												{/if}
-												<DropdownMenu.Item onSelect={() => startEdit(c)}>
-													<Pencil class="size-3.5" />
-													Edit
-												</DropdownMenu.Item>
 												<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
 													<Trash2 class="size-3.5" />
 													Delete
