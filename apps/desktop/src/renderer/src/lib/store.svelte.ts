@@ -3482,6 +3482,14 @@ export const actions = {
 				? (ordered.slice(idx + 1).find(isUnseen) ?? ordered.slice(0, idx).find(isUnseen))
 				: ordered.find(isUnseen);
 		if (!next) return;
+		// Glue the sidebar's single-file selection (the plain background highlight)
+		// to the file we're advancing to. Both branches below set `selectedFile`
+		// up front, so when the scroll handler later reaches `next` its
+		// setActiveFromScroll early-returns (selectedFile already matches) and never
+		// syncs `selectedFiles` — stranding the previous file's background highlight.
+		// Mirror setActiveFromScroll's rule: collapse only a single (or empty)
+		// selection; leave a deliberate multi-selection alone.
+		if (app.selectedFiles.size <= 1) app.selectedFiles = new SvelteSet([next.path]);
 		// In a tour, when the next unseen file opens a new step, land on that step's
 		// header (title + body) rather than scrolling straight to the file. Otherwise
 		// "mark seen" leaps over the step commentary and the reviewer never sees the
