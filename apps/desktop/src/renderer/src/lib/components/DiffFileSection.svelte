@@ -915,18 +915,50 @@
 		}
 	}
 
-	// Pierre's idiomatic gutter affordance: `enableGutterUtility: true` paints
-	// their built-in `+` button on hover, and `onGutterUtilityClick` delivers
-	// the selected line range when it's clicked. No custom DOM, no event
-	// wrestling — Pierre owns the whole interaction.
-	function onGutterClick(range: SelectedLineRange): void {
-		const sel = range.side ?? 'additions';
-		const side = sel === 'deletions' ? 'LEFT' : 'RIGHT';
-		// A plain click reports `start === end` (single line); a drag-select reports
-		// both ends, in either order. Anchor at the top line and carry the bottom as
-		// the range end (collapsed away when they're equal).
+	// The last multi-line range the user selected in the diff *body* (via Pierre's
+	// line selection), normalized to top/bottom + a single side. Stashed here on
+	// selection end and consumed by the next `+` click that lands inside it, so
+	// "select the lines, then click +" comments on the whole selection. Plain
+	// (non-reactive): only read inside the click handler. Null = no live range.
+	let selectedContentRange: { top: number; bottom: number; side: 'LEFT' | 'RIGHT' } | null = null;
+
+	// Normalize a Pierre SelectedLineRange to a single-side top..bottom span, or
+	// null when it isn't a real multi-line range (a bare click reports start ===
+	// end). Uses the anchor `side`; a selection dragged across both split columns
+	// is pinned to that side (a comment can only live on one side anyway).
+	function normalizeRange(
+		range: SelectedLineRange | null
+	): { top: number; bottom: number; side: 'LEFT' | 'RIGHT' } | null {
+		if (!range) return null;
 		const top = Math.min(range.start, range.end);
 		const bottom = Math.max(range.start, range.end);
+		if (top === bottom) return null;
+		const side = (range.side ?? 'additions') === 'deletions' ? 'LEFT' : 'RIGHT';
+		return { top, bottom, side };
+	}
+
+	// Pierre fires this when a body line-selection settles. Stash a real range;
+	// clear on a collapsed/empty selection so a stale span can't apply later.
+	function onContentSelectionEnd(range: SelectedLineRange | null): void {
+		selectedContentRange = normalizeRange(range);
+	}
+
+	// Pierre's `+` affordance: `enableGutterUtility` paints the button on hover and
+	// `onGutterUtilityClick` delivers the line it sits on (`start === end`). If the
+	// user first selected a span in the body and clicks `+` inside it, comment on
+	// that whole span; otherwise it's a single-line comment on the clicked line.
+	function onGutterClick(range: SelectedLineRange): void {
+		const clicked = Math.min(range.start, range.end);
+		let side: 'LEFT' | 'RIGHT' = (range.side ?? 'additions') === 'deletions' ? 'LEFT' : 'RIGHT';
+		let top = clicked;
+		let bottom = Math.max(range.start, range.end);
+		const sel = selectedContentRange;
+		selectedContentRange = null; // consume — stale after this click either way
+		if (sel && clicked >= sel.top && clicked <= sel.bottom) {
+			top = sel.top;
+			bottom = sel.bottom;
+			side = sel.side;
+		}
 		if (isPRContext) {
 			actions.openComposer(file.path, side, top, undefined, bottom);
 		} else if (isLocalCommentContext) {
@@ -1357,6 +1389,12 @@
 				// via setOptions + flushManagers when `canComment` changes.
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
+				// Let the user drag-select lines in the diff *body* to define a comment
+				// range: Pierre resolves the selection to a line span and reports it via
+				// onLineSelectionEnd, which we stash and apply when the `+` is clicked
+				// (see onGutterClick). Same gating as the `+`.
+				enableLineSelection: canComment,
+				onLineSelectionEnd: onContentSelectionEnd,
 				// Token-level hover → npm info cards, only wired for package.json so
 				// Pierre doesn't track hovered tokens for every other file.
 				onTokenEnter: isPkgJson ? onTokenEnter : undefined,
@@ -1650,10 +1688,12 @@
 		if (!instance) return;
 		type WithOptions = { options: Record<string, unknown> };
 		const current = (instance as unknown as WithOptions).options;
-		if (current.enableGutterUtility === enabled) return;
-		instance.setOptions({ ...current, enableGutterUtility: enabled } as Parameters<
-			typeof instance.setOptions
-		>[0]);
+		if (current.enableGutterUtility === enabled && current.enableLineSelection === enabled) return;
+		instance.setOptions({
+			...current,
+			enableGutterUtility: enabled,
+			enableLineSelection: enabled
+		} as Parameters<typeof instance.setOptions>[0]);
 		instance.flushManagers();
 	});
 
