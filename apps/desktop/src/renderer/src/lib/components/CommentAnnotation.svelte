@@ -553,6 +553,14 @@
 		white-space: pre-wrap;
 		word-break: break-word;
 	}
+	/* The rendered-markdown body carries its own block spacing (paragraph/list
+	   margins). `pre-wrap` — kept above for the raw-text fallback, which must
+	   preserve real newlines — would turn marked's inter-tag newlines into visible
+	   blank lines and pile them on top of those margins, so render markdown with
+	   normal whitespace collapsing. */
+	.markdown-body.text {
+		white-space: normal;
+	}
 	.composer {
 		display: flex;
 		flex-direction: column;
