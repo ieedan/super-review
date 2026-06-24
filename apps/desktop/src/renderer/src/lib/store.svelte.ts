@@ -68,6 +68,8 @@ import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import {
 	upstreamChecked,
 	prsSourceByRepo,
+	contextTabByRepo,
+	viewLayoutByRepo,
 	filesCache,
 	diffCache,
 	prPushAccess,
@@ -1390,7 +1392,12 @@ async function refreshRepos(): Promise<void> {
 // Make `repo` the active repo and load everything its view needs. Shared by the
 // open/create flows so they land the user in an identical, fully-refreshed state.
 async function activateRepo(repo: RepoInfo): Promise<void> {
+	// Remember the outgoing repo's layout, then land the freshly opened repo on
+	// its own remembered layout (or a clean default) rather than inheriting the
+	// previous repo's open panel / fullscreen.
+	rememberViewLayout();
 	app.activeRepo = repo;
+	applyRepoViewLayout(repo.id);
 	repoFrecency.use(repo.id);
 	// Kick off the local skill check immediately — it only needs activeRepo and is
 	// a single filesystem stat, so don't strand it behind the slow network work below.
@@ -1862,10 +1869,129 @@ async function refreshRepoPushAccess(): Promise<void> {
 // change, and prefs writes are cheap.
 function applyContextTab(tab: ContextTab): void {
 	app.contextTab = tab;
+	// Remember this repo's tab for the session so switching away and back reopens
+	// it (see restoreContextTab / switchRepo).
+	if (app.activeRepo) contextTabByRepo.set(app.activeRepo.id, tab);
 	// The query is scoped to "files on this tab/repo"; carrying it across
 	// surfaces a stale filter that hides everything in the new context.
 	app.fileSearchQuery = '';
 	void window.api.state.setPrefs({ contextTab: tab }).then((prefs) => {
+		app.prefs = prefs;
+	});
+}
+
+// Snapshot the active repo's work-area layout for the session so switching away
+// and back restores it (see applyRepoViewLayout / switchRepo). Called from every
+// layout setter, the single chokepoints that mutate these flags.
+function rememberViewLayout(): void {
+	if (!app.activeRepo) return;
+	viewLayoutByRepo.set(app.activeRepo.id, {
+		commentsSidebarOpen: app.commentsSidebarOpen,
+		commentsSidebarTab: app.commentsSidebarTab,
+		conversationFullscreen: app.conversationFullscreen,
+		sidebarCollapsed: app.sidebarCollapsed
+	});
+}
+
+// Restore `repoId`'s remembered work-area layout — or a clean default for a repo
+// not opened yet this session — and persist it as the active layout so the next
+// launch restores it too. Setting the flags drives the panes via App.svelte's
+// reactive effects ({#if} for the comments pane; the fullscreen + sidebar-
+// collapse effects for the resizable panes). A repo with no memory never inherits
+// another repo's open panel or fullscreen — that's the leak this fixes.
+function applyRepoViewLayout(repoId: string): void {
+	const saved = viewLayoutByRepo.get(repoId);
+	const open = saved?.commentsSidebarOpen ?? false;
+	const collapsed = saved?.sidebarCollapsed ?? false;
+	app.sidebarCollapsed = collapsed;
+	app.commentsSidebarOpen = open;
+	app.commentsSidebarTab = saved?.commentsSidebarTab ?? 'comments';
+	// Fullscreen only makes sense with the panel open and the left sidebar
+	// collapsed; clamp away any inconsistent combination (mirrors the launch
+	// restore) so the diff is never hidden with no way to bring it back.
+	app.conversationFullscreen = (saved?.conversationFullscreen ?? false) && open && collapsed;
+	rememberViewLayout();
+	void window.api.state
+		.setPrefs({
+			commentsSidebarOpen: app.commentsSidebarOpen,
+			commentsSidebarTab: app.commentsSidebarTab,
+			conversationFullscreen: app.conversationFullscreen,
+			sidebarCollapsed: app.sidebarCollapsed
+		})
+		.then((prefs) => {
+			app.prefs = prefs;
+		});
+}
+
+// Land on `savedTab` for the active repo, building its diff context and running
+// the loads that tab needs, then persist it as the last-active tab. The Branch
+// tab needs branches resolved first and falls back to Unstaged when it isn't
+// viewable on the current branch (e.g. the default branch); Sessions/History
+// only restore when their optional sidebar tab is enabled. Shared by launch
+// restore and switchRepo so each repo reopens on the tab you left it on.
+//
+// `restoreScroll` (switchRepo only) rehydrates the file list's selected file and
+// diff scroll position from the per-context cache before refreshing, so coming
+// back to a repo lands the reviewer on the same file and spot they left — the
+// same restore a within-repo tab switch does. The launch path skips it: the
+// session cache is cold on startup, and per-tab scroll restore already runs from
+// the persisted list.
+async function restoreContextTab(
+	savedTab: ContextTab | undefined,
+	restoreScroll = false
+): Promise<void> {
+	// For the file-list tabs (Unstaged/Branch), repaint the cached file +
+	// scroll position before refreshFiles so its `paint` keeps the selected file
+	// and the diff view restores the saved spot instead of jumping to the top.
+	const restoreFileScroll = async (load: () => Promise<unknown>): Promise<void> => {
+		// Hydrate before kicking off the load so refreshFiles' `paint` sees the
+		// restored selected file and keeps it (and app.scrollAnchor is set before
+		// the diff view re-renders).
+		const restored = restoreScroll && hydrateFilesFromCache();
+		await load();
+		// Nothing to restore (first visit to this repo's context this session) —
+		// start on real content, skipping leading collapsed (already-seen) files.
+		if (restoreScroll && !restored) actions.scrollToFirstExpanded();
+	};
+	if (savedTab === 'branch') {
+		// The Branch tab needs branches resolved before it can build its diff
+		// context (and before we can tell whether it's empty on this branch).
+		await refreshBranches();
+		if (canViewBranchTab()) {
+			app.contextTab = 'branch';
+			app.diffContext = contextForTab('branch');
+		} else {
+			// On the default branch, where the Branch tab is hidden — fall back to
+			// the Unstaged working-tree view.
+			app.contextTab = 'unstaged';
+			app.diffContext = { kind: 'workingTree' };
+		}
+		await restoreFileScroll(() => Promise.all([refreshFiles(), refreshPushStatus()]));
+	} else if (savedTab === 'sessions' && app.sidebarTabs.sessions) {
+		app.contextTab = 'sessions';
+		// The Sessions tab shows the documented-sessions list (in the sidebar),
+		// not a working-tree file list. Still fetch the Unstaged badge count.
+		await Promise.all([
+			refreshBranches(),
+			refreshPushStatus(),
+			refreshUnstagedCount(),
+			actions.loadSessions()
+		]);
+	} else if (savedTab === 'history' && app.sidebarTabs.history) {
+		app.contextTab = 'history';
+		// loadCommits needs branches resolved first so historyHeadRef() can fall
+		// back to the current branch. Still fetch the Unstaged badge count.
+		await Promise.all([refreshBranches(), refreshPushStatus(), refreshUnstagedCount()]);
+		await actions.loadCommits();
+	} else {
+		app.contextTab = 'unstaged';
+		app.diffContext = { kind: 'workingTree' };
+		await restoreFileScroll(() =>
+			Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()])
+		);
+	}
+	if (app.activeRepo) contextTabByRepo.set(app.activeRepo.id, app.contextTab);
+	void window.api.state.setPrefs({ contextTab: app.contextTab }).then((prefs) => {
 		app.prefs = prefs;
 	});
 }
@@ -2683,48 +2809,15 @@ export const actions = {
 		app.activeRepo = await window.api.repos.getActive();
 		if (app.activeRepo) {
 			repoFrecency.use(app.activeRepo.id);
+			// Seed this repo's per-session layout memory from the launch state (read
+			// from prefs just above) so switching away and back restores it.
+			rememberViewLayout();
 			// Local filesystem stat — fire it now so it isn't stranded behind the tab
 			// restore + network PR lookup below.
 			void refreshSkillInstalled();
-			// Restore the last tab. The 'branch' tab needs `currentBranch` to build
-			// its DiffContext, so refresh branches first when restoring it.
-			const savedTab = app.prefs.contextTab;
-			if (savedTab === 'branch') {
-				// The Branch tab needs branches resolved before it can build its diff
-				// context (and before we can tell whether it's empty on this branch).
-				await refreshBranches();
-				if (canViewBranchTab()) {
-					app.contextTab = 'branch';
-					app.diffContext = contextForTab('branch');
-				} else {
-					// Launched on the default branch, where the Branch tab is hidden —
-					// fall back to the Unstaged working-tree view.
-					app.contextTab = 'unstaged';
-					app.diffContext = { kind: 'workingTree' };
-				}
-				await Promise.all([refreshFiles(), refreshPushStatus()]);
-			} else if (savedTab === 'sessions' && app.sidebarTabs.sessions) {
-				app.contextTab = 'sessions';
-				// The Sessions tab shows the documented-sessions list (in the sidebar),
-				// not a working-tree file list — load the sessions. Still fetch the
-				// Unstaged badge count so it's accurate on launch.
-				await Promise.all([
-					refreshBranches(),
-					refreshPushStatus(),
-					refreshUnstagedCount(),
-					actions.loadSessions()
-				]);
-			} else if (savedTab === 'history' && app.sidebarTabs.history) {
-				app.contextTab = 'history';
-				// The History tab shows the commit list (in the sidebar), not a
-				// working-tree file list. loadCommits needs branches resolved first so
-				// historyHeadRef() can fall back to the current branch. Still fetch the
-				// Unstaged badge count so it's accurate on launch.
-				await Promise.all([refreshBranches(), refreshPushStatus(), refreshUnstagedCount()]);
-				await actions.loadCommits();
-			} else {
-				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
-			}
+			// Restore the last tab. Shared with switchRepo so the active repo also
+			// seeds its per-repo tab memory for this session.
+			await restoreContextTab(app.prefs.contextTab);
 			await refreshBranchPR();
 		}
 		// Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
@@ -2811,20 +2904,31 @@ export const actions = {
 		if (app.activeRepo?.id === id) return;
 		const repo = await window.api.repos.setActive(id);
 		if (repo) {
+			// Snapshot the outgoing repo's work-area layout before switching, then
+			// restore the incoming repo's so each repo keeps its own panel/fullscreen/
+			// sidebar state instead of inheriting the one we're leaving.
+			rememberViewLayout();
 			app.activeRepo = repo;
+			applyRepoViewLayout(repo.id);
 			repoFrecency.use(repo.id);
 			// Local filesystem stat — fire it now so the skill banner resolves without
 			// waiting on the network PR lookup below.
 			void refreshSkillInstalled();
-			applyContextTab('unstaged');
+			// Switching repos drops any tab-scoped file search; restoreContextTab
+			// below lands on whichever tab this repo was last left on.
+			app.fileSearchQuery = '';
 			app.diffContext = { kind: 'workingTree' };
 			app.viewBranch = null;
 			app.viewPR = null;
 			// Clear the outgoing repo's file list / diff so it doesn't linger while
-			// the new repo loads.
+			// the new repo loads. restoreContextTab rehydrates the selected file +
+			// scroll anchor from the per-context cache below; clearing the anchor here
+			// means a cache miss (first visit this session) starts clean at the top
+			// rather than carrying the previous repo's scroll position.
 			app.changedFiles = [];
 			app.selectedFile = null;
 			app.selectedFiles = new SvelteSet();
+			app.scrollAnchor = null;
 			app.activeSessionId = null;
 			app.activeSessionDetail = null;
 			app.sessions = [];
@@ -2845,7 +2949,7 @@ export const actions = {
 			// they're re-resolved for the new repo by refreshBranchPR below.
 			app.forkPrompt = null;
 			app.repoPushAccess = null;
-			await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
+			await Promise.all([refreshRepos(), restoreContextTab(contextTabByRepo.get(repo.id), true)]);
 			await refreshBranchPR();
 		}
 	},
@@ -4500,6 +4604,7 @@ export const actions = {
 	setCommentsSidebarTab(tab: 'comments' | 'conversation'): void {
 		if (app.commentsSidebarTab !== tab) {
 			app.commentsSidebarTab = tab;
+			rememberViewLayout();
 			void window.api.state.setPrefs({ commentsSidebarTab: tab }).then((prefs) => {
 				app.prefs = prefs;
 			});
@@ -4538,6 +4643,7 @@ export const actions = {
 		// Closing the panel can't leave fullscreen dangling — there'd be nothing on
 		// screen but a collapsed diff. Drop it (which also re-expands the diff).
 		if (!open && app.conversationFullscreen) actions.setConversationFullscreen(false);
+		rememberViewLayout();
 		// Persist so the panel reopens (or stays closed) on the next launch.
 		void window.api.state.setPrefs({ commentsSidebarOpen: open }).then((prefs) => {
 			app.prefs = prefs;
@@ -4554,6 +4660,7 @@ export const actions = {
 		const next = on && app.commentsSidebarOpen;
 		if (app.conversationFullscreen === next) return;
 		app.conversationFullscreen = next;
+		rememberViewLayout();
 		void window.api.state.setPrefs({ conversationFullscreen: next }).then((prefs) => {
 			app.prefs = prefs;
 		});
@@ -4571,6 +4678,7 @@ export const actions = {
 		// Reopening the left sidebar exits fullscreen — the two can't coexist, since
 		// fullscreen requires the sidebar to be out of the way.
 		if (!collapsed && app.conversationFullscreen) actions.setConversationFullscreen(false);
+		rememberViewLayout();
 		void window.api.state.setPrefs({ sidebarCollapsed: collapsed }).then((prefs) => {
 			app.prefs = prefs;
 		});
