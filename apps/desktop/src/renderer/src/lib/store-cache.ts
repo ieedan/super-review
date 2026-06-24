@@ -18,6 +18,21 @@ export const prsSourceByRepo = new Map<string, PRSource>();
 // Absent → fall back to the persisted launch tab / Unstaged.
 export const contextTabByRepo = new Map<string, ContextTab>();
 
+// The work-area layout a repo was left with, remembered for the session so
+// switching away and back restores how each repo looked: whether the
+// comments/conversation panel was open, which tab it showed, whether it was
+// fullscreen, and whether the left file-list sidebar was collapsed. These are
+// otherwise globally persisted prefs, so without this they leak across repos —
+// e.g. a fullscreen conversation in one repo stays fullscreen after switching to
+// another that has nothing to be fullscreen about. Absent → a clean default.
+export interface RepoViewLayout {
+	commentsSidebarOpen: boolean;
+	commentsSidebarTab: 'comments' | 'conversation';
+	conversationFullscreen: boolean;
+	sidebarCollapsed: boolean;
+}
+export const viewLayoutByRepo = new Map<string, RepoViewLayout>();
+
 // A diff-view scroll position, stored as the file at the top of the viewport
 // plus how far its section's top sits from the container top (`offset`, ≤ 0
 // once scrolled past it). Anchoring to a file rather than a raw `scrollTop`

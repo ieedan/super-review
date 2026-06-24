@@ -75,21 +75,17 @@
 	// the comments panel takes over; the toggle drives this via the $effect below.
 	let mainPane = $state<PaneAPI | undefined>();
 
-	// Restore the persisted collapsed state once the pane mounts. The pane layout
-	// is the source of truth (assigning app.sidebarCollapsed alone won't move it),
-	// so drive it imperatively; expand()/collapse() no-op when already in state.
-	// Deferred a frame so PaneForge has committed its initial layout first.
-	let sidebarRestored = false;
+	// Drive the left sidebar pane from app.sidebarCollapsed. The pane layout is the
+	// source of truth (assigning the flag alone won't move it), so drive it
+	// imperatively; collapse()/expand() no-op when already in state, and
+	// onCollapse/onExpand sync the flag back when the user drags. Mirrors the
+	// fullscreen effect below: reacting to the flag (rather than restoring once on
+	// mount) lets a repo switch restore each repo's remembered collapse state, not
+	// just the launch state. Width drags don't touch the flag, so they never
+	// retrigger this. Deferred a frame so PaneForge has committed its layout first.
 	$effect(() => {
-		// Re-arm when the pane unmounts (e.g. closing the repo) so reopening
-		// restores the persisted state again.
-		if (!sidebarPane) {
-			sidebarRestored = false;
-			return;
-		}
-		if (sidebarRestored) return;
-		sidebarRestored = true;
 		const pane = sidebarPane;
+		if (!pane) return;
 		const collapsed = app.sidebarCollapsed;
 		requestAnimationFrame(() => (collapsed ? pane.collapse() : pane.expand()));
 	});
