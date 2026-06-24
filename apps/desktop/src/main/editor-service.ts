@@ -110,9 +110,29 @@ export async function detectEditors(): Promise<Record<EditorKind, boolean>> {
 	};
 }
 
+// Build the CLI args to open `target`, optionally jumping to `line`. Each editor
+// has its own "go to line" syntax; Visual Studio's `devenv` has no simple one, so
+// it (and any call without a line) just opens the file.
+function editorArgs(editor: EditorKind, target: string, line?: number): string[] {
+	if (line == null || !Number.isFinite(line) || line < 1) return [target];
+	switch (editor) {
+		case 'cursor':
+		case 'vscode':
+			// `-g`/`--goto` accepts file:line(:column).
+			return ['-g', `${target}:${line}`];
+		case 'zed':
+			return [`${target}:${line}`];
+		case 'xcode':
+			return ['--line', String(line), target];
+		case 'visualstudio':
+			return [target];
+	}
+}
+
 export async function openInEditor(
 	editor: EditorKind,
-	target: string
+	target: string,
+	line?: number
 ): Promise<{ ok: boolean; error?: string }> {
 	const bin = await resolveBinary(editor);
 	if (!bin) {
@@ -123,7 +143,11 @@ export async function openInEditor(
 	}
 	try {
 		const cwd = path.dirname(target);
-		const child = spawn(bin, [target], { detached: true, stdio: 'ignore', cwd });
+		const child = spawn(bin, editorArgs(editor, target, line), {
+			detached: true,
+			stdio: 'ignore',
+			cwd
+		});
 		child.on('error', () => {
 			/* unref'd — swallow */
 		});

@@ -175,8 +175,8 @@ const api: PreloadAPI = {
 	},
 	editor: {
 		detect: () => ipcRenderer.invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,
-		open: (editor: EditorKind, target: string) =>
-			ipcRenderer.invoke('editor:open', editor, target) as Promise<{
+		open: (editor: EditorKind, target: string, line?: number) =>
+			ipcRenderer.invoke('editor:open', editor, target, line) as Promise<{
 				ok: boolean;
 				error?: string;
 			}>

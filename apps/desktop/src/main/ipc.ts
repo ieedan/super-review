@@ -1005,8 +1005,8 @@ export function registerIpc(): void {
 
 	// ─── Editor ────────────────────────────────────────────────────────────
 	ipcMain.handle('editor:detect', async () => detectEditors());
-	ipcMain.handle('editor:open', async (_e, editor: EditorKind, target: string) =>
-		openInEditor(editor, target)
+	ipcMain.handle('editor:open', async (_e, editor: EditorKind, target: string, line?: number) =>
+		openInEditor(editor, target, line)
 	);
 
 	// ─── Terminal ──────────────────────────────────────────────────────────

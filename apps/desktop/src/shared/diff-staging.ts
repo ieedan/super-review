@@ -116,6 +116,23 @@ export function parseFilePatch(patch: string): ParsedFilePatch | null {
 	return { header, hunks };
 }
 
+// The new-file line number of the first diff line that still exists in the
+// file's current state — i.e. the first context or added line (deletions have
+// no new-file line). Used to "open in editor at the diff": we jump to where the
+// change begins so the editor lands on it instead of the top of the file.
+// Returns null when there's no such line (empty/binary/pure-deletion or
+// unparseable patch), so callers fall back to opening the file at the top.
+export function firstCurrentDiffLine(patch: string): number | null {
+	const parsed = parseFilePatch(patch);
+	if (!parsed) return null;
+	for (const hunk of parsed.hunks) {
+		for (const line of hunk.lines) {
+			if (line.newLine != null) return line.newLine;
+		}
+	}
+	return null;
+}
+
 // All changed-line keys in a parsed patch, so the renderer can compute select-
 // all state and the store can promote a fully-deselected file to "excluded".
 export function changedLineKeys(filePath: string, parsed: ParsedFilePatch): string[] {
