@@ -435,6 +435,12 @@ export interface PRReviewComment {
 	// after the diff moves on. Used to render/label the comment when `line` is
 	// null (outdated).
 	originalLine: number | null;
+	// First line of a multi-line comment's range, when the comment spans more than
+	// one line (GitHub's `start_line`). Null for a single-line comment. The range
+	// is `startLine..line` on `side`; we anchor/render the comment at `startLine`.
+	// Falls back to `original_start_line` so an outdated range still carries its
+	// span for labelling.
+	startLine: number | null;
 	// The comment's position within the current diff hunk, mirroring GitHub's
 	// REST `position`. Kept for reference/pinning; note REST leaves this populated
 	// (reflecting the original diff position) even after a comment goes outdated,
@@ -473,6 +479,10 @@ export interface NewReviewCommentInput {
 	body: string;
 	line: number;
 	side: 'LEFT' | 'RIGHT';
+	// First line of a multi-line range, when commenting on more than one line.
+	// Posted as GitHub's `start_line` (with `start_side` = `side`); must be less
+	// than `line`. Omitted for a single-line comment.
+	startLine?: number;
 	// Git ref of the commit the on-screen diff was rendered from, so the comment
 	// anchors to exactly what the user is looking at. `pr/<n>/head` for a PR view,
 	// or the branch tip for a Branch view. On the Branch tab the branch tip (once

@@ -85,8 +85,13 @@ export type { ContextTab };
 // Used by DiffFileSection to render an inline compose box at the right spot.
 export interface PendingComposer {
 	filePath: string;
+	// Anchor line — the top of the selection, where the compose box renders. For a
+	// single-line comment this is the only line; for a range it's the start.
 	line: number;
 	side: 'LEFT' | 'RIGHT';
+	// Bottom of a multi-line selection. Undefined (or equal to `line`) for a
+	// single-line comment. Always >= `line`.
+	endLine?: number;
 	// Optional comment id we're replying to. When set, posting will use the
 	// reply endpoint instead of creating a top-level comment.
 	replyTo?: number;
@@ -100,8 +105,12 @@ export interface PendingComposer {
 // rendered inline by DiffFileSection in any non-PR context.
 export interface LocalComposer {
 	filePath: string;
+	// Anchor line — the top of the selection (the comment's `startLine`).
 	line: number;
 	side: 'LEFT' | 'RIGHT';
+	// Bottom of a multi-line selection (the comment's `endLine`). Undefined (or
+	// equal to `line`) for a single-line comment. Always >= `line`.
+	endLine?: number;
 	draft: string;
 	submitting: boolean;
 }
@@ -4279,12 +4288,20 @@ export const actions = {
 		}
 	},
 
-	openComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number, replyTo?: number): void {
+	openComposer(
+		filePath: string,
+		side: 'LEFT' | 'RIGHT',
+		line: number,
+		replyTo?: number,
+		endLine?: number
+	): void {
 		const key = composerKey(filePath, side, line);
 		if (app.pendingComposers[key]) return;
+		// Only keep a real range; collapse a single-line selection to no endLine.
+		const range = endLine != null && endLine > line ? endLine : undefined;
 		app.pendingComposers = {
 			...app.pendingComposers,
-			[key]: { filePath, line, side, replyTo, draft: '', submitting: false }
+			[key]: { filePath, line, side, endLine: range, replyTo, draft: '', submitting: false }
 		};
 	},
 
@@ -4331,8 +4348,11 @@ export const actions = {
 						{
 							prNumber,
 							path: c.filePath,
-							line: c.line,
+							// GitHub anchors a range at its end line; `c.line` is the start, so
+							// post the end as `line` and the start as `startLine`.
+							line: c.endLine ?? c.line,
 							side: c.side,
+							...(c.endLine != null && c.endLine > c.line ? { startLine: c.line } : {}),
 							body: c.draft.trim(),
 							headRef: commentAnchorRef()
 						},
@@ -4479,14 +4499,21 @@ export const actions = {
 		await loadLocalComments();
 	},
 
-	// Open an inline compose box for a new local comment at a line. No-op if one is
-	// already open there (matches the PR composer's single-open-per-line rule).
-	openLocalComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number): void {
+	// Open an inline compose box for a new local comment at a line (or a range, when
+	// `endLine` is past `line`). No-op if one is already open there (matches the PR
+	// composer's single-open-per-line rule).
+	openLocalComposer(
+		filePath: string,
+		side: 'LEFT' | 'RIGHT',
+		line: number,
+		endLine?: number
+	): void {
 		const key = composerKey(filePath, side, line);
 		if (app.localComposers[key]) return;
+		const range = endLine != null && endLine > line ? endLine : undefined;
 		app.localComposers = {
 			...app.localComposers,
-			[key]: { filePath, line, side, draft: '', submitting: false }
+			[key]: { filePath, line, side, endLine: range, draft: '', submitting: false }
 		};
 	},
 
@@ -4517,7 +4544,7 @@ export const actions = {
 				path: c.filePath,
 				side: c.side,
 				startLine: c.line,
-				endLine: c.line,
+				endLine: c.endLine ?? c.line,
 				body: c.draft.trim(),
 				author: localAuthor()
 			});

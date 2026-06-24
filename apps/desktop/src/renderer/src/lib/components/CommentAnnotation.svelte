@@ -35,6 +35,9 @@
 				filePath: string;
 				line: number;
 				side: 'LEFT' | 'RIGHT';
+				// Bottom of a multi-line selection (the range end). Undefined for a
+				// single-line comment. The composer renders at `line` (the start).
+				endLine?: number;
 				replyTo?: number;
 		  };
 
@@ -252,6 +255,11 @@
 					<header>
 						<span class="author">{c.author}</span>
 						<span class="time">{formatRelative(c.createdAt)}</span>
+						<!-- Range label for a multi-line comment, on the root only — the
+						     thread reads as anchored to the whole span. -->
+						{#if isRoot && c.line != null && c.startLine != null && c.startLine !== c.line}
+							<span class="range-tag">L{c.startLine}–L{c.line}</span>
+						{/if}
 						<!-- "Outdated" mirrors GitHub: the anchored line/file is gone from the
 					     current diff. It's independent of resolution — the resolved badge
 					     below stays driven solely by `isResolved`. Shown once per thread
@@ -475,7 +483,15 @@
 			>
 				<div class="composer-header">
 					<MessageSquare class="size-3.5 text-muted-foreground" />
-					<span>{composer.replyTo ? 'Reply' : 'New comment'}</span>
+					<span>
+						{#if composer.replyTo}
+							Reply
+						{:else if composer.endLine != null && composer.endLine > composer.line}
+							New comment on lines {composer.line}–{composer.endLine}
+						{:else}
+							New comment
+						{/if}
+					</span>
 				</div>
 				<MarkdownComposer
 					bind:value={composer.draft}
@@ -624,6 +640,16 @@
 	.reply-count {
 		color: hsl(var(--muted-foreground));
 		font-size: 11px;
+	}
+	/* Line-range label for a multi-line comment. Monospace to read as line numbers. */
+	.range-tag {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		font-size: 10px;
+		color: hsl(var(--muted-foreground));
+		background: var(--color-muted);
+		padding: 1px 5px;
+		border-radius: 999px;
+		line-height: 1.4;
 	}
 	/* Outdated-thread code context, between the root header and the comment text.
 	   Sits tight under the header (no extra top gap) so the header doesn't read as

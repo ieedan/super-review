@@ -15,7 +15,15 @@
 				// yet, in which case the UI shows no badge rather than a false "outdated".
 				isOutdated?: boolean;
 		  }
-		| { kind: 'local-composer'; filePath: string; line: number; side: 'LEFT' | 'RIGHT' };
+		| {
+				kind: 'local-composer';
+				filePath: string;
+				line: number;
+				side: 'LEFT' | 'RIGHT';
+				// Bottom of a multi-line selection (the range end). Undefined for a
+				// single-line comment. The composer renders at `line` (the start).
+				endLine?: number;
+		  };
 </script>
 
 <script lang="ts">
@@ -138,6 +146,9 @@
 				<header>
 					<span class="author">{c.author.name}</span>
 					<span class="time">{formatRelative(c.createdAt)}</span>
+					{#if c.endLine !== c.startLine}
+						<span class="range-tag">L{c.startLine}–L{c.endLine}</span>
+					{/if}
 					{#if outdated}
 						<span
 							class="outdated-tag"
@@ -281,7 +292,13 @@
 		>
 			<div class="composer-header">
 				<MessageSquare class="size-3.5 text-muted-foreground" />
-				<span>New comment</span>
+				<span>
+					{#if composer.endLine != null && composer.endLine > composer.line}
+						New comment on lines {composer.line}–{composer.endLine}
+					{:else}
+						New comment
+					{/if}
+				</span>
 			</div>
 			<Textarea
 				bind:ref={textareaEl}
@@ -367,6 +384,16 @@
 	.time {
 		color: hsl(var(--muted-foreground));
 		font-size: 11px;
+	}
+	/* Line-range label for a multi-line comment. Monospace to read as line numbers. */
+	.range-tag {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		font-size: 10px;
+		color: hsl(var(--muted-foreground));
+		background: hsl(var(--muted));
+		padding: 1px 5px;
+		border-radius: 999px;
+		line-height: 1.4;
 	}
 	.resolved-tag {
 		display: inline-flex;

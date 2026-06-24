@@ -298,7 +298,8 @@
 		const out: Array<{ side: 'LEFT' | 'RIGHT'; line: number }> = [];
 		if (isPRContext) {
 			for (const c of app.prComments[file.path] ?? []) {
-				if (c.line != null) out.push({ side: c.side, line: c.line });
+				// Anchor at the rendered line — the range start for a multi-line comment.
+				if (c.line != null) out.push({ side: c.side, line: c.startLine ?? c.line });
 			}
 		} else if (isLocalCommentContext) {
 			for (const c of app.localComments) {
@@ -529,7 +530,9 @@
 			}
 			out.push({
 				side: c.side === 'LEFT' ? 'deletions' : 'additions',
-				lineNumber: c.line,
+				// A multi-line comment is anchored at the top of its range (`startLine`);
+				// `line` is the range end. Single-line comments have no `startLine`.
+				lineNumber: c.startLine ?? c.line,
 				metadata: meta
 			});
 		}
@@ -537,12 +540,13 @@
 		for (const composer of composers) {
 			const key = composerKey(composer.filePath, composer.side, composer.line);
 			let meta = composerMetaCache.get(key);
-			if (meta == null || meta.replyTo !== composer.replyTo) {
+			if (meta == null || meta.replyTo !== composer.replyTo || meta.endLine !== composer.endLine) {
 				meta = {
 					kind: 'composer',
 					filePath: composer.filePath,
 					line: composer.line,
 					side: composer.side,
+					endLine: composer.endLine,
 					replyTo: composer.replyTo
 				};
 				composerMetaCache.set(key, meta);
@@ -577,12 +581,13 @@
 		for (const composer of localComposers) {
 			const key = composerKey(composer.filePath, composer.side, composer.line);
 			let meta = localComposerMetaCache.get(key);
-			if (meta == null) {
+			if (meta == null || meta.endLine !== composer.endLine) {
 				meta = {
 					kind: 'local-composer',
 					filePath: composer.filePath,
 					line: composer.line,
-					side: composer.side
+					side: composer.side,
+					endLine: composer.endLine
 				};
 				localComposerMetaCache.set(key, meta);
 			}
@@ -917,12 +922,15 @@
 	function onGutterClick(range: SelectedLineRange): void {
 		const sel = range.side ?? 'additions';
 		const side = sel === 'deletions' ? 'LEFT' : 'RIGHT';
-		// For a plain click `start === end`. Drag-select reports both ends; we
-		// attach the comment to the first (top) line for now.
+		// A plain click reports `start === end` (single line); a drag-select reports
+		// both ends, in either order. Anchor at the top line and carry the bottom as
+		// the range end (collapsed away when they're equal).
+		const top = Math.min(range.start, range.end);
+		const bottom = Math.max(range.start, range.end);
 		if (isPRContext) {
-			actions.openComposer(file.path, side, range.start);
+			actions.openComposer(file.path, side, top, undefined, bottom);
 		} else if (isLocalCommentContext) {
-			actions.openLocalComposer(file.path, side, range.start);
+			actions.openLocalComposer(file.path, side, top, bottom);
 		}
 	}
 

@@ -110,6 +110,16 @@
 		return c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
 	}
 
+	// PR comments anchor at `line` (the range end); `startLine` is the span start
+	// for a multi-line comment. Fall back to `originalLine` for outdated comments.
+	function prLineLabel(c: PRReviewComment): string {
+		const end = c.line ?? c.originalLine;
+		if (c.startLine != null && end != null && c.startLine !== end) {
+			return `L${c.startLine}-${end}`;
+		}
+		return `L${end}`;
+	}
+
 	function fileName(path: string): string {
 		const parts = path.split('/');
 		return parts[parts.length - 1] || path;
@@ -351,7 +361,7 @@
 									<span class="truncate font-mono">{fileName(root.path)}</span>
 									{#if (root.line ?? root.originalLine) != null}
 										<span class="shrink-0">·</span>
-										<span class="shrink-0 font-mono">L{root.line ?? root.originalLine}</span>
+										<span class="shrink-0 font-mono">{prLineLabel(root)}</span>
 									{/if}
 									{#if replies > 0}
 										<span class="shrink-0">·</span>
