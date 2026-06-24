@@ -1635,6 +1635,16 @@ export interface PreloadAPI {
 			owner?: string,
 			repo?: string
 		): Promise<void>;
+		// Edit one of the viewer's own line-anchored review comments. Returns the body
+		// as GitHub stored it; the caller merges just the body so the comment's
+		// thread/resolution state is preserved.
+		updateReviewComment(
+			repoId: string,
+			commentId: number,
+			body: string,
+			owner?: string,
+			repo?: string
+		): Promise<string>;
 		// The PR's top-level conversation timeline (issue comments, review summaries,
 		// commits and events) in chronological order. Drives the Conversation tab.
 		listConversation(

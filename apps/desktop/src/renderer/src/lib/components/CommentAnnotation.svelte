@@ -6,6 +6,7 @@
 	import Github from './icons/GithubIcon.svelte';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
+	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Button } from './ui/button';
 	import { ShortcutHint } from './ui/shortcut-hint';
@@ -168,6 +169,41 @@
 		void actions.deleteComment(comment.id, comment.path);
 	}
 
+	// Inline edit state for this comment. Each comment row is its own component
+	// instance, so a plain boolean tracks whether *this* one is being edited; the
+	// draft is kept locally so typing doesn't churn the thread.
+	let editing = $state(false);
+	let editDraft = $state('');
+	let editSubmitting = $state(false);
+
+	function startEdit(comment: PRReviewComment): void {
+		editing = true;
+		editDraft = comment.body;
+	}
+	function cancelEdit(): void {
+		editing = false;
+		editDraft = '';
+	}
+	async function saveEdit(comment: PRReviewComment): Promise<void> {
+		if (editSubmitting) return;
+		const body = editDraft.trim();
+		if (!body) return;
+		editSubmitting = true;
+		const ok = await actions.editReviewComment(comment.id, comment.path, body);
+		editSubmitting = false;
+		if (ok) cancelEdit();
+	}
+	function onEditKeydown(e: KeyboardEvent): void {
+		if (meta.kind !== 'comment') return;
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			e.preventDefault();
+			void saveEdit(meta.comment);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelEdit();
+		}
+	}
+
 	// Open this comment on GitHub in the user's browser. `url` is the API-provided
 	// permalink to the review comment.
 	function viewOnGithub(comment: PRReviewComment): void {
@@ -251,6 +287,20 @@
 										<Copy class="size-3.5" />
 									{/if}
 								</button>
+								<!-- Edit is a first-class action on the viewer's own comment, so it
+								     gets its own button next to Copy rather than living in the
+								     overflow menu. Hidden while already editing. -->
+								{#if c.canDelete && !editing}
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+										title="Edit comment"
+										aria-label="Edit comment"
+										onclick={() => startEdit(c)}
+									>
+										<Pencil class="size-3.5" />
+									</button>
+								{/if}
 								{#if c.url || c.canDelete}
 									<DropdownMenu.Root>
 										<DropdownMenu.Trigger
@@ -304,7 +354,42 @@
 								<DiffHunkSnippet hunk={diffHunk} path={c.path} />
 							</div>
 						{/if}
-						{#if bodyHtml}
+						{#if editing}
+							<!-- Inline editor for the viewer's own comment — same MarkdownComposer
+							     the new-comment/reply composers use, so editing gets the full
+							     Write/Preview editor and toolbar. -->
+							<form
+								class="composer edit-composer"
+								onsubmit={(e) => {
+									e.preventDefault();
+									void saveEdit(c);
+								}}
+							>
+								<MarkdownComposer
+									bind:value={editDraft}
+									placeholder="Edit comment…"
+									disabled={editSubmitting}
+									autofocus
+									onkeydown={onEditKeydown}
+								/>
+								<div class="composer-footer">
+									<div class="actions">
+										<Button variant="ghost" size="sm" type="button" onclick={cancelEdit}>
+											Cancel <ShortcutHint>esc</ShortcutHint>
+										</Button>
+										<Button
+											variant="default"
+											size="sm"
+											type="submit"
+											disabled={!editDraft.trim() || editSubmitting}
+										>
+											{editSubmitting ? 'Saving…' : 'Save'}
+											<ShortcutHint>⌘⏎</ShortcutHint>
+										</Button>
+									</div>
+								</div>
+							</form>
+						{:else if bodyHtml}
 							<!-- bodyHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
 							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 							<div class="markdown-body text">{@html bodyHtml}</div>
@@ -565,6 +650,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+	}
+	/* The inline edit editor takes the place of the comment body, so give it the
+	   same vertical rhythm the rendered text had. */
+	.edit-composer {
+		margin: 4px 0 6px;
 	}
 	.composer-header {
 		display: flex;
