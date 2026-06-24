@@ -1880,7 +1880,30 @@ function applyContextTab(tab: ContextTab): void {
 // viewable on the current branch (e.g. the default branch); Sessions/History
 // only restore when their optional sidebar tab is enabled. Shared by launch
 // restore and switchRepo so each repo reopens on the tab you left it on.
-async function restoreContextTab(savedTab: ContextTab | undefined): Promise<void> {
+//
+// `restoreScroll` (switchRepo only) rehydrates the file list's selected file and
+// diff scroll position from the per-context cache before refreshing, so coming
+// back to a repo lands the reviewer on the same file and spot they left — the
+// same restore a within-repo tab switch does. The launch path skips it: the
+// session cache is cold on startup, and per-tab scroll restore already runs from
+// the persisted list.
+async function restoreContextTab(
+	savedTab: ContextTab | undefined,
+	restoreScroll = false
+): Promise<void> {
+	// For the file-list tabs (Unstaged/Branch), repaint the cached file +
+	// scroll position before refreshFiles so its `paint` keeps the selected file
+	// and the diff view restores the saved spot instead of jumping to the top.
+	const restoreFileScroll = async (load: () => Promise<unknown>): Promise<void> => {
+		// Hydrate before kicking off the load so refreshFiles' `paint` sees the
+		// restored selected file and keeps it (and app.scrollAnchor is set before
+		// the diff view re-renders).
+		const restored = restoreScroll && hydrateFilesFromCache();
+		await load();
+		// Nothing to restore (first visit to this repo's context this session) —
+		// start on real content, skipping leading collapsed (already-seen) files.
+		if (restoreScroll && !restored) actions.scrollToFirstExpanded();
+	};
 	if (savedTab === 'branch') {
 		// The Branch tab needs branches resolved before it can build its diff
 		// context (and before we can tell whether it's empty on this branch).
@@ -1894,7 +1917,7 @@ async function restoreContextTab(savedTab: ContextTab | undefined): Promise<void
 			app.contextTab = 'unstaged';
 			app.diffContext = { kind: 'workingTree' };
 		}
-		await Promise.all([refreshFiles(), refreshPushStatus()]);
+		await restoreFileScroll(() => Promise.all([refreshFiles(), refreshPushStatus()]));
 	} else if (savedTab === 'sessions' && app.sidebarTabs.sessions) {
 		app.contextTab = 'sessions';
 		// The Sessions tab shows the documented-sessions list (in the sidebar),
@@ -1914,7 +1937,9 @@ async function restoreContextTab(savedTab: ContextTab | undefined): Promise<void
 	} else {
 		app.contextTab = 'unstaged';
 		app.diffContext = { kind: 'workingTree' };
-		await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+		await restoreFileScroll(() =>
+			Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()])
+		);
 	}
 	if (app.activeRepo) contextTabByRepo.set(app.activeRepo.id, app.contextTab);
 	void window.api.state.setPrefs({ contextTab: app.contextTab }).then((prefs) => {
@@ -2839,10 +2864,14 @@ export const actions = {
 			app.viewBranch = null;
 			app.viewPR = null;
 			// Clear the outgoing repo's file list / diff so it doesn't linger while
-			// the new repo loads.
+			// the new repo loads. restoreContextTab rehydrates the selected file +
+			// scroll anchor from the per-context cache below; clearing the anchor here
+			// means a cache miss (first visit this session) starts clean at the top
+			// rather than carrying the previous repo's scroll position.
 			app.changedFiles = [];
 			app.selectedFile = null;
 			app.selectedFiles = new SvelteSet();
+			app.scrollAnchor = null;
 			app.activeSessionId = null;
 			app.activeSessionDetail = null;
 			app.sessions = [];
@@ -2863,7 +2892,7 @@ export const actions = {
 			// they're re-resolved for the new repo by refreshBranchPR below.
 			app.forkPrompt = null;
 			app.repoPushAccess = null;
-			await Promise.all([refreshRepos(), restoreContextTab(contextTabByRepo.get(repo.id))]);
+			await Promise.all([refreshRepos(), restoreContextTab(contextTabByRepo.get(repo.id), true)]);
 			await refreshBranchPR();
 		}
 	},
