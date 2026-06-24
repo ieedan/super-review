@@ -28,6 +28,7 @@
 		parseDiffFromFile,
 		type DiffLineAnnotation,
 		type DiffTokenEventBaseProps,
+		type FileContents,
 		type FileDiffMetadata,
 		type HunkExpansionRegion,
 		type OnDiffLineClickProps,
@@ -1245,11 +1246,42 @@
 	// renderer — the "Raw" view. Reuses the same web component tag, worker pool
 	// and theme as the diff so the file reads identically minus the +/− gutters.
 	// For a deletion there's no post-change file, so show the removed contents.
+	// The whole-file payload for the raw view. For a deletion there's no
+	// post-change file, so show the removed contents. `cacheKey` lets the worker
+	// pool cache the highlighted AST so a later render (toggling Diff↔Raw, a
+	// theme-type swap, or a hover-prime landing before the click) reuses it
+	// instead of re-tokenizing the *whole* file — without it Pierre re-highlights
+	// from scratch every render (see WorkerPoolManager.fileCache, keyed solely by
+	// cacheKey). Keyed by context + path + side + dataEpoch, which bumps only when
+	// the contents actually change, so the cache stays valid across renders of the
+	// same content and is invalidated on a real edit.
+	function rawFileContents(diff: DiffData): FileContents {
+		const deleted = diff.file.status === 'deleted';
+		return {
+			name: deleted ? (diff.file.oldPath ?? diff.file.path) : diff.file.path,
+			contents: deleted ? diff.oldContents : diff.newContents,
+			cacheKey: loadedCtxKey
+				? `raw:${loadedCtxKey}:${file.path}:${deleted ? 'old' : 'new'}:${dataEpoch}`
+				: undefined
+		};
+	}
+
+	// Warm the worker's highlight cache for the raw view before it's shown. Called
+	// when the user points at the toggle: tokenizing the whole file is the slow
+	// part, so giving the workers a head start (the result lands in the cache
+	// under the same cacheKey renderRaw uses) means the actual click paints
+	// highlighted with little or no wait. Deduped by cacheKey, so a graze that
+	// never becomes a click costs at most the one tokenize the click would anyway.
+	function primeRawHighlight(): void {
+		const pool = getDiffWorkerPool();
+		if (!pool || !diffData || !loadedCtxKey || diffData.file.isBinary) return;
+		const fc = rawFileContents(diffData);
+		if (!fc.contents || !fc.cacheKey) return;
+		pool.primeFileHighlightCache(fc);
+	}
+
 	function renderRaw(diff: DiffData): void {
 		if (!host) return;
-		const deleted = diff.file.status === 'deleted';
-		const contents = deleted ? diff.oldContents : diff.newContents;
-		const name = deleted ? (diff.file.oldPath ?? diff.file.path) : diff.file.path;
 
 		diffContainer = document.createElement(DIFFS_TAG_NAME);
 		// `host` is ours and Svelte doesn't manage its children — Pierre renders
@@ -1267,7 +1299,7 @@
 
 		try {
 			rawInstance.render({
-				file: { name, contents },
+				file: rawFileContents(diff),
 				fileContainer: diffContainer
 			});
 		} catch (err) {
@@ -2080,6 +2112,7 @@
 					class="inline-flex h-7 items-stretch gap-0.5 rounded-md border border-border p-0.5 @max-[460px]:hidden"
 					role="group"
 					aria-label="View mode"
+					onpointerenter={primeRawHighlight}
 				>
 					{#each [{ raw: false, label: 'Diff' }, { raw: true, label: 'Raw' }] as opt (opt.label)}
 						{@const active = showRaw === opt.raw}
