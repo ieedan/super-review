@@ -439,30 +439,29 @@
 		app.diffContext.kind === 'session' ? calloutsForFile(app.activeSessionDetail, file.path) : []
 	);
 
-	// The set of line numbers still present in the current diff, per side, parsed
-	// from the loaded patch. A local comment is "outdated" when its anchored line
-	// fell out of the diff (the working tree changed under it), mirroring how
-	// GitHub flags PR comments whose code has since changed. Null until the diff
-	// is loaded — we can't tell yet, so the UI shows no badge rather than a false
+	// Count the lines in a file's contents. A trailing newline terminates the last
+	// line rather than starting an empty one, so it isn't counted; an empty file
+	// has zero lines.
+	function lineCount(contents: string): number {
+		if (contents.length === 0) return 0;
+		return contents.endsWith('\n') ? contents.split('\n').length - 1 : contents.split('\n').length;
+	}
+
+	// How many lines each side of this file currently has, from the full contents
+	// the diff carries. A local comment is "outdated" when its anchored line no
+	// longer exists in the file — i.e. the file is now shorter than that line, so
+	// the code it sat on is gone — mirroring how GitHub flags PR comments whose
+	// code has since changed. We judge against the whole file (not just the diff's
+	// hunks): a comment placed on an unchanged line outside the changes — e.g. on
+	// expanded context in the Unstaged view — is perfectly valid and must NOT be
+	// flagged. Null until the diff is loaded, or when it's truncated (the line
+	// counts can't be trusted), so the UI shows no badge rather than a false
 	// positive. Only meaningful for local-comment contexts; PR contexts get
 	// outdated straight from GitHub.
-	const localLiveLines = $derived.by<{ left: Set<number>; right: Set<number> } | null>(() => {
+	const localFileExtent = $derived.by<{ left: number; right: number } | null>(() => {
 		if (!isLocalCommentContext) return null;
-		const patch = diffData?.patch;
-		if (!patch) return null;
-		const parsed = parseFilePatch(patch);
-		if (!parsed) return null;
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
-		const left = new Set<number>();
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
-		const right = new Set<number>();
-		for (const hunk of parsed.hunks) {
-			for (const line of hunk.lines) {
-				if (line.oldLine != null) left.add(line.oldLine);
-				if (line.newLine != null) right.add(line.newLine);
-			}
-		}
-		return { left, right };
+		if (!diffData || diffData.truncated) return null;
+		return { left: lineCount(diffData.oldContents), right: lineCount(diffData.newContents) };
 	});
 
 	// This file's local comments (empty outside a local-comment context).
@@ -474,13 +473,13 @@
 	// comments sidebar can badge comments whose anchored line is gone — they no
 	// longer render inline, so the sidebar is the only place they can surface.
 	// Touches only this file's ids (file paths are unique across sections, so no
-	// contention). While the diff is unloaded (`localLiveLines` null) we can't tell,
-	// so we drop this file's ids rather than guess. Cleaned up on destroy.
+	// contention). While the diff is unloaded (`localFileExtent` null) we can't
+	// tell, so we drop this file's ids rather than guess. Cleaned up on destroy.
 	$effect(() => {
-		const live = localLiveLines;
+		const extent = localFileExtent;
 		for (const c of fileLocalComments) {
 			const outdated =
-				live != null && !(c.side === 'LEFT' ? live.left : live.right).has(c.startLine);
+				extent != null && c.startLine > (c.side === 'LEFT' ? extent.left : extent.right);
 			if (outdated) app.outdatedLocalCommentIds.add(c.id);
 			else app.outdatedLocalCommentIds.delete(c.id);
 		}
@@ -556,9 +555,9 @@
 
 		for (const c of localComments) {
 			// undefined while the diff is still loading (don't claim outdated yet);
-			// otherwise true when the anchored line is gone from the current diff.
-			const outdated = localLiveLines
-				? !(c.side === 'LEFT' ? localLiveLines.left : localLiveLines.right).has(c.startLine)
+			// otherwise true when the anchored line no longer exists in the file.
+			const outdated = localFileExtent
+				? c.startLine > (c.side === 'LEFT' ? localFileExtent.left : localFileExtent.right)
 				: undefined;
 			let meta = localCommentMetaCache.get(c.id);
 			// Invalidate when the comment object was replaced (e.g. resolved) or its
