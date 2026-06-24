@@ -1073,18 +1073,30 @@ let errorSeq = 0;
 // Surface an error to the user. Passing a message appends a new toast (errors
 // stack rather than overwrite); passing null clears the whole stack. `action`
 // names the operation that failed so the toast's one-click report can include
-// it. Consecutive identical messages collapse to one so a retry loop doesn't
-// pile up duplicates.
+// it. A message identical to the newest toast doesn't pile up a duplicate —
+// instead it bumps that toast's count and `bump` nonce, so the UI can flag the
+// repeat (a "×N" badge + a shake) rather than leaving the user unsure whether
+// the new error registered.
 export function setError(msg: string | null, action?: string): void {
 	if (msg === null) {
 		app.errors = [];
 		return;
 	}
 	const last = app.errors[app.errors.length - 1];
-	if (last && last.message === msg) return;
+	if (last && last.message === msg) {
+		last.count += 1;
+		last.bump += 1;
+		return;
+	}
 	app.errors = [
 		...app.errors,
-		{ id: `err-${++errorSeq}`, message: msg, context: captureErrorContext(action) }
+		{
+			id: `err-${++errorSeq}`,
+			message: msg,
+			context: captureErrorContext(action),
+			count: 1,
+			bump: 0
+		}
 	];
 }
 

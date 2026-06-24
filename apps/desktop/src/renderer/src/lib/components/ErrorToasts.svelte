@@ -12,6 +12,7 @@
 	import Bug from '@lucide/svelte/icons/bug';
 	import * as Tooltip from './ui/tooltip';
 	import { actions, app, dismissError } from '$lib/store.svelte';
+	import { useAnimations } from '$lib/hooks/use-animations.svelte';
 	import type { ErrorToast } from '@shared/types';
 
 	// Per-toast UI state keyed by toast id: which have their details expanded and
@@ -21,6 +22,24 @@
 	const detailsOpen = new SvelteSet<string>();
 	const copied = new SvelteSet<string>();
 	const copyResetIds = new SvelteMap<string, number>();
+
+	const animations = useAnimations();
+
+	// Re-trigger a brief shake whenever a toast's `bump` increases — i.e. the same
+	// error fired again and collapsed into this toast instead of stacking a
+	// duplicate, so without a cue the user couldn't tell a new one occurred. Only
+	// fires when accent-level motion is on (the ×N badge still signals the repeat
+	// when it's off), and never on first mount since `update` runs only on change.
+	function shake(node: HTMLElement, _bump: number) {
+		return {
+			update() {
+				if (!animations.accentsEnabled) return;
+				node.classList.remove('animate-error-shake');
+				void node.offsetWidth; // force reflow so the animation restarts
+				node.classList.add('animate-error-shake');
+			}
+		};
+	}
 
 	function toggleDetails(id: string): void {
 		if (detailsOpen.has(id)) detailsOpen.delete(id);
@@ -43,6 +62,8 @@
 		{#each app.errors as toast (toast.id)}
 			<div
 				role="alert"
+				use:shake={toast.bump}
+				onanimationend={(e) => e.currentTarget.classList.remove('animate-error-shake')}
 				class="flex flex-col gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive shadow-lg backdrop-blur"
 			>
 				<div class="flex items-start gap-2">
@@ -52,6 +73,15 @@
 							? `Error while ${toast.context.action.toLowerCase()}`
 							: 'An error occurred'}
 					</span>
+					{#if toast.count > 1}
+						<span
+							class="shrink-0 rounded-full bg-destructive/20 px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+							aria-label={`Occurred ${toast.count} times`}
+							title={`This error has occurred ${toast.count} times`}
+						>
+							×{toast.count}
+						</span>
+					{/if}
 					<button
 						class="rounded p-0.5 hover:bg-destructive/20"
 						onclick={() => dismissError(toast.id)}

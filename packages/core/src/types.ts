@@ -897,6 +897,14 @@ export interface ErrorToast {
 	id: string;
 	message: string;
 	context?: ErrorContext;
+	// How many times this same error has fired in a row. Consecutive duplicates
+	// collapse into this toast (bumping the count) instead of piling up; the UI
+	// shows a "×N" badge once it's > 1.
+	count: number;
+	// Incremented on every repeat so the UI can re-trigger a shake animation —
+	// the cue that a new (identical) error just occurred even though no new toast
+	// appeared.
+	bump: number;
 }
 
 // Pre-filled fields handed to the feedback dialog when it's opened from a

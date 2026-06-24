@@ -44,6 +44,26 @@
 	--color-flame-soft: hsl(16 100% 70%);
 	--color-flame-deep: hsl(6 88% 56%);
 	--radius: 0.5rem;
+
+	/* A short horizontal shake, used to flag that an error toast just fired again
+	   with the same message (a repeat that collapses into the existing toast
+	   rather than stacking a duplicate). Applied via the `animate-error-shake`
+	   utility, re-triggered on each repeat. */
+	--animate-error-shake: error-shake 0.4s ease-in-out;
+	@keyframes error-shake {
+		0%,
+		100% {
+			transform: translateX(0);
+		}
+		20%,
+		60% {
+			transform: translateX(-4px);
+		}
+		40%,
+		80% {
+			transform: translateX(4px);
+		}
+	}
 }
 
 .dark {
