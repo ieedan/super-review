@@ -1371,6 +1371,26 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle(
+		'github:updateReviewComment',
+		async (
+			_e,
+			repoId: string,
+			commentId: number,
+			body: string,
+			prOwner?: string,
+			prRepo?: string
+		): Promise<string> => {
+			const repo = repoOrThrow(repoId);
+			const owner = prOwner ?? repo.githubOwner;
+			const name = prRepo ?? repo.githubRepo;
+			if (!owner || !name) {
+				throw new Error('This repository does not have a GitHub remote.');
+			}
+			return gh.updateReviewComment(owner, name, commentId, body, repo.githubAccountId);
+		}
+	);
+
+	ipcMain.handle(
 		'github:setReviewThreadResolved',
 		async (
 			_e,

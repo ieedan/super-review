@@ -269,6 +269,15 @@ const api: PreloadAPI = {
 				owner,
 				repo
 			) as Promise<void>,
+		updateReviewComment: (repoId, commentId, body, owner, repo) =>
+			ipcRenderer.invoke(
+				'github:updateReviewComment',
+				repoId,
+				commentId,
+				body,
+				owner,
+				repo
+			) as Promise<string>,
 		setReviewThreadResolved: (repoId, threadId, resolved) =>
 			ipcRenderer.invoke('github:setReviewThreadResolved', repoId, threadId, resolved) as Promise<{
 				isResolved: boolean;

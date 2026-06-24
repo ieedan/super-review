@@ -4297,6 +4297,31 @@ export const actions = {
 		}
 	},
 
+	// Edit one of the viewer's own review comments. Optimistic, reconciling to the
+	// body GitHub returns. Only the body changes so the comment keeps its thread,
+	// resolution and anchor state. Returns true on success so the editor can close.
+	async editReviewComment(commentId: number, filePath: string, body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const prev = app.prComments[filePath] ?? [];
+		const apply = (newBody: string): PRReviewComment[] =>
+			prev.map((c) => (c.id === commentId ? { ...c, body: newBody } : c));
+		app.prComments = { ...app.prComments, [filePath]: apply(body) };
+		try {
+			const saved = await window.api.github.updateReviewComment(
+				app.activeRepo.id,
+				commentId,
+				body,
+				...prHostArgs(commentablePR())
+			);
+			app.prComments = { ...app.prComments, [filePath]: apply(saved) };
+			return true;
+		} catch (err) {
+			app.prComments = { ...app.prComments, [filePath]: prev };
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
 	// Resolve / unresolve a review thread. A thread can span files (and every
 	// comment in it carries the same threadId), so we flip `isResolved` on every
 	// matching comment across the whole map. Optimistic, with rollback + a

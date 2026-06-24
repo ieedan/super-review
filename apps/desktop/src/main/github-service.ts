@@ -1404,6 +1404,21 @@ export async function deleteReviewComment(
 	await o.pulls.deleteReviewComment({ owner, repo, comment_id: commentId });
 }
 
+// Edit one of the viewer's own line-anchored review comments. Returns the new
+// body as GitHub stored it — the caller merges just the body into the comment it
+// already holds, so the thread/resolution state we tracked separately survives.
+export async function updateReviewComment(
+	owner: string,
+	repo: string,
+	commentId: number,
+	body: string,
+	accountId?: string | null
+): Promise<string> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.pulls.updateReviewComment({ owner, repo, comment_id: commentId, body });
+	return res.data.body ?? body;
+}
+
 // Returns the open PR for `branch`, or null. PRs are listed on `baseOwner/baseRepo`
 // (where the PR lives — the upstream parent for a fork contributing to it) and
 // filtered by the head `${headOwner}:${branch}`, where `headOwner` owns the branch
