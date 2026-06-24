@@ -23,6 +23,7 @@
 	import '$lib/markdown.css';
 	import {
 		DIFFS_TAG_NAME,
+		File as FileClass,
 		FileDiff as FileDiffClass,
 		parseDiffFromFile,
 		type DiffLineAnnotation,
@@ -75,6 +76,7 @@
 		DiffContext,
 		DiffData,
 		EditorKind,
+		FileHeaderItemVisibility,
 		LocalComment,
 		PRReviewComment,
 		SessionCallout
@@ -107,6 +109,16 @@
 	let host = $state<HTMLElement | null>(null);
 	let diffContainer: HTMLElement | null = null;
 	let instance: FileDiffClass<AnnotationMeta> | null = null;
+	// Pierre's single-file renderer, used for the "Raw" view (the whole file with
+	// no diff). Mutually exclusive with `instance`: only one is ever live at a
+	// time (renderDiff picks the branch), and both share `diffContainer`/`host`.
+	// Plain `let` (not $state) like `instance` — see the theme effect's caveat.
+	let rawInstance: FileClass | null = null;
+	// Diff/Raw toggle. When true the section renders the whole file (Pierre's
+	// File renderer) instead of the diff — the "Raw" view. Part of the render
+	// key, so flipping it re-renders through the normal scheduler. Reset
+	// alongside `showPreview` when a recycled section is pointed at a new file.
+	let showRaw = $state(false);
 	// The annotation list currently painted into `instance`. The `lineAnnotations`
 	// derived reads the *whole* `app.pendingComposers` object, so opening a
 	// composer on ANY file re-runs the derived (and the update effect) on EVERY
@@ -737,6 +749,16 @@
 			}
 			instance = null;
 		}
+		// Tear down the raw-view renderer if it was the live one (raw and diff
+		// never coexist, so at most one of these has work to do).
+		if (rawInstance) {
+			try {
+				rawInstance.cleanUp();
+			} catch {
+				// ignore
+			}
+			rawInstance = null;
+		}
 		// The staging click listener lives on the shadow root that's about to be
 		// destroyed with the container; drop our reference (and detach defensively).
 		if (stagingClickRoot) {
@@ -1219,10 +1241,52 @@
 		if (root) syncStagingControls(root);
 	});
 
+	// Render the whole file (no diff) into the shared host using Pierre's File
+	// renderer — the "Raw" view. Reuses the same web component tag, worker pool
+	// and theme as the diff so the file reads identically minus the +/− gutters.
+	// For a deletion there's no post-change file, so show the removed contents.
+	function renderRaw(diff: DiffData): void {
+		if (!host) return;
+		const deleted = diff.file.status === 'deleted';
+		const contents = deleted ? diff.oldContents : diff.newContents;
+		const name = deleted ? (diff.file.oldPath ?? diff.file.path) : diff.file.path;
+
+		diffContainer = document.createElement(DIFFS_TAG_NAME);
+		// `host` is ours and Svelte doesn't manage its children — Pierre renders
+		// into this element, so the manual append is intentional.
+		// eslint-disable-next-line svelte/no-dom-manipulating
+		host.appendChild(diffContainer);
+
+		rawInstance = new FileClass(
+			{
+				themeType: app.theme,
+				disableFileHeader: true
+			},
+			getDiffWorkerPool()
+		);
+
+		try {
+			rawInstance.render({
+				file: { name, contents },
+				fileContainer: diffContainer
+			});
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
 	function renderDiff(diff: DiffData): void {
 		if (!host) return;
 		disposeDiff();
 		if (diff.file.isBinary) return;
+
+		// Raw view: render the whole file instead of the diff. Comments, staging
+		// and hunk expansion are diff-only; their effects all bail while `instance`
+		// is null (renderRaw never assigns it), so nothing else needs to branch.
+		if (showRaw) {
+			renderRaw(diff);
+			return;
+		}
 
 		// Build the per-hunk staging model from the raw git patch up front so the
 		// gutter checkboxes can be injected as soon as Pierre finishes rendering.
@@ -1333,7 +1397,9 @@
 	// What the DOM *should* reflect given the currently loaded data + UI mode.
 	// Compared against `renderedKey` to decide whether a (re)render is needed.
 	const targetRenderKey = $derived(
-		loadedCtxKey && diffData ? `${loadedCtxKey}::${app.viewMode}::${dataEpoch}` : null
+		loadedCtxKey && diffData
+			? `${loadedCtxKey}::${app.viewMode}::raw=${showRaw}::${dataEpoch}`
+			: null
 	);
 
 	// True when there's no DOM in the host yet for the current data — the
@@ -1402,7 +1468,7 @@
 		if (data == null || ctxKey == null) return false;
 		if (data.file.isBinary || data.truncated) return false;
 		// dataEpoch has just been bumped by setLoadedDiff (or was already current).
-		const target = `${ctxKey}::${app.viewMode}::${dataEpoch}`;
+		const target = `${ctxKey}::${app.viewMode}::raw=${showRaw}::${dataEpoch}`;
 		if (renderedKey === target) return true;
 		cancelPendingRender?.();
 		cancelPendingRender = null;
@@ -1616,9 +1682,16 @@
 	// effect would orphan and never re-fire on theme changes.
 	$effect(() => {
 		const t = app.theme;
-		if (!instance) return;
-		instance.setThemeType(t);
-		instance.onThemeChange();
+		// Whichever renderer is live (diff or raw) gets the new theme. Read `t`
+		// first so the dependency registers even when both are null on first run.
+		if (instance) {
+			instance.setThemeType(t);
+			instance.onThemeChange();
+		}
+		if (rawInstance) {
+			rawInstance.setThemeType(t);
+			rawInstance.onThemeChange();
+		}
 	});
 
 	onDestroy(() => {
@@ -1693,6 +1766,18 @@
 	// Whether the source-diff host is on screen (not replaced by a preview). The
 	// render effect gates on this so Pierre never paints into a hidden host.
 	const hostVisible = $derived(!showMarkdownView && !showImageView);
+	// Offer the Diff/Raw toggle for any text file with a source to show — i.e.
+	// not a binary or raster image (those have no source view), not a deferred
+	// (hidden/oversized) or placeholder diff (nothing fetched), and not while a
+	// Markdown/image preview has taken over the source area.
+	const canToggleRaw = $derived(
+		!file.isBinary &&
+			!isImage &&
+			!deferred &&
+			!placeholderMessage &&
+			!showMarkdownView &&
+			!showImageView
+	);
 	// Rendered preview HTML. Shiki highlighting is async, so we compute it in an
 	// effect and stash the result instead of deriving synchronously. We keep the
 	// previous HTML on screen while a re-render is in flight (e.g. theme change)
@@ -1733,6 +1818,7 @@
 		if (file.path !== lastResetPath) {
 			lastResetPath = file.path;
 			showPreview = false;
+			showRaw = false;
 		}
 	});
 
@@ -1782,6 +1868,32 @@
 		xcode: 'Xcode',
 		visualstudio: 'Visual Studio'
 	};
+
+	// Each entry in a file header's right-click menu: the pref key it toggles and
+	// its label. Mirrors TopBar's header menu, but for the per-file controls.
+	const fileHeaderMenuItems: { key: keyof FileHeaderItemVisibility; label: string }[] = [
+		{ key: 'editor', label: 'Open in editor' },
+		{ key: 'changedLines', label: 'Changed lines' },
+		{ key: 'viewToggle', label: 'Raw / Diff toggle' },
+		{ key: 'markSeen', label: 'Mark seen' }
+	];
+
+	// Right-click anywhere on a file header to customize which optional controls
+	// show, via a native context menu. Each item is a checkbox reflecting its
+	// current visibility; toggling one persists the new state for every file
+	// header. A native menu closes on each click, so we apply the single item it
+	// reports back.
+	async function onFileHeaderContextMenu(e: MouseEvent): Promise<void> {
+		e.preventDefault();
+		const result = await window.api.menu.showFileHeaderContextMenu({
+			items: fileHeaderMenuItems.map((it) => ({
+				key: it.key,
+				label: it.label,
+				checked: app.fileHeaderItems[it.key]
+			}))
+		});
+		if (result) actions.setFileHeaderItem(result.key, result.checked);
+	}
 
 	// Outdated comments can't be pinned inline — their line (or whole file) is gone
 	// from the current diff — so we group them by thread and render them below the
@@ -1850,10 +1962,14 @@
 	data-collapsed={!expanded}
 	class={['border-b border-border', isLast && 'min-h-full']}
 >
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- The header is a structural row, not a control; the contextmenu handler is
+	     a supplementary right-click affordance for customizing the file header. -->
 	<header
 		class={[
 			'@container sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
 		]}
+		oncontextmenu={onFileHeaderContextMenu}
 	>
 		<!-- The visible chevron stays size-5, but a transparent ::before stretches the
 		     click target to the header's top/bottom edges, out to the left edge
@@ -1905,7 +2021,7 @@
 			{/if}
 		</div>
 		<div class="flex items-center gap-2 text-[10px] tabular-nums">
-			{#if !file.isBinary}
+			{#if !file.isBinary && app.fileHeaderItems.changedLines}
 				{#if file.additions > 0}
 					<span class="text-success @max-[360px]:hidden">+{file.additions}</span>
 				{/if}
@@ -1913,11 +2029,11 @@
 					<span class="text-destructive @max-[360px]:hidden">−{file.deletions}</span>
 				{/if}
 			{/if}
-			{#if anyEditorAvailable}
+			{#if anyEditorAvailable && app.fileHeaderItems.editor}
 				<!-- As the diff pane gets cramped (e.g. comments panel open), elements
 				     drop right-to-left so the file name keeps its room, widest first:
-				     Mark seen (<500, ⌘↵ still works) → badges (<440) → this editor
-				     button (<400) → the +/- counts (<360). -->
+				     Mark seen (<500, ⌘↵ still works) → badges (<440) → the Raw/Diff
+				     toggle (<460) → this editor button (<400) → the +/- counts (<360). -->
 				<Button
 					variant="ghost"
 					size="icon-sm"
@@ -1955,19 +2071,46 @@
 					{/if}
 				</Button>
 			{/if}
-			<Button
-				variant={isSeen ? 'secondary' : 'outline'}
-				size="sm"
-				class="@max-[500px]:hidden"
-				onclick={handleMarkSeen}
-			>
-				{#if isSeen}
-					<Check class="size-3.5" /> Seen
-				{:else}
-					<Eye class="size-3.5" /> Mark seen
-					<ShortcutHint>{markSeenHotkey.join('')}</ShortcutHint>
-				{/if}
-			</Button>
+			<!-- Diff/Raw view switcher: a two-segment toggle between the diff and
+			     the whole file. Drops out below 460px (after Mark seen) to keep the
+			     filename room when the pane is cramped. -->
+			{#if canToggleRaw && app.fileHeaderItems.viewToggle}
+				<div class="flex items-center @max-[460px]:hidden" role="group" aria-label="View mode">
+					<Button
+						variant={showRaw ? 'outline' : 'secondary'}
+						size="sm"
+						class="rounded-r-none"
+						aria-pressed={!showRaw}
+						onclick={() => (showRaw = false)}
+					>
+						Diff
+					</Button>
+					<Button
+						variant={showRaw ? 'secondary' : 'outline'}
+						size="sm"
+						class="-ml-px rounded-l-none"
+						aria-pressed={showRaw}
+						onclick={() => (showRaw = true)}
+					>
+						Raw
+					</Button>
+				</div>
+			{/if}
+			{#if app.fileHeaderItems.markSeen}
+				<Button
+					variant={isSeen ? 'secondary' : 'outline'}
+					size="sm"
+					class="@max-[500px]:hidden"
+					onclick={handleMarkSeen}
+				>
+					{#if isSeen}
+						<Check class="size-3.5" /> Seen
+					{:else}
+						<Eye class="size-3.5" /> Mark seen
+						<ShortcutHint>{markSeenHotkey.join('')}</ShortcutHint>
+					{/if}
+				</Button>
+			{/if}
 		</div>
 	</header>
 

@@ -782,6 +782,28 @@ export type HeaderContextMenuResult = {
 	checked: boolean;
 } | null;
 
+// A single toggle in a diff file header's "Show in file header" native context
+// menu. `key` is the FileHeaderItemVisibility field it controls; `checked` is
+// its current state.
+export interface FileHeaderContextMenuItem {
+	key: keyof FileHeaderItemVisibility;
+	label: string;
+	checked: boolean;
+}
+
+// Params for a file header's native context menu: the toggle items to show, in
+// order, each carrying its current checked state.
+export interface FileHeaderContextMenuParams {
+	items: FileHeaderContextMenuItem[];
+}
+
+// What the file header context menu returns: the toggled item's key and its new
+// checked state. `null` (from the IPC) means the menu was dismissed.
+export type FileHeaderContextMenuResult = {
+	key: keyof FileHeaderItemVisibility;
+	checked: boolean;
+} | null;
+
 // A single toggle in the sidebar tab strip's "Show tab" native context menu.
 // `key` is the SidebarTabVisibility field it controls; `checked` is its state.
 export interface TabsContextMenuItem {
@@ -1199,6 +1221,29 @@ export const DEFAULT_SIDEBAR_TABS: SidebarTabVisibility = {
 	history: true
 };
 
+// Which optional controls each diff file's sticky header shows. The chevron,
+// file icon, path and status badges are structural and always present; only
+// these auxiliary controls are user-toggleable, via the file header's
+// right-click native context menu. Persisted in UserPrefs.
+export interface FileHeaderItemVisibility {
+	// The per-file "Open in editor" button.
+	editor: boolean;
+	// The +additions / −deletions changed-line counts.
+	changedLines: boolean;
+	// The Diff / Raw view toggle that swaps the rendered diff for the whole file.
+	viewToggle: boolean;
+	// The "Mark seen" button.
+	markSeen: boolean;
+}
+
+// Everything visible by default; the user hides what they don't want.
+export const DEFAULT_FILE_HEADER_ITEMS: FileHeaderItemVisibility = {
+	editor: true,
+	changedLines: true,
+	viewToggle: true,
+	markSeen: true
+};
+
 export interface UserPrefs {
 	viewMode: ViewMode;
 	// Whether the diff view scrolls through all files at once ('scroll') or shows
@@ -1305,6 +1350,10 @@ export interface UserPrefs {
 	// tab strip's right-click menu. Missing keys fall back to DEFAULT_SIDEBAR_TABS
 	// so older persisted prefs (and any future additions) default to visible.
 	sidebarTabs?: SidebarTabVisibility;
+	// Which optional controls each diff file header shows. Toggled from the file
+	// header's right-click menu. Missing keys fall back to DEFAULT_FILE_HEADER_ITEMS
+	// so older persisted prefs (and any future additions) default to visible.
+	fileHeaderItems: FileHeaderItemVisibility;
 }
 
 // A user-registered file icon: every file whose path matches `pattern` is
@@ -1895,6 +1944,11 @@ export interface PreloadAPI {
 		// Pop up the sidebar tab strip's "Show tab" customization context menu.
 		// Resolves to the toggled tab and its new state, or null when dismissed.
 		showTabsContextMenu(params: TabsContextMenuParams): Promise<TabsContextMenuResult>;
+		// Pop up a diff file header's "Show in file header" customization context
+		// menu. Resolves to the toggled item and its new state, or null when dismissed.
+		showFileHeaderContextMenu(
+			params: FileHeaderContextMenuParams
+		): Promise<FileHeaderContextMenuResult>;
 		// Push the latest Branch-menu enablement/labels to the main process so it
 		// can rebuild the native application menu. Fire-and-forget.
 		setBranchState(state: BranchMenuState): void;

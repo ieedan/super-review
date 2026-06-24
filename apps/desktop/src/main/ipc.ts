@@ -56,6 +56,8 @@ import type {
 	RepoContextMenuParams,
 	HeaderContextMenuParams,
 	HeaderContextMenuResult,
+	FileHeaderContextMenuParams,
+	FileHeaderContextMenuResult,
 	TabsContextMenuParams,
 	TabsContextMenuResult,
 	RepoInfo,
@@ -1871,6 +1873,35 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<HeaderContextMenuResult>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// A diff file header's "Show in file header" menu. Same shape as the header
+	// menu: a checkbox per optional control; the chosen item and its new state
+	// come back.
+	ipcMain.handle(
+		'menu:showFileHeaderContextMenu',
+		async (e, params: FileHeaderContextMenuParams): Promise<FileHeaderContextMenuResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: FileHeaderContextMenuResult = null;
+			const template: MenuItemConstructorOptions[] = params.items.map(
+				(it): MenuItemConstructorOptions => ({
+					label: it.label,
+					type: 'checkbox',
+					checked: it.checked,
+					click: (menuItem) => {
+						chosen = { key: it.key, checked: menuItem.checked };
+					}
+				})
+			);
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<FileHeaderContextMenuResult>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)

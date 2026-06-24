@@ -39,12 +39,18 @@ import type {
 	Session,
 	SessionSummary,
 	HeaderItemVisibility,
+	FileHeaderItemVisibility,
 	SidebarTabVisibility,
 	TerminalKind,
 	UserPrefs,
 	ViewMode
 } from '@shared/types';
-import { DEFAULT_HEADER_ITEMS, DEFAULT_SIDEBAR_TABS, WINDOW_BOUNDS } from '@shared/types';
+import {
+	DEFAULT_FILE_HEADER_ITEMS,
+	DEFAULT_HEADER_ITEMS,
+	DEFAULT_SIDEBAR_TABS,
+	WINDOW_BOUNDS
+} from '@shared/types';
 import { diffContextKey, reviewContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
@@ -279,6 +285,10 @@ interface AppState {
 	// Visibility of the optional sidebar tabs (Sessions, History), toggled from
 	// the tab strip's right-click menu.
 	sidebarTabs: SidebarTabVisibility;
+	// Visibility of the optional per-file diff header controls (editor button,
+	// changed-line counts, Diff/Raw toggle, mark seen), toggled from a file
+	// header's right-click menu.
+	fileHeaderItems: FileHeaderItemVisibility;
 	// Initial window bounds, applied on the next launch (see UserPrefs).
 	windowWidth: number;
 	windowHeight: number;
@@ -753,6 +763,7 @@ const initial: AppState = {
 	hotkeys: DEFAULT_HOTKEYS,
 	headerItems: { ...DEFAULT_HEADER_ITEMS },
 	sidebarTabs: { ...DEFAULT_SIDEBAR_TABS },
+	fileHeaderItems: { ...DEFAULT_FILE_HEADER_ITEMS },
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
 	startMaximized: false,
@@ -2668,6 +2679,17 @@ export const actions = {
 		});
 	},
 
+	// Show/hide a single optional per-file diff header control (editor button,
+	// changed-line counts, Diff/Raw toggle, mark seen) from a file header's
+	// right-click menu. Updates the local copy first so every mounted file header
+	// reacts instantly, then persists the merged map.
+	async setFileHeaderItem(key: keyof FileHeaderItemVisibility, value: boolean): Promise<void> {
+		app.fileHeaderItems = { ...app.fileHeaderItems, [key]: value };
+		app.prefs = await window.api.state.setPrefs({
+			fileHeaderItems: { ...app.fileHeaderItems }
+		});
+	},
+
 	// Show/hide an optional sidebar tab (Sessions, History) from the tab strip's
 	// right-click menu. Updates the local copy first so the strip reacts instantly,
 	// then persists. Hiding the tab you're currently on would strand you on a tab
@@ -2783,6 +2805,7 @@ export const actions = {
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
 		app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...app.prefs.sidebarTabs };
+		app.fileHeaderItems = { ...DEFAULT_FILE_HEADER_ITEMS, ...app.prefs.fileHeaderItems };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
 		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;

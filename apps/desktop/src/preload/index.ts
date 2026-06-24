@@ -28,6 +28,7 @@ import type {
 	FeedbackResult,
 	FileContextMenuAction,
 	HeaderContextMenuResult,
+	FileHeaderContextMenuResult,
 	HelpMenuAction,
 	GithubAccount,
 	GithubAuthError,
@@ -490,6 +491,11 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
 		showTabsContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
+		showFileHeaderContextMenu: (params) =>
+			ipcRenderer.invoke(
+				'menu:showFileHeaderContextMenu',
+				params
+			) as Promise<FileHeaderContextMenuResult>,
 		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
 		setRepositoryState: (state: RepositoryMenuState) =>
 			ipcRenderer.send('menu:setRepositoryState', state)
