@@ -1,5 +1,35 @@
 # @super-review/desktop
 
+## 0.1.14
+
+### Patch Changes
+
+- Diff view now holds your scroll position. Refreshing the changes no longer snaps the diff back to the top, and leaving a tab and returning restores the file and scroll position you were on instead of jumping to the first change. ([#108](https://github.com/ieedan/super-review/pull/108))
+
+- You can now edit your own line-anchored PR review comments from the diff and Comments panel — an "Edit" action in the comment's overflow menu opens the same markdown editor used for new comments, mirroring the existing edit flow for conversation comments. Editing only changes the body, so the comment keeps its thread, resolution, and anchor state. ([#117](https://github.com/ieedan/super-review/pull/117))
+
+- Each file in the diff now has a Diff/Raw toggle in its header so you can view the actual file without the diff markers. You can also right-click any file header to customize which controls it shows — the open-in-editor button, changed-line counts, the Raw/Diff toggle, and Mark seen — and the choice is remembered across every file. ([#123](https://github.com/ieedan/super-review/pull/123))
+
+- Local review comments (the Unstaged/branch/session views) now match the PR comment view. You can edit your own comment's body inline with an "Edit" pencil action; comments show the author's GitHub avatar (with an initialed placeholder when you're not signed in); and a comment whose anchored line has dropped out of the diff is flagged "Outdated" in the comment and the Comments panel. ([#121](https://github.com/ieedan/super-review/pull/121))
+
+- Opening a changed file in your editor now jumps to where its diff begins instead of the top of the file. The per-file "Open in editor" button passes the first changed line still present in the file's current state to Cursor, VS Code, Zed, and Xcode (Visual Studio has no line argument, so it opens the file as before). ([#120](https://github.com/ieedan/super-review/pull/120))
+
+- Remember each repo's UI state when switching between repos. Coming back to a repo now restores the file-list tab you left it on (Unstaged, Branch, Sessions, or History), the file and diff scroll position you were reading, and the work-area layout (comments/conversation panel, fullscreen, and left sidebar collapse) — instead of resetting everything to the Unstaged tab. ([#116](https://github.com/ieedan/super-review/pull/116))
+
+- Marking a file seen and jumping to the next change no longer leaves the file you just left highlighted in the Changes sidebar. The background highlight now follows the active file to the one you advanced to, instead of stranding it on the previous row. ([#125](https://github.com/ieedan/super-review/pull/125))
+
+- Marking a file as seen from the sidebar now collapses it in the diff view, matching the diff view's own "mark seen" behavior. Unmarking a file leaves its collapsed/expanded state untouched. ([#106](https://github.com/ieedan/super-review/pull/106))
+
+- Error notifications now stack instead of overwriting each other, so a new error never silently replaces one you haven't read yet — each toast can be dismissed on its own. Every error toast also gains a one-click "Report" button that opens the feedback dialog prefilled as a bug report, including the action that was running and where you were in the app, so reports carry useful detail for debugging. ([#112](https://github.com/ieedan/super-review/pull/112))
+
+- Arrow-key navigation in a session's Tour view now steps through files in tour (reading) order, matching how they appear in the diff and the tour sidebar, instead of jumping around in the underlying file-tree order. ([#111](https://github.com/ieedan/super-review/pull/111))
+
+- Tour: "Mark seen" now stops at the next step's title/body when the next unseen file opens a new step, instead of scrolling past the commentary straight to the file. ([#99](https://github.com/ieedan/super-review/pull/99))
+
+- Show per-file "seen" checkmarks on file rows in a session's Tour view, matching the Changes sidebar so you can see and toggle seen state while touring. ([#100](https://github.com/ieedan/super-review/pull/100))
+
+- Unstaged view: clicking a line's gutter checkbox to include/exclude it from a commit no longer also opens the comment composer. The staging gutter click is now intercepted in the capture phase so it doesn't fall through to Pierre's line-number click handler. ([#104](https://github.com/ieedan/super-review/pull/104))
+
 ## 0.1.13
 
 ### Patch Changes
