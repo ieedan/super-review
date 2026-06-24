@@ -455,6 +455,12 @@ interface AppState {
 	localCommentsContextKey: string | null;
 	// Pending local-comment compose boxes, keyed like `pendingComposers`.
 	localComposers: Record<string, LocalComposer>;
+	// Ids of local comments whose anchored line has fallen out of the current diff
+	// — the working tree changed under them, mirroring GitHub's "outdated" flag for
+	// PR comments. Maintained by each DiffFileSection for its own file's comments
+	// (it owns the parsed diff), so the comments sidebar can badge them even though
+	// an orphaned comment no longer renders inline.
+	outdatedLocalCommentIds: SvelteSet<string>;
 	// Whether the right-hand comments sidebar is open. Ephemeral (per launch).
 	commentsSidebarOpen: boolean;
 	// When true, the comments panel fills the whole work area (diff pane collapsed
@@ -835,6 +841,7 @@ const initial: AppState = {
 	localComments: [],
 	localCommentsContextKey: null,
 	localComposers: {},
+	outdatedLocalCommentIds: new SvelteSet(),
 	commentsSidebarOpen: false,
 	conversationFullscreen: false,
 	commentScrollTarget: null,
@@ -2175,7 +2182,8 @@ function localCommentContextKey(): string {
 function localAuthor(): LocalCommentAuthor {
 	const account = effectiveGithubAccount();
 	const name = account?.name?.trim() || account?.login?.trim() || 'You';
-	return { kind: 'human', name };
+	const avatarUrl = account?.avatarUrl?.trim();
+	return { kind: 'human', name, ...(avatarUrl ? { avatarUrl } : {}) };
 }
 
 // Whether two comment lists are field-equal, so a no-op watcher/refresh doesn't
@@ -2202,9 +2210,11 @@ async function loadLocalComments(): Promise<void> {
 	}
 	const repoId = app.activeRepo.id;
 	const contextKey = localCommentContextKey();
-	// A context switch invalidates composers anchored to the previous view.
+	// A context switch invalidates composers anchored to the previous view, and the
+	// outdated flags (each DiffFileSection re-derives them for the new diff).
 	if (app.localCommentsContextKey !== contextKey) {
 		app.localComposers = {};
+		app.outdatedLocalCommentIds.clear();
 		app.localCommentsContextKey = contextKey;
 	}
 	let comments: LocalComment[];
@@ -4567,6 +4577,29 @@ export const actions = {
 		} catch (err) {
 			app.localComments = prev;
 			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Edit a local comment's body in place. Optimistic, with reconcile to the
+	// persisted record and rollback on failure. Returns whether it succeeded so the
+	// caller (the inline editor) can close only on success.
+	async editLocalComment(id: string, body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const trimmed = body.trim();
+		if (!trimmed) return false;
+		const prev = app.localComments;
+		const now = Date.now();
+		app.localComments = prev.map((c) =>
+			c.id === id ? { ...c, body: trimmed, updatedAt: now } : c
+		);
+		try {
+			const updated = await window.api.comments.edit(app.activeRepo.id, id, trimmed);
+			if (updated) app.localComments = app.localComments.map((c) => (c.id === id ? updated : c));
+			return true;
+		} catch (err) {
+			app.localComments = prev;
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
 		}
 	},
 

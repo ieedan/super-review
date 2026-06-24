@@ -439,6 +439,55 @@
 		app.diffContext.kind === 'session' ? calloutsForFile(app.activeSessionDetail, file.path) : []
 	);
 
+	// Count the lines in a file's contents. A trailing newline terminates the last
+	// line rather than starting an empty one, so it isn't counted; an empty file
+	// has zero lines.
+	function lineCount(contents: string): number {
+		if (contents.length === 0) return 0;
+		return contents.endsWith('\n') ? contents.split('\n').length - 1 : contents.split('\n').length;
+	}
+
+	// How many lines each side of this file currently has, from the full contents
+	// the diff carries. A local comment is "outdated" when its anchored line no
+	// longer exists in the file — i.e. the file is now shorter than that line, so
+	// the code it sat on is gone — mirroring how GitHub flags PR comments whose
+	// code has since changed. We judge against the whole file (not just the diff's
+	// hunks): a comment placed on an unchanged line outside the changes — e.g. on
+	// expanded context in the Unstaged view — is perfectly valid and must NOT be
+	// flagged. Null until the diff is loaded, or when it's truncated (the line
+	// counts can't be trusted), so the UI shows no badge rather than a false
+	// positive. Only meaningful for local-comment contexts; PR contexts get
+	// outdated straight from GitHub.
+	const localFileExtent = $derived.by<{ left: number; right: number } | null>(() => {
+		if (!isLocalCommentContext) return null;
+		if (!diffData || diffData.truncated) return null;
+		return { left: lineCount(diffData.oldContents), right: lineCount(diffData.newContents) };
+	});
+
+	// This file's local comments (empty outside a local-comment context).
+	const fileLocalComments = $derived(
+		isLocalCommentContext ? app.localComments.filter((c) => c.path === file.path) : []
+	);
+
+	// Reconcile this file's outdated comment ids into the shared store set, so the
+	// comments sidebar can badge comments whose anchored line is gone — they no
+	// longer render inline, so the sidebar is the only place they can surface.
+	// Touches only this file's ids (file paths are unique across sections, so no
+	// contention). While the diff is unloaded (`localFileExtent` null) we can't
+	// tell, so we drop this file's ids rather than guess. Cleaned up on destroy.
+	$effect(() => {
+		const extent = localFileExtent;
+		for (const c of fileLocalComments) {
+			const outdated =
+				extent != null && c.startLine > (c.side === 'LEFT' ? extent.left : extent.right);
+			if (outdated) app.outdatedLocalCommentIds.add(c.id);
+			else app.outdatedLocalCommentIds.delete(c.id);
+		}
+	});
+	onDestroy(() => {
+		for (const c of fileLocalComments) app.outdatedLocalCommentIds.delete(c.id);
+	});
+
 	// Build the annotation list FileDiff renders: PR comments + pending composers
 	// (PR contexts only), plus agent tour callouts (session context). Annotation
 	// order is part of the cache key — `${index}-${side}-${line}` — so we append
@@ -505,10 +554,16 @@
 		}
 
 		for (const c of localComments) {
+			// undefined while the diff is still loading (don't claim outdated yet);
+			// otherwise true when the anchored line no longer exists in the file.
+			const outdated = localFileExtent
+				? c.startLine > (c.side === 'LEFT' ? localFileExtent.left : localFileExtent.right)
+				: undefined;
 			let meta = localCommentMetaCache.get(c.id);
-			// Invalidate when the comment object was replaced (e.g. resolved).
-			if (meta == null || meta.comment !== c) {
-				meta = { kind: 'local-comment', comment: c };
+			// Invalidate when the comment object was replaced (e.g. resolved) or its
+			// outdated status changed (the diff shifted under it).
+			if (meta == null || meta.comment !== c || meta.isOutdated !== outdated) {
+				meta = { kind: 'local-comment', comment: c, isOutdated: outdated };
 				localCommentMetaCache.set(c.id, meta);
 			}
 			out.push({

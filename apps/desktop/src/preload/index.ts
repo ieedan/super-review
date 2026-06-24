@@ -410,6 +410,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('comments:list', repoId, contextKey) as Promise<LocalComment[]>,
 		add: (repoId, input: NewLocalCommentInput) =>
 			ipcRenderer.invoke('comments:add', repoId, input) as Promise<LocalComment>,
+		edit: (repoId, id, body) =>
+			ipcRenderer.invoke('comments:edit', repoId, id, body) as Promise<LocalComment | null>,
 		resolve: (repoId, id, resolver: LocalCommentAuthor, sessionId) =>
 			ipcRenderer.invoke(
 				'comments:resolve',

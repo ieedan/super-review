@@ -367,13 +367,14 @@
 				<ul>
 					{#each localSorted as c (c.id)}
 						{@const resolved = c.resolvedAt != null}
+						{@const outdated = app.outdatedLocalCommentIds.has(c.id)}
 						<li class="border-b border-border">
 							<div
 								role="button"
 								tabindex="0"
 								class={[
 									'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
-									resolved && 'opacity-60'
+									(resolved || outdated) && 'opacity-60'
 								]}
 								onclick={() => actions.revealComment(c.id)}
 								onkeydown={(e) => {
@@ -384,10 +385,26 @@
 								}}
 							>
 								<div class="flex items-center gap-2">
+									{#if c.author.avatarUrl}
+										<img
+											class="size-4 shrink-0 rounded-full"
+											src={c.author.avatarUrl}
+											alt={c.author.name}
+										/>
+									{/if}
 									<span class="truncate text-xs font-medium">{c.author.name}</span>
 									<span class="shrink-0 text-[11px] text-muted-foreground">
 										{formatRelative(c.createdAt)}
 									</span>
+									{#if outdated}
+										<span
+											class="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+											style="background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning);"
+											title="The line this comment was left on is no longer in the diff"
+										>
+											Outdated
+										</span>
+									{/if}
 									{#if resolved}
 										<span
 											class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
