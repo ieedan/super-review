@@ -1,8 +1,8 @@
 <script lang="ts">
 	// A single dismissible notice shown above the commit box: an optional logo, a
 	// one-line message, an optional action, and (when `onDismiss` is given) a close
-	// button. Purely presentational — `NoticeStack` handles arranging several of
-	// these into a Sonner-style stack. The background is a frosted translucent
+	// button. Purely presentational — `Stack` handles arranging several of these
+	// into a Sonner-style stack. The background is a frosted translucent
 	// card (`bg-card/75` + backdrop blur) so the diff/file list shows through
 	// behind it, with a variant tint layered on top so cards read cleanly when
 	// they overlap.
@@ -52,7 +52,7 @@
 </script>
 
 <div
-	class={`relative flex items-center gap-2 overflow-hidden rounded-md border ${borderClass[variant]} bg-card/75 px-2 py-1.5 shadow-sm backdrop-blur-md`}
+	class={`relative flex items-center gap-2 overflow-hidden rounded-md border ${borderClass[variant]} bg-card/90 px-2 py-1.5 shadow-sm backdrop-blur-md`}
 	title={tooltip}
 >
 	<!-- Variant tint over the opaque card background. -->

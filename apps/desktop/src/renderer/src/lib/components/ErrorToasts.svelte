@@ -1,8 +1,11 @@
 <!--
-	Stack of error toasts, newest at the bottom. Each error gets its own toast so a
-	new failure never overwrites one the user hasn't seen. Per-toast actions:
-	expand the raw message, copy it, file a one-click feedback report (prefilled
-	with the error + captured context), or dismiss just that toast.
+	Error toasts: a Sonner-style stack in the bottom-right corner via Stack.
+	Collapsed, only the newest toast is fully visible with the rest peeking behind
+	it; hovering (or focusing in) fans the stack out so every toast is readable and
+	individually actionable. Identical consecutive errors don't stack a duplicate —
+	the store collapses them into the newest toast, bumping its ×N count and giving
+	it a shake. Per-toast actions: expand the raw message, copy it, file a one-click
+	feedback report (prefilled with the error + captured context), or dismiss it.
 -->
 <script lang="ts">
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -11,6 +14,7 @@
 	import X from '@lucide/svelte/icons/x';
 	import Bug from '@lucide/svelte/icons/bug';
 	import * as Tooltip from './ui/tooltip';
+	import Stack from './stack/Stack.svelte';
 	import { actions, app, dismissError } from '$lib/store.svelte';
 	import { useAnimations } from '$lib/hooks/use-animations.svelte';
 	import type { ErrorToast } from '@shared/types';
@@ -25,14 +29,23 @@
 
 	const animations = useAnimations();
 
-	// Re-trigger a brief shake whenever a toast's `bump` increases — i.e. the same
-	// error fired again and collapsed into this toast instead of stacking a
-	// duplicate, so without a cue the user couldn't tell a new one occurred. Only
-	// fires when accent-level motion is on (the ×N badge still signals the repeat
-	// when it's off), and never on first mount since `update` runs only on change.
-	function shake(node: HTMLElement, _bump: number) {
+	// Front-first for Stack: the newest error is index 0 (fully visible front),
+	// older ones peek behind it and the stack grows upward.
+	const toasts = $derived([...app.errors].reverse());
+
+	// Re-trigger a brief shake only when a toast's `bump` actually increases — i.e.
+	// the same error fired again and collapsed into this toast instead of stacking
+	// a duplicate. We track the previous bump in the closure because the action's
+	// `update` also fires on unrelated re-renders (e.g. when a *different* error is
+	// appended); shaking then would be spurious. Only when accent-level motion is
+	// on (the ×N badge still signals the repeat otherwise), and never on first
+	// mount since `update` runs only after changes.
+	function shake(node: HTMLElement, bump: number) {
+		let prev = bump;
 		return {
-			update() {
+			update(next: number) {
+				if (next === prev) return;
+				prev = next;
 				if (!animations.accentsEnabled) return;
 				node.classList.remove('animate-error-shake');
 				void node.offsetWidth; // force reflow so the animation restarts
@@ -57,14 +70,14 @@
 	}
 </script>
 
-{#if app.errors.length > 0}
-	<div class="fixed right-4 bottom-4 z-50 flex w-full max-w-sm flex-col gap-2">
-		{#each app.errors as toast (toast.id)}
+{#if toasts.length > 0}
+	<Stack items={toasts} onDismiss={(t) => dismissError(t.id)} fixed gap={12}>
+		{#snippet card(toast, { dismiss })}
 			<div
 				role="alert"
 				use:shake={toast.bump}
 				onanimationend={(e) => e.currentTarget.classList.remove('animate-error-shake')}
-				class="flex flex-col gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive shadow-lg backdrop-blur"
+				class="relative isolate flex flex-col gap-2 overflow-hidden rounded-lg border border-destructive/50 bg-card/90 p-3 text-sm text-destructive shadow-lg backdrop-blur-md before:absolute before:inset-0 before:-z-10 before:bg-destructive/10 before:content-['']"
 			>
 				<div class="flex items-start gap-2">
 					<TriangleAlert class="size-5 shrink-0" />
@@ -84,7 +97,7 @@
 					{/if}
 					<button
 						class="rounded p-0.5 hover:bg-destructive/20"
-						onclick={() => dismissError(toast.id)}
+						onclick={dismiss}
 						aria-label="Dismiss"
 					>
 						<X class="size-3.5" />
@@ -138,6 +151,6 @@
 						class="ml-7 max-h-48 overflow-auto rounded-md border border-destructive/30 bg-destructive/5 p-2 font-mono text-xs whitespace-pre-wrap">{toast.message}</pre>
 				{/if}
 			</div>
-		{/each}
-	</div>
+		{/snippet}
+	</Stack>
 {/if}
