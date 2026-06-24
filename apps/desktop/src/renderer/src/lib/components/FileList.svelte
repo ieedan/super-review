@@ -609,6 +609,59 @@
 		if (result) void actions.setSidebarTab(result.key, result.checked);
 	}
 
+	// The tab strip scrolls horizontally when its tabs overflow (no-scrollbar
+	// hides the bar). Fade out whichever edge has more content behind it so the
+	// overflow is discoverable and the strip reads as separate from the rest of
+	// the chrome. Both flags start true so an un-measured / non-overflowing strip
+	// renders with no mask at all.
+	let tabsListEl = $state<HTMLElement | null>(null);
+	let tabsAtStart = $state(true);
+	let tabsAtEnd = $state(true);
+
+	function updateTabScroll(): void {
+		const el = tabsListEl;
+		if (!el) return;
+		tabsAtStart = el.scrollLeft <= 0;
+		// scrollWidth - clientWidth is the max scrollLeft; allow 1px of slack for
+		// sub-pixel rounding so a fully-scrolled strip reliably clears its fade.
+		tabsAtEnd = el.scrollLeft >= el.scrollWidth - el.clientWidth - 1;
+	}
+
+	// 24px of frosting on each overflowing edge; calc keeps the fades anchored to
+	// the strip's box (its visible viewport) as the content scrolls beneath them.
+	const tabsMask = $derived.by(() => {
+		if (tabsAtStart && tabsAtEnd) return undefined;
+		const left = tabsAtStart ? '0px' : '24px';
+		const right = tabsAtEnd ? '100%' : 'calc(100% - 24px)';
+		return `linear-gradient(to right, transparent, black ${left}, black ${right}, transparent)`;
+	});
+
+	$effect(() => {
+		const el = tabsListEl;
+		if (!el) return;
+		updateTabScroll();
+		el.addEventListener('scroll', updateTabScroll, { passive: true });
+		// Re-measure on width changes (sidebar drags, window resize, collapse).
+		const ro = new ResizeObserver(updateTabScroll);
+		ro.observe(el);
+		return () => {
+			el.removeEventListener('scroll', updateTabScroll);
+			ro.disconnect();
+		};
+	});
+
+	// Toggling the optional tabs (or their count badges) changes scrollWidth
+	// without resizing the strip itself, so re-measure when the visible set does.
+	$effect(() => {
+		void isReadOnlyView();
+		void canViewBranchTab();
+		void app.sidebarTabs.history;
+		void app.sidebarTabs.sessions;
+		void app.unstagedFileCount;
+		void app.sessionCount;
+		updateTabScroll();
+	});
+
 	// The session whose diff is currently open (Sessions tab). When set, the
 	// header swaps its tab strip for a back button + session name.
 	const activeSession = $derived(
@@ -845,7 +898,9 @@
 					<!-- Right-click the strip to show/hide the optional Sessions / History
 					     tabs, via a native context menu (mirrors the header's menu). -->
 					<Tabs.List
+						bind:ref={tabsListEl}
 						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
+						style={tabsMask ? `-webkit-mask-image:${tabsMask};mask-image:${tabsMask};` : undefined}
 						oncontextmenu={onTabStripContextMenu}
 					>
 						<!-- Unstaged is the working tree of the checked-out branch. While a
