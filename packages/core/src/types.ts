@@ -631,6 +631,10 @@ export interface LocalCommentAuthor {
 	// The agent's harness, when kind === 'agent'. Drives the logo shown beside the
 	// resolver, matching how a session card shows its harness.
 	harness?: HarnessKind;
+	// The human author's GitHub avatar, when signed in. Lets the app show the same
+	// avatar next to a local comment as it does for PR review comments. Absent for
+	// agents (they show their harness logo) and for anonymous "You" comments.
+	avatarUrl?: string;
 }
 
 // A single local comment. Anchored GitHub-style by `side` + line range, so it
@@ -1801,6 +1805,9 @@ export interface PreloadAPI {
 		// Create a comment (id + timestamps assigned by the main process) and return
 		// the persisted record.
 		add(repoId: string, input: NewLocalCommentInput): Promise<LocalComment>;
+		// Replace a comment's body (and bump `updatedAt`). Returns the updated
+		// comment, or null if it's gone.
+		edit(repoId: string, id: string, body: string): Promise<LocalComment | null>;
 		// Stamp `resolvedAt`/`resolvedBy` (and optionally link a session that
 		// addressed the feedback). Returns the updated comment, or null if it's gone.
 		resolve(

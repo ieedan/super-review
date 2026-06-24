@@ -193,6 +193,25 @@ export async function addComment(
 	return comment;
 }
 
+// Replace a comment's body, bumping `updatedAt`. Returns the updated record, or
+// null if the comment is gone. Only the body is editable — anchor, author and
+// resolution are left untouched.
+export async function editComment(
+	repoPath: string,
+	id: string,
+	body: string
+): Promise<LocalComment | null> {
+	const existing = await getComment(repoPath, id);
+	if (!existing) return null;
+	const db = await getDb();
+	const now = Date.now();
+	await db
+		.update(comments)
+		.set({ body, updatedAt: now })
+		.where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.id, id)));
+	return { ...existing, body, updatedAt: now };
+}
+
 export async function deleteComment(repoPath: string, id: string): Promise<void> {
 	const db = await getDb();
 	await db.delete(comments).where(and(eq(comments.repo, repoKey(repoPath)), eq(comments.id, id)));

@@ -135,6 +135,7 @@ import {
 import {
 	addComment,
 	deleteComment as deleteCommentRecord,
+	editComment,
 	listCommentsForContext,
 	resolveComment,
 	unresolveComment,
@@ -2086,6 +2087,12 @@ export function registerIpc(): void {
 		'comments:add',
 		async (_e, repoId: string, input: NewLocalCommentInput): Promise<LocalComment> =>
 			addComment(repoOrThrow(repoId).path, input)
+	);
+
+	ipcMain.handle(
+		'comments:edit',
+		async (_e, repoId: string, id: string, body: string): Promise<LocalComment | null> =>
+			editComment(repoOrThrow(repoId).path, id, body)
 	);
 
 	ipcMain.handle(

@@ -454,6 +454,12 @@ interface AppState {
 	localCommentsContextKey: string | null;
 	// Pending local-comment compose boxes, keyed like `pendingComposers`.
 	localComposers: Record<string, LocalComposer>;
+	// Ids of local comments whose anchored line has fallen out of the current diff
+	// — the working tree changed under them, mirroring GitHub's "outdated" flag for
+	// PR comments. Maintained by each DiffFileSection for its own file's comments
+	// (it owns the parsed diff), so the comments sidebar can badge them even though
+	// an orphaned comment no longer renders inline.
+	outdatedLocalCommentIds: SvelteSet<string>;
 	// Whether the right-hand comments sidebar is open. Ephemeral (per launch).
 	commentsSidebarOpen: boolean;
 	// When true, the comments panel fills the whole work area (diff pane collapsed
@@ -834,6 +840,7 @@ const initial: AppState = {
 	localComments: [],
 	localCommentsContextKey: null,
 	localComposers: {},
+	outdatedLocalCommentIds: new SvelteSet(),
 	commentsSidebarOpen: false,
 	conversationFullscreen: false,
 	commentScrollTarget: null,
@@ -2174,7 +2181,8 @@ function localCommentContextKey(): string {
 function localAuthor(): LocalCommentAuthor {
 	const account = effectiveGithubAccount();
 	const name = account?.name?.trim() || account?.login?.trim() || 'You';
-	return { kind: 'human', name };
+	const avatarUrl = account?.avatarUrl?.trim();
+	return { kind: 'human', name, ...(avatarUrl ? { avatarUrl } : {}) };
 }
 
 // Whether two comment lists are field-equal, so a no-op watcher/refresh doesn't
@@ -2201,9 +2209,11 @@ async function loadLocalComments(): Promise<void> {
 	}
 	const repoId = app.activeRepo.id;
 	const contextKey = localCommentContextKey();
-	// A context switch invalidates composers anchored to the previous view.
+	// A context switch invalidates composers anchored to the previous view, and the
+	// outdated flags (each DiffFileSection re-derives them for the new diff).
 	if (app.localCommentsContextKey !== contextKey) {
 		app.localComposers = {};
+		app.outdatedLocalCommentIds.clear();
 		app.localCommentsContextKey = contextKey;
 	}
 	let comments: LocalComment[];
@@ -2254,18 +2264,23 @@ function sideQualifier(side: 'LEFT' | 'RIGHT'): string {
 	return side === 'LEFT' ? ' (original side)' : '';
 }
 
-// A header line for the "copy all" task lists, naming what the list is.
+// A header line for the "copy all" task lists, naming what the list is. The id
+// in each item is what `super-review comment resolve <id>` takes, so the closing
+// note tells the agent to resolve each by that id once it's addressed.
 const COMMENTS_PROMPT_INTRO =
 	'Address the following review comments left on a diff (the code changes under review). ' +
-	'Each item gives the file, the line(s), and the feedback. Line numbers are on the new ' +
-	'(post-change) side unless marked "(original side)":\n';
+	'Each item gives its comment id, the file, the line(s), and the feedback. Line numbers ' +
+	'are on the new (post-change) side unless marked "(original side)". When you finish a ' +
+	'comment, mark it resolved with `super-review comment resolve <id>`:\n';
 
 // Build a copy-ready prompt for a single comment: makes the diff context and the
-// side explicit so an agent can act on it without the diff in front of them.
+// side explicit so an agent can act on it without the diff in front of them. The
+// id is included so the agent can resolve it via `super-review comment resolve`.
 function formatCommentPrompt(c: LocalComment): string {
 	return (
-		`Review comment at ${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)} ` +
-		`in \`${c.path}\`:\n\n${c.body.trim()}`
+		`Review comment \`${c.id}\` at ${lineRangeLabel(c.startLine, c.endLine)}` +
+		`${sideQualifier(c.side)} in \`${c.path}\`:\n\n${c.body.trim()}\n\n` +
+		`When addressed, mark it resolved: \`super-review comment resolve ${c.id}\``
 	);
 }
 
@@ -2286,7 +2301,7 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 		for (const c of list) {
 			const where = `${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)}`;
 			const body = c.body.trim().replace(/\n/g, '\n  ');
-			sections.push(`- [ ] **${where}** - ${body}`);
+			sections.push(`- [ ] \`${c.id}\` **${where}** - ${body}`);
 		}
 		sections.push('');
 	}
@@ -4566,6 +4581,29 @@ export const actions = {
 		} catch (err) {
 			app.localComments = prev;
 			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Edit a local comment's body in place. Optimistic, with reconcile to the
+	// persisted record and rollback on failure. Returns whether it succeeded so the
+	// caller (the inline editor) can close only on success.
+	async editLocalComment(id: string, body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const trimmed = body.trim();
+		if (!trimmed) return false;
+		const prev = app.localComments;
+		const now = Date.now();
+		app.localComments = prev.map((c) =>
+			c.id === id ? { ...c, body: trimmed, updatedAt: now } : c
+		);
+		try {
+			const updated = await window.api.comments.edit(app.activeRepo.id, id, trimmed);
+			if (updated) app.localComments = app.localComments.map((c) => (c.id === id ? updated : c));
+			return true;
+		} catch (err) {
+			app.localComments = prev;
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
 		}
 	},
 

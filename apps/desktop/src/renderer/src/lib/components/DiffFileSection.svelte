@@ -439,6 +439,56 @@
 		app.diffContext.kind === 'session' ? calloutsForFile(app.activeSessionDetail, file.path) : []
 	);
 
+	// The set of line numbers still present in the current diff, per side, parsed
+	// from the loaded patch. A local comment is "outdated" when its anchored line
+	// fell out of the diff (the working tree changed under it), mirroring how
+	// GitHub flags PR comments whose code has since changed. Null until the diff
+	// is loaded — we can't tell yet, so the UI shows no badge rather than a false
+	// positive. Only meaningful for local-comment contexts; PR contexts get
+	// outdated straight from GitHub.
+	const localLiveLines = $derived.by<{ left: Set<number>; right: Set<number> } | null>(() => {
+		if (!isLocalCommentContext) return null;
+		const patch = diffData?.patch;
+		if (!patch) return null;
+		const parsed = parseFilePatch(patch);
+		if (!parsed) return null;
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const left = new Set<number>();
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const right = new Set<number>();
+		for (const hunk of parsed.hunks) {
+			for (const line of hunk.lines) {
+				if (line.oldLine != null) left.add(line.oldLine);
+				if (line.newLine != null) right.add(line.newLine);
+			}
+		}
+		return { left, right };
+	});
+
+	// This file's local comments (empty outside a local-comment context).
+	const fileLocalComments = $derived(
+		isLocalCommentContext ? app.localComments.filter((c) => c.path === file.path) : []
+	);
+
+	// Reconcile this file's outdated comment ids into the shared store set, so the
+	// comments sidebar can badge comments whose anchored line is gone — they no
+	// longer render inline, so the sidebar is the only place they can surface.
+	// Touches only this file's ids (file paths are unique across sections, so no
+	// contention). While the diff is unloaded (`localLiveLines` null) we can't tell,
+	// so we drop this file's ids rather than guess. Cleaned up on destroy.
+	$effect(() => {
+		const live = localLiveLines;
+		for (const c of fileLocalComments) {
+			const outdated =
+				live != null && !(c.side === 'LEFT' ? live.left : live.right).has(c.startLine);
+			if (outdated) app.outdatedLocalCommentIds.add(c.id);
+			else app.outdatedLocalCommentIds.delete(c.id);
+		}
+	});
+	onDestroy(() => {
+		for (const c of fileLocalComments) app.outdatedLocalCommentIds.delete(c.id);
+	});
+
 	// Build the annotation list FileDiff renders: PR comments + pending composers
 	// (PR contexts only), plus agent tour callouts (session context). Annotation
 	// order is part of the cache key — `${index}-${side}-${line}` — so we append
@@ -505,10 +555,16 @@
 		}
 
 		for (const c of localComments) {
+			// undefined while the diff is still loading (don't claim outdated yet);
+			// otherwise true when the anchored line is gone from the current diff.
+			const outdated = localLiveLines
+				? !(c.side === 'LEFT' ? localLiveLines.left : localLiveLines.right).has(c.startLine)
+				: undefined;
 			let meta = localCommentMetaCache.get(c.id);
-			// Invalidate when the comment object was replaced (e.g. resolved).
-			if (meta == null || meta.comment !== c) {
-				meta = { kind: 'local-comment', comment: c };
+			// Invalidate when the comment object was replaced (e.g. resolved) or its
+			// outdated status changed (the diff shifted under it).
+			if (meta == null || meta.comment !== c || meta.isOutdated !== outdated) {
+				meta = { kind: 'local-comment', comment: c, isOutdated: outdated };
 				localCommentMetaCache.set(c.id, meta);
 			}
 			out.push({
