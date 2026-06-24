@@ -2077,7 +2077,7 @@
 			     room when the pane is cramped. -->
 			{#if canToggleRaw && app.fileHeaderItems.viewToggle}
 				<div
-					class="inline-flex h-7 items-center gap-0.5 rounded-md border border-border p-0.5 @max-[460px]:hidden"
+					class="inline-flex h-7 items-stretch gap-0.5 rounded-md border border-border p-0.5 @max-[460px]:hidden"
 					role="group"
 					aria-label="View mode"
 				>
@@ -2088,7 +2088,7 @@
 							aria-pressed={active}
 							onclick={() => (showRaw = opt.raw)}
 							class={[
-								'h-6 rounded-sm px-2.5 text-[0.8rem] font-medium transition-colors',
+								'flex items-center rounded-sm px-2 text-[0.8rem] font-medium transition-colors',
 								active
 									? 'bg-secondary text-secondary-foreground'
 									: 'text-muted-foreground hover:text-foreground'
