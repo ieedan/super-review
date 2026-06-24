@@ -2072,12 +2072,12 @@
 				</Button>
 			{/if}
 			<!-- Diff/Raw view switcher: a two-segment toggle between the diff and the
-			     whole file. A muted track with the active segment raised as a pill
-			     (mirrors the TabsList coloring). Drops out below 460px (after Mark
-			     seen) to keep the filename room when the pane is cramped. -->
+			     whole file. A bordered track (no fill) with the selected segment
+			     filled. Drops out below 460px (after Mark seen) to keep the filename
+			     room when the pane is cramped. -->
 			{#if canToggleRaw && app.fileHeaderItems.viewToggle}
 				<div
-					class="inline-flex h-7 items-center gap-0.5 rounded-md bg-muted p-0.5 @max-[460px]:hidden"
+					class="inline-flex h-7 items-center gap-0.5 rounded-md border border-border p-0.5 @max-[460px]:hidden"
 					role="group"
 					aria-label="View mode"
 				>
@@ -2090,7 +2090,7 @@
 							class={[
 								'h-6 rounded-sm px-2.5 text-[0.8rem] font-medium transition-colors',
 								active
-									? 'bg-background text-foreground shadow-sm dark:bg-input/30'
+									? 'bg-secondary text-secondary-foreground'
 									: 'text-muted-foreground hover:text-foreground'
 							]}
 						>
