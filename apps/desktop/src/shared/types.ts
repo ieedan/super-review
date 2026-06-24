@@ -9,6 +9,7 @@
 // source package. Only the handful of runtime constants need a real re-export.
 export type * from '@super-review/core/types';
 export {
+	DEFAULT_FILE_HEADER_ITEMS,
 	DEFAULT_HEADER_ITEMS,
 	DEFAULT_SIDEBAR_TABS,
 	EDITORS_BY_PLATFORM,

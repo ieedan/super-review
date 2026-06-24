@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import {
+	DEFAULT_FILE_HEADER_ITEMS,
 	DEFAULT_HEADER_ITEMS,
 	WINDOW_BOUNDS,
 	type ChangedFile,
@@ -98,7 +99,8 @@ const defaults: Schema = {
 		recentRepoCount: 5,
 		changesetsEnabled: true,
 		signCommits: true,
-		headerItems: DEFAULT_HEADER_ITEMS
+		headerItems: DEFAULT_HEADER_ITEMS,
+		fileHeaderItems: DEFAULT_FILE_HEADER_ITEMS
 	},
 	seen: {},
 	collapsedFiles: {},
@@ -319,6 +321,8 @@ export function getPrefs(): UserPrefs {
 	// Same per-key merge for header item visibility, so controls added later
 	// default to visible even when an older prefs file has a partial object.
 	merged.headerItems = { ...defaults.prefs.headerItems, ...merged.headerItems };
+	// And for the per-file diff header controls.
+	merged.fileHeaderItems = { ...defaults.prefs.fileHeaderItems, ...merged.fileHeaderItems };
 	return merged;
 }
 
