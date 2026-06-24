@@ -49,6 +49,7 @@ import { diffContextKey, reviewContextKey } from '@shared/diff-context';
 import {
 	buildDiscardPatch,
 	buildFilteredPatch,
+	firstCurrentDiffLine,
 	lineKeySides,
 	parseFilePatch,
 	stagingLineKey,
@@ -5592,7 +5593,7 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ externalEditor: editor });
 	},
 
-	async openInEditor(target?: string): Promise<void> {
+	async openInEditor(target?: string, line?: number): Promise<void> {
 		if (!app.activeRepo) return;
 		const editor = effectiveEditor();
 		if (!editor) {
@@ -5601,8 +5602,29 @@ export const actions = {
 		}
 		const path = target ?? app.activeRepo.path;
 		const resolved = target && !target.startsWith('/') ? `${app.activeRepo.path}/${target}` : path;
-		const result = await window.api.editor.open(editor, resolved);
+		// When opening a changed file (a relative repo path) without an explicit
+		// line, jump to where its diff begins so the editor lands on the change
+		// instead of the top of the file.
+		let targetLine = line;
+		if (targetLine == null && target && !target.startsWith('/')) {
+			targetLine = (await actions.firstDiffLineFor(target)) ?? undefined;
+		}
+		const result = await window.api.editor.open(editor, resolved, targetLine);
 		if (!result.ok && result.error) setError(result.error);
+	},
+
+	// The new-file line number where `filePath`'s diff begins in the current
+	// review context, or null if there's no diff to anchor to. Reads the cached
+	// diff when available and otherwise fetches it.
+	async firstDiffLineFor(filePath: string): Promise<number | null> {
+		if (!app.activeRepo) return null;
+		const repoId = app.activeRepo.id;
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		let diff = getCachedDiff(repoId, ctx, filePath);
+		if (!diff) {
+			diff = await window.api.git.getDiff(repoId, filePath, ctx).catch(() => undefined);
+		}
+		return diff?.patch ? firstCurrentDiffLine(diff.patch) : null;
 	},
 
 	// Pop up the native file-row context menu, then run whatever the user chose.

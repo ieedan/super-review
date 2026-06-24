@@ -1546,7 +1546,11 @@ export interface PreloadAPI {
 	};
 	editor: {
 		detect(): Promise<Record<EditorKind, boolean>>;
-		open(editor: EditorKind, target: string): Promise<{ ok: boolean; error?: string }>;
+		open(
+			editor: EditorKind,
+			target: string,
+			line?: number
+		): Promise<{ ok: boolean; error?: string }>;
 	};
 	terminal: {
 		detect(): Promise<Record<TerminalKind, boolean>>;
