@@ -34,12 +34,14 @@
 	let result = $state<FeedbackResult | null>(null);
 
 	// Reset every field whenever the dialog opens so a fresh report never inherits
-	// the previous one's text or success state.
+	// the previous one's text or success state. When opened from a one-click error
+	// report, `feedbackPrefill` seeds the category/title/body instead of blanks.
 	$effect(() => {
 		if (open) {
-			category = 'bug';
-			title = '';
-			body = '';
+			const prefill = app.feedbackPrefill;
+			category = prefill?.category ?? 'bug';
+			title = prefill?.title ?? '';
+			body = prefill?.body ?? '';
 			errorMsg = null;
 			result = null;
 			submitting = false;

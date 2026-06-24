@@ -13,3 +13,6 @@ build/icon.*
 # SvelteKit (apps/docs)
 .svelte-kit
 apps/docs/build
+
+# Local super-review session data
+.super-review

@@ -874,6 +874,48 @@ export interface FeedbackResult {
 	number: number;
 }
 
+// Best-effort snapshot of what the user was doing when an error fired, so a
+// one-click report carries enough detail for an agent to debug it. Captured
+// from app state at the moment `setError` runs; `action` is supplied by the
+// caller when the failing operation is known.
+export interface ErrorContext {
+	// What the app was attempting, e.g. "Pushing branch" or "Submitting comment".
+	action?: string;
+	// Which review tab was active.
+	tab?: ContextTab;
+	// The repo being reviewed and its checked-out branch.
+	repo?: string;
+	branch?: string;
+	// The active item within the tab (session, commit, or PR), when there is one.
+	location?: string;
+}
+
+// A single error surfaced to the user as a toast. Errors stack rather than
+// overwrite, so a new failure never silently replaces an earlier one; `id`
+// keys the stack and lets a single toast be dismissed.
+export interface ErrorToast {
+	id: string;
+	message: string;
+	context?: ErrorContext;
+	// How many times this same error has fired in a row. Consecutive duplicates
+	// collapse into this toast (bumping the count) instead of piling up; the UI
+	// shows a "×N" badge once it's > 1.
+	count: number;
+	// Incremented on every repeat so the UI can re-trigger a shake animation —
+	// the cue that a new (identical) error just occurred even though no new toast
+	// appeared.
+	bump: number;
+}
+
+// Pre-filled fields handed to the feedback dialog when it's opened from a
+// one-click error report. Every field is optional so the dialog falls back to
+// its blank defaults when opened normally.
+export interface FeedbackDraft {
+	category?: FeedbackCategory;
+	title?: string;
+	body?: string;
+}
+
 // Renderer-computed state deciding which "Repository" menu items are enabled and
 // their dynamic labels. Items whose label is null are hidden (no editor/terminal
 // detected), matching the rest of the menu's "show what applies" behavior.
