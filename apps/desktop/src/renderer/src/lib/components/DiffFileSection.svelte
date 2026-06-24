@@ -915,32 +915,56 @@
 		}
 	}
 
-	// The last multi-line range the user selected in the diff *body* (via Pierre's
-	// line selection), normalized to top/bottom + a single side. Stashed here on
-	// selection end and consumed by the next `+` click that lands inside it, so
-	// "select the lines, then click +" comments on the whole selection. Plain
-	// (non-reactive): only read inside the click handler. Null = no live range.
+	// The last multi-line range the user selected in the diff *body* with the
+	// native browser selection, normalized to top/bottom + a single side. Captured
+	// on `selectionchange` (before a `+` click can collapse the selection) and
+	// consumed by the next `+` click that lands inside it, so "select the lines,
+	// then click +" comments on the whole selection. Plain (non-reactive): only
+	// touched by the selection handler and the click handler.
 	let selectedContentRange: { top: number; bottom: number; side: 'LEFT' | 'RIGHT' } | null = null;
 
-	// Normalize a Pierre SelectedLineRange to a single-side top..bottom span, or
-	// null when it isn't a real multi-line range (a bare click reports start ===
-	// end). Uses the anchor `side`; a selection dragged across both split columns
-	// is pinned to that side (a comment can only live on one side anyway).
-	function normalizeRange(
-		range: SelectedLineRange | null
-	): { top: number; bottom: number; side: 'LEFT' | 'RIGHT' } | null {
-		if (!range) return null;
-		const top = Math.min(range.start, range.end);
-		const bottom = Math.max(range.start, range.end);
-		if (top === bottom) return null;
-		const side = (range.side ?? 'additions') === 'deletions' ? 'LEFT' : 'RIGHT';
-		return { top, bottom, side };
+	// Map a DOM node inside Pierre's rendered diff to its line number + side. Pierre
+	// tags each code line element with `data-line` (the number) and `data-line-type`
+	// (change-addition / change-deletion / context). Mirrors Pierre's own
+	// getAnnotationSide: explicit add/del types map straight to a side; a context
+	// line takes its side from the column it sits in (`data-deletions` ⇒ LEFT).
+	function lineInfoFromNode(node: Node | null): { line: number; side: 'LEFT' | 'RIGHT' } | null {
+		const start = node instanceof Element ? node : (node?.parentElement ?? null);
+		const lineEl = start?.closest('[data-line]') ?? null;
+		if (!lineEl) return null;
+		const line = Number(lineEl.getAttribute('data-line'));
+		if (!Number.isFinite(line)) return null;
+		const type = lineEl.getAttribute('data-line-type');
+		let side: 'LEFT' | 'RIGHT';
+		if (type === 'change-deletion') side = 'LEFT';
+		else if (type === 'change-addition') side = 'RIGHT';
+		else side = lineEl.closest('[data-deletions]') ? 'LEFT' : 'RIGHT';
+		return { line, side };
 	}
 
-	// Pierre fires this when a body line-selection settles. Stash a real range;
-	// clear on a collapsed/empty selection so a stale span can't apply later.
-	function onContentSelectionEnd(range: SelectedLineRange | null): void {
-		selectedContentRange = normalizeRange(range);
+	// Read the native selection inside THIS file's diff and stash it as a line
+	// range. Runs on `selectionchange` so we capture the span while it's live —
+	// clicking the `+` afterwards collapses the selection, so reading it at click
+	// time would be too late (the bug this fixes). A collapsed/empty selection is
+	// ignored rather than cleared, so a span stays available for the click that
+	// follows; the click consumes it and the in-range guard rejects a stale one.
+	function captureContentSelection(): void {
+		const root = diffContainer?.shadowRoot as
+			| (ShadowRoot & { getSelection?: () => Selection | null })
+			| undefined;
+		// Chromium/Electron expose selection per shadow root; fall back to the
+		// document selection if that's unavailable.
+		const selection = root?.getSelection?.() ?? document.getSelection();
+		if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+		const a = lineInfoFromNode(selection.anchorNode);
+		const b = lineInfoFromNode(selection.focusNode);
+		// Both ends must resolve to lines in this diff and share a side (a comment
+		// lives on one side); otherwise leave any prior stash untouched.
+		if (!a || !b || a.side !== b.side) return;
+		const top = Math.min(a.line, b.line);
+		const bottom = Math.max(a.line, b.line);
+		if (top === bottom) return; // single line — not a range
+		selectedContentRange = { top, bottom, side: a.side };
 	}
 
 	// Pierre's `+` affordance: `enableGutterUtility` paints the button on hover and
@@ -1389,12 +1413,6 @@
 				// via setOptions + flushManagers when `canComment` changes.
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
-				// Let the user drag-select lines in the diff *body* to define a comment
-				// range: Pierre resolves the selection to a line span and reports it via
-				// onLineSelectionEnd, which we stash and apply when the `+` is clicked
-				// (see onGutterClick). Same gating as the `+`.
-				enableLineSelection: canComment,
-				onLineSelectionEnd: onContentSelectionEnd,
 				// Token-level hover → npm info cards, only wired for package.json so
 				// Pierre doesn't track hovered tokens for every other file.
 				onTokenEnter: isPkgJson ? onTokenEnter : undefined,
@@ -1688,12 +1706,10 @@
 		if (!instance) return;
 		type WithOptions = { options: Record<string, unknown> };
 		const current = (instance as unknown as WithOptions).options;
-		if (current.enableGutterUtility === enabled && current.enableLineSelection === enabled) return;
-		instance.setOptions({
-			...current,
-			enableGutterUtility: enabled,
-			enableLineSelection: enabled
-		} as Parameters<typeof instance.setOptions>[0]);
+		if (current.enableGutterUtility === enabled) return;
+		instance.setOptions({ ...current, enableGutterUtility: enabled } as Parameters<
+			typeof instance.setOptions
+		>[0]);
 		instance.flushManagers();
 	});
 
@@ -1778,6 +1794,19 @@
 		});
 		ro.observe(el);
 		return () => ro.disconnect();
+	});
+
+	// Watch the native text selection so "select code in the diff, then click +"
+	// can comment on the whole span. `selectionchange` is document-level; the
+	// handler reads only THIS file's shadow-root selection and ignores everything
+	// else, so the per-section listeners don't cross-talk. Captured live because
+	// the `+` click collapses the selection before its handler runs.
+	onMount(() => {
+		const onSelectionChange = (): void => {
+			if (canComment) captureContentSelection();
+		};
+		document.addEventListener('selectionchange', onSelectionChange);
+		return () => document.removeEventListener('selectionchange', onSelectionChange);
 	});
 	const displayPrefix = $derived(
 		pathDir ? truncatePathPrefix(pathDir, pathBase, pathWidth, pathFont) : ''
