@@ -2071,29 +2071,32 @@
 					{/if}
 				</Button>
 			{/if}
-			<!-- Diff/Raw view switcher: a two-segment toggle between the diff and
-			     the whole file. Drops out below 460px (after Mark seen) to keep the
-			     filename room when the pane is cramped. -->
+			<!-- Diff/Raw view switcher: a two-segment toggle between the diff and the
+			     whole file. A muted track with the active segment raised as a pill
+			     (mirrors the TabsList coloring). Drops out below 460px (after Mark
+			     seen) to keep the filename room when the pane is cramped. -->
 			{#if canToggleRaw && app.fileHeaderItems.viewToggle}
-				<div class="flex items-center @max-[460px]:hidden" role="group" aria-label="View mode">
-					<Button
-						variant={showRaw ? 'outline' : 'secondary'}
-						size="sm"
-						class="rounded-r-none"
-						aria-pressed={!showRaw}
-						onclick={() => (showRaw = false)}
-					>
-						Diff
-					</Button>
-					<Button
-						variant={showRaw ? 'secondary' : 'outline'}
-						size="sm"
-						class="-ml-px rounded-l-none"
-						aria-pressed={showRaw}
-						onclick={() => (showRaw = true)}
-					>
-						Raw
-					</Button>
+				<div
+					class="inline-flex h-7 items-center gap-0.5 rounded-md bg-muted p-0.5 @max-[460px]:hidden"
+					role="group"
+					aria-label="View mode"
+				>
+					{#each [{ raw: false, label: 'Diff' }, { raw: true, label: 'Raw' }] as opt (opt.label)}
+						{@const active = showRaw === opt.raw}
+						<button
+							type="button"
+							aria-pressed={active}
+							onclick={() => (showRaw = opt.raw)}
+							class={[
+								'h-6 rounded-sm px-2.5 text-[0.8rem] font-medium transition-colors',
+								active
+									? 'bg-background text-foreground shadow-sm dark:bg-input/30'
+									: 'text-muted-foreground hover:text-foreground'
+							]}
+						>
+							{opt.label}
+						</button>
+					{/each}
 				</div>
 			{/if}
 			{#if app.fileHeaderItems.markSeen}
