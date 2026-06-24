@@ -68,6 +68,7 @@ import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import {
 	upstreamChecked,
 	prsSourceByRepo,
+	contextTabByRepo,
 	filesCache,
 	diffCache,
 	prPushAccess,
@@ -1862,10 +1863,61 @@ async function refreshRepoPushAccess(): Promise<void> {
 // change, and prefs writes are cheap.
 function applyContextTab(tab: ContextTab): void {
 	app.contextTab = tab;
+	// Remember this repo's tab for the session so switching away and back reopens
+	// it (see restoreContextTab / switchRepo).
+	if (app.activeRepo) contextTabByRepo.set(app.activeRepo.id, tab);
 	// The query is scoped to "files on this tab/repo"; carrying it across
 	// surfaces a stale filter that hides everything in the new context.
 	app.fileSearchQuery = '';
 	void window.api.state.setPrefs({ contextTab: tab }).then((prefs) => {
+		app.prefs = prefs;
+	});
+}
+
+// Land on `savedTab` for the active repo, building its diff context and running
+// the loads that tab needs, then persist it as the last-active tab. The Branch
+// tab needs branches resolved first and falls back to Unstaged when it isn't
+// viewable on the current branch (e.g. the default branch); Sessions/History
+// only restore when their optional sidebar tab is enabled. Shared by launch
+// restore and switchRepo so each repo reopens on the tab you left it on.
+async function restoreContextTab(savedTab: ContextTab | undefined): Promise<void> {
+	if (savedTab === 'branch') {
+		// The Branch tab needs branches resolved before it can build its diff
+		// context (and before we can tell whether it's empty on this branch).
+		await refreshBranches();
+		if (canViewBranchTab()) {
+			app.contextTab = 'branch';
+			app.diffContext = contextForTab('branch');
+		} else {
+			// On the default branch, where the Branch tab is hidden — fall back to
+			// the Unstaged working-tree view.
+			app.contextTab = 'unstaged';
+			app.diffContext = { kind: 'workingTree' };
+		}
+		await Promise.all([refreshFiles(), refreshPushStatus()]);
+	} else if (savedTab === 'sessions' && app.sidebarTabs.sessions) {
+		app.contextTab = 'sessions';
+		// The Sessions tab shows the documented-sessions list (in the sidebar),
+		// not a working-tree file list. Still fetch the Unstaged badge count.
+		await Promise.all([
+			refreshBranches(),
+			refreshPushStatus(),
+			refreshUnstagedCount(),
+			actions.loadSessions()
+		]);
+	} else if (savedTab === 'history' && app.sidebarTabs.history) {
+		app.contextTab = 'history';
+		// loadCommits needs branches resolved first so historyHeadRef() can fall
+		// back to the current branch. Still fetch the Unstaged badge count.
+		await Promise.all([refreshBranches(), refreshPushStatus(), refreshUnstagedCount()]);
+		await actions.loadCommits();
+	} else {
+		app.contextTab = 'unstaged';
+		app.diffContext = { kind: 'workingTree' };
+		await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+	}
+	if (app.activeRepo) contextTabByRepo.set(app.activeRepo.id, app.contextTab);
+	void window.api.state.setPrefs({ contextTab: app.contextTab }).then((prefs) => {
 		app.prefs = prefs;
 	});
 }
@@ -2686,45 +2738,9 @@ export const actions = {
 			// Local filesystem stat — fire it now so it isn't stranded behind the tab
 			// restore + network PR lookup below.
 			void refreshSkillInstalled();
-			// Restore the last tab. The 'branch' tab needs `currentBranch` to build
-			// its DiffContext, so refresh branches first when restoring it.
-			const savedTab = app.prefs.contextTab;
-			if (savedTab === 'branch') {
-				// The Branch tab needs branches resolved before it can build its diff
-				// context (and before we can tell whether it's empty on this branch).
-				await refreshBranches();
-				if (canViewBranchTab()) {
-					app.contextTab = 'branch';
-					app.diffContext = contextForTab('branch');
-				} else {
-					// Launched on the default branch, where the Branch tab is hidden —
-					// fall back to the Unstaged working-tree view.
-					app.contextTab = 'unstaged';
-					app.diffContext = { kind: 'workingTree' };
-				}
-				await Promise.all([refreshFiles(), refreshPushStatus()]);
-			} else if (savedTab === 'sessions' && app.sidebarTabs.sessions) {
-				app.contextTab = 'sessions';
-				// The Sessions tab shows the documented-sessions list (in the sidebar),
-				// not a working-tree file list — load the sessions. Still fetch the
-				// Unstaged badge count so it's accurate on launch.
-				await Promise.all([
-					refreshBranches(),
-					refreshPushStatus(),
-					refreshUnstagedCount(),
-					actions.loadSessions()
-				]);
-			} else if (savedTab === 'history' && app.sidebarTabs.history) {
-				app.contextTab = 'history';
-				// The History tab shows the commit list (in the sidebar), not a
-				// working-tree file list. loadCommits needs branches resolved first so
-				// historyHeadRef() can fall back to the current branch. Still fetch the
-				// Unstaged badge count so it's accurate on launch.
-				await Promise.all([refreshBranches(), refreshPushStatus(), refreshUnstagedCount()]);
-				await actions.loadCommits();
-			} else {
-				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
-			}
+			// Restore the last tab. Shared with switchRepo so the active repo also
+			// seeds its per-repo tab memory for this session.
+			await restoreContextTab(app.prefs.contextTab);
 			await refreshBranchPR();
 		}
 		// Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
@@ -2816,7 +2832,9 @@ export const actions = {
 			// Local filesystem stat — fire it now so the skill banner resolves without
 			// waiting on the network PR lookup below.
 			void refreshSkillInstalled();
-			applyContextTab('unstaged');
+			// Switching repos drops any tab-scoped file search; restoreContextTab
+			// below lands on whichever tab this repo was last left on.
+			app.fileSearchQuery = '';
 			app.diffContext = { kind: 'workingTree' };
 			app.viewBranch = null;
 			app.viewPR = null;
@@ -2845,7 +2863,7 @@ export const actions = {
 			// they're re-resolved for the new repo by refreshBranchPR below.
 			app.forkPrompt = null;
 			app.repoPushAccess = null;
-			await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
+			await Promise.all([refreshRepos(), restoreContextTab(contextTabByRepo.get(repo.id))]);
 			await refreshBranchPR();
 		}
 	},
