@@ -2264,23 +2264,18 @@ function sideQualifier(side: 'LEFT' | 'RIGHT'): string {
 	return side === 'LEFT' ? ' (original side)' : '';
 }
 
-// A header line for the "copy all" task lists, naming what the list is. The id
-// in each item is what `super-review comment resolve <id>` takes, so the closing
-// note tells the agent to resolve each by that id once it's addressed.
+// A header line for the "copy all" task lists, naming what the list is.
 const COMMENTS_PROMPT_INTRO =
 	'Address the following review comments left on a diff (the code changes under review). ' +
-	'Each item gives its comment id, the file, the line(s), and the feedback. Line numbers ' +
-	'are on the new (post-change) side unless marked "(original side)". When you finish a ' +
-	'comment, mark it resolved with `super-review comment resolve <id>`:\n';
+	'Each item gives the file, the line(s), and the feedback. Line numbers are on the new ' +
+	'(post-change) side unless marked "(original side)":\n';
 
 // Build a copy-ready prompt for a single comment: makes the diff context and the
-// side explicit so an agent can act on it without the diff in front of them. The
-// id is included so the agent can resolve it via `super-review comment resolve`.
+// side explicit so an agent can act on it without the diff in front of them.
 function formatCommentPrompt(c: LocalComment): string {
 	return (
-		`Review comment \`${c.id}\` at ${lineRangeLabel(c.startLine, c.endLine)}` +
-		`${sideQualifier(c.side)} in \`${c.path}\`:\n\n${c.body.trim()}\n\n` +
-		`When addressed, mark it resolved: \`super-review comment resolve ${c.id}\``
+		`Review comment at ${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)} ` +
+		`in \`${c.path}\`:\n\n${c.body.trim()}`
 	);
 }
 
@@ -2301,7 +2296,7 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 		for (const c of list) {
 			const where = `${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)}`;
 			const body = c.body.trim().replace(/\n/g, '\n  ');
-			sections.push(`- [ ] \`${c.id}\` **${where}** - ${body}`);
+			sections.push(`- [ ] **${where}** - ${body}`);
 		}
 		sections.push('');
 	}
