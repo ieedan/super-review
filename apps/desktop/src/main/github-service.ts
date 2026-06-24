@@ -1174,9 +1174,6 @@ function mapReviewComment(
 		// comment onto the wrong current-diff line.
 		line: c.line ?? null,
 		originalLine: c.original_line ?? null,
-		// Range start for a multi-line comment; `original_start_line` keeps the span
-		// available after the comment goes outdated (when `start_line` is nulled).
-		startLine: c.start_line ?? c.original_start_line ?? null,
 		position: c.position ?? null,
 		diffHunk: c.diff_hunk ?? undefined,
 		// Outdated = the comment had a line anchor (`original_line`) that no longer
@@ -1333,10 +1330,6 @@ export async function createReviewComment(
 	const anchor =
 		commitId ?? (await o.pulls.get({ owner, repo, pull_number: input.prNumber })).data.head.sha;
 	try {
-		// Multi-line comment: GitHub anchors at `line` (the end) and spans up to
-		// `start_line`, both on the same side. Only send the start when it's a real
-		// range (`startLine` strictly above `line`) — GitHub 422s on start == line.
-		const isRange = input.startLine != null && input.startLine < input.line;
 		const res = await o.pulls.createReviewComment({
 			owner,
 			repo,
@@ -1345,8 +1338,7 @@ export async function createReviewComment(
 			commit_id: anchor,
 			path: input.path,
 			line: input.line,
-			side: input.side,
-			...(isRange ? { start_line: input.startLine, start_side: input.side } : {})
+			side: input.side
 		});
 		return mapReviewComment(res.data, input.prNumber, viewer?.login ?? null);
 	} catch (err) {

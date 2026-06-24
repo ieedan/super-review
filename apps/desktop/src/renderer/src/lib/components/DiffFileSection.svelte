@@ -298,8 +298,7 @@
 		const out: Array<{ side: 'LEFT' | 'RIGHT'; line: number }> = [];
 		if (isPRContext) {
 			for (const c of app.prComments[file.path] ?? []) {
-				// Anchor at the rendered line — the range start for a multi-line comment.
-				if (c.line != null) out.push({ side: c.side, line: c.startLine ?? c.line });
+				if (c.line != null) out.push({ side: c.side, line: c.line });
 			}
 		} else if (isLocalCommentContext) {
 			for (const c of app.localComments) {
@@ -530,9 +529,7 @@
 			}
 			out.push({
 				side: c.side === 'LEFT' ? 'deletions' : 'additions',
-				// A multi-line comment is anchored at the top of its range (`startLine`);
-				// `line` is the range end. Single-line comments have no `startLine`.
-				lineNumber: c.startLine ?? c.line,
+				lineNumber: c.line,
 				metadata: meta
 			});
 		}
@@ -540,13 +537,12 @@
 		for (const composer of composers) {
 			const key = composerKey(composer.filePath, composer.side, composer.line);
 			let meta = composerMetaCache.get(key);
-			if (meta == null || meta.replyTo !== composer.replyTo || meta.endLine !== composer.endLine) {
+			if (meta == null || meta.replyTo !== composer.replyTo) {
 				meta = {
 					kind: 'composer',
 					filePath: composer.filePath,
 					line: composer.line,
 					side: composer.side,
-					endLine: composer.endLine,
 					replyTo: composer.replyTo
 				};
 				composerMetaCache.set(key, meta);
@@ -581,13 +577,12 @@
 		for (const composer of localComposers) {
 			const key = composerKey(composer.filePath, composer.side, composer.line);
 			let meta = localComposerMetaCache.get(key);
-			if (meta == null || meta.endLine !== composer.endLine) {
+			if (meta == null) {
 				meta = {
 					kind: 'local-composer',
 					filePath: composer.filePath,
 					line: composer.line,
-					side: composer.side,
-					endLine: composer.endLine
+					side: composer.side
 				};
 				localComposerMetaCache.set(key, meta);
 			}
@@ -915,78 +910,19 @@
 		}
 	}
 
-	// The last multi-line range the user selected in the diff *body* with the
-	// native browser selection, normalized to top/bottom + a single side. Captured
-	// on `selectionchange` (before a `+` click can collapse the selection) and
-	// consumed by the next `+` click that lands inside it, so "select the lines,
-	// then click +" comments on the whole selection. Plain (non-reactive): only
-	// touched by the selection handler and the click handler.
-	let selectedContentRange: { top: number; bottom: number; side: 'LEFT' | 'RIGHT' } | null = null;
-
-	// Map a DOM node inside Pierre's rendered diff to its line number + side. Pierre
-	// tags each code line element with `data-line` (the number) and `data-line-type`
-	// (change-addition / change-deletion / context). Mirrors Pierre's own
-	// getAnnotationSide: explicit add/del types map straight to a side; a context
-	// line takes its side from the column it sits in (`data-deletions` ⇒ LEFT).
-	function lineInfoFromNode(node: Node | null): { line: number; side: 'LEFT' | 'RIGHT' } | null {
-		const start = node instanceof Element ? node : (node?.parentElement ?? null);
-		const lineEl = start?.closest('[data-line]') ?? null;
-		if (!lineEl) return null;
-		const line = Number(lineEl.getAttribute('data-line'));
-		if (!Number.isFinite(line)) return null;
-		const type = lineEl.getAttribute('data-line-type');
-		let side: 'LEFT' | 'RIGHT';
-		if (type === 'change-deletion') side = 'LEFT';
-		else if (type === 'change-addition') side = 'RIGHT';
-		else side = lineEl.closest('[data-deletions]') ? 'LEFT' : 'RIGHT';
-		return { line, side };
-	}
-
-	// Read the native selection inside THIS file's diff and stash it as a line
-	// range. Runs on `selectionchange` so we capture the span while it's live —
-	// clicking the `+` afterwards collapses the selection, so reading it at click
-	// time would be too late (the bug this fixes). A collapsed/empty selection is
-	// ignored rather than cleared, so a span stays available for the click that
-	// follows; the click consumes it and the in-range guard rejects a stale one.
-	function captureContentSelection(): void {
-		const root = diffContainer?.shadowRoot as
-			| (ShadowRoot & { getSelection?: () => Selection | null })
-			| undefined;
-		// Chromium/Electron expose selection per shadow root; fall back to the
-		// document selection if that's unavailable.
-		const selection = root?.getSelection?.() ?? document.getSelection();
-		if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
-		const a = lineInfoFromNode(selection.anchorNode);
-		const b = lineInfoFromNode(selection.focusNode);
-		// Both ends must resolve to lines in this diff and share a side (a comment
-		// lives on one side); otherwise leave any prior stash untouched.
-		if (!a || !b || a.side !== b.side) return;
-		const top = Math.min(a.line, b.line);
-		const bottom = Math.max(a.line, b.line);
-		if (top === bottom) return; // single line — not a range
-		selectedContentRange = { top, bottom, side: a.side };
-	}
-
-	// Pierre's `+` affordance: `enableGutterUtility` paints the button on hover and
-	// `onGutterUtilityClick` delivers the line it sits on (`start === end`). If the
-	// user first selected a span in the body and clicks `+` inside it, comment on
-	// that whole span; otherwise it's a single-line comment on the clicked line.
+	// Pierre's idiomatic gutter affordance: `enableGutterUtility: true` paints
+	// their built-in `+` button on hover, and `onGutterUtilityClick` delivers
+	// the selected line range when it's clicked. No custom DOM, no event
+	// wrestling — Pierre owns the whole interaction.
 	function onGutterClick(range: SelectedLineRange): void {
-		const clicked = Math.min(range.start, range.end);
-		let side: 'LEFT' | 'RIGHT' = (range.side ?? 'additions') === 'deletions' ? 'LEFT' : 'RIGHT';
-		let top = clicked;
-		let bottom = Math.max(range.start, range.end);
-		const sel = selectedContentRange;
-		selectedContentRange = null; // consume — stale after this click either way
-		if (sel && clicked >= sel.top && clicked <= sel.bottom) {
-			top = sel.top;
-			bottom = sel.bottom;
-			side = sel.side;
-		}
+		const sel = range.side ?? 'additions';
+		const side = sel === 'deletions' ? 'LEFT' : 'RIGHT';
+		// For a plain click `start === end`. Drag-select reports both ends; we
+		// attach the comment to the first (top) line for now.
 		if (isPRContext) {
-			actions.openComposer(file.path, side, top, undefined, bottom);
+			actions.openComposer(file.path, side, range.start);
 		} else if (isLocalCommentContext) {
-			actions.openLocalComposer(file.path, side, top, bottom);
+			actions.openLocalComposer(file.path, side, range.start);
 		}
 	}
 
@@ -1794,19 +1730,6 @@
 		});
 		ro.observe(el);
 		return () => ro.disconnect();
-	});
-
-	// Watch the native text selection so "select code in the diff, then click +"
-	// can comment on the whole span. `selectionchange` is document-level; the
-	// handler reads only THIS file's shadow-root selection and ignores everything
-	// else, so the per-section listeners don't cross-talk. Captured live because
-	// the `+` click collapses the selection before its handler runs.
-	onMount(() => {
-		const onSelectionChange = (): void => {
-			if (canComment) captureContentSelection();
-		};
-		document.addEventListener('selectionchange', onSelectionChange);
-		return () => document.removeEventListener('selectionchange', onSelectionChange);
 	});
 	const displayPrefix = $derived(
 		pathDir ? truncatePathPrefix(pathDir, pathBase, pathWidth, pathFont) : ''
