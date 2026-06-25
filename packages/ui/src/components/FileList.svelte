@@ -9,6 +9,7 @@
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import List from '@lucide/svelte/icons/list';
 	import FolderTree from '@lucide/svelte/icons/folder-tree';
+	import FoldVertical from '@lucide/svelte/icons/fold-vertical';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Minus from '@lucide/svelte/icons/minus';
 	import PanelLeft from '@lucide/svelte/icons/panel-left';
@@ -613,6 +614,26 @@
 		if (result) void actions.setSidebarTab(result.key, result.checked);
 	}
 
+	// Right-click the file-controls row to show/hide its optional buttons (the
+	// collapse-all-seen and tree/list toggle), via a native context menu — the
+	// same pattern as the header's customization menu. The search box always
+	// stays, so it isn't listed. Each item is a checkbox reflecting its current
+	// visibility; the native menu reports the single item toggled, which we persist.
+	async function onControlsContextMenu(e: MouseEvent): Promise<void> {
+		e.preventDefault();
+		const result = await window.api.menu.showSidebarControlsContextMenu({
+			items: [
+				{
+					key: 'collapseSeen',
+					label: 'Collapse all seen',
+					checked: app.sidebarControls.collapseSeen
+				},
+				{ key: 'viewToggle', label: 'Tree / list toggle', checked: app.sidebarControls.viewToggle }
+			]
+		});
+		if (result) void actions.setSidebarControl(result.key, result.checked);
+	}
+
 	// The tab strip scrolls horizontally when its tabs overflow (no-scrollbar
 	// hides the bar). Fade out whichever edge has more content behind it so the
 	// overflow is discoverable and the strip reads as separate from the rest of
@@ -1118,7 +1139,14 @@
 		{/if}
 
 		{#if showFileControls}
-			<div class="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
+			<!-- Right-click the row to show/hide its optional buttons (collapse-all-seen,
+			     tree/list toggle), via a native context menu (mirrors the header's menu).
+			     The search box always stays. -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="flex items-center gap-1.5 border-b border-border px-2 py-1.5"
+				oncontextmenu={onControlsContextMenu}
+			>
 				<div
 					class="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input bg-background px-2"
 				>
@@ -1143,22 +1171,39 @@
 						<Kbd title="Press / to search">/</Kbd>
 					{/if}
 				</div>
+				<!-- Collapse every already-seen file's diff at once. No-ops when nothing
+		         is seen, so it's always clickable. Hidable via the controls row's menu. -->
+				{#if app.sidebarControls.collapseSeen}
+					<Button
+						variant="outline"
+						size="icon-sm"
+						class="shrink-0 text-muted-foreground"
+						title="Collapse all seen"
+						aria-label="Collapse all seen"
+						onclick={() => void actions.collapseSeenFiles()}
+					>
+						<FoldVertical class="size-3.5" />
+					</Button>
+				{/if}
 				<!-- Single button that swaps the active tab's file list between tree
-             and list layout, showing the current layout's icon. -->
-				<Button
-					variant="outline"
-					size="icon-sm"
-					class="shrink-0 text-muted-foreground"
-					title={isTreeLayout ? 'Switch to list view' : 'Switch to tree view'}
-					aria-label={isTreeLayout ? 'Switch to list view' : 'Switch to tree view'}
-					onclick={() => void actions.setFileListLayout(isTreeLayout ? 'list' : 'tree')}
-				>
-					{#if isTreeLayout}
-						<FolderTree class="size-3.5" />
-					{:else}
-						<List class="size-3.5" />
-					{/if}
-				</Button>
+             and list layout, showing the current layout's icon. Hidable via the
+             controls row's menu. -->
+				{#if app.sidebarControls.viewToggle}
+					<Button
+						variant="outline"
+						size="icon-sm"
+						class="shrink-0 text-muted-foreground"
+						title={isTreeLayout ? 'Switch to list view' : 'Switch to tree view'}
+						aria-label={isTreeLayout ? 'Switch to list view' : 'Switch to tree view'}
+						onclick={() => void actions.setFileListLayout(isTreeLayout ? 'list' : 'tree')}
+					>
+						{#if isTreeLayout}
+							<FolderTree class="size-3.5" />
+						{:else}
+							<List class="size-3.5" />
+						{/if}
+					</Button>
+				{/if}
 			</div>
 		{/if}
 

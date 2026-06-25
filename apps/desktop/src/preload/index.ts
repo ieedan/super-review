@@ -58,6 +58,7 @@ import type {
 	Session,
 	SessionSummary,
 	TabsContextMenuResult,
+	SidebarControlsContextMenuResult,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -375,6 +376,14 @@ const api: PreloadAPI = {
 				filePath,
 				collapsed
 			) as Promise<void>,
+		setFilesCollapsed: (repoId, contextKey, filePaths, collapsed) =>
+			ipcRenderer.invoke(
+				'state:setFilesCollapsed',
+				repoId,
+				contextKey,
+				filePaths,
+				collapsed
+			) as Promise<void>,
 		clearCollapsedFiles: (repoId, contextKey) =>
 			ipcRenderer.invoke('state:clearCollapsedFiles', repoId, contextKey) as Promise<void>,
 		getCachedFileList: (repoId, contextKey) =>
@@ -493,6 +502,11 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
 		showTabsContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
+		showSidebarControlsContextMenu: (params) =>
+			ipcRenderer.invoke(
+				'menu:showSidebarControlsContextMenu',
+				params
+			) as Promise<SidebarControlsContextMenuResult>,
 		showFileHeaderContextMenu: (params) =>
 			ipcRenderer.invoke(
 				'menu:showFileHeaderContextMenu',

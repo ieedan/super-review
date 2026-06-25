@@ -60,6 +60,8 @@ import type {
 	FileHeaderContextMenuResult,
 	TabsContextMenuParams,
 	TabsContextMenuResult,
+	SidebarControlsContextMenuParams,
+	SidebarControlsContextMenuResult,
 	RepoInfo,
 	Session,
 	SessionSummary,
@@ -163,6 +165,7 @@ import {
 	setCachedFileList,
 	setCommitDraft,
 	setFileCollapsed,
+	setFilesCollapsed,
 	setPrefs,
 	getPRBranch,
 	setPRBranch,
@@ -1939,6 +1942,38 @@ export function registerIpc(): void {
 		}
 	);
 
+	// The sidebar controls row's "Show button" menu. Same shape as the header
+	// menu: a checkbox per optional button; the chosen item and its new state
+	// come back.
+	ipcMain.handle(
+		'menu:showSidebarControlsContextMenu',
+		async (
+			e,
+			params: SidebarControlsContextMenuParams
+		): Promise<SidebarControlsContextMenuResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: SidebarControlsContextMenuResult = null;
+			const template: MenuItemConstructorOptions[] = params.items.map(
+				(it): MenuItemConstructorOptions => ({
+					label: it.label,
+					type: 'checkbox',
+					checked: it.checked,
+					click: (menuItem) => {
+						chosen = { key: it.key, checked: menuItem.checked };
+					}
+				})
+			);
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<SidebarControlsContextMenuResult>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
 	// ─── State ─────────────────────────────────────────────────────────────
 	ipcMain.handle('state:getPrefs', async (): Promise<UserPrefs> => getPrefs());
 	ipcMain.handle(
@@ -2010,6 +2045,13 @@ export function registerIpc(): void {
 		'state:setFileCollapsed',
 		async (_e, repoId: string, contextKey: string, filePath: string, collapsed: boolean) => {
 			setFileCollapsed(repoId, contextKey, filePath, collapsed);
+		}
+	);
+
+	ipcMain.handle(
+		'state:setFilesCollapsed',
+		async (_e, repoId: string, contextKey: string, filePaths: string[], collapsed: boolean) => {
+			setFilesCollapsed(repoId, contextKey, filePaths, collapsed);
 		}
 	);
 

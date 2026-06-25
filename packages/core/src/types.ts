@@ -829,6 +829,28 @@ export type TabsContextMenuResult = {
 	checked: boolean;
 } | null;
 
+// A single toggle in the sidebar controls row's "Show button" native context
+// menu. `key` is the SidebarControlVisibility field it controls; `checked` is
+// its current state.
+export interface SidebarControlsContextMenuItem {
+	key: keyof SidebarControlVisibility;
+	label: string;
+	checked: boolean;
+}
+
+// Params for the controls row's native context menu: the toggle items to show,
+// in order, each carrying its current checked state.
+export interface SidebarControlsContextMenuParams {
+	items: SidebarControlsContextMenuItem[];
+}
+
+// What the controls row context menu returns: the toggled button's key and its
+// new checked state. `null` (from the IPC) means the menu was dismissed.
+export type SidebarControlsContextMenuResult = {
+	key: keyof SidebarControlVisibility;
+	checked: boolean;
+} | null;
+
 // Items in the native application menu's "Branch" submenu. The main process
 // sends the chosen action to the focused renderer, which runs the matching
 // store flow (some open a confirm dialog first).
@@ -1225,6 +1247,24 @@ export const DEFAULT_SIDEBAR_TABS: SidebarTabVisibility = {
 	history: true
 };
 
+// Which of the sidebar's file-controls-row buttons are shown. The file search
+// box is structural and always present; only these auxiliary buttons are
+// user-toggleable, via the controls row's right-click native context menu,
+// mirroring the header's "Show in header" menu. Persisted in UserPrefs.
+export interface SidebarControlVisibility {
+	// The "Collapse all seen" button (fold-vertical icon) that collapses every
+	// already-seen file's diff at once.
+	collapseSeen: boolean;
+	// The tree / list layout toggle.
+	viewToggle: boolean;
+}
+
+// Both buttons shown by default; the user hides what they don't want.
+export const DEFAULT_SIDEBAR_CONTROLS: SidebarControlVisibility = {
+	collapseSeen: true,
+	viewToggle: true
+};
+
 // Which optional controls each diff file's sticky header shows. The chevron,
 // file icon, path and status badges are structural and always present; only
 // these auxiliary controls are user-toggleable, via the file header's
@@ -1354,6 +1394,11 @@ export interface UserPrefs {
 	// tab strip's right-click menu. Missing keys fall back to DEFAULT_SIDEBAR_TABS
 	// so older persisted prefs (and any future additions) default to visible.
 	sidebarTabs?: SidebarTabVisibility;
+	// Which optional sidebar controls-row buttons (collapse-all-seen, tree/list
+	// toggle) are shown. Toggled from the controls row's right-click menu. Missing
+	// keys fall back to DEFAULT_SIDEBAR_CONTROLS so older persisted prefs (and any
+	// future additions) default to visible.
+	sidebarControls: SidebarControlVisibility;
 	// Which optional controls each diff file header shows. Toggled from the file
 	// header's right-click menu. Missing keys fall back to DEFAULT_FILE_HEADER_ITEMS
 	// so older persisted prefs (and any future additions) default to visible.
@@ -1805,6 +1850,14 @@ export interface PreloadAPI {
 			filePath: string,
 			collapsed: boolean
 		): Promise<void>;
+		// Collapse/expand many files at once (one persisted write), used by the
+		// sidebar's "Collapse all seen" button.
+		setFilesCollapsed(
+			repoId: string,
+			contextKey: string,
+			filePaths: string[],
+			collapsed: boolean
+		): Promise<void>;
 		clearCollapsedFiles(repoId: string, contextKey: string): Promise<void>;
 		// The last-computed changed-file list for a context, persisted so a cold
 		// start can paint the sidebar (with seen markers) instantly while the git
@@ -1951,6 +2004,11 @@ export interface PreloadAPI {
 		// Pop up the sidebar tab strip's "Show tab" customization context menu.
 		// Resolves to the toggled tab and its new state, or null when dismissed.
 		showTabsContextMenu(params: TabsContextMenuParams): Promise<TabsContextMenuResult>;
+		// Pop up the sidebar controls row's "Show button" customization context menu.
+		// Resolves to the toggled button and its new state, or null when dismissed.
+		showSidebarControlsContextMenu(
+			params: SidebarControlsContextMenuParams
+		): Promise<SidebarControlsContextMenuResult>;
 		// Pop up a diff file header's "Show in file header" customization context
 		// menu. Resolves to the toggled item and its new state, or null when dismissed.
 		showFileHeaderContextMenu(
