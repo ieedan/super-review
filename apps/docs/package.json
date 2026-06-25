@@ -26,7 +26,6 @@
 	},
 	"dependencies": {
 		"@super-review/core": "workspace:*",
-		"@super-review/ui": "workspace:*",
 		"sv-agentation": "catalog:"
 	}
 }
