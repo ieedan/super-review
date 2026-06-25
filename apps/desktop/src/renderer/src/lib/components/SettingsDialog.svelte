@@ -1126,27 +1126,34 @@
 					</div>
 				</div>
 
-				<div class="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3">
+				<div>
+					<h3 class="text-base font-semibold">Additional integrations</h3>
+					<p class="mt-1 text-xs text-muted-foreground">Optional features for specific repos.</p>
+
 					<div
-						class="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-card"
+						class="mt-3 flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3"
 					>
-						<ChangesetLogo class="h-5 w-auto" />
+						<div
+							class="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-card"
+						>
+							<ChangesetLogo class="h-5 w-auto" />
+						</div>
+						<div class="min-w-0 flex-1">
+							<div class="text-sm font-medium">Changesets</div>
+							<p class="text-xs text-muted-foreground">
+								Prompts, commit message autofill, and a button to create one. For repos that use <a
+									href="https://github.com/changesets/changesets"
+									target="_blank"
+									rel="noopener noreferrer"
+									class="underline underline-offset-2 hover:text-foreground">changesets</a
+								>.
+							</p>
+						</div>
+						<Switch
+							bind:checked={draftChangesetsEnabled}
+							aria-label="Enable changesets integration"
+						/>
 					</div>
-					<div class="min-w-0 flex-1">
-						<div class="text-sm font-medium">Changesets</div>
-						<p class="text-xs text-muted-foreground">
-							Prompts, commit message autofill, and a button to create one. For repos that use <a
-								href="https://github.com/changesets/changesets"
-								target="_blank"
-								rel="noopener noreferrer"
-								class="underline underline-offset-2 hover:text-foreground">changesets</a
-							>.
-						</p>
-					</div>
-					<Switch
-						bind:checked={draftChangesetsEnabled}
-						aria-label="Enable changesets integration"
-					/>
 				</div>
 			</section>
 		{:else if activeTab === 'hotkeys'}
