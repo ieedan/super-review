@@ -1,4 +1,4 @@
-import adapter from '@sveltejs/adapter-static';
+import adapter from '@sveltejs/adapter-vercel';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -7,6 +7,9 @@ const config = {
 		runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 	},
 	kit: {
+		// Vercel adapter: the marketing pages still prerender to static HTML (see
+		// +layout.ts), but the waitlist endpoint (/api/waitlist) needs a serverless
+		// function to write to Upstash, which adapter-static can't host.
 		adapter: adapter(),
 		alias: { '@super-review/ui': '../../packages/ui/src' }
 	}

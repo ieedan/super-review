@@ -1,33 +1,130 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
 @plugin '@tailwindcss/typography';
 
+/* This site embeds the *real* desktop UI components from @super-review/ui. Tailwind
+   v4 doesn't scan workspace dependencies, so point it at the package source or its
+   utility classes get tree-shaken away. Relative to this file:
+   routes -> src -> docs -> apps -> repo root -> packages/ui/src (4x ../). */
+@source '../../../../packages/ui/src';
+
+@custom-variant dark (&:is(.dark *));
+
 @theme {
-	/* Near-black canvas with a warm off-white ink. The desktop app's monochrome
-	   palette, inverted to a confident dark marketing surface. */
+	/* ── Desktop app palette (shadcn tokens) ───────────────────────────────────
+	   Copied verbatim from apps/desktop/src/renderer/src/app.css so the embedded
+	   components render exactly as they do in the app. Light values are the base;
+	   the .dark block below supplies the dark theme (the site runs dark-only via
+	   class="dark" on <html>). */
+	--color-background: hsl(0 0% 100%);
+	--color-foreground: hsl(0 0% 3.9%);
+	--color-card: hsl(0 0% 100%);
+	--color-card-foreground: hsl(0 0% 3.9%);
+	--color-popover: hsl(0 0% 100%);
+	--color-popover-foreground: hsl(0 0% 3.9%);
+	--color-primary: hsl(11 100% 60%);
+	--color-primary-foreground: hsl(20 14% 9%);
+	--color-secondary: hsl(0 0% 96.1%);
+	--color-secondary-foreground: hsl(0 0% 9%);
+	--color-muted: hsl(0 0% 96.1%);
+	--color-muted-foreground: hsl(0 0% 45.1%);
+	--color-accent: hsl(0 0% 96.1%);
+	--color-accent-foreground: hsl(0 0% 9%);
+	--color-destructive: hsl(0 84.2% 60.2%);
+	--color-destructive-foreground: hsl(0 0% 98%);
+	--color-border: hsl(0 0% 89.8%);
+	--color-input: hsl(0 0% 89.8%);
+	--color-ring: hsl(11 100% 60%);
+	--color-success: hsl(142 76% 36%);
+	--color-warning: hsl(38 92% 50%);
+	--color-info: hsl(212 92% 45%);
+	--color-merged: hsl(265 60% 52%);
+	--color-sidebar: hsl(0 0% 98%);
+	--color-sidebar-foreground: hsl(0 0% 3.9%);
+	--color-sidebar-border: hsl(0 0% 89.8%);
+	--color-sidebar-accent: hsl(0 0% 96.1%);
+	--color-sidebar-accent-foreground: hsl(0 0% 9%);
+	--color-sidebar-primary: hsl(11 100% 60%);
+	--color-sidebar-primary-foreground: hsl(20 14% 9%);
+	--color-sidebar-ring: hsl(11 100% 60%);
+	--radius: 0.5rem;
+
+	/* ── Marketing surface (additive, non-colliding names) ─────────────────────
+	   The page chrome (hero, sections, footer) sits on a warm near-black canvas
+	   distinct from the app's neutral grays. These names intentionally avoid the
+	   shadcn tokens above so component utilities (bg-muted, border-border, …) keep
+	   their app meaning while page utilities (bg-base, border-line, …) keep theirs. */
 	--color-base: hsl(20 8% 4%);
 	--color-elevated: hsl(20 7% 7%);
 	--color-fg: hsl(30 14% 96%);
-	--color-muted: hsl(28 8% 64%);
 	--color-faint: hsl(24 6% 42%);
 	--color-line: hsl(28 9% 15%);
 	--color-line-bright: hsl(28 10% 22%);
 
-	/* Brand flame, pulled from the app icon's coral to red-orange gradient. */
+	/* Brand flame, shared with the app icon + the desktop default button. */
 	--color-flame: hsl(11 100% 64%);
 	--color-flame-deep: hsl(6 88% 56%);
 	--color-flame-soft: hsl(16 100% 70%);
 
-	/* Diff signature: additions / deletions, fitting a code-review tool. */
+	/* Diff signature, matching the app's add/remove coloring. */
 	--color-add: hsl(142 58% 52%);
 	--color-del: hsl(2 78% 63%);
 
+	/* Red Hat Display is reserved for headers (.font-display). Everything else uses
+	   the system UI stack — the same one the desktop app uses for --ui-font — so the
+	   embedded components read identically to the app. */
 	--font-display: 'Red Hat Display', ui-sans-serif, system-ui, sans-serif;
-	--font-body: 'Red Hat Text', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: 'Red Hat Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+	--font-body:
+		ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
 }
 
-html {
+/* Dark theme for the embedded components — verbatim from the desktop app.css so
+   the app windows on the page look identical to the running app. */
+.dark {
+	--color-background: hsl(0 0% 6%);
+	--color-foreground: hsl(0 0% 98%);
+	--color-card: hsl(0 0% 8%);
+	--color-card-foreground: hsl(0 0% 98%);
+	--color-popover: hsl(0 0% 8%);
+	--color-popover-foreground: hsl(0 0% 98%);
+	--color-primary: hsl(11 100% 60%);
+	--color-primary-foreground: hsl(20 14% 9%);
+	--color-secondary: hsl(0 0% 14.9%);
+	--color-secondary-foreground: hsl(0 0% 98%);
+	--color-muted: hsl(0 0% 14.9%);
+	--color-muted-foreground: hsl(0 0% 63.9%);
+	--color-accent: hsl(0 0% 14.9%);
+	--color-accent-foreground: hsl(0 0% 98%);
+	--color-destructive: hsl(0 62.8% 40.6%);
+	--color-destructive-foreground: hsl(0 0% 98%);
+	--color-border: hsl(0 0% 14.9%);
+	--color-input: hsl(0 0% 14.9%);
+	--color-ring: hsl(11 100% 60%);
+	--color-success: hsl(142 70% 45%);
+	--color-warning: hsl(38 92% 60%);
+	--color-info: hsl(215 92% 60%);
+	--color-merged: hsl(265 70% 65%);
+	--color-sidebar: hsl(0 0% 7%);
+	--color-sidebar-foreground: hsl(0 0% 98%);
+	--color-sidebar-border: hsl(0 0% 14.9%);
+	--color-sidebar-accent: hsl(0 0% 14.9%);
+	--color-sidebar-accent-foreground: hsl(0 0% 98%);
+	--color-sidebar-primary: hsl(11 100% 60%);
+	--color-sidebar-primary-foreground: hsl(20 14% 9%);
+	--color-sidebar-ring: hsl(11 100% 60%);
+}
+
+:root {
+	color-scheme: dark;
 	scroll-behavior: smooth;
+	/* Fonts the embedded components inherit (the app sets these in its own :root). */
+	--ui-font: var(--font-body);
+	--code-font: var(--font-mono);
+	/* Default-button gradient + glow, matching the desktop default button. */
+	--flame-gradient: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep));
+	--btn-primary-shadow: 0 2px 8px -3px hsl(11 100% 55% / 0.5);
 	background: var(--color-base);
 }
 
@@ -124,25 +221,11 @@ body {
 	animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-@keyframes float-window {
-	0%,
-	100% {
-		transform: translateY(0) rotate(0.4deg);
-	}
-	50% {
-		transform: translateY(-10px) rotate(0.4deg);
-	}
-}
-.float-window {
-	animation: float-window 7s ease-in-out infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
 	html {
 		scroll-behavior: auto;
 	}
-	.reveal,
-	.float-window {
+	.reveal {
 		animation: none;
 		opacity: 1;
 	}

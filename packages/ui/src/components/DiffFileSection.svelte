@@ -2141,7 +2141,7 @@
 			<span
 				bind:this={pathEl}
 				class={[
-					'flex min-w-0 flex-1 items-center overflow-hidden font-mono text-xs whitespace-nowrap',
+					'flex min-w-0 flex-1 items-center overflow-hidden text-xs whitespace-nowrap',
 					isSeen && 'text-muted-foreground'
 				]}
 				title={file.path}
