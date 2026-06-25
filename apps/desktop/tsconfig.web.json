@@ -15,7 +15,7 @@
 		"allowSyntheticDefaultImports": true,
 		"forceConsistentCasingInFileNames": true,
 		"paths": {
-			"$lib/*": ["./src/renderer/src/lib/*"],
+			"@super-review/ui/*": ["../../packages/ui/src/*"],
 			"@shared/*": ["./src/shared/*"]
 		}
 	},

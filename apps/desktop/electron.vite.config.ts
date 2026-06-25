@@ -59,7 +59,12 @@ export default defineConfig({
 		},
 		resolve: {
 			alias: {
-				$lib: resolve(__dirname, 'src/renderer/src/lib'),
+				// The renderer UI now lives in the `@super-review/ui` workspace package
+				// (packages/ui), shipped as TS/Svelte source. Its files import each
+				// other via the `@super-review/ui/...` specifier, so we alias it
+				// straight at the package source for the renderer build (rather than
+				// resolving through node_modules) to keep HMR and source paths intact.
+				'@super-review/ui': resolve(__dirname, '../../packages/ui/src'),
 				'@shared': resolve(__dirname, 'src/shared')
 			}
 		},
