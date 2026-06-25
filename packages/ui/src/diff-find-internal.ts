@@ -3,15 +3,9 @@
 // bookkeeping over the rendered diff DOM, not reactive UI state, so they stay
 // ordinary Maps. The reactive `find` state lives in diff-find.svelte.ts.
 
-// One entry per file path → list of match positions inside the searchable
-// text we derive from `cached.patch`. The same algorithm is used to walk
-// the file's DOM when we need to paint, so the Nth match in DOM aligns with
-// the Nth match here.
-export interface PatchMatch {
-	start: number;
-	end: number;
-}
-export const matchesByFile = new Map<string, PatchMatch[]>();
+// The per-file match index (counts + flat-index mapping) now lives in the
+// incremental FindIndex (diff-find-index.ts); this module only holds the
+// DOM-bound registries below.
 
 export interface RegisteredSection {
 	sectionEl: HTMLElement;
@@ -32,9 +26,12 @@ export interface RegisteredSection {
 export const sections = new Map<string, RegisteredSection>();
 
 // Per-file Range cache used by the "all matches" yellow highlight. Keyed by
-// file path; tagged with the renderEpoch it was built against.
+// file path; tagged with the renderEpoch AND the query signature it was built
+// against, so a query change (which doesn't bump the epoch) still forces a
+// rebuild instead of leaving stale ranges from the previous search.
 export interface BuiltRanges {
 	epoch: number;
+	querySig: string;
 	ranges: Range[];
 }
 export const builtRanges = new Map<string, BuiltRanges>();

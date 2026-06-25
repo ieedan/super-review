@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { mount, unmount, onDestroy, onMount } from 'svelte';
+	import { mount, unmount, onDestroy, onMount, untrack } from 'svelte';
 	import Check from '@lucide/svelte/icons/check';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -677,19 +677,40 @@
 	// FRAME_BUDGET_MS render scheduler queue. Without this fast lane, the
 	// target file's render sits behind every other file that scrollIntoView
 	// happened to sweep into the IntersectionObserver margin.
+	// Value-stable file path. A `$derived` is memoized by `===`, so when the
+	// parent hands us a *fresh* `file` object with the SAME path — which happens
+	// on every changed-files refresh (window focus, polling, any git op
+	// reassigns `app.changedFiles` with new objects) — this does NOT change.
+	// Reading `file.path` directly in the registration effect below instead made
+	// that effect re-run on every such refresh, tearing down and re-creating the
+	// find registration with `renderEpoch: 0` while the diff DOM stayed painted —
+	// so find decided the rendered file was unrendered and silently stopped
+	// building highlights (the "1 of N but nothing highlighted, works after I
+	// switch back" bug). Depending on the stable path keeps registration tied to
+	// the section's actual lifetime.
+	const findSectionPath = $derived(file.path);
+
 	$effect(() => {
-		if (!section) return;
-		const unregister = registerFindSection(file.path, section, {
-			renderIfNeeded: forceRenderForFind
-		});
-		return unregister;
+		const sec = section;
+		const path = findSectionPath;
+		if (!sec) return;
+		// `untrack`: registerFindSection reads `find.open`/`find.query` (to fold an
+		// already-active search's matches in on mount). Without untrack, this effect
+		// would TRACK those, so every keystroke (find.query changing) would re-run
+		// it — tearing down and re-registering the section with renderEpoch reset to
+		// 0 while the diff DOM stays painted, so find decides the file is unrendered
+		// and stops highlighting. We only want to (re)register when the section
+		// element or its path actually changes.
+		return untrack(() => registerFindSection(path, sec, { renderIfNeeded: forceRenderForFind }));
 	});
 
-	// Mirror `inView` into the find controller so it knows which file sections
-	// have live DOM to paint yellow "all-match" highlights into. Out-of-view
-	// sections get their highlights dropped.
+	// Mirror `inView` into the find controller. Same untrack rationale: the
+	// notify reads find state, which we don't want this effect to depend on — it
+	// should re-run only when `inView` (or the path) changes.
 	$effect(() => {
-		notifySectionState(file.path, { inView });
+		const v = inView;
+		const path = findSectionPath;
+		untrack(() => notifySectionState(path, { inView: v }));
 	});
 
 	// Scroll a specific callout's note into view when the sidebar requests it and
@@ -1062,6 +1083,18 @@
 	// Pierre's shadow root for the current diff (where the gutter cells live).
 	function stagingRoot(): ShadowRoot | null {
 		return diffContainer?.shadowRoot ?? null;
+	}
+
+	// Pierre's onPostRender hook — fires after the first (plain-text) render AND
+	// after the async worker rerender that swaps in syntax-highlighted nodes. Both
+	// rebuild the shadow DOM, so besides re-applying the staging gutters we tell
+	// the find controller its cached highlight Ranges for this file just dangled
+	// (their text nodes were replaced) and it should re-walk + repaint. Without
+	// this, find's yellow/orange highlights vanish the instant the highlight worker
+	// returns and only come back on a full re-render (e.g. switching tabs).
+	function onPierrePostRender(): void {
+		applyStagingControls();
+		notifySectionState(file.path, { bumpRenderEpoch: true });
 	}
 
 	// Called after each Pierre render/rerender: (re)inject the controls, ensure
@@ -1454,7 +1487,7 @@
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
 				// rerender, so re-apply each time.
-				onPostRender: applyStagingControls
+				onPostRender: onPierrePostRender
 			},
 			// Highlight + diff-AST work runs on the shared worker pool so the main
 			// thread stays responsive; FileDiff paints plain text first, then
@@ -1544,6 +1577,16 @@
 	// false when data hasn't been fetched and we have nothing to render yet.
 	function forceRenderForFind(): boolean {
 		if (host == null) return false;
+		// Never render into a hidden host. A collapsed file we were just asked to
+		// jump to is wrapped in `hidden={!expanded}`; if the caller invokes this in
+		// the same tick it flips `expanded`, the wrapper is still `display:none` and
+		// Pierre measures the container at 0×0 — producing a blank diff that never
+		// recovers (renderedKey is set, so the render effect won't re-run). Bail so
+		// the normal render effect paints it once the wrapper is actually shown.
+		// `offsetParent === null` is display:none specifically; the prerender
+		// neighbours use visibility:hidden (offsetParent stays set), where Pierre
+		// measures fine, so those still take the fast lane.
+		if (host.offsetParent === null) return false;
 		let data = diffData;
 		let ctxKey = loadedCtxKey;
 		if (data == null && app.activeRepo) {
@@ -1564,6 +1607,15 @@
 		cancelPendingRender = null;
 		renderDiff(data);
 		renderedKey = target;
+		// Mark the reload token applied. A section whose lazy-fetch effect has
+		// never run still has appliedReloadToken === -1, so its first run computes
+		// `forced = reloadToken !== -1 = true` and clearLoadedDiff()s — throwing
+		// away the diff we just rendered from cache, then re-rendering it through
+		// the (slower, scheduled) path. That double-render is exactly the lag find
+		// is trying to avoid by rendering synchronously here. Claiming the token
+		// lets the fetch effect treat this data as current (a silent background
+		// revalidate at most), so the synchronous render survives.
+		if (appliedReloadToken === -1) appliedReloadToken = app.diffReloadToken;
 		notifySectionState(file.path, { bumpRenderEpoch: true });
 		return true;
 	}
@@ -1678,6 +1730,10 @@
 				cancelPendingRender = null;
 				disposeDiff();
 				renderedKey = null;
+				// The diff DOM is gone — tell find so it drops this file's now-dangling
+				// highlight Ranges. Find gates on renderEpoch (not inView), so a bump is
+				// what signals "the DOM you cached ranges against no longer exists".
+				notifySectionState(file.path, { bumpRenderEpoch: true });
 			}
 			return;
 		}

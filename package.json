@@ -20,6 +20,7 @@
 		"changeset:version": "changeset version && pnpm install --lockfile-only && pnpm format",
 		"ci:release": "pnpm build:cli && changeset publish",
 		"typecheck": "pnpm -r typecheck",
+		"test": "pnpm -r --if-present test",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint ."
 	},

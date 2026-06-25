@@ -1,6 +1,6 @@
 name: CI
 
-# Lint, type-check and build on every PR so a release tag can't be cut
+# Lint, type-check, test and build on every PR so a release tag can't be cut
 # against a broken tree. This does not package or publish — that's release.yml.
 on:
   pull_request:
@@ -32,3 +32,29 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The @super-review/ui browser tests (find/highlighting) run in real
+      # Chromium via Playwright; install just that browser + its OS deps.
+      - name: Install Playwright Chromium
+        run: pnpm --filter @super-review/ui exec playwright install --with-deps chromium
+
+      - name: Test
+        run: pnpm test
