@@ -1,0 +1,53 @@
+{
+	"name": "@super-review/ui",
+	"version": "0.0.1",
+	"description": "Shared Svelte UI components and renderer state for super-review (consumed by the desktop app and future sites)",
+	"type": "module",
+	"private": true,
+	"license": "MIT",
+	"exports": {
+		"./*": "./src/*"
+	},
+	"scripts": {
+		"typecheck": "svelte-check --tsconfig tsconfig.json"
+	},
+	"dependencies": {
+		"@cartamd/plugin-code": "^4.2.0",
+		"@cartamd/plugin-emoji": "^4.3.0",
+		"@cartamd/plugin-slash": "^4.2.0",
+		"@chenglou/pretext": "^0.0.7",
+		"@iconify-json/material-icon-theme": "^1.2.66",
+		"@iconify/svelte": "^5.2.1",
+		"@lucide/svelte": "^1.17.0",
+		"@pierre/diffs": "^1.2.3",
+		"@super-review/core": "workspace:*",
+		"bits-ui": "^2.18.1",
+		"carta-md": "^4.11.2",
+		"clsx": "^2.1.1",
+		"d3-time": "^3.1.0",
+		"dompurify": "^3.4.7",
+		"layerchart": "2.0.0-next.65",
+		"marked": "^18.0.4",
+		"node-emoji": "^2.2.0",
+		"paneforge": "^1.0.2",
+		"picomatch": "^4.0.4",
+		"runed": "^0.37.1",
+		"svelte-tiny-virtual-list": "^3.0.1",
+		"tailwind-merge": "^2.6.0",
+		"tailwind-variants": "^3.2.2"
+	},
+	"devDependencies": {
+		"@sveltejs/vite-plugin-svelte": "^5.0.3",
+		"@tsconfig/svelte": "^5.0.4",
+		"@types/d3-time": "^3.0.4",
+		"@types/picomatch": "^4.0.3",
+		"svelte": "^5.16.6",
+		"svelte-check": "^4.1.4",
+		"tailwindcss": "^4.1.7",
+		"typescript": "^5.7.3",
+		"vite": "^6.0.7"
+	},
+	"peerDependencies": {
+		"svelte": "^5.16.6"
+	}
+}

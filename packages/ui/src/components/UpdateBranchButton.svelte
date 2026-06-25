@@ -1,0 +1,42 @@
+<script lang="ts">
+	import GitMerge from '@lucide/svelte/icons/git-merge';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import { Button } from './ui/button';
+	import { actions, app } from '@super-review/ui/store.svelte';
+	import { cn } from '@super-review/ui/utils';
+
+	const status = $derived(app.pushStatus);
+	// How many commits the default branch is ahead of this one. >0 means the
+	// branch is out of date and "Update from <default>" has something to merge.
+	const behind = $derived(status?.behindDefault ?? 0);
+	const defaultBranch = $derived(app.activeRepo?.defaultBranch ?? 'main');
+
+	// Spin ONLY for this button's own update-from-default operation. The shared
+	// push state's `intent` is 'pull' for a plain pull and an upstream sync too,
+	// so keying on intent would light this button up for those unrelated actions;
+	// `op === 'update'` is set solely by updateFromDefault. While stage is
+	// 'conflicts' the merge is paused on the conflict dialog — don't spin.
+	const updating = $derived(
+		app.push.inProgress && app.push.op === 'update' && app.push.stage !== 'conflicts'
+	);
+
+	const title = $derived(
+		`Update from ${defaultBranch} (${behind} commit${behind === 1 ? '' : 's'} behind)`
+	);
+
+	function click(): void {
+		void actions.updateFromDefault();
+	}
+</script>
+
+{#if app.activeRepo && behind > 0}
+	<Button variant="outline" size="sm" disabled={app.push.inProgress} onclick={click} {title}>
+		{#if updating}
+			<Loader2 class={cn('size-3.5 animate-spin')} />
+			<span class="text-xs">Updating…</span>
+		{:else}
+			<GitMerge class="size-3.5" />
+			<span class="text-xs">Update branch</span>
+		{/if}
+	</Button>
+{/if}

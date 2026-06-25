@@ -9,7 +9,11 @@
 		".": "./src/index.ts",
 		"./types": "./src/types.ts",
 		"./media": "./src/media.ts",
-		"./hotkeys": "./src/hotkeys.ts"
+		"./hotkeys": "./src/hotkeys.ts",
+		"./diff-context": "./src/diff-context.ts",
+		"./diff-defer": "./src/diff-defer.ts",
+		"./diff-staging": "./src/diff-staging.ts",
+		"./session-manifest": "./src/session-manifest.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit"
