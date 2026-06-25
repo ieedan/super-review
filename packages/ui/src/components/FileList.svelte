@@ -1171,8 +1171,8 @@
 						<Kbd title="Press / to search">/</Kbd>
 					{/if}
 				</div>
-				<!-- Collapse every already-seen file's diff at once. Disabled until at
-		         least one file is seen. Hidable via the controls row's menu. -->
+				<!-- Collapse every already-seen file's diff at once. No-ops when nothing
+		         is seen, so it's always clickable. Hidable via the controls row's menu. -->
 				{#if app.sidebarControls.collapseSeen}
 					<Button
 						variant="outline"
@@ -1180,7 +1180,6 @@
 						class="shrink-0 text-muted-foreground"
 						title="Collapse all seen"
 						aria-label="Collapse all seen"
-						disabled={seenCount === 0}
 						onclick={() => void actions.collapseSeenFiles()}
 					>
 						<FoldVertical class="size-3.5" />
