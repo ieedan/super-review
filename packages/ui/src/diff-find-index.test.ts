@@ -124,7 +124,7 @@ describe('FindIndex correctness', () => {
 		idx.addFile('c.ts', files[2].patch);
 		expect(idx.matchCount).toBeGreaterThanOrEqual(0);
 		idx.addFile('b.ts', files[1].patch);
-		idx.matchCount;
+		expect(idx.matchCount).toBeGreaterThanOrEqual(0); // force a rebuild mid-stream
 		idx.addFile('a.ts', files[0].patch);
 
 		const ref = bruteForce(files, 'widget', false);

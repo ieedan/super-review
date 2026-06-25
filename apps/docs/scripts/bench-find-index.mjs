@@ -46,15 +46,18 @@ for (const [N, hunk] of [
 	idx.setOrder(files.map((f) => f.path));
 	idx.setQuery('widget', false);
 	t = performance.now();
+	let warm = 0;
 	for (let k = 0; k < N; k++) {
 		idx.addFile(files[k].path, files[k].patch);
-		if (k % 10 === 0) idx.matchCount;
+		// Force the lazy rebuild periodically, mirroring the throttled UI reading
+		// the count during preload.
+		if (k % 10 === 0) warm += idx.matchCount;
 	}
 	const total = idx.matchCount;
 	const newPreloadMs = performance.now() - t;
 	t = performance.now();
 	idx.setQuery('widget', false);
-	idx.matchCount;
+	warm += idx.matchCount;
 	const newQueryMs = performance.now() - t;
 	const stride = Math.max(1, (total / 100000) | 0);
 	t = performance.now();
@@ -71,6 +74,6 @@ for (const [N, hunk] of [
 	);
 	console.log(`   NEW query change (rescan)    = ${newQueryMs.toFixed(0)}ms`);
 	console.log(
-		`   NEW ${(total / stride) | 0} matchAt() lookups = ${navMs.toFixed(1)}ms (${sink} ok)`
+		`   NEW ${(total / stride) | 0} matchAt() lookups = ${navMs.toFixed(1)}ms (${sink} ok, ${warm} warm)`
 	);
 }

@@ -202,6 +202,7 @@
 	// `inView` on their own here. Drive it deterministically from geometry: this
 	// mirrors what the real IntersectionObserver does in Electron (600px margin),
 	// so the find code paths run against accurate inView state. Harness-only.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const lastInView = new Map<HTMLElement, boolean>();
 	function syncInViewFromGeometry(): void {
 		const sc = document.querySelector('.overflow-auto') as HTMLElement | null;

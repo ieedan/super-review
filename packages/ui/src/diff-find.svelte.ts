@@ -13,7 +13,7 @@ import { actions, app, getCachedDiff, setCachedDiff } from '@super-review/ui/sto
 import { diffContextKey } from '@super-review/core/diff-context';
 import type { ChangedFile, DiffContext, DiffData } from '@super-review/core/types';
 import { sections, builtRanges, renderWaiters } from '@super-review/ui/diff-find-internal';
-import { FindIndex, searchText } from '@super-review/ui/diff-find-index';
+import { FindIndex } from '@super-review/ui/diff-find-index';
 
 // The incremental match index: counts matches across every cached file's patch
 // text without rebuilding from scratch on every preload completion, and maps
@@ -450,6 +450,8 @@ function refreshAllInViewHighlights(): void {
 // the user scrolls — so on a big change set most matches live in files whose
 // section doesn't exist yet. Navigation asks the view to reveal the file (which
 // grows the window), then parks here until registerFindSection mounts it.
+// Plain Map: non-reactive imperative bookkeeping, not UI state.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
 const sectionWaiters = new Map<string, Array<() => void>>();
 
 function waitForSectionRegistered(filePath: string): Promise<void> {
