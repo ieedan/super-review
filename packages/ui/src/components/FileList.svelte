@@ -1458,10 +1458,12 @@
 
 	{#if app.contextTab === 'unstaged' && !app.stashView}
 		<Sidebar.Footer bind:ref={footerEl} class="absolute inset-x-0 bottom-0 z-20 gap-0 p-0">
+			<CommitNotices />
 			{#if app.stash}
 				<!-- The branch's managed stash: click to enter the stash view (its
-             diff + Restore/Discard actions). Sits above the commit box, like
-             GitHub Desktop's "Stashed Changes" entry. -->
+             diff + Restore/Discard actions). Sits directly above the commit
+             box, like GitHub Desktop's "Stashed Changes" entry, with nothing
+             (e.g. the changeset notice) between it and the commit box. -->
 				<button
 					type="button"
 					class="flex w-full items-center gap-2 border-t border-border bg-card/75 px-3 py-2 text-left text-sm backdrop-blur-md hover:bg-accent/50"
@@ -1476,7 +1478,6 @@
 					<ChevronRight class="size-4 shrink-0 text-muted-foreground" />
 				</button>
 			{/if}
-			<CommitNotices />
 			<CommitBox />
 		</Sidebar.Footer>
 	{/if}
