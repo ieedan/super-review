@@ -41,6 +41,7 @@ import type {
 	HeaderItemVisibility,
 	FileHeaderItemVisibility,
 	SidebarTabVisibility,
+	SidebarControlVisibility,
 	TerminalKind,
 	UserPrefs,
 	ViewMode
@@ -49,6 +50,7 @@ import {
 	DEFAULT_FILE_HEADER_ITEMS,
 	DEFAULT_HEADER_ITEMS,
 	DEFAULT_SIDEBAR_TABS,
+	DEFAULT_SIDEBAR_CONTROLS,
 	WINDOW_BOUNDS
 } from '@super-review/core/types';
 import { diffContextKey, reviewContextKey } from '@super-review/core/diff-context';
@@ -288,6 +290,9 @@ interface AppState {
 	// Visibility of the optional sidebar tabs (Sessions, History), toggled from
 	// the tab strip's right-click menu.
 	sidebarTabs: SidebarTabVisibility;
+	// Visibility of the optional sidebar controls-row buttons (collapse-all-seen,
+	// tree/list toggle), toggled from the controls row's right-click menu.
+	sidebarControls: SidebarControlVisibility;
 	// Visibility of the optional per-file diff header controls (editor button,
 	// changed-line counts, Diff/Raw toggle, mark seen), toggled from a file
 	// header's right-click menu.
@@ -772,6 +777,7 @@ const initial: AppState = {
 	hotkeys: DEFAULT_HOTKEYS,
 	headerItems: { ...DEFAULT_HEADER_ITEMS },
 	sidebarTabs: { ...DEFAULT_SIDEBAR_TABS },
+	sidebarControls: { ...DEFAULT_SIDEBAR_CONTROLS },
 	fileHeaderItems: { ...DEFAULT_FILE_HEADER_ITEMS },
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
@@ -2718,6 +2724,27 @@ export const actions = {
 			sidebarTabs: { ...app.sidebarTabs }
 		});
 	},
+
+	// Show/hide a single optional sidebar controls-row button (collapse-all-seen,
+	// tree/list toggle) from the controls row's right-click menu. Updates the
+	// local copy first so the row reacts instantly, then persists the merged map.
+	async setSidebarControl(key: keyof SidebarControlVisibility, value: boolean): Promise<void> {
+		app.sidebarControls = { ...app.sidebarControls, [key]: value };
+		app.prefs = await window.api.state.setPrefs({
+			sidebarControls: { ...app.sidebarControls }
+		});
+	},
+
+	// Collapse every already-seen file's diff in the current context at once.
+	// Backs the sidebar's "Collapse all seen" button. No-op when nothing's seen.
+	async collapseSeenFiles(): Promise<void> {
+		if (!app.activeRepo) return;
+		const paths = app.changedFiles.filter((f) => app.seenFiles.has(f.path)).map((f) => f.path);
+		if (paths.length === 0) return;
+		for (const p of paths) app.collapsedFiles.add(p);
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		await window.api.state.setFilesCollapsed(app.activeRepo.id, reviewContextKey(ctx), paths, true);
+	},
 	async setChangesetsEnabled(value: boolean): Promise<void> {
 		app.changesetsEnabled = value;
 		app.prefs = await window.api.state.setPrefs({ changesetsEnabled: value });
@@ -2818,6 +2845,7 @@ export const actions = {
 		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
 		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
 		app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...app.prefs.sidebarTabs };
+		app.sidebarControls = { ...DEFAULT_SIDEBAR_CONTROLS, ...app.prefs.sidebarControls };
 		app.fileHeaderItems = { ...DEFAULT_FILE_HEADER_ITEMS, ...app.prefs.fileHeaderItems };
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);

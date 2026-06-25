@@ -2,6 +2,7 @@ import Store from 'electron-store';
 import {
 	DEFAULT_FILE_HEADER_ITEMS,
 	DEFAULT_HEADER_ITEMS,
+	DEFAULT_SIDEBAR_CONTROLS,
 	WINDOW_BOUNDS,
 	type ChangedFile,
 	type CommitDraft,
@@ -100,7 +101,8 @@ const defaults: Schema = {
 		changesetsEnabled: true,
 		signCommits: true,
 		headerItems: DEFAULT_HEADER_ITEMS,
-		fileHeaderItems: DEFAULT_FILE_HEADER_ITEMS
+		fileHeaderItems: DEFAULT_FILE_HEADER_ITEMS,
+		sidebarControls: DEFAULT_SIDEBAR_CONTROLS
 	},
 	seen: {},
 	collapsedFiles: {},
@@ -323,6 +325,8 @@ export function getPrefs(): UserPrefs {
 	merged.headerItems = { ...defaults.prefs.headerItems, ...merged.headerItems };
 	// And for the per-file diff header controls.
 	merged.fileHeaderItems = { ...defaults.prefs.fileHeaderItems, ...merged.fileHeaderItems };
+	// And for the sidebar controls-row buttons.
+	merged.sidebarControls = { ...defaults.prefs.sidebarControls, ...merged.sidebarControls };
 	return merged;
 }
 
@@ -390,6 +394,21 @@ export function setFileCollapsed(
 	const forCtx = new Set(forRepo[contextKey] ?? []);
 	if (collapsed) forCtx.add(filePath);
 	else forCtx.delete(filePath);
+	forRepo[contextKey] = [...forCtx];
+	flush();
+}
+
+export function setFilesCollapsed(
+	repoId: string,
+	contextKey: string,
+	filePaths: string[],
+	collapsed: boolean
+): void {
+	const all = db().collapsedFiles;
+	const forRepo = (all[repoId] ??= {});
+	const forCtx = new Set(forRepo[contextKey] ?? []);
+	if (collapsed) for (const p of filePaths) forCtx.add(p);
+	else for (const p of filePaths) forCtx.delete(p);
 	forRepo[contextKey] = [...forCtx];
 	flush();
 }
