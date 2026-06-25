@@ -19,7 +19,3 @@ apps/docs/build/
 # frozen snapshots; they travel with the PR for review but aren't hand-edited,
 # so don't gate them on our formatting rules.
 .super-review/
-
-# Generated find-debug fixtures (apps/docs/scripts/gen-find-fixtures.mjs) — a
-# large machine-written JSON, not hand-edited.
-apps/docs/src/lib/find-fixtures.json

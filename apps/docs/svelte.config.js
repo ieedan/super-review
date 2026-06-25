@@ -8,11 +8,6 @@ const config = {
 	},
 	kit: {
 		adapter: adapter(),
-		// The /debug/find harness imports the shared UI package by its source.
-		// Runtime resolution works via the workspace link, but svelte-check needs
-		// the alias to find the type declarations (same mapping the desktop app's
-		// tsconfig uses). Adding it here also generates the path into
-		// .svelte-kit/tsconfig.json.
 		alias: { '@super-review/ui': '../../packages/ui/src' }
 	}
 };
