@@ -8,16 +8,20 @@
 // freeze, which came from a global mutation observer re-walking every diff's
 // shadow DOM as Pierre streamed shiki tokens.
 
+import { tick, untrack } from 'svelte';
 import { actions, app, getCachedDiff, setCachedDiff } from '@super-review/ui/store.svelte';
 import { diffContextKey } from '@super-review/core/diff-context';
 import type { ChangedFile, DiffContext, DiffData } from '@super-review/core/types';
-import {
-	matchesByFile,
-	sections,
-	builtRanges,
-	renderWaiters,
-	type PatchMatch
-} from '@super-review/ui/diff-find-internal';
+import { sections, builtRanges, renderWaiters } from '@super-review/ui/diff-find-internal';
+import { FindIndex, searchText } from '@super-review/ui/diff-find-index';
+
+// The incremental match index: counts matches across every cached file's patch
+// text without rebuilding from scratch on every preload completion, and maps
+// `find.currentIndex` ⇄ (file, idxInFile) without materialising a flat array.
+// See diff-find-index.ts for the why (it's the fix for the "falls over on big
+// change sets" performance cliff). Exported under a debug name for the harness.
+const matchIndex = new FindIndex();
+export const _findIndex = matchIndex;
 
 const ALL_HIGHLIGHT = 'sr-find-match';
 const CURRENT_HIGHLIGHT = 'sr-find-current';
@@ -56,24 +60,50 @@ export const find = $state<FindState>({
 	indexEpoch: 0
 });
 
-// Order matters: navigation walks files in `app.changedFiles` order. We
-// snapshot the list whenever we recompute so a render-during-recompute can't
-// scramble indices.
-let fileOrder: string[] = [];
-
-// Flat (filePath, idxInFile) list — what `find.currentIndex` indexes into.
-interface FlatMatch {
-	filePath: string;
-	idxInFile: number;
-}
-let flatMatches: FlatMatch[] = [];
-
 let allHL: HighlightLike | null = null;
 let currentHL: HighlightLike | null = null;
 let highlightSheet: CSSStyleSheet | null = null;
-const styledShadowRoots = new WeakSet<ShadowRoot>();
 
 let scrollContainer: HTMLElement | null = null;
+
+// Monotonic token bumped at the start of every navigation (sync or async).
+// Each async navigateTo captures the value and bails after its awaits if a
+// newer navigation has superseded it. Without this, mashing Next fires a burst
+// of overlapping async navigations that each clear-then-add the orange "current"
+// highlight across an await boundary, leaving several stale pins painted at once
+// (and sometimes none). The token makes "last navigation wins" — exactly one pin.
+let navToken = 0;
+
+// Stable identity of the current match: its file + char offset in that file's
+// searchable text. `find.currentIndex` is just a flat position, which shifts
+// whenever preload folds a new matching file in ahead of the current one — so we
+// track the underlying (file, start) and re-derive the flat index after the
+// index changes, keeping the orange pin glued to the same match instead of
+// jumping. Reset when there's no current match.
+let currentFile: string | null = null;
+let currentStart = -1;
+
+function recordCurrent(
+	index: number,
+	target: { filePath: string; idxInFile: number } | null
+): void {
+	find.currentIndex = index;
+	if (!target) {
+		currentFile = null;
+		currentStart = -1;
+		return;
+	}
+	const m = matchIndex.matchesForFile(target.filePath)[target.idxInFile];
+	currentFile = target.filePath;
+	currentStart = m ? m.start : -1;
+}
+
+function clearCurrent(): void {
+	getHighlights()?.current.clear();
+	find.currentIndex = -1;
+	currentFile = null;
+	currentStart = -1;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Custom Highlight API plumbing
@@ -115,63 +145,36 @@ function getHighlightSheet(): CSSStyleSheet | null {
 	}
 }
 
+// Make sure this shadow root carries the `::highlight()` style. The Custom
+// Highlight API registers highlights document-globally, but they only PAINT
+// inside a shadow tree whose own stylesheets define the `::highlight()` rule —
+// so every diff's shadow root needs our sheet.
+//
+// Critically, we must NOT trust a "styled once" flag here: Pierre REPLACES the
+// shadow root's `adoptedStyleSheets` on its async worker rerender (it owns that
+// array for its diff theme), which silently drops our sheet. The old WeakSet
+// guard then skipped re-adding it, leaving valid highlight Ranges completely
+// invisible until a full re-render — the "1 of N but nothing highlighted, comes
+// back when I switch tabs" bug. So we re-verify membership every call (cheap: an
+// array `includes`) and re-add if it's gone.
 function ensureShadowHighlightStyle(shadow: ShadowRoot): void {
-	if (styledShadowRoots.has(shadow)) return;
 	const sheet = getHighlightSheet();
 	if (sheet) {
 		try {
-			shadow.adoptedStyleSheets = [...shadow.adoptedStyleSheets, sheet];
-			styledShadowRoots.add(shadow);
+			if (!shadow.adoptedStyleSheets.includes(sheet)) {
+				shadow.adoptedStyleSheets = [...shadow.adoptedStyleSheets, sheet];
+			}
 			return;
 		} catch {
-			// fall through
+			// adoptedStyleSheets unsupported — fall through to the <style> element.
 		}
 	}
-	const styleEl = document.createElement('style');
-	styleEl.setAttribute('data-sr-find', '');
-	styleEl.textContent = HIGHLIGHT_CSS;
-	shadow.appendChild(styleEl);
-	styledShadowRoots.add(shadow);
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Patch parsing — pulls just the code text out of a unified diff. Excludes
-// hunk headers ("@@ … @@") and the "\ No newline at end of file" marker.
-// The leading +/-/space prefix is stripped so the user's search query matches
-// the visible code, not the diff metadata.
-
-function buildSearchableFromPatch(patch: string): string {
-	const lines = patch.split('\n');
-	const out: string[] = [];
-	let inHunk = false;
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i];
-		if (line.startsWith('@@ ')) {
-			inHunk = true;
-			continue;
-		}
-		if (!inHunk) continue;
-		if (line.startsWith('\\')) continue;
-		const ch = line.length > 0 ? line[0] : '';
-		if (ch === '+' || ch === '-' || ch === ' ') out.push(line.slice(1));
-		else out.push(line);
+	if (!shadow.querySelector('style[data-sr-find]')) {
+		const styleEl = document.createElement('style');
+		styleEl.setAttribute('data-sr-find', '');
+		styleEl.textContent = HIGHLIGHT_CSS;
+		shadow.appendChild(styleEl);
 	}
-	return out.join('\n');
-}
-
-function searchPatch(text: string, query: string, caseSensitive: boolean): PatchMatch[] {
-	if (!query) return [];
-	const hay = caseSensitive ? text : text.toLowerCase();
-	const needle = caseSensitive ? query : query.toLowerCase();
-	const results: PatchMatch[] = [];
-	let idx = 0;
-	while (true) {
-		const f = hay.indexOf(needle, idx);
-		if (f < 0) break;
-		results.push({ start: f, end: f + needle.length });
-		idx = f + Math.max(needle.length, 1);
-	}
-	return results;
 }
 
 function getCachedDiffFor(filePath: string): DiffData | null {
@@ -181,30 +184,37 @@ function getCachedDiffFor(filePath: string): DiffData | null {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Index rebuild — recompute matches across every cached file.
+// Index maintenance. The heavy lifting lives in the incremental FindIndex; here
+// we just drive it from the store. `rebuildIndex` is the full-rescan path used
+// when the query or file set changes; `addFileToIndex` is the cheap incremental
+// path preload and lazy section loads use as each file's patch lands.
 
-function recomputeIndex(): void {
-	matchesByFile.clear();
-	fileOrder = app.changedFiles.map((f) => f.path);
-	flatMatches = [];
-	if (!find.query) {
-		find.matchCount = 0;
-		find.currentIndex = -1;
-		return;
-	}
-	for (const path of fileOrder) {
-		const d = getCachedDiffFor(path);
-		if (!d) continue;
-		const text = buildSearchableFromPatch(d.patch);
-		const matches = searchPatch(text, find.query, find.caseSensitive);
-		if (matches.length === 0) continue;
-		matchesByFile.set(path, matches);
-		for (let i = 0; i < matches.length; i++) {
-			flatMatches.push({ filePath: path, idxInFile: i });
+// Re-seed the index from the current changed-files order + query, folding in
+// every file that's already in the diff cache. The per-file searchable text is
+// cached inside FindIndex, so a query change only re-runs indexOf (no patch
+// re-parsing), and folding in already-known files is a no-op rescan.
+function rebuildIndex(): void {
+	matchIndex.setOrder(app.changedFiles.map((f) => f.path));
+	matchIndex.setQuery(find.query, find.caseSensitive);
+	if (find.query) {
+		for (const f of app.changedFiles) {
+			if (matchIndex.hasFile(f.path)) continue;
+			const d = getCachedDiffFor(f.path);
+			if (d) matchIndex.addFile(f.path, d.patch);
 		}
 	}
-	find.matchCount = flatMatches.length;
+	find.matchCount = matchIndex.matchCount;
 	find.indexEpoch++;
+}
+
+// Fold a single newly-cached file into the index — O(that file), not O(all
+// files). Called per preload completion / lazy section load so a burst of those
+// doesn't trigger a full rescan.
+function addFileToIndex(filePath: string): void {
+	if (!find.open || !find.query) return;
+	if (matchIndex.hasFile(filePath)) return;
+	const d = getCachedDiffFor(filePath);
+	if (d) matchIndex.addFile(filePath, d.patch);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -349,8 +359,9 @@ function rangeFor(segments: NodeSegment[], start: number, end: number): Range | 
 }
 
 // Walk one file section's shadow DOM, search for the query, return one Range
-// per match. The Nth Range here corresponds 1-1 with the Nth entry in
-// matchesByFile[filePath] because both walk the same code text.
+// per match. The Nth Range here corresponds to the Nth match the FindIndex
+// counted for this file (both scan the file's code text). See diff-find-index.ts
+// for the caveat that git-patch context and Pierre's rendered context can differ.
 function buildRangesForSection(filePath: string): Range[] {
 	const reg = sections.get(filePath);
 	if (!reg || !find.query) return [];
@@ -389,31 +400,43 @@ function dropFileRanges(filePath: string): void {
 	builtRanges.delete(filePath);
 }
 
+// Signature of the current search, so a cached range set built for a different
+// query/case is treated as stale even when the render epoch is unchanged.
+function querySig(): string {
+	return `${find.caseSensitive ? 's' : 'i'} ${find.query}`;
+}
+
 // Build (or refresh) yellow highlights for one file. No-op if the file's
-// existing build matches the current renderEpoch.
+// existing build matches the current render epoch AND query. We gate on
+// `renderEpoch > 0` (the section has rendered DOM to walk), NOT on the mirrored
+// `inView` flag: that mirror can lag or desync from the real visibility, and
+// when it does, gating on it means find walks nothing and paints zero
+// highlights even though the diff is right there on screen — the "1 of N but
+// nothing highlighted" report. If there's DOM, we can highlight it.
 function refreshFileHighlights(filePath: string): void {
 	const reg = sections.get(filePath);
 	if (!reg) return;
 	const hl = getHighlights();
 	if (!hl) return;
-	if (!find.open || !find.query || !reg.inView) {
+	if (!find.open || !find.query || reg.renderEpoch === 0) {
 		dropFileRanges(filePath);
 		return;
 	}
+	const sig = querySig();
 	const existing = builtRanges.get(filePath);
-	if (existing && existing.epoch === reg.renderEpoch) return;
+	if (existing && existing.epoch === reg.renderEpoch && existing.querySig === sig) return;
 	// Stale build — remove its ranges before re-walking.
 	if (existing) {
 		for (const r of existing.ranges) hl.all.delete(r);
 	}
 	const ranges = buildRangesForSection(filePath);
-	builtRanges.set(filePath, { epoch: reg.renderEpoch, ranges });
+	builtRanges.set(filePath, { epoch: reg.renderEpoch, querySig: sig, ranges });
 	for (const r of ranges) hl.all.add(r);
 }
 
 function refreshAllInViewHighlights(): void {
 	for (const [path, reg] of sections) {
-		if (reg.inView) refreshFileHighlights(path);
+		if (reg.renderEpoch > 0) refreshFileHighlights(path);
 		else dropFileRanges(path);
 	}
 }
@@ -422,10 +445,54 @@ function refreshAllInViewHighlights(): void {
 // Navigation — scrolls the target file into view, expands it if collapsed,
 // waits for its diff to render, then sets the orange current-match highlight.
 
+// Resolvers waiting for a file's section to be MOUNTED (registered). The diff
+// view only mounts the first ~INITIAL_RENDER sections and grows the window as
+// the user scrolls — so on a big change set most matches live in files whose
+// section doesn't exist yet. Navigation asks the view to reveal the file (which
+// grows the window), then parks here until registerFindSection mounts it.
+const sectionWaiters = new Map<string, Array<() => void>>();
+
+function waitForSectionRegistered(filePath: string): Promise<void> {
+	if (sections.has(filePath)) return Promise.resolve();
+	return new Promise((resolve) => {
+		const list = sectionWaiters.get(filePath) ?? [];
+		list.push(resolve);
+		sectionWaiters.set(filePath, list);
+		// Safety net so navigation can't hang if the file never mounts.
+		window.setTimeout(() => {
+			const cur = sectionWaiters.get(filePath);
+			if (!cur) return;
+			const i = cur.indexOf(resolve);
+			if (i >= 0) cur.splice(i, 1);
+			resolve();
+		}, 2000);
+	});
+}
+
+function flushSectionWaiters(filePath: string): void {
+	const list = sectionWaiters.get(filePath);
+	if (!list || list.length === 0) return;
+	sectionWaiters.delete(filePath);
+	for (const fn of list) {
+		try {
+			fn();
+		} catch {
+			// ignore
+		}
+	}
+}
+
 function waitForRender(filePath: string): Promise<void> {
 	const reg = sections.get(filePath);
-	// Already rendered — the section reported a non-zero renderEpoch.
-	if (reg && reg.renderEpoch > 0 && reg.inView) return Promise.resolve();
+	// Already rendered — the section reported a non-zero renderEpoch. We
+	// deliberately don't also require `inView` here: when navigation renders a
+	// scrolled-to file synchronously (forceRenderForFind), the DOM exists
+	// immediately but the IntersectionObserver hasn't flipped `inView` yet, so
+	// gating on it would park this until the 1500ms safety timeout — adding up to
+	// 1.5s of lag (and a "won't apply" window) to every jump to an off-screen
+	// match. renderEpoch alone answers the only question that matters here: is
+	// the DOM built?
+	if (reg && reg.renderEpoch > 0) return Promise.resolve();
 	return new Promise((resolve) => {
 		const list = renderWaiters.get(filePath) ?? [];
 		list.push(resolve);
@@ -464,28 +531,45 @@ function elementForScroll(node: Node): Element | null {
 	return null;
 }
 
+// Resolve the DOM Range for a file's Nth match, (re)walking the section if its
+// cached ranges are stale. Returns null when the file isn't rendered/in view.
+//
+// The match COUNT comes from scanning the cached git patch, but the Ranges come
+// from walking Pierre's rendered DOM — and the two don't always contain the same
+// number of hits (Pierre renders a wider context window than git's patch, and
+// split view duplicates shared context lines). So `idxInFile` can land past the
+// DOM range list; we clamp to the last real range rather than returning null, so
+// the pin always paints *something* on the right file instead of vanishing.
+function rangeForMatch(filePath: string, idxInFile: number): Range | null {
+	const reg = sections.get(filePath);
+	if (!reg || reg.renderEpoch === 0) return null;
+	refreshFileHighlights(filePath);
+	const built = builtRanges.get(filePath);
+	if (!built || built.ranges.length === 0) return null;
+	const i = Math.min(idxInFile, built.ranges.length - 1);
+	return built.ranges[i] ?? null;
+}
+
 // Paint the orange "current" highlight for the match at `index` without
 // touching scroll. Used while the user is typing — yellow highlights update
 // across in-view files, and the current pin moves silently. If the target
-// file isn't rendered (off-screen or never opened), there's no Range to
-// paint, so we just remember the index and let nextMatch/prevMatch fill it
-// in when the user actually navigates.
+// file isn't rendered (off-screen or never opened), there's no Range to paint
+// *yet*: we record the index but DON'T clear the existing pin, so a background
+// index recompute (e.g. as preload folds in more files) can't wipe the pin the
+// user is looking at. nextMatch/prevMatch fill it in on real navigation.
 function paintCurrentNoScroll(index: number): void {
 	const hl = getHighlights();
 	if (!hl) return;
-	hl.current.clear();
-	if (index < 0 || index >= flatMatches.length) {
-		find.currentIndex = -1;
+	const target = matchIndex.matchAt(index);
+	if (!target) {
+		clearCurrent();
 		return;
 	}
-	find.currentIndex = index;
-	const target = flatMatches[index];
-	const reg = sections.get(target.filePath);
-	if (!reg || !reg.inView || reg.renderEpoch === 0) return;
-	refreshFileHighlights(target.filePath);
-	const built = builtRanges.get(target.filePath);
-	const range = built?.ranges[target.idxInFile];
-	if (range) hl.current.add(range);
+	recordCurrent(index, target);
+	const range = rangeForMatch(target.filePath, target.idxInFile);
+	if (!range) return; // keep whatever pin is already painted
+	hl.current.clear();
+	hl.current.add(range);
 }
 
 // Try to navigate to `index` synchronously. Returns true if it handled
@@ -497,32 +581,15 @@ function paintCurrentNoScroll(index: number): void {
 function tryNavigateSync(index: number): boolean {
 	const hl = getHighlights();
 	if (!hl) return false;
-	if (index < 0 || index >= flatMatches.length) return false;
-	const target = flatMatches[index];
+	const target = matchIndex.matchAt(index);
+	if (!target) return false;
 	if (app.collapsedFiles.has(target.filePath)) return false;
-	const reg = sections.get(target.filePath);
-	if (!reg || !reg.inView || reg.renderEpoch === 0) return false;
-	const built = builtRanges.get(target.filePath);
-	if (!built || built.epoch !== reg.renderEpoch) {
-		// Ranges haven't been walked yet for this render — build them now and
-		// keep the path synchronous. The walk is cheap for one file.
-		refreshFileHighlights(target.filePath);
-		const rebuilt = builtRanges.get(target.filePath);
-		if (!rebuilt) return false;
-		const range = rebuilt.ranges[target.idxInFile];
-		if (!range) return false;
-		find.currentIndex = index;
-		hl.current.clear();
-		hl.current.add(range);
-		if (!isRangeInViewport(range)) {
-			const el = elementForScroll(range.startContainer);
-			if (el) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-		}
-		return true;
-	}
-	const range = built.ranges[target.idxInFile];
+	// rangeForMatch (re)walks the section if the cached ranges are stale and
+	// clamps an out-of-range patch index to a real DOM range, so the same code
+	// path handles "ranges already built" and "ranges need a fresh walk".
+	const range = rangeForMatch(target.filePath, target.idxInFile);
 	if (!range) return false;
-	find.currentIndex = index;
+	recordCurrent(index, target);
 	hl.current.clear();
 	hl.current.add(range);
 	if (!isRangeInViewport(range)) {
@@ -537,40 +604,76 @@ function tryNavigateSync(index: number): boolean {
 // the viewport center. Used by Enter / next / prev when the sync path can't
 // satisfy the nav (off-screen file, collapsed file, never-rendered file).
 async function navigateTo(index: number): Promise<void> {
+	// Claim this navigation. Any async navigation still in flight from a previous
+	// call is now stale and must not paint when it resumes. Bumping before the
+	// sync attempt means a fast same-file Enter also invalidates a slow pending
+	// cross-file nav.
+	const myToken = ++navToken;
+
 	if (tryNavigateSync(index)) return;
 
 	const hl = getHighlights();
 	if (!hl) return;
-	hl.current.clear();
-	if (index < 0 || index >= flatMatches.length) {
-		find.currentIndex = -1;
+	const target = matchIndex.matchAt(index);
+	if (!target) {
+		clearCurrent();
 		return;
 	}
-	find.currentIndex = index;
-	const target = flatMatches[index];
+	recordCurrent(index, target);
 
-	if (app.collapsedFiles.has(target.filePath)) {
+	if (!sections.has(target.filePath)) {
+		// The target file's section isn't mounted — it's past the diff view's
+		// incremental render window (only the first ~80 files mount up front on a
+		// big change set). Ask the view to reveal it, which grows the window,
+		// expands the file if collapsed, and scrolls to it; the section then mounts
+		// and registers, waking us. Without this, find silently does nothing for any
+		// match in a file beyond the window — the "breaks down on a big branch" bug.
+		actions.scrollToFile(target.filePath);
+		await waitForSectionRegistered(target.filePath);
+		if (myToken !== navToken) return;
+		// Give the freshly-mounted section a tick to flush its `hidden`/host DOM
+		// before we try to render into it synchronously.
+		await tick();
+		if (myToken !== navToken) return;
+	} else if (app.collapsedFiles.has(target.filePath)) {
 		void actions.toggleFileCollapsed(target.filePath, false);
+		// Let Svelte flush the `hidden={!expanded}` wrapper to the DOM before we
+		// ask the section to render: forceRenderForFind bails on a still-hidden
+		// host (it would measure 0×0), so without this the collapsed file would
+		// fall back to the slow scheduler path and the highlight would lag.
+		await tick();
+		if (myToken !== navToken) return;
 	}
 
 	const reg = sections.get(target.filePath);
+	let rendered = false;
 	if (reg) {
 		reg.sectionEl.scrollIntoView({ block: 'start', behavior: 'auto' });
+		// We just scrolled this file to the top — it IS the file in view now. The
+		// IntersectionObserver will confirm shortly, but optimistically mark it so
+		// rangeForMatch (which gates range-building on inView) can paint without
+		// waiting a poll cycle. Stale if the user immediately scrolls away, but the
+		// observer reclaims authority the moment it fires.
+		reg.inView = true;
 		// Skip the FRAME_BUDGET_MS render scheduler queue for the navigation
 		// target. Without this, the target's render sits behind every other
 		// file the scrollIntoView swept into the IntersectionObserver margin,
 		// and the highlight can take seconds to appear on large diff sets.
-		reg.renderIfNeeded?.();
+		// renderIfNeeded returns true when the DOM is ready synchronously (already
+		// rendered, or just rendered from cache) — then there's nothing to wait for.
+		rendered = reg.renderIfNeeded?.() ?? false;
 	}
 
-	await waitForRender(target.filePath);
+	if (!rendered) await waitForRender(target.filePath);
+	// Superseded by a newer navigation while we waited — don't paint a stale pin.
+	if (myToken !== navToken) return;
 
-	refreshFileHighlights(target.filePath);
-	const built = builtRanges.get(target.filePath);
-	if (!built) return;
-	const range = built.ranges[target.idxInFile];
+	const range = rangeForMatch(target.filePath, target.idxInFile);
 	if (!range) return;
 
+	// Clear here (not before the await) so a superseding nav's pin isn't wiped by
+	// this stale one, and so the old pin stays put until the new range is ready.
+	hl.current.clear();
 	hl.current.add(range);
 	if (!isRangeInViewport(range)) {
 		const el = elementForScroll(range.startContainer);
@@ -611,9 +714,13 @@ export function registerFindSection(
 		renderEpoch: 0,
 		renderIfNeeded: hooks?.renderIfNeeded
 	});
+	// Wake any navigation parked waiting for this section to mount (it was beyond
+	// the diff view's incremental render window until just now).
+	flushSectionWaiters(filePath);
 	// If find is already active, the file may have matches to fold in.
 	if (find.open && find.query) {
-		queueIndexRecompute();
+		addFileToIndex(filePath);
+		queueRefresh();
 	}
 	return () => {
 		dropFileRanges(filePath);
@@ -628,60 +735,94 @@ export function notifySectionState(
 ): void {
 	const reg = sections.get(filePath);
 	if (!reg) return;
-	let changed = false;
-	if (patch.inView != null && patch.inView !== reg.inView) {
-		reg.inView = patch.inView;
-		changed = true;
-	}
-	if (patch.bumpRenderEpoch) {
-		reg.renderEpoch++;
-		changed = true;
-		flushRenderWaiters(filePath);
-	}
-	if (patch.dataLoaded) {
-		// New cached diff data for this file — pull its matches into the index.
-		queueIndexRecompute();
-	}
-	if (!changed) return;
-	if (!find.open) return;
-	refreshFileHighlights(filePath);
-}
-
-// Debounced index recompute so a flurry of section loads / scroll events
-// during initial mount doesn't redo the scan dozens of times in a tick.
-let indexScheduled = false;
-function queueIndexRecompute(): void {
-	if (indexScheduled) return;
-	indexScheduled = true;
-	queueMicrotask(() => {
-		indexScheduled = false;
-		if (!find.open) return;
-		const prevTarget = flatMatches[find.currentIndex] ?? null;
-		recomputeIndex();
-		// Try to keep the current selection stable across recompute (e.g. when
-		// a new file's matches are added to the front of the list).
-		let preservedIdx = -1;
-		if (prevTarget) {
-			const newIdx = flatMatches.findIndex(
-				(m) => m.filePath === prevTarget.filePath && m.idxInFile === prevTarget.idxInFile
-			);
-			if (newIdx >= 0) preservedIdx = newIdx;
-			else if (flatMatches.length > 0)
-				preservedIdx = Math.min(find.currentIndex, flatMatches.length - 1);
-		} else if (flatMatches.length > 0) {
-			preservedIdx = 0;
+	// untrack: this is imperative bookkeeping that reads reactive find state
+	// (find.open/query/currentIndex). It's called from component $effects (the
+	// in-view mirror, the render scheduler, clearLoadedDiff). Without untrack
+	// those effects would TRACK find state and re-run on every keystroke — and the
+	// render/registration effects re-running resets renderEpoch, which silently
+	// breaks highlighting. The reads here must never become caller dependencies.
+	untrack(() => {
+		let changed = false;
+		if (patch.inView != null && patch.inView !== reg.inView) {
+			reg.inView = patch.inView;
+			changed = true;
 		}
-		refreshAllInViewHighlights();
-		// Repaint the orange pin on the (possibly relocated) current match. Old
-		// Ranges would dangle after a rebuild — the no-scroll variant just
-		// re-derives from current state.
-		if (preservedIdx >= 0) paintCurrentNoScroll(preservedIdx);
-		else {
-			const hl = getHighlights();
-			hl?.current.clear();
-			find.currentIndex = -1;
+		if (patch.bumpRenderEpoch) {
+			reg.renderEpoch++;
+			changed = true;
+			flushRenderWaiters(filePath);
+		}
+		if (patch.dataLoaded) {
+			// New cached diff data for this file — fold just this file into the index
+			// (cheap, incremental) and schedule a UI refresh.
+			addFileToIndex(filePath);
+			queueRefresh();
+		}
+		if (!changed) return;
+		if (!find.open) return;
+		refreshFileHighlights(filePath);
+		// If the orange "current" match lives in this file and its DOM was just
+		// rebuilt, repaint it. This is the fix for "find says 1 of N but nothing is
+		// highlighted until I switch tabs": Pierre renders a diff twice — plain
+		// text, then again when the syntax-highlight worker returns, and that second
+		// pass REPLACES the shadow-DOM text nodes our painted Range pointed at, so
+		// the pin (and the yellow ranges) silently dangle. DiffFileSection routes
+		// Pierre's onPostRender through here (bumpRenderEpoch), so we re-walk and
+		// repaint against the fresh DOM the moment the worker pass lands.
+		if (patch.bumpRenderEpoch && currentFile === filePath && find.currentIndex >= 0) {
+			paintCurrentNoScroll(find.currentIndex);
 		}
 	});
+}
+
+// Sync the visible UI to the current index state: update the count, repaint the
+// in-view yellow highlights, and re-anchor the orange pin. This is cheap — the
+// index itself was already updated incrementally by addFileToIndex; here we just
+// read its totals and re-derive the current flat index from the stable
+// (file, start) anchor, so the pin stays on the same match as preload folds new
+// matching files in ahead of it.
+function runRefresh(): void {
+	if (!find.open) return;
+	find.matchCount = matchIndex.matchCount;
+	find.indexEpoch++;
+	refreshAllInViewHighlights();
+	if (find.matchCount === 0) {
+		clearCurrent();
+		return;
+	}
+	let preservedIdx = -1;
+	if (currentFile && currentStart >= 0) {
+		const fm = matchIndex.matchesForFile(currentFile);
+		const inFile = fm.findIndex((m) => m.start === currentStart);
+		if (inFile >= 0) preservedIdx = matchIndex.flatIndexOf(currentFile, inFile);
+	}
+	if (preservedIdx < 0) {
+		preservedIdx = find.currentIndex >= 0 ? Math.min(find.currentIndex, find.matchCount - 1) : 0;
+	}
+	paintCurrentNoScroll(preservedIdx);
+}
+
+// Throttle the UI refresh to once per 100ms with a guaranteed trailing run: a
+// call arriving while a cycle is in flight sets `dirty`, and the cycle re-arms
+// until a window passes with nothing new (a plain "drop while pending" debounce
+// loses the tail — the last preloaded files' counts never land). The index
+// updates that back this are now O(1-per-file) incremental, so the only real
+// per-cycle cost is the in-view DOM highlight refresh, bounded by visible files.
+let refreshTimer: number | null = null;
+let refreshDirty = false;
+function queueRefresh(): void {
+	refreshDirty = true;
+	if (refreshTimer != null) return;
+	const tick = (): void => {
+		if (!refreshDirty) {
+			refreshTimer = null;
+			return;
+		}
+		refreshDirty = false;
+		runRefresh();
+		refreshTimer = window.setTimeout(tick, 100);
+	};
+	refreshTimer = window.setTimeout(tick, 100);
 }
 
 // In-progress preload session — incremented each time openFind kicks one off
@@ -720,9 +861,11 @@ async function preloadAllPatches(): Promise<void> {
 				const curKey = diffContextKey($state.snapshot(app.diffContext) as DiffContext);
 				if (curKey !== ctxKey) return;
 				setCachedDiff(repo.id, ctx, file.path, d);
-				// Fold the new patch's matches into the index. Debounced so 100
-				// concurrent completions don't trigger 100 recomputes.
-				queueIndexRecompute();
+				// Fold just this file into the index (O(file), not a full rescan),
+				// then schedule a throttled UI refresh — so a burst of concurrent
+				// completions stays cheap even with thousands of changed files.
+				addFileToIndex(file.path);
+				queueRefresh();
 			} catch {
 				// Skip files that fail to load — preload is best-effort.
 			}
@@ -785,7 +928,7 @@ export function openFind(): void {
 	// is superseded by the new one.
 	void preloadAllPatches();
 	if (find.query) {
-		recomputeIndex();
+		rebuildIndex();
 		refreshAllInViewHighlights();
 		// Bar re-opened with a prefilled query — surface the first match the
 		// same way a fresh search would.
@@ -797,58 +940,41 @@ export function closeFind(): void {
 	find.open = false;
 	find.matchCount = 0;
 	find.currentIndex = -1;
-	flatMatches = [];
-	matchesByFile.clear();
+	currentFile = null;
+	currentStart = -1;
+	matchIndex.clear();
 	clearAllHighlights();
+	// Cancel a pending UI refresh so it can't fire against the cleared state.
+	if (refreshTimer != null) {
+		window.clearTimeout(refreshTimer);
+		refreshTimer = null;
+	}
+	refreshDirty = false;
 	// Bump the preload session so any in-flight workers stop the next time
 	// they check.
 	preloadSession++;
 	// Don't drop sections — they're still mounted; just stop highlighting.
 }
 
-// Capture the current orange match's stable identity (file + patch-text
-// offset) before a rebuild. After the rebuild we try to find the same
-// underlying position in the new match list — if it's still a match the
-// user keeps their place; if it's gone we navigate them to the first match.
-interface PreservedAnchor {
-	filePath: string;
-	patchStart: number;
-}
-
-function snapshotAnchor(): PreservedAnchor | null {
-	if (find.currentIndex < 0) return null;
-	const prev = flatMatches[find.currentIndex];
-	if (!prev) return null;
-	const fileMatches = matchesByFile.get(prev.filePath);
-	const m = fileMatches?.[prev.idxInFile];
-	if (!m) return null;
-	return { filePath: prev.filePath, patchStart: m.start };
-}
-
-function findAnchorAfterRebuild(anchor: PreservedAnchor | null): number {
-	if (!anchor) return -1;
-	const fileMatches = matchesByFile.get(anchor.filePath);
-	if (!fileMatches) return -1;
-	const inFileIdx = fileMatches.findIndex((m) => m.start === anchor.patchStart);
-	if (inFileIdx < 0) return -1;
-	return flatMatches.findIndex((m) => m.filePath === anchor.filePath && m.idxInFile === inFileIdx);
-}
-
 // After a query/case-sensitivity change, settle on a current match and
-// navigate (scroll) to it iff the user's previous anchor is gone. This
-// mirrors what browsers do: typing scrolls to the first match unless your
-// current match is still valid.
-function settleAfterQueryChange(prev: PreservedAnchor | null): void {
-	const hl = getHighlights();
+// navigate (scroll) to it iff the user's previous anchor is gone. This mirrors
+// what browsers do: typing scrolls to the first match unless your current match
+// (same file + same char offset) is still a match for the new query.
+function settleAfterQueryChange(prevFile: string | null, prevStart: number): void {
 	if (find.matchCount === 0) {
-		hl?.current.clear();
-		find.currentIndex = -1;
+		clearCurrent();
 		return;
 	}
-	const preserved = findAnchorAfterRebuild(prev);
-	if (preserved >= 0) {
-		paintCurrentNoScroll(preserved);
-		return;
+	if (prevFile && prevStart >= 0) {
+		const fm = matchIndex.matchesForFile(prevFile);
+		const inFile = fm.findIndex((m) => m.start === prevStart);
+		if (inFile >= 0) {
+			const flat = matchIndex.flatIndexOf(prevFile, inFile);
+			if (flat >= 0) {
+				paintCurrentNoScroll(flat);
+				return;
+			}
+		}
 	}
 	// No equivalent match — scroll to #1 so the user can see where the new
 	// query landed. navigateTo's sync fast path keeps this snappy when the
@@ -867,41 +993,45 @@ export function setQuery(q: string): void {
 	queryDebounce = window.setTimeout(() => {
 		queryDebounce = null;
 		if (!q) {
-			flatMatches = [];
-			matchesByFile.clear();
+			matchIndex.setQuery('', find.caseSensitive);
 			find.matchCount = 0;
+			currentFile = null;
+			currentStart = -1;
 			find.currentIndex = -1;
 			clearAllHighlights();
 			return;
 		}
-		const anchor = snapshotAnchor();
-		recomputeIndex();
+		const prevFile = currentFile;
+		const prevStart = currentStart;
+		rebuildIndex();
 		refreshAllInViewHighlights();
-		settleAfterQueryChange(anchor);
+		settleAfterQueryChange(prevFile, prevStart);
 	}, 80);
 }
 
 export function toggleCaseSensitive(): void {
 	find.caseSensitive = !find.caseSensitive;
 	if (!find.open || !find.query) return;
-	const anchor = snapshotAnchor();
-	recomputeIndex();
+	const prevFile = currentFile;
+	const prevStart = currentStart;
+	rebuildIndex();
 	refreshAllInViewHighlights();
-	settleAfterQueryChange(anchor);
+	settleAfterQueryChange(prevFile, prevStart);
 }
 
 export function nextMatch(): void {
-	if (flatMatches.length === 0) return;
+	const count = matchIndex.matchCount;
+	if (count === 0) return;
 	const cur = find.currentIndex;
-	const next = cur < 0 ? 0 : (cur + 1) % flatMatches.length;
+	const next = cur < 0 ? 0 : (cur + 1) % count;
 	void navigateTo(next);
 }
 
 export function prevMatch(): void {
-	if (flatMatches.length === 0) return;
+	const count = matchIndex.matchCount;
+	if (count === 0) return;
 	const cur = find.currentIndex;
-	const prev =
-		cur < 0 ? flatMatches.length - 1 : (cur - 1 + flatMatches.length) % flatMatches.length;
+	const prev = cur < 0 ? count - 1 : (cur - 1 + count) % count;
 	void navigateTo(prev);
 }
 
