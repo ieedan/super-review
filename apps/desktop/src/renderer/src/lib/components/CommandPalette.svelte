@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Check from '@lucide/svelte/icons/check';
 	import * as Command from './ui/command';
-	import { actions, app } from '$lib/store.svelte';
+	import { actions, app, allBranchChangesSeen } from '$lib/store.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import { truncatePathPrefix } from '$lib/path-truncate';
 	import { cn } from '$lib/utils';
@@ -18,6 +18,12 @@
 	// dispatched centrally from App.svelte's window keydown handler.
 
 	function choose(path: string): void {
+		// Picking a file from the palette while the "You've seen it all" state is up
+		// should reveal that file's diff, so dismiss the overlay first — otherwise
+		// the completion view stays put and the chosen file never comes up. Mirrors
+		// the sidebar's nav handling. Guarded on the state actually being completable
+		// so we never set the dismissed flag while the branch is below fully-seen.
+		if (allBranchChangesSeen()) actions.dismissSeenItAll();
 		actions.scrollToFile(path);
 		actions.closeCommandMenu();
 	}
