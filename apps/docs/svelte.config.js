@@ -7,7 +7,13 @@ const config = {
 		runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 	},
 	kit: {
-		adapter: adapter()
+		adapter: adapter(),
+		// Resolve the shared UI package to its source so pages can import its
+		// components directly. Runtime resolution works via the workspace link, but
+		// svelte-check needs the alias to find the type declarations (same mapping
+		// the desktop app's tsconfig uses). Adding it here also generates the path
+		// into .svelte-kit/tsconfig.json.
+		alias: { '@super-review/ui': '../../packages/ui/src' }
 	}
 };
 
