@@ -14,5 +14,8 @@ build/icon.*
 .svelte-kit
 apps/docs/build
 
+# Vercel adapter output (apps/docs)
+.vercel
+
 # Local super-review session data
 .super-review
