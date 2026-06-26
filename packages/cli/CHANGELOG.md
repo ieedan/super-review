@@ -1,5 +1,28 @@
 # super-review
 
+## 0.0.5
+
+### Patch Changes
+
+- feat: pre-fill the commit box from a session's suggested title ([`56953c6`](https://github.com/ieedan/super-review/commit/56953c65d9dcc3c4ecfe2be3f94d20cb35dd40bf))
+
+- feat: add `--pr` flag to view PR comments ([`eeceb6d`](https://github.com/ieedan/super-review/commit/eeceb6de4efc1dc2a4495c0f2e5d1e29351b0d33))
+
+- feat: reply to local review comments ([`7b9db69`](https://github.com/ieedan/super-review/commit/7b9db692c41f8905739a81c56dd70bc92fdcac2b))
+
+  Local review comments can now hold threaded replies. Agents reply from the CLI
+  with `super-review comment reply <id> <body>` (authored via `--harness`), and
+  humans reply from the desktop with the same Write/Preview composer used for new
+  comments. Replies inherit the thread root's anchor, resolution stays
+  thread-level (on the root), and the sidebar/file-count badges count threads, not
+  individual replies. `comment list` now groups replies under their root and
+  `--unresolved` filters by the root's state.
+
+  A new "Copy thread" control copies a whole thread (root + replies) as markdown
+  for an agent, on both PR and local comments. The resolve toggle now lives in a
+  thread-level action bar below the conversation on both PR and local comments
+  (previously local put it in the comment header), so the two are consistent.
+
 ## 0.0.4
 
 ### Patch Changes
