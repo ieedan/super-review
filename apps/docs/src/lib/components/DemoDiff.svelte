@@ -12,7 +12,11 @@
 	import { app } from '@super-review/ui/store.svelte';
 	import type { ChangedFile } from '@super-review/core/types';
 
-	let { paths, class: className = 'h-[440px]' }: { paths?: string[]; class?: string } = $props();
+	let {
+		paths,
+		class: className = 'h-[440px]',
+		focusCommentId
+	}: { paths?: string[]; class?: string; focusCommentId?: string } = $props();
 
 	bootDemo();
 
@@ -32,6 +36,54 @@
 			scroller.scrollTop + (el.getBoundingClientRect().top - scroller.getBoundingClientRect().top);
 		scroller.scrollTo({ top, behavior: 'auto' });
 	}
+
+	// The comment annotation mounts inside Pierre's `diffs-container` shadow DOM,
+	// so a plain querySelector from the card can't reach it — hop through the
+	// shadow root.
+	function findCommentEl(id: string): HTMLElement | null {
+		const host = scroller?.querySelector('diffs-container');
+		return host?.shadowRoot?.querySelector<HTMLElement>(`[data-comment-id="${id}"]`) ?? null;
+	}
+
+	// Center a comment thread inside the card so it opens already in view (image 1)
+	// rather than scrolled to the file top. The diff renders async and re-renders
+	// once syntax highlighting lands, shifting heights, so re-center across a short
+	// settling window. Card-only: never touch the window scroll. Bounded; bails the
+	// moment the user takes over.
+	function focusComment(id: string): void {
+		if (!scroller) return;
+		let raf = 0;
+		let stableFrames = 0;
+		let lastTop = Number.NaN;
+		const deadline = performance.now() + 1500;
+		const stop = (): void => {
+			if (raf) cancelAnimationFrame(raf);
+			scroller?.removeEventListener('wheel', stop);
+			scroller?.removeEventListener('touchstart', stop);
+		};
+		const tick = (): void => {
+			const el = findCommentEl(id);
+			if (el && scroller) {
+				const top =
+					scroller.scrollTop +
+					(el.getBoundingClientRect().top - scroller.getBoundingClientRect().top) -
+					(scroller.clientHeight - el.offsetHeight) / 2;
+				scroller.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+				stableFrames = Math.abs(top - lastTop) < 1 ? stableFrames + 1 : 0;
+				lastTop = top;
+				if (stableFrames >= 3) return stop();
+			}
+			if (performance.now() < deadline) raf = requestAnimationFrame(tick);
+			else stop();
+		};
+		scroller.addEventListener('wheel', stop, { passive: true });
+		scroller.addEventListener('touchstart', stop, { passive: true });
+		raf = requestAnimationFrame(tick);
+	}
+
+	$effect(() => {
+		if (focusCommentId) focusComment(focusCommentId);
+	});
 
 	// Watch this card's files for a fresh "seen" mark, then scroll to the next
 	// unreviewed one (wrapping to the first if none remain below). The first run

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { comments, CREATE_COMMENTS_TABLE } from './comment-schema.js';
+import { comments, CREATE_COMMENTS_TABLE, COMMENTS_MIGRATIONS } from './comment-schema.js';
 import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from './types.js';
 
 // Local review comments live in ONE SQLite database for the whole application,
@@ -50,8 +50,16 @@ function getHandle(): Handle {
 		// libSQL wants a forward-slash file URL even on Windows.
 		const client = createClient({ url: `file:${appDbPath().replace(/\\/g, '/')}` });
 		const db = drizzle(client);
-		// `executeMultiple` runs the table + index DDL (two statements) in one call.
-		const ready = client.executeMultiple(CREATE_COMMENTS_TABLE).then(() => undefined);
+		// `executeMultiple` runs the table + index DDL (two statements) in one call,
+		// then each idempotent migration runs on its own — an ALTER that re-adds an
+		// existing column throws "duplicate column name", which we swallow so a
+		// migrated DB is a no-op.
+		const ready = client
+			.executeMultiple(CREATE_COMMENTS_TABLE)
+			.then(() =>
+				Promise.all(COMMENTS_MIGRATIONS.map((sql) => client.execute(sql).catch(() => undefined)))
+			)
+			.then(() => undefined);
 		handle = { client, db, ready };
 	}
 	return handle;
@@ -80,6 +88,7 @@ function rowToComment(r: Row): LocalComment {
 		author: r.author,
 		createdAt: r.createdAt,
 		updatedAt: r.updatedAt,
+		...(r.inReplyTo != null ? { inReplyTo: r.inReplyTo } : {}),
 		...(r.resolvedAt != null ? { resolvedAt: r.resolvedAt } : {}),
 		...(r.resolvedBy != null ? { resolvedBy: r.resolvedBy } : {}),
 		...(r.resolvedSessionId != null ? { resolvedSessionId: r.resolvedSessionId } : {})
@@ -156,6 +165,7 @@ export function createComment(input: NewLocalCommentInput): LocalComment {
 		endLine: input.endLine,
 		body: input.body,
 		author: input.author,
+		...(input.inReplyTo != null ? { inReplyTo: input.inReplyTo } : {}),
 		createdAt: now,
 		updatedAt: now
 	};
@@ -176,6 +186,7 @@ export async function writeComment(repoPath: string, comment: LocalComment): Pro
 		author: comment.author,
 		createdAt: comment.createdAt,
 		updatedAt: comment.updatedAt,
+		inReplyTo: comment.inReplyTo ?? null,
 		resolvedAt: comment.resolvedAt ?? null,
 		resolvedBy: comment.resolvedBy ?? null,
 		resolvedSessionId: comment.resolvedSessionId ?? null
@@ -191,6 +202,32 @@ export async function addComment(
 	const comment = createComment(input);
 	await writeComment(repoPath, comment);
 	return comment;
+}
+
+// Post a reply to an existing comment's thread. The reply inherits the thread
+// root's anchor (path/side/line range) and contextKey so it stacks under the root
+// in the diff, and points at the root via `inReplyTo` (replies are one level deep,
+// so a reply to a reply attaches to the same root). Returns the new comment, or
+// null if the target is gone. The root's resolution is left untouched.
+export async function replyToComment(
+	repoPath: string,
+	targetId: string,
+	body: string,
+	author: LocalCommentAuthor
+): Promise<LocalComment | null> {
+	const target = await getComment(repoPath, targetId);
+	if (!target) return null;
+	const rootId = target.inReplyTo ?? target.id;
+	return addComment(repoPath, {
+		contextKey: target.contextKey,
+		path: target.path,
+		side: target.side,
+		startLine: target.startLine,
+		endLine: target.endLine,
+		body,
+		author,
+		inReplyTo: rootId
+	});
 }
 
 // Replace a comment's body, bumping `updatedAt`. Returns the updated record, or

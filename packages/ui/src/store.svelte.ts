@@ -479,6 +479,13 @@ interface AppState {
 	// (it owns the parsed diff), so the comments sidebar can badge them even though
 	// an orphaned comment no longer renders inline.
 	outdatedLocalCommentIds: SvelteSet<string>;
+	// The single inline comment editor open anywhere — an edit box or a reply box,
+	// keyed so the two are mutually exclusive (opening one closes the other, in this
+	// or any other thread). Format: `edit:<scope>:<id>` or `reply:<scope>:<rootId>`,
+	// where scope is `pr` | `local`. Null when nothing is being edited/replied to.
+	// Each comment component derives its open state from this rather than holding a
+	// local boolean, so there's never more than one open at once.
+	openCommentEditor: string | null;
 	// Whether the right-hand comments sidebar is open. Ephemeral (per launch).
 	commentsSidebarOpen: boolean;
 	// When true, the comments panel fills the whole work area (diff pane collapsed
@@ -625,7 +632,9 @@ export function sidebarHasUnresolvedComments(): boolean {
 			list.some((c) => c.line != null && c.inReplyTo == null && !c.isResolved)
 		);
 	}
-	return app.localComments.some((c) => c.resolvedAt == null);
+	// Roots only — replies never carry their own resolution, so a thread is open iff
+	// its root is unresolved.
+	return app.localComments.some((c) => c.inReplyTo == null && c.resolvedAt == null);
 }
 
 // True when the Branch tab has something to show. The Branch diff compares the
@@ -862,6 +871,7 @@ const initial: AppState = {
 	localCommentsContextKey: null,
 	localComposers: {},
 	outdatedLocalCommentIds: new SvelteSet(),
+	openCommentEditor: null,
 	commentsSidebarOpen: false,
 	conversationFullscreen: false,
 	commentScrollTarget: null,
@@ -2364,6 +2374,39 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 		sections.push('');
 	}
 	return sections.join('\n').trim();
+}
+
+// Copy-ready markdown for a whole local comment thread (root + replies), so an
+// agent gets the full conversation and the code location in one paste. Comments
+// are passed oldest-first; each turn is labelled with its author.
+function formatThreadPrompt(thread: LocalComment[]): string {
+	const root = thread[0];
+	if (!root) return '';
+	const where = `${lineRangeLabel(root.startLine, root.endLine)}${sideQualifier(root.side)}`;
+	// Lead with the thread id so an agent can act on it (e.g. `comment reply <id>`).
+	const head = `Local Thread: ${root.id}\n\nReview thread at ${where} in \`${root.path}\` (oldest first):`;
+	const turns = thread.map(
+		(c, i) => `**${c.author.name}${i === 0 ? '' : ' (reply)'}:**\n${c.body.trim()}`
+	);
+	return `${head}\n\n${turns.join('\n\n')}`;
+}
+
+// Same, for a PR review thread.
+function formatPRThreadPrompt(thread: PRReviewComment[]): string {
+	const root = thread[0];
+	if (!root) return '';
+	const line = root.line ?? root.originalLine;
+	const outdated = root.isOutdated ? ' (outdated)' : '';
+	const loc =
+		line != null
+			? `at line ${line}${sideQualifier(root.side)} in \`${root.path}\`${outdated}`
+			: `on \`${root.path}\` (file-level)`;
+	// Lead with the root comment id so an agent has a stable handle to it.
+	const head = `PR Comment: ${root.id}\n\nReview thread ${loc} (oldest first):`;
+	const turns = thread.map(
+		(c, i) => `**${c.author}${i === 0 ? '' : ' (reply)'}:**\n${c.body.trim()}`
+	);
+	return `${head}\n\n${turns.join('\n\n')}`;
 }
 
 // Check whether the super-review skill is installed in the active repo and
@@ -4560,6 +4603,42 @@ export const actions = {
 		app.localComposers = rest;
 	},
 
+	// Set (or clear, with null) the single open inline comment editor — see
+	// AppState.openCommentEditor. Setting a new key implicitly closes whatever edit
+	// or reply box was open before, keeping the two mutually exclusive.
+	setOpenCommentEditor(key: string | null): void {
+		app.openCommentEditor = key;
+	},
+
+	// Post a human reply to a local comment thread. The reply inherits the root's
+	// anchor + contextKey (mirroring the CLI's `comment reply`) so it stacks under
+	// the root in the diff. Returns whether it succeeded so the inline reply box can
+	// close only on success. Agents reply via the CLI; this is the desktop path.
+	async submitLocalReply(filePath: string, rootId: string, body: string): Promise<boolean> {
+		if (!app.activeRepo) return false;
+		const trimmed = body.trim();
+		if (!trimmed) return false;
+		const root = app.localComments.find((c) => c.id === rootId);
+		if (!root) return false;
+		try {
+			const created = await window.api.comments.add(app.activeRepo.id, {
+				contextKey: root.contextKey,
+				path: root.path,
+				side: root.side,
+				startLine: root.startLine,
+				endLine: root.endLine,
+				body: trimmed,
+				author: localAuthor(),
+				inReplyTo: root.id
+			});
+			app.localComments = [created, ...app.localComments];
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	},
+
 	// Persist a new local comment from an open composer, then drop the composer and
 	// merge the saved record into the list.
 	async submitLocalComposer(key: string): Promise<void> {
@@ -4626,9 +4705,14 @@ export const actions = {
 	async deleteLocalComment(id: string): Promise<void> {
 		if (!app.activeRepo) return;
 		const prev = app.localComments;
-		app.localComments = prev.filter((c) => c.id !== id);
+		// Deleting a thread root takes its replies with it — leaving replies behind
+		// would orphan them (no root to anchor the thread). Deleting a reply removes
+		// just that reply. (Plain array — a thread is small, and a Set here is
+		// scratch, not reactive state.)
+		const ids = [id, ...prev.filter((c) => c.inReplyTo === id).map((c) => c.id)];
+		app.localComments = prev.filter((c) => !ids.includes(c.id));
 		try {
-			await window.api.comments.remove(app.activeRepo.id, id);
+			await Promise.all(ids.map((cid) => window.api.comments.remove(app.activeRepo!.id, cid)));
 		} catch (err) {
 			app.localComments = prev;
 			setError(err instanceof Error ? err.message : String(err));
@@ -4665,9 +4749,20 @@ export const actions = {
 		await actions.copyToClipboard(formatCommentPrompt(comment));
 	},
 
-	// Copy every unresolved comment in the active context as one markdown task list.
+	// Copy a whole local thread (root + replies, oldest first) as markdown.
+	async copyLocalThreadPrompt(rootId: string): Promise<void> {
+		const thread = app.localComments
+			.filter((c) => (c.inReplyTo ?? c.id) === rootId)
+			.sort((a, b) => a.createdAt - b.createdAt);
+		if (thread.length === 0) return;
+		await actions.copyToClipboard(formatThreadPrompt(thread));
+	},
+
+	// Copy every unresolved thread (its root) in the active context as one markdown
+	// task list. Replies are conversation context, not standalone tasks, so the list
+	// is keyed off roots — matching the sidebar's copy-all gate.
 	async copyAllUnresolvedComments(): Promise<void> {
-		const open = app.localComments.filter((c) => !c.resolvedAt);
+		const open = app.localComments.filter((c) => c.inReplyTo == null && !c.resolvedAt);
 		if (open.length === 0) return;
 		await actions.copyToClipboard(formatCommentsPrompt(open));
 	},
@@ -4795,6 +4890,15 @@ export const actions = {
 		const comment = (app.prComments[path] ?? []).find((c) => c.id === id);
 		if (!comment) return;
 		await actions.copyToClipboard(formatPRCommentPrompt(comment));
+	},
+
+	// Copy a whole PR review thread (root + replies, oldest first) as markdown.
+	async copyPRThreadPrompt(path: string, rootId: number): Promise<void> {
+		const thread = (app.prComments[path] ?? [])
+			.filter((c) => (c.inReplyTo ?? c.id) === rootId)
+			.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+		if (thread.length === 0) return;
+		await actions.copyToClipboard(formatPRThreadPrompt(thread));
 	},
 
 	// Copy every actionable PR review thread (one entry per root comment) as a

@@ -569,7 +569,32 @@
 			});
 		}
 
-		for (const c of localComments) {
+		// Order so each thread's root leads and its replies follow (createdAt asc),
+		// threads ordered by their root's createdAt. Replies share the root's line, so
+		// Pierre stacks same-line annotations in array order — emitting root-then-reply
+		// here is what puts a reply directly *under* its root rather than above it.
+		// A plain object lookup (not a Map) keeps this out of the reactive-collection
+		// lint and is pure scratch for the sort.
+		const createdById: Record<string, number> = {};
+		for (const c of localComments) createdById[c.id] = c.createdAt;
+		const rootCreatedAt = (c: LocalComment): number =>
+			createdById[c.inReplyTo ?? c.id] ?? c.createdAt;
+		const orderedLocalComments = [...localComments].sort((a, b) => {
+			const ra = rootCreatedAt(a);
+			const rb = rootCreatedAt(b);
+			if (ra !== rb) return ra - rb;
+			const rootA = a.inReplyTo ?? a.id;
+			const rootB = b.inReplyTo ?? b.id;
+			if (rootA === rootB) {
+				// Same thread: root (no inReplyTo) first, then replies by createdAt.
+				const aReply = a.inReplyTo != null ? 1 : 0;
+				const bReply = b.inReplyTo != null ? 1 : 0;
+				return aReply !== bReply ? aReply - bReply : a.createdAt - b.createdAt;
+			}
+			return rootA < rootB ? -1 : 1;
+		});
+
+		for (const c of orderedLocalComments) {
 			// undefined while the diff is still loading (don't claim outdated yet);
 			// otherwise true when the anchored line no longer exists in the file.
 			const outdated = localFileExtent

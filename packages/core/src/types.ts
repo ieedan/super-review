@@ -617,13 +617,15 @@ export interface PRConversationReference extends PRConversationBase {
 // under .super-review/comments (one JSON file per comment) so it travels with the
 // branch like a session. Unlike PRReviewComment these never touch GitHub: they're
 // a human's working-tree review notes that an agent can read back, act on, and
-// mark resolved — optionally linking the session that documents the fix. Flat (no
-// threads) by design.
+// mark resolved — optionally linking the session that documents the fix. Comments
+// thread one level deep: a reply carries `inReplyTo` pointing at the root (see
+// LocalComment).
 
 // Who authored or resolved a local comment. Humans leave comments in the desktop
-// app; agents (claude-code, cursor, …) only ever appear as the *resolver*, since
-// comments aren't agent-authored. `harness` is set for agents so the UI can show
-// their logo, mirroring how sessions identify their harness.
+// app; agents (claude-code, cursor, …) resolve them and can reply to a thread (via
+// the CLI), so an agent can appear as an `author` on a reply as well as a
+// `resolvedBy`. `harness` is set for agents so the UI can show their logo,
+// mirroring how sessions identify their harness.
 export interface LocalCommentAuthor {
 	kind: 'human' | 'agent';
 	// Display name: a human's git/GitHub handle, or an agent's harness label.
@@ -661,6 +663,13 @@ export interface LocalComment {
 	author: LocalCommentAuthor;
 	createdAt: number;
 	updatedAt: number;
+	// Top-level comment id this one replies to, if any — the thread root. A reply
+	// inherits its root's anchor (path/side/line range) and contextKey so it stacks
+	// under the root in the diff. Replies are always one level deep (they point at
+	// the root, never another reply), mirroring how PR review threads flatten.
+	// Resolution stays a thread-level concept carried by the root, so replies don't
+	// get their own resolution.
+	inReplyTo?: string;
 	// Resolution. Presence of `resolvedAt` ⇒ resolved. An agent that fixed the
 	// feedback can link the session documenting the fix via `resolvedSessionId`, so
 	// the reviewer can jump straight to that guided tour.
@@ -679,6 +688,9 @@ export interface NewLocalCommentInput {
 	endLine: number;
 	body: string;
 	author: LocalCommentAuthor;
+	// Set when this comment is a reply — the thread root's id. The caller is
+	// responsible for inheriting the root's anchor (path/side/lines) + contextKey.
+	inReplyTo?: string;
 }
 
 export type ViewMode = 'split' | 'unified';

@@ -1360,7 +1360,7 @@
 							: []}
 						{@const localFileComments = inPRContext
 							? []
-							: app.localComments.filter((c) => c.path === node.file.path)}
+							: app.localComments.filter((c) => c.path === node.file.path && c.inReplyTo == null)}
 						{@const threadCount = prThreads.length + localFileComments.length}
 						<!-- Every thread/comment on the file resolved → swap the icon for a
                    checked variant so the sidebar reads "comments handled" at a
@@ -1477,10 +1477,11 @@
 									{#if threadCount > 0}
 										<span
 											class="flex items-center gap-0.5 text-muted-foreground"
-											title="{threadCount} {inPRContext ? 'comment thread' : 'comment'}{threadCount ===
-											1
-												? ''
-												: 's'}{allThreadsResolved ? ' (resolved)' : ''}"
+											title="{threadCount} {inPRContext
+												? 'comment thread'
+												: 'comment'}{threadCount === 1 ? '' : 's'}{allThreadsResolved
+												? ' (resolved)'
+												: ''}"
 										>
 											{#if allThreadsResolved}
 												<MessageSquareCheck class="size-3" />

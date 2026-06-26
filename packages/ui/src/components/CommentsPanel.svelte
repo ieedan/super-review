@@ -39,16 +39,21 @@
 	const toggleShortcut = isMac ? '⌘L' : 'Ctrl+L';
 
 	// ── Local comments ──
-	// Newest first, but always sink resolved comments below the open ones so the
+	// Group into threads — a root (no parent) with its reply count — mirroring the
+	// PR list. Newest first, but resolved threads always sink below the open ones so
 	// actionable feedback stays at the top.
-	const localSorted = $derived(
-		[...app.localComments].sort((a, b) => {
-			const ar = a.resolvedAt != null ? 1 : 0;
-			const br = b.resolvedAt != null ? 1 : 0;
-			if (ar !== br) return ar - br;
-			return b.createdAt - a.createdAt;
-		})
-	);
+	const localThreads = $derived.by(() => {
+		const all = app.localComments;
+		const roots = all.filter((c) => c.inReplyTo == null);
+		return roots
+			.map((root) => ({ root, replies: all.filter((c) => c.inReplyTo === root.id).length }))
+			.sort((a, b) => {
+				const ar = a.root.resolvedAt != null ? 1 : 0;
+				const br = b.root.resolvedAt != null ? 1 : 0;
+				if (ar !== br) return ar - br;
+				return b.root.createdAt - a.root.createdAt;
+			});
+	});
 
 	// ── PR comments ──
 	// Flatten the per-file map to root threads (a comment with no parent, pinned to
@@ -70,14 +75,14 @@
 		});
 	});
 
-	const totalCount = $derived(isPR ? prThreads.length : app.localComments.length);
+	const totalCount = $derived(isPR ? prThreads.length : localThreads.length);
 	// Gates the "copy all" button. Mirrors exactly what copyAll* will emit: for
 	// PRs that's unresolved threads still anchored to a live line (outdated and
-	// file-level roots are skipped); locally it's every unresolved comment.
+	// file-level roots are skipped); locally it's every unresolved thread root.
 	const copyableCount = $derived(
 		isPR
 			? prThreads.filter((t) => !t.root.isResolved && t.root.line != null).length
-			: app.localComments.filter((c) => c.resolvedAt == null).length
+			: localThreads.filter((t) => t.root.resolvedAt == null).length
 	);
 
 	// Per-button "copied" feedback: the key of the button that was last copied,
@@ -96,13 +101,15 @@
 		flashCopied('all');
 	}
 
-	function copyLocal(id: string): void {
-		void actions.copyCommentPrompt(id);
-		flashCopied(id);
+	// Each sidebar row is a thread root, so its copy button grabs the whole thread
+	// (root + replies) — matching the inline "Copy thread" control.
+	function copyLocal(rootId: string): void {
+		void actions.copyLocalThreadPrompt(rootId);
+		flashCopied(rootId);
 	}
-	function copyPR(path: string, id: number): void {
-		void actions.copyPRCommentPrompt(path, id);
-		flashCopied(`pr-${id}`);
+	function copyPR(path: string, rootId: number): void {
+		void actions.copyPRThreadPrompt(path, rootId);
+		flashCopied(`pr-${rootId}`);
 	}
 
 	// Open a PR review comment on GitHub in the browser (`url` is its permalink).
@@ -306,7 +313,7 @@
 										<button
 											type="button"
 											class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-											title="Copy as prompt"
+											title="Copy thread as prompt"
 											onclick={(e) => {
 												e.stopPropagation();
 												copyPR(root.path, root.id);
@@ -370,7 +377,8 @@
 				</ul>
 			{:else}
 				<ul>
-					{#each localSorted as c (c.id)}
+					{#each localThreads as { root, replies } (root.id)}
+						{@const c = root}
 						{@const resolved = c.resolvedAt != null}
 						{@const outdated = app.outdatedLocalCommentIds.has(c.id)}
 						<li class="border-b border-border">
@@ -439,7 +447,7 @@
 										<button
 											type="button"
 											class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-											title="Copy as prompt"
+											title="Copy thread as prompt"
 											onclick={(e) => {
 												e.stopPropagation();
 												copyLocal(c.id);
@@ -477,6 +485,10 @@
 									<span class="truncate font-mono">{fileName(c.path)}</span>
 									<span class="shrink-0">·</span>
 									<span class="shrink-0 font-mono">{lineLabel(c)}</span>
+									{#if replies > 0}
+										<span class="shrink-0">·</span>
+										<span class="shrink-0">{replies} {replies === 1 ? 'reply' : 'replies'}</span>
+									{/if}
 								</div>
 								<p class="mt-1 line-clamp-3 text-[13px] whitespace-pre-wrap">{c.body}</p>
 								{#if resolved && c.resolvedBy}

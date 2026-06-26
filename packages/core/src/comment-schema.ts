@@ -19,6 +19,10 @@ export const comments = sqliteTable('comments', {
 	author: text('author', { mode: 'json' }).$type<LocalCommentAuthor>().notNull(),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull(),
+	// Thread root id when this row is a reply (see LocalComment.inReplyTo). Null for
+	// top-level comments. Added after the initial schema, so existing databases get
+	// it via the ALTER in COMMENTS_MIGRATIONS below.
+	inReplyTo: text('in_reply_to'),
 	resolvedAt: integer('resolved_at'),
 	resolvedBy: text('resolved_by', { mode: 'json' }).$type<LocalCommentAuthor>(),
 	resolvedSessionId: text('resolved_session_id')
@@ -41,9 +45,17 @@ CREATE TABLE IF NOT EXISTS comments (
 	author TEXT NOT NULL,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
+	in_reply_to TEXT,
 	resolved_at INTEGER,
 	resolved_by TEXT,
 	resolved_session_id TEXT
 );
 CREATE INDEX IF NOT EXISTS comments_repo_context ON comments (repo, context_key);
 `;
+
+// Idempotent ALTERs for databases created before a column existed. SQLite has no
+// "ADD COLUMN IF NOT EXISTS", so each statement is run individually and a
+// "duplicate column name" error is swallowed by the caller (see comment-store).
+// The CREATE above already has the column for fresh databases; this only matters
+// for ones that predate it.
+export const COMMENTS_MIGRATIONS: string[] = ['ALTER TABLE comments ADD COLUMN in_reply_to TEXT;'];

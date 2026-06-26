@@ -2,8 +2,9 @@
 	import type { LocalComment } from '@super-review/core/types';
 
 	// Metadata Pierre carries on each local-comment line annotation. Mirrors
-	// CommentMeta (PR comments) but for the local, flat comments: either an
-	// existing comment row or the pending composer for a brand-new one.
+	// CommentMeta (PR comments): either an existing comment row (root or reply — the
+	// component reconstructs the thread from the store) or the pending composer for
+	// a brand-new one.
 	export type LocalCommentMeta =
 		| {
 				kind: 'local-comment';
@@ -19,19 +20,21 @@
 </script>
 
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import Check from '@lucide/svelte/icons/check';
 	import Copy from '@lucide/svelte/icons/copy';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 	import Pencil from '@lucide/svelte/icons/pencil';
-	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import { Button } from './ui/button';
 	import { ShortcutHint } from './ui/shortcut-hint';
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import MarkdownComposer from './MarkdownComposer.svelte';
+	import ReplyComposer from './ReplyComposer.svelte';
+	import CommentThreadActions from './CommentThreadActions.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
-	import { actions, app, composerKey } from '@super-review/ui/store.svelte';
+	import { actions, app, composerKey, effectiveGithubAccount } from '@super-review/ui/store.svelte';
 	import { formatRelative } from '@super-review/ui/utils';
 	import { renderMarkdown } from '@super-review/ui/markdown';
 	import '@super-review/ui/markdown.css';
@@ -41,6 +44,30 @@
 	}
 
 	let { meta }: Props = $props();
+
+	// Reconstruct this comment's thread (root + replies) from the shared store. Each
+	// comment in a thread is its own annotation pinned to the same line, so a single
+	// instance needs to know whether it's the root, a reply, or the thread tail to
+	// place the resolve control, badges and reply box correctly — mirroring how
+	// CommentAnnotation threads PR comments. Sorted by createdAt, so the root (made
+	// first) leads and replies follow in order.
+	const threadComments = $derived.by(() => {
+		if (meta.kind !== 'local-comment') return [];
+		const c = meta.comment;
+		const rootId = c.inReplyTo ?? c.id;
+		return app.localComments
+			.filter((x) => (x.inReplyTo ?? x.id) === rootId)
+			.sort((a, b) => a.createdAt - b.createdAt);
+	});
+	const rootComment = $derived(
+		threadComments[0] ?? (meta.kind === 'local-comment' ? meta.comment : null)
+	);
+	const isReply = $derived(meta.kind === 'local-comment' && meta.comment.inReplyTo != null);
+	const isRoot = $derived(meta.kind === 'local-comment' && meta.comment.inReplyTo == null);
+	const isThreadTail = $derived(
+		meta.kind === 'local-comment' &&
+			threadComments[threadComments.length - 1]?.id === meta.comment.id
+	);
 
 	// Render the comment body as GitHub-Flavored Markdown (sanitized in
 	// markdown.ts) — same as the PR comment view — so local comments display
@@ -76,7 +103,9 @@
 		return { key, value: app.localComposers[key] ?? null };
 	});
 
-	const resolved = $derived(meta.kind === 'local-comment' && meta.comment.resolvedAt != null);
+	// Resolution is thread-level: the root carries it, and the whole thread reads as
+	// resolved (and dims) when the root is resolved.
+	const resolved = $derived(rootComment?.resolvedAt != null);
 	// Stamped on the meta by DiffFileSection: the anchored line is gone from the
 	// current diff (the working tree changed under the comment).
 	const outdated = $derived(meta.kind === 'local-comment' && meta.isOutdated === true);
@@ -99,18 +128,21 @@
 
 	// Inline edit state for this comment's body. Uses the same MarkdownComposer as
 	// the new-comment composer below — and as the PR view — so editing gets the
-	// full Write/Preview editor.
-	let editing = $state(false);
+	// full Write/Preview editor. Whether THIS comment is being edited is derived
+	// from the shared `openCommentEditor` key, so an edit and a reply can't be open
+	// at the same time (opening either closes the other).
 	let editDraft = $state('');
 	let editSubmitting = $state(false);
+	const editKey = $derived(meta.kind === 'local-comment' ? `edit:local:${meta.comment.id}` : '');
+	const editing = $derived(editKey !== '' && app.openCommentEditor === editKey);
 
 	function startEdit(body: string): void {
-		editing = true;
 		editDraft = body;
+		actions.setOpenCommentEditor(editKey);
 	}
 	function cancelEdit(): void {
-		editing = false;
 		editDraft = '';
+		actions.setOpenCommentEditor(null);
 	}
 	async function saveEdit(id: string): Promise<void> {
 		if (editSubmitting) return;
@@ -131,22 +163,47 @@
 		}
 	}
 
-	// Copy-as-prompt with a brief checkmark confirmation on the button.
-	let copied = $state(false);
-	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
-	function copyComment(id: string): void {
-		void actions.copyCommentPrompt(id);
-		copied = true;
-		if (copiedTimer) clearTimeout(copiedTimer);
-		copiedTimer = setTimeout(() => (copied = false), 1500);
+	// Inline reply, rendered on the thread tail via the shared ReplyComposer (same
+	// component the PR thread uses). Agents reply via the CLI; this is the human
+	// path. The viewer's avatar fronts the slim prompt when signed in. Open state is
+	// the shared `openCommentEditor` key, so a reply and an edit are mutually
+	// exclusive.
+	const viewerAvatar = $derived(effectiveGithubAccount()?.avatarUrl ?? '');
+	const replyKey = $derived(rootComment ? `reply:local:${rootComment.id}` : '');
+	const replyExpanded = $derived(replyKey !== '' && app.openCommentEditor === replyKey);
+	function replyTo(body: string): Promise<boolean> {
+		if (meta.kind !== 'local-comment') return Promise.resolve(false);
+		const root = rootComment ?? meta.comment;
+		return actions.submitLocalReply(meta.comment.path, root.id, body);
 	}
+
+	// If this comment is unmounted while it owns the shared open-editor key (e.g.
+	// switching files mid-edit in single-file layout), clear the key so it doesn't
+	// reopen an empty editor when the comment remounts.
+	onDestroy(() => {
+		if (app.openCommentEditor === editKey || app.openCommentEditor === replyKey) {
+			actions.setOpenCommentEditor(null);
+		}
+	});
 </script>
 
-<div class={['local-comment-annotation', (resolved || outdated) && 'is-resolved']}>
+<div
+	class={[
+		'local-comment-annotation',
+		isReply && 'is-reply',
+		(resolved || outdated) && 'is-resolved'
+	]}
+>
 	{#if meta.kind === 'local-comment'}
 		{@const c = meta.comment}
 		<article class="comment">
-			{#if c.author.avatarUrl}
+			{#if c.author.kind === 'agent' && c.author.harness}
+				<!-- Agent author (e.g. a CLI reply) shows its harness logo as the avatar,
+				     matching how resolutions and session cards identify a harness. -->
+				<div class="avatar avatar-harness" title={c.author.name}>
+					<HarnessLogo harness={c.author.harness} size={20} />
+				</div>
+			{:else if c.author.avatarUrl}
 				<img class="avatar" src={c.author.avatarUrl} alt={c.author.name} width="20" height="20" />
 			{:else}
 				<!-- Anonymous "You" (not signed into GitHub) has no avatar — show an
@@ -159,7 +216,8 @@
 				<header>
 					<span class="author">{c.author.name}</span>
 					<span class="time">{formatRelative(c.createdAt)}</span>
-					{#if outdated}
+					<!-- Outdated/Resolved are thread-level — shown once, on the root. -->
+					{#if outdated && isRoot}
 						<span
 							class="outdated-tag"
 							title="The line this comment was left on is no longer in the diff"
@@ -167,37 +225,14 @@
 							Outdated
 						</span>
 					{/if}
-					{#if resolved}
+					{#if resolved && isRoot}
 						<span class="resolved-tag"><Check class="size-3" /> Resolved</span>
 					{/if}
 					<div class="ml-auto flex shrink-0 items-center gap-0.5">
-						<button
-							type="button"
-							class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-							title={resolved ? 'Unresolve' : 'Resolve'}
-							onclick={() =>
-								resolved ? actions.unresolveLocalComment(c.id) : actions.resolveLocalComment(c.id)}
-						>
-							{#if resolved}
-								<RotateCcw class="size-3.5" />
-							{:else}
-								<Check class="size-3.5" />
-							{/if}
-						</button>
-						<button
-							type="button"
-							class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-							title="Copy as prompt"
-							onclick={() => copyComment(c.id)}
-						>
-							{#if copied}
-								<Check class="size-3.5" style="color: var(--color-success);" />
-							{:else}
-								<Copy class="size-3.5" />
-							{/if}
-						</button>
-						<!-- Edit is the viewer's own comment — a first-class action next to
-						     Copy, hidden while already editing (mirrors the PR comment view). -->
+						<!-- Resolve lives in the thread-actions bar below (PR-style), not
+						     here, so it sits in the same place on PR and local comments. -->
+						<!-- Edit is the viewer's own comment — a first-class action, hidden
+						     while already editing (mirrors the PR comment view). -->
 						{#if !editing}
 							<button
 								type="button"
@@ -216,7 +251,14 @@
 							>
 								<MoreHorizontal class="size-4" />
 							</DropdownMenu.Trigger>
-							<DropdownMenu.Content align="end">
+							<DropdownMenu.Content align="end" class="w-auto!">
+								<DropdownMenu.Item onSelect={() => actions.copyCommentPrompt(c.id)}>
+									<Copy class="size-3.5" />
+									Copy as prompt
+								</DropdownMenu.Item>
+								<!-- Delete sits in its own group, separated from the
+								     non-destructive actions above. -->
+								<DropdownMenu.Separator />
 								<DropdownMenu.Item
 									variant="destructive"
 									onSelect={() => actions.deleteLocalComment(c.id)}
@@ -267,7 +309,7 @@
 				{:else}
 					<p class="text">{c.body}</p>
 				{/if}
-				{#if resolved && c.resolvedBy}
+				{#if resolved && isRoot && c.resolvedBy}
 					<footer class="resolution">
 						{#if c.resolvedBy.kind === 'agent' && c.resolvedBy.harness}
 							<HarnessLogo harness={c.resolvedBy.harness} size={14} />
@@ -294,6 +336,26 @@
 				{/if}
 			</div>
 		</article>
+		{#if isThreadTail}
+			<ReplyComposer
+				expanded={replyExpanded}
+				onexpand={() => actions.setOpenCommentEditor(replyKey)}
+				oncollapse={() => actions.setOpenCommentEditor(null)}
+				onsubmit={replyTo}
+				avatarUrl={viewerAvatar}
+				replyingTo={rootComment?.author.name}
+			/>
+			<!-- Thread-level controls below the whole conversation, in the same place
+			     (and the same component) as the PR comment view. -->
+			<CommentThreadActions
+				{resolved}
+				onCopyThread={() => actions.copyLocalThreadPrompt((rootComment ?? c).id)}
+				onToggleResolved={() =>
+					resolved
+						? actions.unresolveLocalComment((rootComment ?? c).id)
+						: actions.resolveLocalComment((rootComment ?? c).id)}
+			/>
+		{/if}
 	{:else if composerState?.value}
 		{@const composer = composerState.value}
 		<form
@@ -342,6 +404,13 @@
 		border-bottom: 1px solid hsl(var(--border));
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 	}
+	/* Replies stack as their own annotation rows beneath the root; dropping their
+	   top border leaves a single 1px rule between rows (the previous row's bottom
+	   border), so a thread reads as one stack rather than a set of boxed comments —
+	   mirroring the PR thread. */
+	.local-comment-annotation.is-reply {
+		border-top: none;
+	}
 	/* Resolved comments stay visible but de-emphasized (kept-and-greyed). */
 	.local-comment-annotation.is-resolved .text,
 	.local-comment-annotation.is-resolved .author,
@@ -371,6 +440,14 @@
 		color: hsl(var(--muted-foreground));
 		background: hsl(var(--muted));
 		text-transform: uppercase;
+	}
+	/* Agent author: square-ish so the harness logo isn't clipped into a circle. */
+	.avatar-harness {
+		display: grid;
+		place-items: center;
+		border-radius: 4px;
+		background: transparent;
+		overflow: hidden;
 	}
 	/* The 1fr grid track defaults to min-width: auto, so without this the inline
 	   edit composer's wide Carta toolbar refuses to shrink and overflows the host

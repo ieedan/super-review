@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import Check from '@lucide/svelte/icons/check';
 	import ChevronsDownUp from '@lucide/svelte/icons/chevrons-down-up';
 	import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
@@ -13,6 +14,8 @@
 	import * as DropdownMenu from './ui/dropdown-menu';
 	import DiffHunkSnippet from './DiffHunkSnippet.svelte';
 	import MarkdownComposer from './MarkdownComposer.svelte';
+	import ReplyComposer from './ReplyComposer.svelte';
+	import CommentThreadActions from './CommentThreadActions.svelte';
 	import {
 		actions,
 		app,
@@ -113,32 +116,11 @@
 	// The viewer's avatar for the GitHub-style reply prompt.
 	const viewerAvatar = $derived(effectiveGithubAccount()?.avatarUrl ?? '');
 
-	// Inline reply state. Kept local (not in pendingComposers). The prompt starts
-	// as a slim one-line input; clicking it expands into the full MarkdownComposer
-	// (Write/Preview + toolbar), GitHub-style, with Cancel/Reply actions.
-	let replyDraft = $state('');
-	let replySubmitting = $state(false);
-	let replyExpanded = $state(false);
-
-	function expandReply(): void {
-		replyExpanded = true;
-	}
-
-	// Collapse back to the slim prompt and drop the draft. Used by Cancel and Esc.
-	function collapseReply(): void {
-		replyExpanded = false;
-		replyDraft = '';
-	}
-
-	function onReplyKeydown(e: KeyboardEvent): void {
-		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-			e.preventDefault();
-			void submitReply();
-		} else if (e.key === 'Escape') {
-			e.preventDefault();
-			collapseReply();
-		}
-	}
+	// The thread root (first comment) — drives the reply target/label and the shared
+	// open-editor key so a reply and an edit can't be open at once.
+	const threadRoot = $derived(threadComments[0] ?? (meta.kind === 'comment' ? meta.comment : null));
+	const replyKey = $derived(threadRoot ? `reply:pr:${threadRoot.id}` : '');
+	const replyExpanded = $derived(replyKey !== '' && app.openCommentEditor === replyKey);
 
 	function submit(): void {
 		if (composerState) void actions.submitComposer(composerState.key);
@@ -148,41 +130,43 @@
 		if (composerState) actions.cancelComposer(composerState.key);
 	}
 
-	// Post a reply to the thread. Replies all hang off the top-level comment, so
-	// we pass the root's id as `replyTo`.
-	async function submitReply(): Promise<void> {
-		if (meta.kind !== 'comment') return;
-		const body = replyDraft.trim();
-		if (!body || replySubmitting) return;
+	// Post a reply to the thread (via the shared ReplyComposer). Replies all hang
+	// off the top-level comment, so we pass the root's id as `replyTo`.
+	function replyTo(body: string): Promise<boolean> {
+		if (meta.kind !== 'comment') return Promise.resolve(false);
 		const c = meta.comment;
 		const root = threadComments[0] ?? c;
-		replySubmitting = true;
-		const ok = await actions.submitReply(c.path, root.id, body);
-		replySubmitting = false;
-		if (ok) {
-			replyDraft = '';
-			replyExpanded = false;
-		}
+		return actions.submitReply(c.path, root.id, body);
 	}
+
+	// If this comment is unmounted while it owns the shared open-editor key, clear it
+	// so a remount doesn't reopen an empty editor (mirrors LocalCommentAnnotation).
+	onDestroy(() => {
+		if (app.openCommentEditor === editKey || app.openCommentEditor === replyKey) {
+			actions.setOpenCommentEditor(null);
+		}
+	});
 
 	function remove(comment: PRReviewComment): void {
 		void actions.deleteComment(comment.id, comment.path);
 	}
 
-	// Inline edit state for this comment. Each comment row is its own component
-	// instance, so a plain boolean tracks whether *this* one is being edited; the
-	// draft is kept locally so typing doesn't churn the thread.
-	let editing = $state(false);
+	// Inline edit state for this comment. The draft is kept locally so typing doesn't
+	// churn the thread, but whether THIS comment is being edited is derived from the
+	// shared `openCommentEditor` key — so an edit and a reply are mutually exclusive
+	// (opening either closes the other).
 	let editDraft = $state('');
 	let editSubmitting = $state(false);
+	const editKey = $derived(meta.kind === 'comment' ? `edit:pr:${meta.comment.id}` : '');
+	const editing = $derived(editKey !== '' && app.openCommentEditor === editKey);
 
 	function startEdit(comment: PRReviewComment): void {
-		editing = true;
 		editDraft = comment.body;
+		actions.setOpenCommentEditor(editKey);
 	}
 	function cancelEdit(): void {
-		editing = false;
 		editDraft = '';
+		actions.setOpenCommentEditor(null);
 	}
 	async function saveEdit(comment: PRReviewComment): Promise<void> {
 		if (editSubmitting) return;
@@ -209,16 +193,6 @@
 	function viewOnGithub(comment: PRReviewComment): void {
 		if (!comment.url) return;
 		void window.api.shell.openExternal(comment.url);
-	}
-
-	// Copy this comment as an agent-ready prompt, with a brief checkmark confirm.
-	let copied = $state(false);
-	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
-	function copy(comment: PRReviewComment): void {
-		void actions.copyPRCommentPrompt(comment.path, comment.id);
-		copied = true;
-		if (copiedTimer) clearTimeout(copiedTimer);
-		copiedTimer = setTimeout(() => (copied = false), 1500);
 	}
 
 	function toggleResolved(comment: PRReviewComment): void {
@@ -270,26 +244,14 @@
 								{replyCount === 1 ? 'reply' : 'replies'}
 							</span>
 						{/if}
-						<!-- Right-aligned actions. Copy/overflow only show when expanded; the
+						<!-- Right-aligned actions. Edit/overflow only show when expanded; the
 						     single thread collapse toggle lives on the root and stays at the
 						     far right in both states. -->
 						<div class="ml-auto flex shrink-0 items-center gap-0.5">
 							{#if !collapsed}
-								<button
-									type="button"
-									class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-									title="Copy as prompt"
-									onclick={() => copy(c)}
-								>
-									{#if copied}
-										<Check class="size-3.5" style="color: var(--color-success);" />
-									{:else}
-										<Copy class="size-3.5" />
-									{/if}
-								</button>
 								<!-- Edit is a first-class action on the viewer's own comment, so it
-								     gets its own button next to Copy rather than living in the
-								     overflow menu. Hidden while already editing. -->
+								     gets its own button rather than living in the overflow menu.
+								     Hidden while already editing. -->
 								{#if c.canDelete && !editing}
 									<button
 										type="button"
@@ -301,33 +263,35 @@
 										<Pencil class="size-3.5" />
 									</button>
 								{/if}
-								{#if c.url || c.canDelete}
-									<DropdownMenu.Root>
-										<DropdownMenu.Trigger
-											class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-											aria-label="Comment actions"
-										>
-											<MoreHorizontal class="size-4" />
-										</DropdownMenu.Trigger>
-										<DropdownMenu.Content align="end" class="w-auto!">
-											{#if c.url}
-												<DropdownMenu.Item onSelect={() => viewOnGithub(c)}>
-													<Github class="size-3.5" />
-													View on GitHub
-												</DropdownMenu.Item>
-											{/if}
-											{#if c.canDelete}
-												{#if c.url}
-													<DropdownMenu.Separator />
-												{/if}
-												<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
-													<Trash2 class="size-3.5" />
-													Delete
-												</DropdownMenu.Item>
-											{/if}
-										</DropdownMenu.Content>
-									</DropdownMenu.Root>
-								{/if}
+								<DropdownMenu.Root>
+									<DropdownMenu.Trigger
+										class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+										aria-label="Comment actions"
+									>
+										<MoreHorizontal class="size-4" />
+									</DropdownMenu.Trigger>
+									<DropdownMenu.Content align="end" class="w-auto!">
+										<DropdownMenu.Item onSelect={() => actions.copyPRCommentPrompt(c.path, c.id)}>
+											<Copy class="size-3.5" />
+											Copy as prompt
+										</DropdownMenu.Item>
+										{#if c.url}
+											<DropdownMenu.Item onSelect={() => viewOnGithub(c)}>
+												<Github class="size-3.5" />
+												View on GitHub
+											</DropdownMenu.Item>
+										{/if}
+										{#if c.canDelete}
+											<!-- Delete sits in its own group, separated from the
+											     non-destructive actions above. -->
+											<DropdownMenu.Separator />
+											<DropdownMenu.Item variant="destructive" onSelect={() => remove(c)}>
+												<Trash2 class="size-3.5" />
+												Delete
+											</DropdownMenu.Item>
+										{/if}
+									</DropdownMenu.Content>
+								</DropdownMenu.Root>
 							{/if}
 							{#if isRoot}
 								<button
@@ -400,69 +364,24 @@
 				</div>
 			</article>
 			{#if isThreadTail && !collapsed}
-				{#if replyExpanded}
-					<!-- Expanded reply: the same MarkdownComposer the new-comment composer
-             uses, so a reply gets the full Write/Preview editor and toolbar. -->
-					<form
-						class="composer reply-composer"
-						onsubmit={(e) => {
-							e.preventDefault();
-							void submitReply();
-						}}
-					>
-						<MarkdownComposer
-							bind:value={replyDraft}
-							placeholder="Write a reply…"
-							disabled={replySubmitting}
-							autofocus
-							onkeydown={onReplyKeydown}
-						/>
-						<div class="composer-footer">
-							<div class="actions">
-								<Button variant="ghost" size="sm" type="button" onclick={collapseReply}>
-									Cancel <ShortcutHint>esc</ShortcutHint>
-								</Button>
-								<Button
-									variant="default"
-									size="sm"
-									type="submit"
-									disabled={!replyDraft.trim() || replySubmitting}
-								>
-									{replySubmitting ? 'Posting…' : 'Reply'}
-									<ShortcutHint>⌘⏎</ShortcutHint>
-								</Button>
-							</div>
-						</div>
-					</form>
-				{:else}
-					<!-- GitHub-style reply affordance: the viewer's avatar next to a slim
-             one-line prompt. Clicking (or focusing) it expands the full editor. -->
-					<div class="reply-prompt">
-						{#if viewerAvatar}
-							<img class="reply-avatar" src={viewerAvatar} alt="" width="20" height="20" />
-						{/if}
-						<input
-							class="reply-box"
-							type="text"
-							placeholder="Reply…"
-							readonly
-							onfocus={expandReply}
-							onclick={expandReply}
-						/>
-					</div>
-				{/if}
+				<ReplyComposer
+					expanded={replyExpanded}
+					onexpand={() => actions.setOpenCommentEditor(replyKey)}
+					oncollapse={() => actions.setOpenCommentEditor(null)}
+					onsubmit={replyTo}
+					avatarUrl={viewerAvatar}
+					replyingTo={threadRoot?.author}
+				/>
 			{/if}
-			{#if isThreadTail && c.threadId && !collapsed}
-				<!-- Thread-level control: renders below the last comment so it sits
-           under the whole conversation, mirroring GitHub's resolve bar. -->
-				<div class="thread-actions">
-					<Button variant="outline" size="sm" onclick={() => toggleResolved(c)}>
-						{#if !c.isResolved}
-							<Check class="size-3.5" />
-						{/if}
-						{c.isResolved ? 'Unresolve' : 'Resolve'}
-					</Button>
-				</div>
+			{#if isThreadTail && !collapsed}
+				<!-- Thread-level controls below the whole conversation. Copy-thread is
+             always available; resolve needs a GraphQL thread id. -->
+				<CommentThreadActions
+					resolved={c.isResolved}
+					canResolve={!!c.threadId}
+					onToggleResolved={() => toggleResolved(c)}
+					onCopyThread={() => actions.copyPRThreadPrompt(c.path, (threadComments[0] ?? c).id)}
+				/>
 			{/if}
 		{:else if composerState?.value}
 			{@const composer = composerState.value}
@@ -527,56 +446,6 @@
 		grid-template-columns: auto 1fr;
 		gap: 10px;
 		align-items: start;
-	}
-	/* GitHub-style reply affordance: avatar + a slim one-line prompt that expands
-     into the full MarkdownComposer when clicked. */
-	.reply-prompt {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		width: 100%;
-		margin-top: 4px;
-	}
-	/* Expanded reply editor — same composer as a new comment, with a little space
-     above to set it off from the comment it replies to. */
-	.reply-composer {
-		margin-top: 8px;
-	}
-	.reply-avatar {
-		border-radius: 999px;
-		flex-shrink: 0;
-	}
-	.reply-box {
-		flex: 1;
-		min-width: 0;
-		padding: 6px 10px;
-		font: inherit;
-		font-size: 13px;
-		color: var(--color-foreground);
-		background: var(--color-background);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		outline: none;
-		cursor: text;
-	}
-	.reply-box::placeholder {
-		color: var(--color-muted-foreground);
-	}
-	.reply-box:focus {
-		border-color: var(--color-ring);
-	}
-	.reply-box:disabled {
-		opacity: 0.6;
-	}
-	/* Sits below the last comment, separated by a rule, so the resolve toggle
-     reads as a thread-level action rather than part of that comment. Kept
-     outside `.comment` so it stays full-opacity even when the thread is
-     resolved (and its comments are dimmed). */
-	.thread-actions {
-		display: flex;
-		margin-top: 6px;
-		padding-top: 6px;
-		border-top: 1px solid var(--color-border);
 	}
 	.outdated-tag {
 		display: inline-flex;

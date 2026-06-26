@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import type { Component } from 'svelte';
 	import WaitlistForm from '$lib/components/WaitlistForm.svelte';
-	import { MARK_AS_SEEN_FILES, COMMENTS_FILE } from '$lib/demo/mock-data';
+	import { MARK_AS_SEEN_FILES, COMMENTS_FILE, SEED_COMMENT } from '$lib/demo/mock-data';
 
 	// Real product screenshot in static/.
 	const screenshot: string | null = '/app-preview.webp';
@@ -118,7 +118,7 @@
 			></div>
 
 			<div
-				class="bg-elevated/85 overflow-hidden rounded-2xl text-left shadow-2xl backdrop-blur-sm"
+				class="border-line overflow-hidden rounded-2xl border text-left shadow-2xl backdrop-blur-sm"
 				style="box-shadow: 0 50px 120px -40px hsl(6 88% 40% / 0.5);"
 			>
 				{#if screenshot}
@@ -219,7 +219,7 @@
 					style="animation-delay: 1260ms"
 				>
 					{#if DemoDiff}
-						<DemoDiff paths={[COMMENTS_FILE]} />
+						<DemoDiff paths={[COMMENTS_FILE]} focusCommentId={SEED_COMMENT.id} />
 					{:else}{@render placeholder()}{/if}
 				</div>
 			</div>
