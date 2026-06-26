@@ -10,7 +10,8 @@
 	import { actions, app } from '@super-review/ui/store.svelte';
 	import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
-	import { cn, repoPlaceholder, groupReposByOwner } from '@super-review/ui/utils';
+	import { cn, groupReposByOwner } from '@super-review/ui/utils';
+	import RepoIcon from './RepoIcon.svelte';
 	import type { RepoInfo } from '@super-review/core/types';
 
 	const ITEM_SIZE = 36;
@@ -100,21 +101,6 @@
 		});
 	}
 
-	function placeholderFor(repo: RepoInfo | null | undefined): {
-		initial: string;
-		toneClass: string;
-	} {
-		return repoPlaceholder(repo?.name ?? '');
-	}
-
-	// Pick the icon variant for the current theme. Repos that ship a light/dark
-	// pair (e.g. `favicon-light.svg` + `favicon-dark.svg`) expose both; everyone
-	// else only has `iconDataUrl`, so we fall back to it. Reactive on `app.theme`.
-	function iconSrc(repo: RepoInfo | null | undefined): string | undefined {
-		if (!repo) return undefined;
-		return app.theme === 'dark' && repo.iconDataUrlDark ? repo.iconDataUrlDark : repo.iconDataUrl;
-	}
-
 	// Mirror GitHub Desktop's repo picker: a "Recent" section of the few most
 	// relevant repos, followed by every repo grouped under its owner (recent
 	// repos still appear in their owner group too). Filtering is applied here —
@@ -193,18 +179,8 @@
 
 <Popover.Root bind:open>
 	<Popover.Trigger class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[260px]')}>
-		{#if app.activeRepo?.iconDataUrl}
-			<img src={iconSrc(app.activeRepo)} alt="" class="size-4 rounded-sm object-contain" />
-		{:else if app.activeRepo}
-			{@const { initial, toneClass } = placeholderFor(app.activeRepo)}
-			<span
-				class={cn(
-					'grid size-4 place-items-center rounded-sm text-[9px] leading-none font-semibold',
-					toneClass
-				)}
-			>
-				{initial}
-			</span>
+		{#if app.activeRepo}
+			<RepoIcon repo={app.activeRepo} size="sm" />
 		{/if}
 		<span class="truncate">{app.activeRepo?.name ?? 'Open repository'}</span>
 		<ChevronDown class="size-3.5 text-muted-foreground" />
@@ -263,19 +239,7 @@
 												repo.id === app.activeRepo?.id && 'bg-accent/60'
 											)}
 										>
-											{#if repo.iconDataUrl}
-												<img src={iconSrc(repo)} alt="" class="size-5 rounded-sm object-contain" />
-											{:else}
-												{@const { initial, toneClass } = placeholderFor(repo)}
-												<span
-													class={cn(
-														'grid size-5 place-items-center rounded-sm text-[11px] leading-none font-semibold',
-														toneClass
-													)}
-												>
-													{initial}
-												</span>
-											{/if}
+											<RepoIcon {repo} size="md" />
 											<span class="min-w-0 flex-1 truncate font-medium">{repo.name}</span>
 											<!-- Dot marks a repo with uncommitted changes. Removing a
                            repo now lives in the right-click context menu. -->
