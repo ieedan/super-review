@@ -84,7 +84,7 @@ async function runListPr(opts: ListOptions, explicitNumber: number | null): Prom
 	const slug = await resolveGithubRepo(root);
 	if (!slug) fail("couldn't determine the GitHub owner/repo from the 'origin' remote");
 
-	const token = resolveGithubToken();
+	const token = resolveGithubToken(root);
 	if (!token) {
 		fail(
 			'no GitHub token available. Sign in with the Super Review app, or set GH_TOKEN/GITHUB_TOKEN.'

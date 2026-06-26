@@ -1,4 +1,4 @@
-import { getDesktopGithubToken } from '@super-review/core';
+import { getDesktopGithubToken, getDesktopGithubTokenForRepo } from '@super-review/core';
 
 // A single inline review comment as returned by GitHub's REST API, narrowed to
 // the fields we render. See
@@ -16,10 +16,12 @@ export interface GithubReviewComment {
 	created_at: string;
 }
 
-// Resolve a GitHub token: prefer the desktop app's signed-in account, then fall
-// back to the usual CI/CLI env vars. Returns null when neither is available.
-export function resolveGithubToken(): string | null {
-	const fromApp = getDesktopGithubToken();
+// Resolve a GitHub token: prefer the desktop app's sign-in, then fall back to
+// the usual CI/CLI env vars. Returns null when neither is available. Pass the
+// repo root so the app's per-repo account pin is honored (e.g. a private repo
+// owned by a secondary account); without it the active account is used.
+export function resolveGithubToken(repoPath?: string): string | null {
+	const fromApp = repoPath ? getDesktopGithubTokenForRepo(repoPath) : getDesktopGithubToken();
 	if (fromApp) return fromApp.token;
 	return process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? null;
 }

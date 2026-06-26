@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { repoIdFromPath } from './git-service.js';
 
 // The CLI has no GitHub auth of its own. Rather than bolt a second device-flow
 // onto it, we reuse the login the desktop app already established: the app
@@ -23,6 +24,10 @@ interface StoredConfig {
 	activeGithubAccountId?: string | null;
 	// Legacy single-token field, kept for accounts authed before multi-account.
 	githubToken?: string | null;
+	// Per-repo state, keyed by repoId (see repoIdFromPath). `githubAccountId` pins
+	// the repo to a specific account; when unset the app uses the active account.
+	// Private repos owned by a secondary account rely on this pin.
+	repos?: Record<string, { githubAccountId?: string }>;
 }
 
 export interface DesktopGithubAuth {
@@ -109,21 +114,60 @@ function tokenFromConfig(config: StoredConfig): DesktopGithubAuth | null {
 	return null;
 }
 
-// The desktop app's GitHub token for the active account, or null when the app
-// isn't installed/signed in. When more than one config file has a token (e.g. an
-// install survived a rename), the most recently written file wins, so the app
-// the user is actually running is the one we follow.
-export function getDesktopGithubToken(): DesktopGithubAuth | null {
-	const candidates: { auth: DesktopGithubAuth; mtimeMs: number }[] = [];
+// The token for the account a repo is pinned to in this config, or null when the
+// repo isn't pinned (or the pinned account has no token here). The app pins a
+// repo to a specific account so private repos owned by a secondary account
+// resolve; the CLI must honor that pin rather than always using the active one.
+function repoTokenFromConfig(config: StoredConfig, repoId: string): DesktopGithubAuth | null {
+	const pinnedId = config.repos?.[repoId]?.githubAccountId;
+	if (!pinnedId) return null;
+	const account = config.githubAccounts?.[pinnedId];
+	if (account?.token) return { token: account.token, login: account.login };
+	return null;
+}
+
+// Parsed config files that yielded a usable token, most recently written first.
+// Several can exist when an install survived a repo/package rename; ordering by
+// mtime means the app the user is actually running wins.
+function loadConfigsByRecency(): StoredConfig[] {
+	const parsed: { config: StoredConfig; mtimeMs: number }[] = [];
 	for (const file of findConfigFiles()) {
 		try {
 			const config = JSON.parse(fs.readFileSync(file, 'utf8')) as StoredConfig;
-			const auth = tokenFromConfig(config);
-			if (auth) candidates.push({ auth, mtimeMs: fs.statSync(file).mtimeMs });
+			parsed.push({ config, mtimeMs: fs.statSync(file).mtimeMs });
 		} catch {
 			// Missing or unreadable/corrupt — skip it.
 		}
 	}
-	candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-	return candidates[0]?.auth ?? null;
+	parsed.sort((a, b) => b.mtimeMs - a.mtimeMs);
+	return parsed.map((p) => p.config);
+}
+
+// The desktop app's GitHub token for the active account, or null when the app
+// isn't installed/signed in.
+export function getDesktopGithubToken(): DesktopGithubAuth | null {
+	for (const config of loadConfigsByRecency()) {
+		const auth = tokenFromConfig(config);
+		if (auth) return auth;
+	}
+	return null;
+}
+
+// The token to use for operations against a specific local repo. Prefers the
+// account the repo is pinned to in the app (so a private repo owned by a
+// secondary account works), and falls back to the active account when the repo
+// isn't pinned anywhere. `repoPath` is the repo root, resolved the same way the
+// app keys its per-repo state.
+export function getDesktopGithubTokenForRepo(repoPath: string): DesktopGithubAuth | null {
+	const repoId = repoIdFromPath(repoPath);
+	const configs = loadConfigsByRecency();
+	for (const config of configs) {
+		const pinned = repoTokenFromConfig(config, repoId);
+		if (pinned) return pinned;
+	}
+	for (const config of configs) {
+		const auth = tokenFromConfig(config);
+		if (auth) return auth;
+	}
+	return null;
 }
