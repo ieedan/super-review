@@ -122,6 +122,10 @@
 	/* Fonts the embedded components inherit (the app sets these in its own :root). */
 	--ui-font: var(--font-body);
 	--code-font: var(--font-mono);
+	/* The embedded Pierre diff reads its code font from --diffs-font-family (falling
+	   back to its own SF Mono stack). Custom properties inherit through its shadow
+	   boundary, so point it at our code font to render diffs in Geist Mono too. */
+	--diffs-font-family: var(--code-font);
 	/* Default-button gradient + glow, matching the desktop default button. */
 	--flame-gradient: linear-gradient(135deg, var(--color-flame-soft), var(--color-flame-deep));
 	--btn-primary-shadow: 0 2px 8px -3px hsl(11 100% 55% / 0.5);

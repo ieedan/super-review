@@ -4553,13 +4553,6 @@ export const actions = {
 		};
 	},
 
-	setLocalComposerDraft(key: string, draft: string): void {
-		const c = app.localComposers[key];
-		if (!c) return;
-		// Mutate in place — same focus-stability rationale as setComposerDraft.
-		c.draft = draft;
-	},
-
 	cancelLocalComposer(key: string): void {
 		if (!app.localComposers[key]) return;
 		const { [key]: _removed, ...rest } = app.localComposers;

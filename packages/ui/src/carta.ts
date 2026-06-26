@@ -6,14 +6,13 @@
 // Plugins mirror GitHub's comment editor experience:
 //   - code:  Shiki syntax highlighting in the preview pane
 //   - emoji: `:emoji:` autocomplete picker
-//   - slash: `/` command menu for inserting markdown snippets
 //
-// We deliberately omit plugin-attachment: it requires an upload endpoint to
-// return a hosted URL, which this desktop app doesn't have.
+// We deliberately omit plugin-slash (the `/` command menu) and
+// plugin-attachment: the latter needs an upload endpoint this desktop app
+// doesn't have, and the slash menu adds noise we don't want in PR comments.
 import { Carta } from 'carta-md';
 import { code } from '@cartamd/plugin-code';
 import { emoji } from '@cartamd/plugin-emoji';
-import { slash } from '@cartamd/plugin-slash';
 import DOMPurify from 'dompurify';
 
 // Force links rendered in the preview to open in a new context and never let a
@@ -39,7 +38,7 @@ export const carta = new Carta({
 	// Pass the same dual theme to the code plugin explicitly. It otherwise
 	// inherits the instance theme, but being explicit keeps the preview's fenced
 	// code blocks on the identical light/dark pair as the editor.
-	extensions: [code({ theme: { light: 'github-light', dark: 'github-dark' } }), emoji(), slash()]
+	extensions: [code({ theme: { light: 'github-light', dark: 'github-dark' } }), emoji()]
 });
 
 // CSS class Carta applies to the editor and the plugin popups when we pass

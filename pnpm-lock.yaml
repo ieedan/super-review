@@ -285,9 +285,6 @@ importers:
       '@cartamd/plugin-emoji':
         specifier: ^4.3.0
         version: 4.3.0(carta-md@4.11.2(svelte@5.56.3(@typescript-eslint/types@8.60.1)))
-      '@cartamd/plugin-slash':
-        specifier: ^4.2.0
-        version: 4.2.0(carta-md@4.11.2(svelte@5.56.3(@typescript-eslint/types@8.60.1)))
       '@chenglou/pretext':
         specifier: ^0.0.7
         version: 0.0.7
@@ -515,11 +512,6 @@ packages:
 
   '@cartamd/plugin-emoji@4.3.0':
     resolution: {integrity: sha512-D73qZP/55er1b08CVmBA385omOY9/88zwB1JKBdhEFmOZzYfwr42GiyGHcHpcRinKe/MiaWV4k8vEYj461/wOQ==}
-    peerDependencies:
-      carta-md: ^4.0.0
-
-  '@cartamd/plugin-slash@4.2.0':
-    resolution: {integrity: sha512-lMfdMDbTaq+/VPrH6GlIiJAlaLjhfAK0/LQZrKDnEONOUXr06pddpvvNMhLs0sPx0pPlb7BdNG1GbqdyPn2JCw==}
     peerDependencies:
       carta-md: ^4.0.0
 
@@ -5675,11 +5667,6 @@ snapshots:
       carta-md: 4.11.2(svelte@5.56.3(@typescript-eslint/types@8.60.1))
       node-emoji: 2.2.0
       remark-emoji: 5.0.2
-
-  '@cartamd/plugin-slash@4.2.0(carta-md@4.11.2(svelte@5.56.3(@typescript-eslint/types@8.60.1)))':
-    dependencies:
-      bezier-easing: 2.1.0
-      carta-md: 4.11.2(svelte@5.56.3(@typescript-eslint/types@8.60.1))
 
   '@changesets/apply-release-plan@7.1.1':
     dependencies:

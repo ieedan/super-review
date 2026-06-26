@@ -1348,16 +1348,29 @@
 						{@const isActive = app.selectedFile === node.file.path}
 						{@const isSelected = app.selectedFiles.has(node.file.path)}
 						{@const isFocused = focusedPath === node.file.path}
-						<!-- PR review-comment thread count, only in a PR context. `prComments`
-                 can linger from the branch's PR while on the Unstaged/working-tree
-                 tab, where those comments don't apply — so don't surface them there. -->
-						{@const threads = isPRCommentContext()
+						<!-- Per-file comment count. In a PR context these are the PR review
+                 threads (top-level only); otherwise they're this view's local
+                 comments (a flat list, so each comment is its own "thread").
+                 `prComments` can linger from the branch's PR while on the
+                 Unstaged/working-tree tab, where those comments don't apply — so
+                 the PR/local split mirrors which annotations the diff renders. -->
+						{@const inPRContext = isPRCommentContext()}
+						{@const prThreads = inPRContext
 							? (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo)
 							: []}
-						{@const threadCount = threads.length}
-						<!-- Every thread on the file resolved → swap the icon for a checked
-                   variant so the sidebar reads "comments handled" at a glance. -->
-						{@const allThreadsResolved = threadCount > 0 && threads.every((t) => t.isResolved)}
+						{@const localFileComments = inPRContext
+							? []
+							: app.localComments.filter((c) => c.path === node.file.path)}
+						{@const threadCount = prThreads.length + localFileComments.length}
+						<!-- Every thread/comment on the file resolved → swap the icon for a
+                   checked variant so the sidebar reads "comments handled" at a
+                   glance. PR threads carry `isResolved`; local comments are
+                   resolved when `resolvedAt` is set. (Only one list is ever
+                   populated, so the empty one's `every` is a harmless true.) -->
+						{@const allThreadsResolved =
+							threadCount > 0 &&
+							prThreads.every((t) => t.isResolved) &&
+							localFileComments.every((c) => c.resolvedAt != null)}
 						<!-- Unstaged rows show a commit-inclusion checkbox instead of the
                    "seen" indicator; the seen flow still drives collapse, but its
                    state isn't surfaced here. `seenVisual` gates the strikethrough
@@ -1464,7 +1477,8 @@
 									{#if threadCount > 0}
 										<span
 											class="flex items-center gap-0.5 text-muted-foreground"
-											title="{threadCount} comment thread{threadCount === 1
+											title="{threadCount} {inPRContext ? 'comment thread' : 'comment'}{threadCount ===
+											1
 												? ''
 												: 's'}{allThreadsResolved ? ' (resolved)' : ''}"
 										>

@@ -607,6 +607,13 @@
 		border-radius: 999px;
 		margin-top: 2px;
 	}
+	/* The 1fr grid track defaults to min-width: auto, so without this the inline
+	   edit composer's wide Carta toolbar refuses to shrink and overflows the host
+	   instead of collapsing into the "…" menu (the block-level new-comment/reply
+	   composers aren't affected). */
+	.body {
+		min-width: 0;
+	}
 	.body header {
 		display: flex;
 		gap: 8px;

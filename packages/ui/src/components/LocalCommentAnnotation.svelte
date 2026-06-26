@@ -29,10 +29,12 @@
 	import { Button } from './ui/button';
 	import { ShortcutHint } from './ui/shortcut-hint';
 	import * as DropdownMenu from './ui/dropdown-menu';
-	import { Textarea } from './ui/textarea';
+	import MarkdownComposer from './MarkdownComposer.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { actions, app, composerKey } from '@super-review/ui/store.svelte';
 	import { formatRelative } from '@super-review/ui/utils';
+	import { renderMarkdown } from '@super-review/ui/markdown';
+	import '@super-review/ui/markdown.css';
 
 	interface Props {
 		meta: LocalCommentMeta;
@@ -40,9 +42,32 @@
 
 	let { meta }: Props = $props();
 
-	let textareaEl = $state<HTMLTextAreaElement | null>(null);
+	// Render the comment body as GitHub-Flavored Markdown (sanitized in
+	// markdown.ts) — same as the PR comment view — so local comments display
+	// formatted text, links, and code rather than a raw string.
+	let bodyHtml = $state('');
 	$effect(() => {
-		textareaEl?.focus();
+		if (meta.kind !== 'local-comment') {
+			bodyHtml = '';
+			return;
+		}
+		const src = meta.comment.body;
+		const theme = app.theme;
+		if (!src.trim()) {
+			bodyHtml = '';
+			return;
+		}
+		let cancelled = false;
+		void renderMarkdown(src, theme)
+			.then((h) => {
+				if (!cancelled) bodyHtml = h;
+			})
+			.catch(() => {
+				if (!cancelled) bodyHtml = '';
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	const composerState = $derived.by(() => {
@@ -72,16 +97,12 @@
 		}
 	}
 
-	// Inline edit state for this comment's body. Local comments are plain text, so
-	// the editor is a plain Textarea (matching the new-comment composer below)
-	// rather than the PR view's Markdown editor.
+	// Inline edit state for this comment's body. Uses the same MarkdownComposer as
+	// the new-comment composer below — and as the PR view — so editing gets the
+	// full Write/Preview editor.
 	let editing = $state(false);
 	let editDraft = $state('');
 	let editSubmitting = $state(false);
-	let editTextareaEl = $state<HTMLTextAreaElement | null>(null);
-	$effect(() => {
-		if (editing) editTextareaEl?.focus();
-	});
 
 	function startEdit(body: string): void {
 		editing = true;
@@ -215,13 +236,12 @@
 							void saveEdit(c.id);
 						}}
 					>
-						<Textarea
-							bind:ref={editTextareaEl}
-							class="resize-y"
+						<MarkdownComposer
 							bind:value={editDraft}
-							onkeydown={(e) => onEditKeydown(e, c.id)}
+							placeholder="Edit comment…"
 							disabled={editSubmitting}
-							rows={3}
+							autofocus
+							onkeydown={(e) => onEditKeydown(e, c.id)}
 						/>
 						<div class="composer-footer">
 							<div class="actions">
@@ -240,6 +260,10 @@
 							</div>
 						</div>
 					</form>
+				{:else if bodyHtml}
+					<!-- bodyHtml is sanitized with DOMPurify in markdown.ts before it reaches here -->
+					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+					<div class="markdown-body text">{@html bodyHtml}</div>
 				{:else}
 					<p class="text">{c.body}</p>
 				{/if}
@@ -283,19 +307,12 @@
 				<MessageSquare class="size-3.5 text-muted-foreground" />
 				<span>New comment</span>
 			</div>
-			<Textarea
-				bind:ref={textareaEl}
-				class="resize-y"
+			<MarkdownComposer
+				bind:value={composer.draft}
 				placeholder="Leave a comment on this line…"
-				value={composer.draft}
-				oninput={(e) =>
-					actions.setLocalComposerDraft(
-						composerState!.key,
-						(e.target as HTMLTextAreaElement).value
-					)}
-				onkeydown={onKeydown}
 				disabled={composer.submitting}
-				rows={3}
+				autofocus
+				onkeydown={onKeydown}
 			/>
 			<div class="composer-footer">
 				<div class="actions">
@@ -355,6 +372,13 @@
 		background: hsl(var(--muted));
 		text-transform: uppercase;
 	}
+	/* The 1fr grid track defaults to min-width: auto, so without this the inline
+	   edit composer's wide Carta toolbar refuses to shrink and overflows the host
+	   instead of collapsing into the "…" menu (the block-level new-comment
+	   composer isn't affected). */
+	.body {
+		min-width: 0;
+	}
 	.body header {
 		display: flex;
 		gap: 8px;
@@ -399,6 +423,13 @@
 		margin: 4px 0 6px;
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+	/* The rendered-markdown body carries its own block spacing (paragraph/list
+	   margins). `pre-wrap` — kept above for the raw-text fallback, which must
+	   preserve real newlines — would turn marked's inter-tag newlines into visible
+	   blank lines, so render markdown with normal whitespace collapsing. */
+	.markdown-body.text {
+		white-space: normal;
 	}
 	.resolution {
 		display: flex;

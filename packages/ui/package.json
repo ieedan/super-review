@@ -16,7 +16,6 @@
 	"dependencies": {
 		"@cartamd/plugin-code": "^4.2.0",
 		"@cartamd/plugin-emoji": "^4.3.0",
-		"@cartamd/plugin-slash": "^4.2.0",
 		"@chenglou/pretext": "^0.0.7",
 		"@iconify-json/material-icon-theme": "^1.2.66",
 		"@iconify/svelte": "^5.2.1",
