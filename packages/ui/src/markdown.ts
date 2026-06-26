@@ -10,10 +10,10 @@
 // throw and fall back to plain text. The shared highlighter uses the pure-JS
 // regex engine, so it works under CSP just like the diffs do.
 //
-// We load the bundled `github-dark` / `github-light` themes (self-contained
-// inline colors) into it rather than the diff's `pierre-*` CSS-variable
-// themes, which only render in color inside the diff component's injected
-// style context.
+// The code theme follows the user's configured diff theme (see diff-themes.ts):
+// the store pushes the active `{ light, dark }` pair in via `setMarkdownCodeThemes`
+// when prefs load and whenever the pref changes, so code in comments / md previews
+// matches the diff viewer. Until that runs we default to GitHub's bundled themes.
 //
 // The HTML is sanitized with DOMPurify before it reaches `{@html}` — repo
 // contents are untrusted (often agent-written), and this runs in the Electron
@@ -23,7 +23,8 @@ import DOMPurify from 'dompurify';
 import { emojify } from 'node-emoji';
 import { getSharedHighlighter } from '@pierre/diffs';
 
-type ShikiTheme = 'github-dark' | 'github-light';
+// A Shiki theme name — any diff-theme variant, e.g. 'pierre-dark' or 'github-light'.
+type ShikiTheme = string;
 
 // Highlight one code block with the shared JS-engine highlighter, loading the
 // theme + language on demand. Falls back to a plain-text render for unknown
@@ -73,6 +74,20 @@ const highlightedCode = new WeakMap<Tokens.Code, string>();
 // parse; safe across concurrent calls because every section renders with the
 // same app theme at any given moment.
 let currentShikiTheme: ShikiTheme = 'github-light';
+
+// The light/dark theme pair markdown code blocks highlight with. Defaults to
+// GitHub's bundled themes (available before the store loads prefs); the store
+// calls `setMarkdownCodeThemes` with the user's configured diff-theme pair once
+// prefs are read and on every change, so markdown tracks the diff viewer.
+let activeMarkdownThemes: { light: ShikiTheme; dark: ShikiTheme } = {
+	light: 'github-light',
+	dark: 'github-dark'
+};
+
+/** Point markdown code highlighting at a `{ light, dark }` theme-name pair. */
+export function setMarkdownCodeThemes(themes: { light: ShikiTheme; dark: ShikiTheme }): void {
+	activeMarkdownThemes = themes;
+}
 
 function escapeHtml(s: string): string {
 	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -207,7 +222,7 @@ export function toggleTaskListItem(src: string, index: number, checked: boolean)
 }
 
 export async function renderMarkdown(src: string, theme: 'light' | 'dark'): Promise<string> {
-	currentShikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
+	currentShikiTheme = theme === 'dark' ? activeMarkdownThemes.dark : activeMarkdownThemes.light;
 	const fm = extractFrontmatter(src);
 	const html = (await marked.parse(fm ? fm.body : src, { async: true })) as string;
 	const combined = (fm ? frontmatterTableHtml(fm.rows) : '') + html;

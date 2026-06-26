@@ -29,6 +29,9 @@ export interface SessionMeta {
 	key?: string;
 	name?: string;
 	description?: string;
+	// A short, conventional-commit-style title suggested for committing these
+	// changes. Carried over from the existing session when omitted on an update.
+	commitTitle?: string;
 	harness?: Session['harness'];
 	harnessLabel?: string;
 	harnessUrl?: string;
@@ -172,6 +175,7 @@ export async function captureSession(
 		key: meta.key ?? existing?.key,
 		name: meta.name ?? existing?.name ?? 'Untitled session',
 		description: meta.description ?? existing?.description ?? '',
+		commitTitle: meta.commitTitle ?? existing?.commitTitle,
 		harness: meta.harness ?? existing?.harness ?? 'other',
 		harnessLabel: meta.harnessLabel ?? existing?.harnessLabel,
 		harnessUrl: meta.harnessUrl ?? existing?.harnessUrl,

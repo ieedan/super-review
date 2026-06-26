@@ -354,6 +354,16 @@ export interface SessionSummary {
 	key?: string;
 	name: string;
 	description: string;
+	// A short, conventional-commit-style title the agent suggests for committing
+	// these changes (e.g. "feat: reply to local review comments"). Surfaced by the
+	// desktop app to pre-fill the commit box, the same way a changeset does.
+	// Undefined for sessions saved without one.
+	commitTitle?: string;
+	// Repo-relative paths of the files this session captured. Derived for the
+	// summary (the full Session carries them on `files`) so the app can tell
+	// whether a session still describes the current working-tree changes without
+	// reading the whole manifest.
+	paths: string[];
 	harness: HarnessKind;
 	// Freeform harness name shown when `harness === "other"`.
 	harnessLabel?: string;
@@ -406,7 +416,9 @@ export interface SessionStep {
 }
 
 // A full session: its summary, the guided tour, and the frozen per-file diffs.
-export interface Session extends SessionSummary {
+// `paths` is omitted here — it's a summary-only convenience derived from `files`,
+// so it's not duplicated in the (already large) stored manifest.
+export interface Session extends Omit<SessionSummary, 'paths'> {
 	files: SessionFile[];
 	// Ordered tour steps. Empty when saved without a tour; then `files` is shown
 	// as a flat list with no step headers.

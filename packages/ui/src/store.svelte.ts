@@ -67,6 +67,7 @@ import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@super-review/core/diff-defer';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@super-review/core/hotkeys';
 import { comparePathsVSCodeStyle } from '@super-review/ui/utils';
 import { DEFAULT_DIFF_THEME, diffThemePair } from '@super-review/ui/diff-themes';
+import { setMarkdownCodeThemes } from '@super-review/ui/markdown';
 import {
 	getDiffWorkerPool,
 	POOL_PERSISTENT_RENDER_OPTIONS
@@ -172,6 +173,11 @@ interface AppState {
 	// Count of the active repo's sessions, kept in sync regardless of the active
 	// tab (via the fs watcher) so the Sessions tab can always show a badge.
 	sessionCount: number;
+	// Working-tree session summaries that carry a suggested commit title, kept
+	// live regardless of the active tab (refreshed alongside the count) so the
+	// commit box can pre-fill from a session the moment an agent documents the
+	// current changes. Empty while a branch/PR is viewed read-only.
+	sessionCommitSuggestions: SessionSummary[];
 	// The session whose frozen diff is currently open, or null when the Sessions
 	// tab is showing the list. Ephemeral — not persisted across launches.
 	activeSessionId: string | null;
@@ -749,6 +755,7 @@ const initial: AppState = {
 	contextTab: 'unstaged',
 	sessions: [],
 	sessionCount: 0,
+	sessionCommitSuggestions: [],
 	activeSessionId: null,
 	activeSessionDetail: null,
 	sessionView: 'tour',
@@ -1465,9 +1472,13 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.activeSessionDetail = null;
 	app.sessions = [];
 	app.sessionCount = 0;
+	app.sessionCommitSuggestions = [];
 	app.branchPR = null;
 	app.rememberedBranchBase = null;
 	app.switchBranchPrompt = null;
+	// Seed the commit-box suggestion for the freshly opened repo's working tree;
+	// the watcher keeps it live afterwards.
+	void refreshSessionCommitSuggestions();
 	await Promise.all([refreshRepos(), refreshBranches(), refreshFiles(), refreshPushStatus()]);
 	// Seed the remembered Branch base now (refreshBranches just resolved
 	// currentBranch) so it's ready before the user opens the Branch tab, ahead of
@@ -2137,6 +2148,7 @@ function sessionSummaryEqual(x: SessionSummary, y: SessionSummary): boolean {
 		x.key === y.key &&
 		x.name === y.name &&
 		x.description === y.description &&
+		x.commitTitle === y.commitTitle &&
 		x.harness === y.harness &&
 		x.harnessLabel === y.harnessLabel &&
 		x.harnessUrl === y.harnessUrl &&
@@ -2205,6 +2217,34 @@ async function refreshSessionCount(): Promise<void> {
 	} catch {
 		// keep previous count
 	}
+	// Refresh the commit-box suggestion in lockstep with the badge; both react to
+	// the same fs watcher / view-switch triggers, so the box pre-fills the moment
+	// an agent documents the current changes.
+	void refreshSessionCommitSuggestions();
+}
+
+// Keep `app.sessionCommitSuggestions` current: the working-tree sessions that
+// carry a suggested commit title. Only meaningful while following the working
+// tree (the commit box is hidden in read-only branch/PR views), so it clears to
+// empty otherwise. Parses manifests (unlike the cheap count), but only runs on
+// the same low-frequency triggers as the count, never a tight poll.
+async function refreshSessionCommitSuggestions(): Promise<void> {
+	if (!app.activeRepo || sessionRef() !== null) {
+		app.sessionCommitSuggestions = [];
+		return;
+	}
+	const repoId = app.activeRepo.id;
+	try {
+		const sessions = await window.api.sessions.list(repoId, null);
+		if (app.activeRepo?.id !== repoId || sessionRef() !== null) return;
+		const next = sessions.filter((s) => (s.commitTitle ?? '').trim().length > 0);
+		// Skip the assignment on a no-op refresh so we don't churn the CommitBox effect.
+		if (!sessionsEqual(next, app.sessionCommitSuggestions)) {
+			app.sessionCommitSuggestions = next;
+		}
+	} catch {
+		// keep previous suggestions
+	}
 }
 
 // ─── Local comments ──────────────────────────────────────────────────────────
@@ -2212,7 +2252,15 @@ async function refreshSessionCount(): Promise<void> {
 // The diff-context key the active view's comments are scoped to. Comments are
 // per-view (see LocalComment.contextKey), so this is the key we list/store under.
 function localCommentContextKey(): string {
-	return diffContextKey($state.snapshot(app.diffContext) as DiffContext);
+	const ctx = $state.snapshot(app.diffContext) as DiffContext;
+	// A session captured on the checked-out branch (viewed read-write, not through a
+	// read-only ref) shares the working tree's comment context, so a reviewer's
+	// notes are one shared set: a comment written on the plain Unstaged diff shows
+	// up in that session's guided tour and vice versa, instead of being siloed per
+	// view. A read-only session (a branch/PR reviewed via a ref) keeps its own scope
+	// — its frozen diff isn't the checked-out working tree.
+	if (ctx.kind === 'session' && sessionRef() == null) return 'workingTree';
+	return diffContextKey(ctx);
 }
 
 // Who a comment authored in this app is attributed to: the active GitHub account
@@ -2909,6 +2957,10 @@ export const actions = {
 		app.theme = app.prefs.theme;
 		applyTheme(app.theme);
 		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;
+		// Markdown code blocks (comments, md previews) follow the diff theme too.
+		// Set it unconditionally — it's cheap and doesn't init the worker pool — so
+		// the default 'pierre' pair applies as well, not just non-default themes.
+		setMarkdownCodeThemes(diffThemePair(app.diffTheme));
 		// Only reconfigure the pool when it's not the default it already booted
 		// with — avoids eagerly initializing the workers at startup for the common
 		// case (the pool defaults to the 'pierre' pair).
@@ -3057,6 +3109,7 @@ export const actions = {
 			app.activeSessionDetail = null;
 			app.sessions = [];
 			app.sessionCount = 0;
+			app.sessionCommitSuggestions = [];
 			app.activeCommit = null;
 			app.commits = [];
 			app.historyForkPoint = null;
@@ -6232,6 +6285,9 @@ export const actions = {
 	async setDiffTheme(diffTheme: string): Promise<void> {
 		app.diffTheme = diffTheme;
 		applyDiffTheme();
+		// Keep markdown code highlighting (comments, md previews) in lockstep with
+		// the diff viewer's theme.
+		setMarkdownCodeThemes(diffThemePair(app.diffTheme));
 		app.prefs = await window.api.state.setPrefs({ diffTheme });
 	},
 

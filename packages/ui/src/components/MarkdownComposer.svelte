@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { MarkdownEditor } from 'carta-md';
-	import { carta, CARTA_THEME } from '@super-review/ui/carta';
+	import { getCarta, CARTA_THEME } from '@super-review/ui/carta';
+	import { app } from '@super-review/ui/store.svelte';
 	import 'carta-md/default.css';
 	import '@super-review/ui/carta-theme.css';
 
@@ -25,6 +26,10 @@
 		onkeydown
 	}: Props = $props();
 
+	// Carta instance for the user's configured diff theme. `$derived` so changing
+	// the diff theme in settings re-themes the composer (getCarta memoizes per id).
+	const cartaInstance = $derived(getCarta(app.diffTheme));
+
 	// Carta's `autoFocus` only fires on initial page load, so it misses an editor
 	// that's mounted dynamically (e.g. expanding a reply prompt). Focus the
 	// internal <textarea> imperatively once it exists — on the next frame, since
@@ -43,7 +48,7 @@
      a menu is open. -->
 <div class="markdown-composer" bind:this={wrapper} {onkeydown} role="presentation">
 	<MarkdownEditor
-		{carta}
+		carta={cartaInstance}
 		bind:value
 		theme={CARTA_THEME}
 		mode="tabs"

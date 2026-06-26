@@ -234,11 +234,17 @@
 	text-overflow: ellipsis;
 }
 
-/* Dark mode: flip Shiki's dual-theme code colors to the dark variant. Shiki
-   emits each token's light color inline plus a `--shiki-dark` custom property;
-   this swaps to it under `.dark` (which the app sets on <html>). Mirrors the
-   upstream GitHub example exactly — only the text color is swapped. */
+/* Dark mode: flip Shiki's dual-theme code colors to the dark variant. The
+   preview is highlighted with the user's configured diff theme as a light/dark
+   pair (see carta.ts), so Shiki emits each token's light color inline plus a
+   `--shiki-dark` custom property; this swaps to it under `.dark` (which the app
+   sets on <html>). The block's background is emitted the same way
+   (`--shiki-dark-bg` on the .shiki <pre>), so swap it too — otherwise dark-mode
+   code blocks render dark text on the inline light background. */
 html.dark .carta-theme__github .shiki,
 html.dark .carta-theme__github .shiki span {
 	color: var(--shiki-dark) !important;
+}
+html.dark .carta-theme__github .shiki {
+	background-color: var(--shiki-dark-bg) !important;
 }

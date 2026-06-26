@@ -20,6 +20,7 @@ import { fail, repoRoot } from '../../util';
 interface TourFile {
 	name?: string;
 	description?: string;
+	commitTitle?: string;
 	harness?: string;
 	harnessLabel?: string;
 	harnessUrl?: string;
@@ -37,12 +38,15 @@ reviewed as an isolated session in the super-review desktop app.
 --tour JSON shape:
   {
     "name": "...", "description": "...", "harness": "claude-code",
+    "commitTitle": "feat: add detection layer",
     "steps": [
       { "title": "Detection layer",
         "body": "Markdown explaining what these files do and why.",
         "files": ["src/a.ts", "src/b.ts"] }
     ]
   }
+A "commitTitle" (or --commit-title) is a short conventional-commit-style line
+the desktop app uses to pre-fill the commit box for these changes.
 List files in reading order. When a tour is given, the session captures ONLY
 the files the tour references — so list every file you changed. A changed file
 left out of the tour is not captured. (Without a tour, every changed file is
@@ -60,6 +64,7 @@ interface SaveOptions {
 	id?: string;
 	name?: string;
 	description?: string;
+	commitTitle?: string;
 	harness?: string;
 	harnessLabel?: string;
 	harnessUrl?: string;
@@ -83,6 +88,9 @@ function loadTour(raw: string): TourFile {
 		fail('--tour must be a JSON object');
 	}
 	const tour = parsed as TourFile;
+	if (tour.commitTitle !== undefined && typeof tour.commitTitle !== 'string') {
+		fail('--tour `commitTitle` must be a string');
+	}
 	if (tour.steps !== undefined) {
 		if (!Array.isArray(tour.steps)) fail('--tour `steps` must be an array');
 		tour.steps.forEach((step, i) => {
@@ -150,6 +158,7 @@ async function runSave(opts: SaveOptions): Promise<void> {
 		key: opts.key,
 		name,
 		description,
+		commitTitle: (opts.commitTitle ?? tour?.commitTitle)?.trim() || undefined,
 		harness: harnessRaw ? (harnessRaw as HarnessKind) : undefined,
 		harnessLabel: opts.harnessLabel ?? tour?.harnessLabel,
 		harnessUrl: opts.harnessUrl ?? tour?.harnessUrl,
@@ -221,6 +230,10 @@ export const save = new Command('save')
 	.option('--id <id>', 'Target an existing session by its id (alternative to --key).')
 	.option('--name <text>', 'Session name (required on first save).')
 	.option('--description <text>', 'What you changed (required on first save).')
+	.option(
+		'--commit-title <text>',
+		'A short, conventional-commit-style title (e.g. "feat: add X") suggested for committing these changes. The desktop app uses it to pre-fill the commit box.'
+	)
 	.option('--harness <kind>', `One of: ${HARNESSES.join(', ')} (default: other).`)
 	.option('--harness-label <text>', 'Freeform harness name (used when --harness other).')
 	.option('--harness-url <url>', 'Deep link back to this run (resume/permalink).')

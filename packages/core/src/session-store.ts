@@ -33,10 +33,11 @@ function sessionPath(repoPath: string, id: string): string {
 }
 
 // Drop the heavy per-file contents and tour steps so listings stay cheap; the
-// summary keeps just the step count for the list to show.
+// summary keeps just the step count and the captured paths for the list (and the
+// commit-box suggestion matching) to use.
 function toSummary(session: Session): SessionSummary {
-	const { files: _files, steps, ...rest } = session;
-	return { ...rest, stepCount: steps?.length ?? 0 };
+	const { files, steps, ...rest } = session;
+	return { ...rest, paths: (files ?? []).map((f) => f.path), stepCount: steps?.length ?? 0 };
 }
 
 async function readSession(file: string): Promise<Session | null> {

@@ -18,6 +18,7 @@ walk the tour step by step, with your commentary above each group of diffs.
 npx super-review session save --key "<your conversation/run id>" --tour '{
 	"name": "Short title for the whole change",
 	"description": "One or two sentences of overview.",
+	"commitTitle": "feat: short conventional-commit line for the change",
 	"harness": "claude-code",
 	"harnessUrl": "<optional resume/permalink to this run>",
 	"steps": [
@@ -78,6 +79,12 @@ rendered as a note right at that spot in the diff. Each callout has:
 - `--tour <json>` - the tour as inline JSON, passed directly as the argument.
 - `--name`, `--description` - the overview. Required on first save unless the
   tour supplies them. Flags override the tour's values.
+- `--commit-title` (or tour `commitTitle`) - Optional. A short,
+  conventional-commit-style line (e.g. `feat: reply to local review comments`)
+  describing the change. The desktop app pre-fills the commit box with it when
+  the session's files still match the uncommitted working tree, so the human can
+  commit your work without retyping a message. Keep it to one line; don't include
+  a body.
 - `--harness` - one of: `claude-code`, `cursor`, `codex`, `opencode`,
   `copilot`, `other`. Drives the logo on the session card. Use
   `--harness-label "<name>"` with `--harness other` to label an unlisted tool.

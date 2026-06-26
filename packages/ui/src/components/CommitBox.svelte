@@ -30,14 +30,40 @@
 		null
 	);
 
+	// Provenance of a message auto-filled from a session's suggested commit title,
+	// mirroring `detectedChangeset` above. Kept only while the Summary still matches
+	// the exact title we wrote; cleared the moment the user edits.
+	let detectedSession = $state<{ id: string; updatedAt: number; title: string } | null>(null);
+
+	// The working-tree session whose suggested commit title applies to the current
+	// changes: one that carries a title AND whose captured files are all still
+	// present as uncommitted changes (so a session documenting already-committed or
+	// unrelated work never fills the box). The most-recently-updated match wins.
+	const sessionSuggestion = $derived.by(() => {
+		const changedPaths = new Set(app.changedFiles.map((f) => f.path));
+		let best: (typeof app.sessionCommitSuggestions)[number] | null = null;
+		for (const s of app.sessionCommitSuggestions) {
+			if (!(s.commitTitle ?? '').trim()) continue;
+			if (s.paths.length === 0 || !s.paths.every((p) => changedPaths.has(p))) continue;
+			if (!best || s.updatedAt > best.updatedAt) best = s;
+		}
+		return best;
+	});
+
 	// Restore the persisted draft whenever the active repo changes. Tracked
 	// separately from `app.activeRepo` so we only reload on an actual switch,
 	// not on every metadata refresh.
 	let loadedRepoId: string | null = null;
+	// The repo whose persisted draft has finished loading into the box. The session
+	// auto-fill waits on this (it fills synchronously, so without the gate an empty
+	// draft resolving afterwards would clobber a freshly-filled title). Reactive so
+	// the fill effect re-runs once the draft is in place.
+	let draftReadyRepoId = $state<string | null>(null);
 	$effect(() => {
 		const repoId = app.activeRepo?.id ?? null;
 		if (repoId === loadedRepoId) return;
 		loadedRepoId = repoId;
+		draftReadyRepoId = null;
 		detectedChangeset = null;
 		if (!repoId) {
 			summary = '';
@@ -57,11 +83,13 @@
 				description = '';
 				detectedChangeset = null;
 				clearDraft(repoId);
+				draftReadyRepoId = repoId;
 				return;
 			}
 			summary = draft.summary;
 			description = draft.description;
 			detectedChangeset = null;
+			draftReadyRepoId = repoId;
 		});
 	});
 
@@ -110,6 +138,11 @@
 			});
 		}
 
+		// A session's suggested commit title takes priority over a changeset (see the
+		// session auto-fill effect below), so don't fill from a changeset while one
+		// applies to the current changes.
+		if (sessionSuggestion) return;
+
 		if (!repoId || changesetPaths.length !== 1) return;
 		const path = changesetPaths[0];
 		if (filledChangesets.has(path)) return;
@@ -153,6 +186,69 @@
 		}
 	});
 
+	// Auto-fill the Summary from a session's suggested commit title. The agent that
+	// documented these changes already wrote a conventional-commit line for them, so
+	// the user shouldn't have to. Mirrors the changeset auto-fill (fill once, when the
+	// box is empty, and never fight the user) but only fills the Summary; takes
+	// priority over changesets (the changeset effect bails when one applies).
+	let sessionFillRepoId: string | null = null;
+	// Plain Set on purpose (mutated inside the effect, must stay non-reactive). Keyed
+	// by `id:updatedAt` so each session revision fills at most once.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	let filledSessions = new Set<string>();
+	$effect(() => {
+		const repoId = app.activeRepo?.id ?? null;
+		if (repoId !== sessionFillRepoId) {
+			sessionFillRepoId = repoId;
+			filledSessions = new Set();
+		}
+		// Wait until this repo's persisted draft has loaded, so an empty draft
+		// resolving afterwards can't wipe a title we filled synchronously.
+		if (repoId === null || draftReadyRepoId !== repoId) return;
+
+		const s = sessionSuggestion;
+		const title = s ? (s.commitTitle ?? '').trim() : '';
+		const detected = untrack(() => detectedSession);
+
+		// While the box still holds exactly the title we wrote (provenance intact),
+		// keep it in step with its source: follow a re-titled session, and clear it if
+		// the session stops applying (committed, files reverted, or title removed).
+		if (detected && untrack(() => summary) === detected.title) {
+			if (!s || s.id !== detected.id) {
+				untrack(() => {
+					summary = '';
+				});
+				detectedSession = null;
+				persistDraft();
+			} else if (title !== detected.title) {
+				untrack(() => {
+					summary = title;
+				});
+				detectedSession = title ? { id: s.id, updatedAt: s.updatedAt, title } : null;
+				persistDraft();
+			}
+			return;
+		}
+
+		// Fresh fill: only into an empty box, and only once per session revision.
+		if (!s || !title) return;
+		const key = `${s.id}:${s.updatedAt}`;
+		if (filledSessions.has(key)) return;
+		if (untrack(() => summary.trim().length > 0 || description.trim().length > 0)) return;
+		filledSessions.add(key);
+		summary = title;
+		detectedSession = { id: s.id, updatedAt: s.updatedAt, title };
+		persistDraft();
+	});
+
+	// Drop the session provenance the instant the Summary diverges from the title we
+	// auto-filled, protecting the user's edit from the follow/clear logic above.
+	$effect(() => {
+		const d = detectedSession;
+		if (!d) return;
+		if (summary !== d.title) detectedSession = null;
+	});
+
 	// Debounce persistence so we're not writing the store on every keystroke.
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	function persistDraft(): void {
@@ -165,10 +261,18 @@
 		// resurrect it even after the changeset is committed. Checked explicitly (not
 		// just `detectedChangeset != null`) because oninput fires before the divergence
 		// effect runs, so an edit could otherwise look auto-filled for one tick.
-		const autoFilled =
+		const changesetAutoFilled =
 			detectedChangeset !== null &&
 			summary === detectedChangeset.summary &&
 			description === detectedChangeset.description;
+		// A session-filled Summary is likewise re-derived live (from the session that
+		// still matches the working tree), so don't persist it either; only when it's
+		// untouched (Summary still the title, no extra Description typed).
+		const sessionAutoFilled =
+			detectedSession !== null &&
+			summary === detectedSession.title &&
+			description.trim().length === 0;
+		const autoFilled = changesetAutoFilled || sessionAutoFilled;
 		const snapshot = autoFilled ? { summary: '', description: '' } : { summary, description };
 		saveTimer = setTimeout(() => {
 			void window.api.state.setCommitDraft(repoId, snapshot);
@@ -332,6 +436,7 @@
 			type="text"
 			bind:value={summary}
 			oninput={persistDraft}
+			onkeydown={onKeydown}
 			placeholder={suggestedSummary || 'Summary (required)'}
 			disabled={busy}
 			class="h-7 min-w-0 flex-1 text-xs"
