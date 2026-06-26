@@ -59,6 +59,23 @@ function buildFixtures(count: number, linesPer = 60): DiffData[] {
 	return out;
 }
 
+// A single all-additions file fixture at `path` whose every line contains
+// `token`, so find's patch scan picks it up. Used to probe which files the
+// controller folds into its index.
+function tokenFixture(path: string, token: string, lines = 12): DiffData {
+	const body: string[] = [];
+	for (let i = 0; i < lines; i++) body.push(`const ${token}${i} = ${token}(${i});`);
+	const newContents = body.join('\n') + '\n';
+	const patch = `@@ -0,0 +1,${body.length} @@\n` + body.map((l) => '+' + l).join('\n') + '\n';
+	return {
+		file: { path, status: 'added', additions: body.length, deletions: 0, isBinary: false },
+		patch,
+		oldContents: '',
+		newContents,
+		truncated: false
+	} as DiffData;
+}
+
 // Snapshot of the find highlight state straight from the CSS Custom Highlight
 // registry — the same thing the user sees painted.
 function highlightState(): { yellow: number; current: number; connected: boolean } {
@@ -212,6 +229,47 @@ describe('find: highlighting in the real diff view', () => {
 		expect(s.yellow).toBeGreaterThan(0);
 		expect(s.current).toBe(1);
 		expect(s.connected).toBe(true);
+	});
+
+	it('skips an unopened super-review session manifest (find never folds in its JSON)', async () => {
+		// A normal file and a `.super-review/sessions/*.json` manifest, both
+		// uncached so find's preload is the only thing that could fetch them. The
+		// manifest is deferred to a card by the default hidden pattern, so its
+		// section never auto-fetches either — preload is its ONLY route into the
+		// index, and the fix makes preload skip it.
+		const normal = tokenFixture('src/features/zebra-service.ts', 'zebra');
+		const manifest = tokenFixture('.super-review/sessions/sess-zebra.json', 'zebra');
+		render(Harness, {
+			props: {
+				fixtures: [normal, manifest],
+				uncached: [normal.file.path, manifest.file.path]
+			}
+		});
+		openFind();
+		setQuery('zebra');
+
+		// Preload folds the normal file in; wait for that so we know the preload
+		// cycle has run, then confirm the manifest was passed over.
+		await vi.waitFor(() => expect(_findIndex.hasFile(normal.file.path)).toBe(true), {
+			timeout: 8000
+		});
+		await wait(400);
+		expect(_findIndex.hasFile(manifest.file.path)).toBe(false);
+		expect(_findIndex.firstFlatIndexForFile(manifest.file.path)).toBe(-1);
+	});
+
+	it('includes a session manifest once it has been opened (its diff is cached)', async () => {
+		// A cached manifest stands in for one the user opened via "View raw": its
+		// diff is in the cache, so find folds it in like any other opened file.
+		const manifest = tokenFixture('.super-review/sessions/sess-open.json', 'zebra');
+		render(Harness, { props: { fixtures: [manifest] } });
+		openFind();
+		setQuery('zebra');
+
+		await vi.waitFor(() => expect(_findIndex.hasFile(manifest.file.path)).toBe(true), {
+			timeout: 8000
+		});
+		expect(find.matchCount).toBeGreaterThan(0);
 	});
 
 	it('expands a collapsed file and pins the match inside it', async () => {

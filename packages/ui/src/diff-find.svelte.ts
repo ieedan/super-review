@@ -11,6 +11,7 @@
 import { tick, untrack } from 'svelte';
 import { actions, app, getCachedDiff, setCachedDiff } from '@super-review/ui/store.svelte';
 import { diffContextKey } from '@super-review/core/diff-context';
+import { sessionIdFromManifestPath } from '@super-review/core/session-manifest';
 import type { ChangedFile, DiffContext, DiffData } from '@super-review/core/types';
 import { sections, builtRanges, renderWaiters } from '@super-review/ui/diff-find-internal';
 import { FindIndex } from '@super-review/ui/diff-find-index';
@@ -403,7 +404,7 @@ function dropFileRanges(filePath: string): void {
 // Signature of the current search, so a cached range set built for a different
 // query/case is treated as stale even when the render epoch is unchanged.
 function querySig(): string {
-	return `${find.caseSensitive ? 's' : 'i'} ${find.query}`;
+	return `${find.caseSensitive ? 's' : 'i'} ${find.query}`;
 }
 
 // Build (or refresh) yellow highlights for one file. No-op if the file's
@@ -845,6 +846,12 @@ async function preloadAllPatches(): Promise<void> {
 	for (const f of app.changedFiles) {
 		if (f.isBinary) continue;
 		if (getCachedDiff(repo.id, ctx, f.path)) continue;
+		// Don't force-load `.super-review/sessions/*.json` manifests. Their diffs
+		// are deferred to a session card by default, so the raw JSON lands in the
+		// cache only once the user opens the card (clicks "View raw") and find
+		// folds in exactly the cached files. Preloading them here would pull that
+		// JSON noise into the match index for sessions the user never opened.
+		if (sessionIdFromManifestPath(f.path)) continue;
 		queue.push(f);
 	}
 	if (queue.length === 0) return;

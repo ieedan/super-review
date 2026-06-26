@@ -18,8 +18,11 @@
 	// (Pierre, a syntax highlighter, DOMPurify) can't be server-rendered. Load them
 	// only in the browser so SSR/prerender stays clean and the hero still SSRs.
 	let DemoSidebar = $state<Component | null>(null);
-	let DemoDiff =
-		$state<Component<{ paths?: string[]; class?: string; focusCommentId?: string }> | null>(null);
+	let DemoDiff = $state<Component<{
+		paths?: string[];
+		class?: string;
+		focusCommentId?: string;
+	}> | null>(null);
 	onMount(async () => {
 		const [sidebar, diff] = await Promise.all([
 			import('$lib/components/DemoSidebar.svelte'),
@@ -179,10 +182,7 @@
 						View your changes in a list or file tree and switch instantly, at any time.
 					</p>
 				</div>
-				<div
-					class="reveal w-full lg:w-[600px] lg:shrink-0"
-					style="animation-delay: 860ms"
-				>
+				<div class="reveal w-full lg:w-[600px] lg:shrink-0" style="animation-delay: 860ms">
 					{#if DemoSidebar}<DemoSidebar />{:else}{@render placeholder()}{/if}
 				</div>
 			</div>
@@ -196,10 +196,7 @@
 						you always know exactly what is left.
 					</p>
 				</div>
-				<div
-					class="reveal w-full lg:w-[600px] lg:shrink-0"
-					style="animation-delay: 1060ms"
-				>
+				<div class="reveal w-full lg:w-[600px] lg:shrink-0" style="animation-delay: 1060ms">
 					{#if DemoDiff}
 						<DemoDiff paths={MARK_AS_SEEN_FILES} />
 					{:else}{@render placeholder()}{/if}
@@ -211,13 +208,11 @@
 				<div class="reveal flex-1 text-center lg:text-left" style="animation-delay: 1160ms">
 					<h3 class="font-display text-2xl font-bold tracking-tight">Write your comments</h3>
 					<p class="text-muted-foreground mt-3 text-base leading-relaxed text-pretty">
-						Click any line to leave a comment, copy it for your agent, and come back to see it resolved in app.
+						Click any line to leave a comment, copy it for your agent, and come back to see it
+						resolved in app.
 					</p>
 				</div>
-				<div
-					class="reveal w-full lg:w-[600px] lg:shrink-0"
-					style="animation-delay: 1260ms"
-				>
+				<div class="reveal w-full lg:w-[600px] lg:shrink-0" style="animation-delay: 1260ms">
 					{#if DemoDiff}
 						<DemoDiff paths={[COMMENTS_FILE]} focusCommentId={SEED_COMMENT.id} />
 					{:else}{@render placeholder()}{/if}
@@ -227,7 +222,10 @@
 	</section>
 
 	<!-- Bottom CTA -->
-	<section class="reveal flex flex-col items-center pb-24 text-center" style="animation-delay: 1360ms">
+	<section
+		class="reveal flex flex-col items-center pb-24 text-center"
+		style="animation-delay: 1360ms"
+	>
 		<h2 class="font-display max-w-xl text-3xl font-extrabold tracking-tight text-balance">
 			Be the first to <span class="flame-text">try it.</span>
 		</h2>

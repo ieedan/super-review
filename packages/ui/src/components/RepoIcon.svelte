@@ -8,17 +8,12 @@
 	//   2. the GitHub owner's avatar, when the repo has no icon file
 	//   3. a deterministic lettered placeholder, when there's no owner (or the
 	//      avatar fails to load)
-	let {
-		repo,
-		size = 'md'
-	}: { repo: RepoInfo | null | undefined; size?: 'sm' | 'md' } = $props();
+	let { repo, size = 'md' }: { repo: RepoInfo | null | undefined; size?: 'sm' | 'md' } = $props();
 
 	// Match the two existing call sites: the trigger button uses a smaller icon
 	// and font than the dropdown rows.
 	const dims = $derived(
-		size === 'sm'
-			? { box: 'size-4', text: 'text-[9px]' }
-			: { box: 'size-5', text: 'text-[11px]' }
+		size === 'sm' ? { box: 'size-4', text: 'text-[9px]' } : { box: 'size-5', text: 'text-[11px]' }
 	);
 
 	// Pick the icon variant for the current theme. Repos that ship a light/dark

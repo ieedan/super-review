@@ -69,12 +69,7 @@
 						/>
 					{/snippet}
 				</Control>
-				<Button
-					type="submit"
-					size="lg"
-					class="h-11 rounded-xl px-5"
-					disabled={$submitting}
-				>
+				<Button type="submit" size="lg" class="h-11 rounded-xl px-5" disabled={$submitting}>
 					{#if $submitting}
 						<LoaderCircle class="size-4 animate-spin" />
 					{/if}

@@ -69,4 +69,3 @@ fixes, `session save` (see [document-session.md](document-session.md)) and
 `comment resolve <id> --session "<key>"`; for tiny fixes that need explanation
 only, `comment reply <id> ...` and then resolve the comment without a session if
 there is no tour to link.
-

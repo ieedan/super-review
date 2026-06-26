@@ -663,6 +663,23 @@ async function parseGithubFromUrl(
 	return { owner: m[1], repo: m[2] };
 }
 
+// Resolve the GitHub `owner`/`repo` for a repo from one of its remotes
+// (`origin` by default), or null when that remote is missing or isn't a
+// github.com URL. Thin public wrapper over the remote lookup + URL parsing the
+// desktop app does in `buildRepoInfo`, for callers (like the CLI) that only need
+// the slug.
+export async function resolveGithubRepo(
+	repoPath: string,
+	remote = 'origin'
+): Promise<{ owner: string; repo: string } | null> {
+	const git = simpleGit(repoPath);
+	const remotes = await git.getRemotes(true).catch(() => []);
+	const named = remotes.find((r) => r.name === remote) ?? remotes.find((r) => r.name === 'origin');
+	const url = named?.refs.fetch ?? named?.refs.push;
+	if (!url) return null;
+	return (await parseGithubFromUrl(url)) ?? null;
+}
+
 export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
 	const git = simpleGit(repoPath);
 	const id = repoIdFromPath(repoPath);

@@ -30,6 +30,6 @@ each resolved comment back at that session's `--key`.
 
 ## How to speak to users
 
-- Avoid using em dashes (`—`) - em dashes often are a sign of poorly written speech and run-on sentences. Avoiding them will make your comments and descriptions far easier to read. 
-- Use markdown `` syntax to emphasize parts of your descriptions that reference code - reading: "We changed .someFunction" is harder to parse than: "We changed `.someFunction`"
+- Avoid using em dashes (`—`) - em dashes often are a sign of poorly written speech and run-on sentences. Avoiding them will make your comments and descriptions far easier to read.
+- Use markdown ``syntax to emphasize parts of your descriptions that reference code - reading: "We changed .someFunction" is harder to parse than: "We changed`.someFunction`"
 - Avoid overly detailed or technical descriptions when unnecessary - users want to know about architecture they don't necessarily need to know every function name and if they do they can read the code
