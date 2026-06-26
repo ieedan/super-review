@@ -371,6 +371,7 @@
 					onsubmit={replyTo}
 					avatarUrl={viewerAvatar}
 					replyingTo={threadRoot?.author}
+					replyingToAvatar={threadRoot?.authorAvatarUrl}
 				/>
 			{/if}
 			{#if isThreadTail && !collapsed}

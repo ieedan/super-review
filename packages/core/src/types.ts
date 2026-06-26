@@ -1518,6 +1518,16 @@ export type ReleaseNotesRangeResult =
 	| { ok: true; releases: ReleaseNotes[]; truncated: boolean }
 	| { ok: false; error: string };
 
+// Install/update state of the super-review skill in a repo. `installed` is
+// driven by the presence of `.agents/skills/super-review/SKILL.md`;
+// `updateAvailable` is true when an installed copy's `metadata.version` is
+// behind the bundled skill (or has no version at all). Always false when not
+// installed.
+export interface SkillStatus {
+	installed: boolean;
+	updateAvailable: boolean;
+}
+
 export interface PreloadAPI {
 	platform: AppPlatform;
 	repos: {
@@ -1945,9 +1955,11 @@ export interface PreloadAPI {
 	};
 	skill: {
 		// Whether the super-review skill is installed in the repo
-		// (`.agents/skills/super-review/SKILL.md` exists).
-		isInstalled(repoId: string): Promise<boolean>;
-		// Write the bundled super-review skill into the repo.
+		// (`.agents/skills/super-review/SKILL.md` exists), and if so whether the
+		// bundled skill is newer than the installed copy (an update is available).
+		status(repoId: string): Promise<SkillStatus>;
+		// Write the bundled super-review skill into the repo (install or update —
+		// the whole skill directory is replaced wholesale either way).
 		install(repoId: string): Promise<void>;
 	};
 	npm: {

@@ -6,6 +6,7 @@
 // those real files into the target repo — there is no second, inlined copy to
 // keep in sync.
 
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 
@@ -26,4 +27,33 @@ export function bundledSkillDir(): string {
 	return app.isPackaged
 		? path.join(process.resourcesPath, 'skills', 'super-review')
 		: path.join(app.getAppPath(), '..', '..', SUPER_REVIEW_SKILL_DIR);
+}
+
+// Parse the skill's version from its SKILL.md frontmatter `metadata.version`.
+// The skill ships a monotonically increasing integer that we bump whenever its
+// files change; the app compares an installed copy's version against the bundled
+// one to decide whether to offer an update. Returns null when there's no version
+// — an un-versioned skill (predating versioning), which we treat as out of date.
+export function parseSkillVersion(skillMd: string): number | null {
+	// Only look inside the leading `---` frontmatter fence.
+	const frontmatter = skillMd.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+	if (!frontmatter) return null;
+	// The frontmatter is small and hand-written, so a line scan for the single
+	// `version:` key beats pulling in a YAML parser.
+	const version = frontmatter[1].match(/^\s*version:\s*["']?(\d+)["']?\s*$/m);
+	if (!version) return null;
+	const parsed = Number.parseInt(version[1], 10);
+	return Number.isNaN(parsed) ? null : parsed;
+}
+
+// The version of the skill we ship and would install, read from the bundled
+// SKILL.md so it always matches what `installSkill` writes. null if the bundled
+// skill somehow has no version — in which case we never prompt an update.
+export async function bundledSkillVersion(): Promise<number | null> {
+	try {
+		const src = await fs.readFile(path.join(bundledSkillDir(), 'SKILL.md'), 'utf8');
+		return parseSkillVersion(src);
+	} catch {
+		return null;
+	}
 }

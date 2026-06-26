@@ -344,6 +344,7 @@
 				onsubmit={replyTo}
 				avatarUrl={viewerAvatar}
 				replyingTo={rootComment?.author.name}
+				replyingToAvatar={rootComment?.author.avatarUrl}
 			/>
 			<!-- Thread-level controls below the whole conversation, in the same place
 			     (and the same component) as the PR comment view. -->

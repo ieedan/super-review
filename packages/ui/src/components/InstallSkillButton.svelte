@@ -12,11 +12,13 @@
 		size = 'sm',
 		variant = 'default',
 		label = 'Install skill',
+		pendingLabel = 'Installing…',
 		class: className
 	}: {
 		size?: ButtonSize;
 		variant?: ButtonVariant;
 		label?: string;
+		pendingLabel?: string;
 		class?: string;
 	} = $props();
 
@@ -36,7 +38,7 @@
 <Button onclick={install} disabled={installing} {size} {variant} class={className}>
 	{#if installing}
 		<Loader2 class="size-3.5 animate-spin" />
-		Installing…
+		{pendingLabel}
 	{:else}
 		<Download class="size-3.5" />
 		{label}

@@ -198,10 +198,17 @@ interface AppState {
 	// while unknown (no active repo, or the check hasn't returned yet); false
 	// drives the "Install skill" prompts in the header and sessions empty state.
 	skillInstalled: boolean | null;
+	// Whether the installed skill is behind the bundled one (older or un-versioned
+	// `metadata.version`) and an update is on offer. null while unknown; true only
+	// when the skill is installed, so it drives the "Update the skill?" notice.
+	skillUpdateAvailable: boolean | null;
 	// Whether the user dismissed the "Install the skill" notice above the commit
 	// box. In-memory only and reset on every repo switch, so it stays hidden while
 	// you work in this repo but returns if the skill is still missing next time.
 	skillInstallDismissed: boolean;
+	// Whether the user dismissed the "Update the skill?" notice. Same in-memory,
+	// reset-per-repo-switch lifetime as skillInstallDismissed.
+	skillUpdateDismissed: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
 	// changeset?" prompt above the commit box). null while unknown / not the
 	// working-tree context.
@@ -749,7 +756,9 @@ const initial: AppState = {
 	historyForkPoint: null,
 	activeCommit: null,
 	skillInstalled: null,
+	skillUpdateAvailable: null,
 	skillInstallDismissed: false,
+	skillUpdateDismissed: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
 	changesetPromptDismissed: false,
@@ -1439,7 +1448,7 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	repoFrecency.use(repo.id);
 	// Kick off the local skill check immediately — it only needs activeRepo and is
 	// a single filesystem stat, so don't strand it behind the slow network work below.
-	void refreshSkillInstalled();
+	void refreshSkillStatus();
 	applyContextTab('unstaged');
 	app.diffContext = { kind: 'workingTree' };
 	// A read-only view (branch or PR) belongs to the previous repo — drop it.
@@ -2409,18 +2418,22 @@ function formatPRThreadPrompt(thread: PRReviewComment[]): string {
 	return `${head}\n\n${turns.join('\n\n')}`;
 }
 
-// Check whether the super-review skill is installed in the active repo and
+// Check the super-review skill's install/update status in the active repo and
 // store the result. Failure-silent — leaves the answer unknown (null) so the
-// install prompts stay hidden rather than flashing on a transient error.
-async function refreshSkillInstalled(): Promise<void> {
+// install/update prompts stay hidden rather than flashing on a transient error.
+async function refreshSkillStatus(): Promise<void> {
 	if (!app.activeRepo) {
 		app.skillInstalled = null;
+		app.skillUpdateAvailable = null;
 		return;
 	}
 	const repoId = app.activeRepo.id;
 	try {
-		const installed = await window.api.skill.isInstalled(repoId);
-		if (app.activeRepo?.id === repoId) app.skillInstalled = installed;
+		const status = await window.api.skill.status(repoId);
+		if (app.activeRepo?.id === repoId) {
+			app.skillInstalled = status.installed;
+			app.skillUpdateAvailable = status.updateAvailable;
+		}
 	} catch {
 		// Leave unknown — don't surface a banner over a non-critical check.
 	}
@@ -2808,6 +2821,9 @@ export const actions = {
 	dismissSkillInstall(): void {
 		app.skillInstallDismissed = true;
 	},
+	dismissSkillUpdate(): void {
+		app.skillUpdateDismissed = true;
+	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;
 	},
@@ -2922,7 +2938,7 @@ export const actions = {
 			rememberViewLayout();
 			// Local filesystem stat — fire it now so it isn't stranded behind the tab
 			// restore + network PR lookup below.
-			void refreshSkillInstalled();
+			void refreshSkillStatus();
 			// Restore the last tab. Shared with switchRepo so the active repo also
 			// seeds its per-repo tab memory for this session.
 			await restoreContextTab(app.prefs.contextTab);
@@ -2957,7 +2973,7 @@ export const actions = {
 			if (app.activeRepo) {
 				repoFrecency.use(app.activeRepo.id);
 				// Local filesystem stat — fire it now, not behind the network PR lookup.
-				void refreshSkillInstalled();
+				void refreshSkillStatus();
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 				await refreshBranchPR();
 			}
@@ -2984,7 +3000,7 @@ export const actions = {
 			if (app.activeRepo) {
 				repoFrecency.use(app.activeRepo.id);
 				// Local filesystem stat — fire it now, not behind the network PR lookup.
-				void refreshSkillInstalled();
+				void refreshSkillStatus();
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 				await refreshBranchPR();
 			}
@@ -3021,7 +3037,7 @@ export const actions = {
 			repoFrecency.use(repo.id);
 			// Local filesystem stat — fire it now so the skill banner resolves without
 			// waiting on the network PR lookup below.
-			void refreshSkillInstalled();
+			void refreshSkillStatus();
 			// Switching repos drops any tab-scoped file search; restoreContextTab
 			// below lands on whichever tab this repo was last left on.
 			app.fileSearchQuery = '';
@@ -3045,7 +3061,9 @@ export const actions = {
 			app.commits = [];
 			app.historyForkPoint = null;
 			app.skillInstalled = null;
+			app.skillUpdateAvailable = null;
 			app.skillInstallDismissed = false;
+			app.skillUpdateDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
 			app.prs = [];
@@ -3081,7 +3099,9 @@ export const actions = {
 			app.branches = [];
 			app.selectedFile = null;
 			app.skillInstalled = null;
+			app.skillUpdateAvailable = null;
 			app.skillInstallDismissed = false;
+			app.skillUpdateDismissed = false;
 		}
 	},
 
@@ -3370,17 +3390,18 @@ export const actions = {
 
 	// Re-check whether the super-review skill is installed in the active repo
 	// (e.g. after the repo's `.agents/skills` dir may have changed on disk).
-	async refreshSkillInstalled(): Promise<void> {
-		await refreshSkillInstalled();
+	async refreshSkillStatus(): Promise<void> {
+		await refreshSkillStatus();
 	},
 
-	// Install the super-review skill into the active repo, then re-check so
-	// the "Install skill" prompts clear once it's in place.
+	// Install (or update) the super-review skill in the active repo, then
+	// re-check so the install/update prompts clear once it's current. The bundled
+	// skill replaces the repo's copy wholesale, so the same action covers both.
 	async installSkill(): Promise<void> {
 		if (!app.activeRepo) return;
 		try {
 			await window.api.skill.install(app.activeRepo.id);
-			await refreshSkillInstalled();
+			await refreshSkillStatus();
 			// Installing writes the skill files into the working tree — surface them
 			// as unstaged changes right away instead of waiting for the next poll.
 			await refreshFiles();

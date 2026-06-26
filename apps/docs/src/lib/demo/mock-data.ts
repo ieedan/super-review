@@ -326,8 +326,13 @@ export const SEEN_FILE = `${MDSX}/p.svelte`;
 export const MARK_AS_SEEN_FILES = [SEEN_FILE, 'docs/src/app.css', `${MDSX}/h3.svelte`];
 export const COMMENTS_FILE = `${MDSX}/h2.svelte`;
 
-// ieedan's actual review comment on the PR, anchored to the lg:mt-12 height change.
-export const SEED_COMMENT: Omit<LocalComment, 'createdAt' | 'updatedAt'> & { ageMs: number } = {
+// ieedan's actual review comment on the PR, anchored to the lg:mt-12 height change,
+// resolved by Claude Code to show off the agent-resolution flow. `ageMs` /
+// `resolvedAgeMs` are offsets from "now" the boot resolves into timestamps.
+export const SEED_COMMENT: Omit<LocalComment, 'createdAt' | 'updatedAt' | 'resolvedAt'> & {
+	ageMs: number;
+	resolvedAgeMs: number;
+} = {
 	id: 'demo-seed-1',
 	contextKey: 'workingTree',
 	path: COMMENTS_FILE,
@@ -340,5 +345,7 @@ A lot of the examples like aspect-ratio, alert etc. no longer fit in this new he
 
 That's definitely a larger change though so maybe we should move those changes to a separate PR and just do the external link badges in this PR?`,
 	author: { kind: 'human', name: 'ieedan', avatarUrl: 'https://github.com/ieedan.png' },
-	ageMs: 18 * 60 * 1000
+	ageMs: 18 * 60 * 1000,
+	resolvedBy: { kind: 'agent', name: 'Claude Code', harness: 'claude-code' },
+	resolvedAgeMs: 5 * 60 * 1000
 };

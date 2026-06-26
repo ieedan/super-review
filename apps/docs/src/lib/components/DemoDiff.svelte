@@ -37,52 +37,66 @@
 		scroller.scrollTo({ top, behavior: 'auto' });
 	}
 
-	// The comment annotation mounts inside Pierre's `diffs-container` shadow DOM,
-	// so a plain querySelector from the card can't reach it — hop through the
-	// shadow root.
+	// Pierre slots comment annotations into the diff's light DOM, so a plain
+	// querySelector from the card reaches them.
 	function findCommentEl(id: string): HTMLElement | null {
-		const host = scroller?.querySelector('diffs-container');
-		return host?.shadowRoot?.querySelector<HTMLElement>(`[data-comment-id="${id}"]`) ?? null;
+		return scroller?.querySelector<HTMLElement>(`[data-comment-id="${id}"]`) ?? null;
 	}
 
-	// Center a comment thread inside the card so it opens already in view (image 1)
-	// rather than scrolled to the file top. The diff renders async and re-renders
-	// once syntax highlighting lands, shifting heights, so re-center across a short
-	// settling window. Card-only: never touch the window scroll. Bounded; bails the
-	// moment the user takes over.
-	function focusComment(id: string): void {
-		if (!scroller) return;
+	// Center the comment's thread within the card, returning true once the comment
+	// exists (so the caller knows the center actually landed). Card-only math —
+	// never touches the window scroll.
+	function centerComment(id: string): boolean {
+		const el = findCommentEl(id);
+		if (!el || !scroller) return false;
+		const top =
+			scroller.scrollTop +
+			(el.getBoundingClientRect().top - scroller.getBoundingClientRect().top) -
+			(scroller.clientHeight - el.offsetHeight) / 2;
+		scroller.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+		return true;
+	}
+
+	// Open the card already scrolled to a comment thread (image 1) instead of the
+	// file top (image 2). The diff mounts async and re-renders once syntax
+	// highlighting lands (shifting row heights), and in some cases doesn't render
+	// until the card nears the viewport — so drive this off a MutationObserver that
+	// re-centers on every change, rather than a one-shot timer that could fire
+	// before the diff exists. Once the comment first appears we keep re-centering
+	// for a short grace period (to ride out the highlight re-render) and then
+	// disconnect. Bails the moment the user scrolls.
+	function focusComment(id: string): () => void {
+		const host = scroller;
+		if (!host) return () => {};
 		let raf = 0;
-		let stableFrames = 0;
-		let lastTop = Number.NaN;
-		const deadline = performance.now() + 1500;
+		let lifetime = 0;
+		const observer = new MutationObserver(() => recenter());
 		const stop = (): void => {
 			if (raf) cancelAnimationFrame(raf);
-			scroller?.removeEventListener('wheel', stop);
-			scroller?.removeEventListener('touchstart', stop);
+			clearTimeout(lifetime);
+			observer.disconnect();
+			host.removeEventListener('wheel', stop);
+			host.removeEventListener('touchstart', stop);
 		};
-		const tick = (): void => {
-			const el = findCommentEl(id);
-			if (el && scroller) {
-				const top =
-					scroller.scrollTop +
-					(el.getBoundingClientRect().top - scroller.getBoundingClientRect().top) -
-					(scroller.clientHeight - el.offsetHeight) / 2;
-				scroller.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
-				stableFrames = Math.abs(top - lastTop) < 1 ? stableFrames + 1 : 0;
-				lastTop = top;
-				if (stableFrames >= 3) return stop();
-			}
-			if (performance.now() < deadline) raf = requestAnimationFrame(tick);
-			else stop();
+		const recenter = (): void => {
+			if (raf) return; // coalesce a burst of mutations into one frame
+			raf = requestAnimationFrame(() => {
+				raf = 0;
+				// Once the comment first renders, give it a brief grace period to
+				// re-center through the syntax-highlight re-render, then disconnect so
+				// later edits/composers don't yank the scroll.
+				if (centerComment(id) && !lifetime) lifetime = window.setTimeout(stop, 1200);
+			});
 		};
-		scroller.addEventListener('wheel', stop, { passive: true });
-		scroller.addEventListener('touchstart', stop, { passive: true });
-		raf = requestAnimationFrame(tick);
+		host.addEventListener('wheel', stop, { passive: true });
+		host.addEventListener('touchstart', stop, { passive: true });
+		observer.observe(host, { childList: true, subtree: true });
+		recenter();
+		return stop;
 	}
 
 	$effect(() => {
-		if (focusCommentId) focusComment(focusCommentId);
+		if (focusCommentId) return focusComment(focusCommentId);
 	});
 
 	// Watch this card's files for a fresh "seen" mark, then scroll to the next

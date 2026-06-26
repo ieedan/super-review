@@ -39,7 +39,13 @@
 	// (unknown / still checking) keeps the prompt hidden rather than flashing it.
 	const showSkill = $derived(app.skillInstalled === false && !app.skillInstallDismissed);
 
-	type Notice = { id: 'warning' | 'add' | 'skill' };
+	// Offer an update when the skill is installed but behind the bundled one.
+	// Requires installed === true, so this and showSkill are mutually exclusive.
+	const showSkillUpdate = $derived(
+		app.skillInstalled === true && app.skillUpdateAvailable === true && !app.skillUpdateDismissed
+	);
+
+	type Notice = { id: 'warning' | 'add' | 'skill' | 'skill-update' };
 
 	// Front-first (index 0 is the fully-visible front card; later ones peek behind
 	// it). "Add a changeset?" leads, then the skill nudge, and the unnecessary-
@@ -48,6 +54,7 @@
 		const list: Notice[] = [];
 		if (showAdd) list.push({ id: 'add' });
 		if (showSkill) list.push({ id: 'skill' });
+		if (showSkillUpdate) list.push({ id: 'skill-update' });
 		if (showWarning) list.push({ id: 'warning' });
 		return list;
 	});
@@ -57,6 +64,7 @@
 	function dismissNotice(n: Notice): void {
 		if (n.id === 'warning') actions.dismissChangesetWarning();
 		else if (n.id === 'add') actions.dismissChangesetPrompt();
+		else if (n.id === 'skill-update') actions.dismissSkillUpdate();
 		else actions.dismissSkillInstall();
 	}
 </script>
@@ -104,6 +112,25 @@
 							>
 								Add
 							</Button>
+						{/snippet}
+					</NoticeCard>
+				{:else if n.id === 'skill-update'}
+					<NoticeCard
+						onDismiss={dismiss}
+						dismissTitle="Dismiss"
+						tooltip="A newer version of the super-review skill is available. Update it so agents follow the latest workflow."
+					>
+						{#snippet logo()}
+							<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-4 shrink-0" />
+						{/snippet}
+						Update the skill?
+						{#snippet action()}
+							<InstallSkillButton
+								size="xs"
+								variant="outline"
+								label="Update"
+								pendingLabel="Updating…"
+							/>
 						{/snippet}
 					</NoticeCard>
 				{:else}

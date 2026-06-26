@@ -18,7 +18,8 @@
 	// (Pierre, a syntax highlighter, DOMPurify) can't be server-rendered. Load them
 	// only in the browser so SSR/prerender stays clean and the hero still SSRs.
 	let DemoSidebar = $state<Component | null>(null);
-	let DemoDiff = $state<Component<{ paths?: string[]; class?: string }> | null>(null);
+	let DemoDiff =
+		$state<Component<{ paths?: string[]; class?: string; focusCommentId?: string }> | null>(null);
 	onMount(async () => {
 		const [sidebar, diff] = await Promise.all([
 			import('$lib/components/DemoSidebar.svelte'),
@@ -210,8 +211,7 @@
 				<div class="reveal flex-1 text-center lg:text-left" style="animation-delay: 1160ms">
 					<h3 class="font-display text-2xl font-bold tracking-tight">Write your comments</h3>
 					<p class="text-muted-foreground mt-3 text-base leading-relaxed text-pretty">
-						Click any line to leave a comment, then copy it in one click to hand straight to your
-						agent.
+						Click any line to leave a comment, copy it for your agent, and come back to see it resolved in app.
 					</p>
 				</div>
 				<div

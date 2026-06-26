@@ -1,6 +1,8 @@
 ---
 name: super-review
 description: Make the changes you made in your session easy for a human to review with the Super Review CLI - document them as a guided tour, and read & resolve the reviewer's inline review comments. Use after reaching a checkpoint, or when the reviewer has left comments to address.
+metadata:
+  version: 1
 ---
 
 # Super Review
@@ -18,9 +20,9 @@ you're doing:
   reviewer reads your change as a narrative instead of an alphabetical pile of
   diffs. → Read **[document-session.md](document-session.md)**.
 
-- **Resolving review comments.** The reviewer left inline comments on your diff
+- **Working with review comments.** The reviewer left inline comments on your diff
   and you need to address and resolve them. → Read
-  **[resolve-comments.md](resolve-comments.md)**.
+  **[review-comments.md](review-comments.md)**.
 
 Both run through the same `super-review` CLI (`npx super-review …`) and share one
 `--key`: document the fixes for a batch of comments under a session, then point

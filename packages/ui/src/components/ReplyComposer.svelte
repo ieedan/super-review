@@ -25,6 +25,9 @@
 		// Author of the thread root, shown in the expanded editor's "Replying to …"
 		// header. Omitted → no header.
 		replyingTo?: string;
+		// The thread-root author's avatar, shown next to their name in the header.
+		// Omitted (e.g. an agent or signed-out author) → just the name.
+		replyingToAvatar?: string;
 		// Placeholder for the slim prompt and, separately, the expanded editor.
 		promptPlaceholder?: string;
 		editorPlaceholder?: string;
@@ -39,6 +42,7 @@
 		onsubmit,
 		avatarUrl = '',
 		replyingTo,
+		replyingToAvatar = '',
 		promptPlaceholder = 'Reply…',
 		editorPlaceholder = 'Write a reply…',
 		submitLabel = 'Reply',
@@ -86,7 +90,13 @@
 		{#if replyingTo}
 			<div class="composer-header">
 				<Reply class="size-3.5 text-muted-foreground" />
-				<span>Replying to {replyingTo}</span>
+				<span class="replying-to">
+					Replying to
+					{#if replyingToAvatar}
+						<img class="reply-to-avatar" src={replyingToAvatar} alt="" width="16" height="16" />
+					{/if}
+					{replyingTo}
+				</span>
 			</div>
 		{/if}
 		<MarkdownComposer
@@ -142,6 +152,19 @@
 		align-items: center;
 		font-size: 12px;
 		color: hsl(var(--muted-foreground));
+	}
+	/* Keeps the "Replying to", the avatar, and the name on one baseline with a
+	   tighter gap than the header's, so the avatar reads as part of the name. */
+	.replying-to {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.reply-to-avatar {
+		width: 16px;
+		height: 16px;
+		border-radius: 999px;
+		flex-shrink: 0;
 	}
 	.composer-footer {
 		display: flex;

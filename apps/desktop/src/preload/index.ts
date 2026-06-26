@@ -57,6 +57,7 @@ import type {
 	RepoInfo,
 	Session,
 	SessionSummary,
+	SkillStatus,
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
 	TerminalKind,
@@ -437,7 +438,7 @@ const api: PreloadAPI = {
 		unwatch: () => ipcRenderer.invoke('comments:unwatch') as Promise<void>
 	},
 	skill: {
-		isInstalled: (repoId) => ipcRenderer.invoke('skill:isInstalled', repoId) as Promise<boolean>,
+		status: (repoId) => ipcRenderer.invoke('skill:status', repoId) as Promise<SkillStatus>,
 		install: (repoId) => ipcRenderer.invoke('skill:install', repoId) as Promise<void>
 	},
 	npm: {

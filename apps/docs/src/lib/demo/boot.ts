@@ -108,8 +108,17 @@ export function bootDemo(): void {
 	// Seed the (real) PR review comment so the comments demo shows the thread
 	// straight away; visitors can still click any line to add their own.
 	const now = Date.now();
-	const { ageMs, ...comment } = SEED_COMMENT;
-	app.localComments = [{ ...comment, createdAt: now - ageMs, updatedAt: now - ageMs }];
+	const { ageMs, resolvedAgeMs, ...comment } = SEED_COMMENT;
+	app.localComments = [
+		{
+			...comment,
+			createdAt: now - ageMs,
+			updatedAt: now - ageMs,
+			// Resolved by Claude Code a few minutes after it was left, so the demo
+			// shows the "Resolved by Claude Code" footer + harness logo.
+			resolvedAt: now - resolvedAgeMs
+		}
+	];
 
 	for (const d of MOCK_DIFFS) setCachedDiff(REPO.id, CTX as never, d.file.path, d);
 }

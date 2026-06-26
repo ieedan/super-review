@@ -64,6 +64,7 @@ import type {
 	SidebarControlsContextMenuResult,
 	RepoInfo,
 	Session,
+	SkillStatus,
 	SessionSummary,
 	TerminalKind,
 	UserPrefs
@@ -146,7 +147,7 @@ import {
 	watchCommentsDir
 } from '@super-review/core';
 import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from '@super-review/core';
-import { installSkill, isSkillInstalled } from './skill-service.js';
+import { getSkillStatus, installSkill } from './skill-service.js';
 import { listTemplates } from '@super-review/core';
 import {
 	clearCollapsedFiles,
@@ -2202,11 +2203,11 @@ export function registerIpc(): void {
 	// ─── Skill ─────────────────────────────────────────────────────────────
 	// The super-review skill teaches an agent how/when to record a session and
 	// resolve review comments.
-	// The UI checks whether it's installed in the active repo and offers to drop
-	// it in when it isn't.
+	// The UI checks the active repo's skill status and offers to drop the skill
+	// in when it isn't installed, or update it when the bundled copy is newer.
 	ipcMain.handle(
-		'skill:isInstalled',
-		async (_e, repoId: string): Promise<boolean> => isSkillInstalled(repoOrThrow(repoId).path)
+		'skill:status',
+		async (_e, repoId: string): Promise<SkillStatus> => getSkillStatus(repoOrThrow(repoId).path)
 	);
 
 	ipcMain.handle('skill:install', async (_e, repoId: string): Promise<void> => {
