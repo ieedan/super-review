@@ -55,6 +55,20 @@
 	opacity: 1;
 }
 
+/* The Write tab overlays the typed markdown with a Shiki-highlighted copy (a
+   `<pre class="shiki">`) for source coloring. Shiki emits a code-block
+   background on that <pre> — a light color inline, swapped to --shiki-dark-bg in
+   dark mode by the rule at the bottom of this file — which paints a box behind
+   the text that differs from the editor body. The overlay must sit directly on
+   the editor background, so clear its background in both modes. Real fenced code
+   blocks live in the Preview tab (.carta-renderer) and keep their Shiki
+   background. The `html.dark` variant matches the dark swap's specificity so it
+   still wins there. */
+.carta-theme__github .carta-input .shiki,
+html.dark .carta-theme__github .carta-input .shiki {
+	background-color: transparent !important;
+}
+
 /* Toolbar (Write/Preview tabs on the left, formatting icons on the right).
    Shares the editor body's background so the composer is one uniform color; the
    active tab still reads as selected via its text color and the gap it leaves in
