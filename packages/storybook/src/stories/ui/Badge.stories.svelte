@@ -41,15 +41,3 @@
 		</div>
 	{/snippet}
 </Story>
-
-<!-- Performance: a wall of badges (every variant repeated) to confirm they stay
-     cheap when a list view renders one per row at scale. -->
-<Story name="Performance (900 badges)">
-	{#snippet template()}
-		<div class="flex max-w-4xl flex-wrap gap-1">
-			{#each Array(900) as _, i (i)}
-				<Badge variant={VARIANTS[i % VARIANTS.length]}>#{i}</Badge>
-			{/each}
-		</div>
-	{/snippet}
-</Story>

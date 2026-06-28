@@ -54,23 +54,3 @@
 		</div>
 	{/snippet}
 </Story>
-
-<!-- Performance: a long settings-style form with many rows of mixed controls. -->
-<Story name="Performance (300 rows)">
-	{#snippet template()}
-		<div class="flex w-96 flex-col gap-2">
-			{#each Array(300) as _, i (i)}
-				<div class="flex items-center justify-between gap-3 border-b border-border/60 py-1">
-					<span class="truncate text-sm">Setting option {i}</span>
-					{#if i % 3 === 0}
-						<Switch checked={i % 2 === 0} />
-					{:else if i % 3 === 1}
-						<Checkbox checked={i % 2 === 0} />
-					{:else}
-						<Input class="h-7 w-32" value={`value-${i}`} />
-					{/if}
-				</div>
-			{/each}
-		</div>
-	{/snippet}
-</Story>
