@@ -1,0 +1,23 @@
+/* Reuse the desktop renderer's stylesheet verbatim so components render in
+   Storybook exactly as they do in the app: same Tailwind theme tokens, the
+   light/dark palettes, the accent variants, the brand "flame" gradient, the
+   base typography and the Pierre diff / find-highlight baselines.
+
+   Tailwind v4 resolves `@source` relative to the file that declares it, so the
+   `@source '.../packages/ui/src'` inside app.css keeps scanning the real
+   component sources regardless of who imports the file. That means we get the
+   full utility set without re-declaring anything here. */
+@import '../../../apps/desktop/src/renderer/src/app.css';
+
+/* Storybook's preview iframe has no app shell, so give every story a sensible
+   surface to sit on (the app paints this via the body/#app chain). */
+:root {
+	color-scheme: light;
+}
+.dark {
+	color-scheme: dark;
+}
+body {
+	background: var(--color-background);
+	color: var(--color-foreground);
+}

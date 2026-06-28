@@ -16,9 +16,10 @@ apps/
   desktop/   Electron app (the product) — electron-vite, Svelte 5 renderer
   docs/      SvelteKit marketing/download site (embeds the real UI components)
 packages/
-  core/      Node-only session + git layer; shared by the CLI and the desktop main process
-  ui/        @super-review/ui — Svelte renderer components, stores, diff/find logic
-  cli/       super-review — published npm CLI for authoring sessions & review comments
+  core/       Node-only session + git layer; shared by the CLI and the desktop main process
+  ui/         @super-review/ui — Svelte renderer components, stores, diff/find logic
+  cli/        super-review — published npm CLI for authoring sessions & review comments
+  storybook/  @super-review/storybook — Storybook workbench for the ui components
 ```
 
 ### apps/desktop — `@super-review/desktop`
@@ -79,6 +80,24 @@ Commands: `session save`, `session clear`, `comment list|reply|resolve`.
 Source: `src/cli.ts` (commander program), `src/commands/session/*`,
 `src/commands/comment/*`.
 
+### packages/storybook — `@super-review/storybook`
+
+A Storybook workbench (Storybook 10 + `@storybook/svelte-vite` +
+`@storybook/addon-svelte-csf`) that consumes the **real** `@super-review/ui`
+components. Stories are `*.stories.svelte` files under `src/stories/`, covering
+the critical components (file tree, diff view, comment box, branch picker, repo
+picker) and the shadcn-svelte primitives. Each critical component has a
+performance story that renders it at scale.
+
+- `vite.config.ts` carries the Svelte + Tailwind plugins and the
+  `@super-review/ui` source alias (the framework consumes the project Vite
+  config; the Svelte plugin must precede the CSF addon in plugin order).
+- `.storybook/preview.css` imports the desktop app's `app.css` so the theme
+  matches exactly; `.storybook/api-stub.ts` stands in for the Electron
+  `window.api` preload bridge.
+- `src/lib/` holds the fixtures + `store-harness`/`StoreScope` that seed the
+  global `app` store for the store-driven components.
+
 ## Commands (run from repo root)
 
 | Task                         | Command            |
@@ -88,6 +107,7 @@ Source: `src/cli.ts` (commander program), `src/commands/session/*`,
 | Docs only                    | `pnpm dev:docs`    |
 | Build the desktop app        | `pnpm build`       |
 | Build the CLI for publishing | `pnpm build:cli`   |
+| Run Storybook                | `pnpm storybook`   |
 | Typecheck all packages       | `pnpm typecheck`   |
 | Test all packages            | `pnpm test`        |
 | Lint (prettier + eslint)     | `pnpm lint`        |
