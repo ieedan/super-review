@@ -15,5 +15,8 @@ build/icon.*
 apps/docs/build
 .vercel
 
+# Storybook (packages/storybook) build output
+storybook-static
+
 # Local super-review session data
 .super-review
