@@ -72,7 +72,7 @@ function findConfigFiles(): string[] {
 
 	const base = appDataDir();
 	const dirs: string[] = [];
-	let entries: string[] = [];
+	let entries: string[];
 	try {
 		entries = fs.readdirSync(base);
 	} catch {
@@ -83,7 +83,7 @@ function findConfigFiles(): string[] {
 		const dir = path.join(base, entry);
 		if (entry.startsWith('@')) {
 			// Scoped package dir (dev): descend one more level (e.g. .../desktop).
-			let subs: string[] = [];
+			let subs: string[];
 			try {
 				subs = fs.readdirSync(dir);
 			} catch {
