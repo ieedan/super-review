@@ -55,10 +55,13 @@
 	opacity: 1;
 }
 
-/* Toolbar (Write/Preview tabs on the left, formatting icons on the right). */
+/* Toolbar (Write/Preview tabs on the left, formatting icons on the right).
+   Shares the editor body's background so the composer is one uniform color; the
+   active tab still reads as selected via its text color and the gap it leaves in
+   the toolbar's bottom border (see `.carta-active` below), not a fill contrast. */
 .carta-theme__github .carta-toolbar {
 	height: 2.25rem;
-	background-color: var(--color-muted);
+	background-color: var(--color-background);
 	border-top-left-radius: var(--radius);
 	border-top-right-radius: var(--radius);
 }
@@ -96,7 +99,10 @@
 	height: 100%;
 }
 
-/* Active tab — reads as a raised panel continuous with the editor body. */
+/* Active tab — continuous with the editor body. It shares the toolbar's
+   background and is set off by its foreground text color plus the break it
+   leaves in the toolbar's bottom border (its own bottom border is painted in the
+   background color, "erasing" that segment so the tab opens into the body). */
 .carta-theme__github .carta-toolbar-left .carta-active {
 	background-color: var(--color-background);
 	color: var(--color-foreground);
