@@ -390,6 +390,11 @@ interface AppState {
 	// Cmd/Ctrl+K fuzzy file-search palette. Opened from the header search box or
 	// the global shortcut; selecting a file scrolls the diff to it.
 	commandMenuOpen: boolean;
+	// Open state for the header repo / branch pickers. Lifted out of the picker
+	// components so the global hotkeys (openRepoPicker / openBranchPicker) can
+	// drive them; the components bind:open to these.
+	repoPickerOpen: boolean;
+	branchPickerOpen: boolean;
 	// Bumped to ask the sidebar to focus its file-search input — driven by the
 	// global "search files (sidebar)" hotkey, which lives outside FileList.
 	focusSidebarSearchNonce: number;
@@ -871,6 +876,8 @@ const initial: AppState = {
 	feedbackDialogOpen: false,
 	feedbackPrefill: null,
 	commandMenuOpen: false,
+	repoPickerOpen: false,
+	branchPickerOpen: false,
 	focusSidebarSearchNonce: 0,
 	githubSignIn: {
 		open: false,
@@ -6502,6 +6509,14 @@ export const actions = {
 	},
 	toggleCommandMenu(): void {
 		app.commandMenuOpen = !app.commandMenuOpen;
+	},
+	// Toggle the header repo / branch pickers. Driven by the global hotkeys; the
+	// pickers themselves bind:open to these flags.
+	toggleRepoPicker(): void {
+		app.repoPickerOpen = !app.repoPickerOpen;
+	},
+	toggleBranchPicker(): void {
+		app.branchPickerOpen = !app.branchPickerOpen;
 	},
 	// The sidebar owns its search input, so the global hotkey routes through a
 	// nonce the FileList watches rather than reaching across components.

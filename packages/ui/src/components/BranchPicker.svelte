@@ -11,11 +11,10 @@
 	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Search from '@lucide/svelte/icons/search';
-	import { VirtualList } from '@super-review/ui/virtual-list';
 	import { Button, buttonVariants } from './ui/button';
 	import * as Popover from './ui/popover';
 	import * as Command from './ui/command';
-	import * as Tabs from './ui/tabs';
+	import * as UnderlineTabs from './ui/underline-tabs';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import {
 		actions,
@@ -28,11 +27,6 @@
 	import { cn, formatRelative } from '@super-review/ui/utils';
 	import type { BranchInfo, PRSource, PRSummary } from '@super-review/core/types';
 
-	const ITEM_SIZE = 28;
-	const PR_ITEM_SIZE = 48;
-	const MAX_LIST_HEIGHT = 320;
-
-	let open = $state(false);
 	let filter = $state('');
 	let tab = $state<'branches' | 'prs'>('branches');
 	// Track whether we've kicked off a PR fetch for the current popover session
@@ -61,7 +55,7 @@
 	// opening a PR, and the context-menu/dialog actions all close the picker by
 	// setting `open` directly, which never fires onOpenChange.
 	$effect(() => {
-		if (!open) reset();
+		if (!app.branchPickerOpen) reset();
 	});
 
 	// Kick off the PR fetch once per popover session, deduped via `prsRequested`.
@@ -83,7 +77,7 @@
 	}
 
 	async function checkout(name: string): Promise<void> {
-		open = false;
+		app.branchPickerOpen = false;
 		await actions.requestBranchSwitch(name);
 	}
 
@@ -103,7 +97,7 @@
 		} else if (action === 'delete') {
 			requestDelete(b);
 		} else if (action === 'view') {
-			open = false;
+			app.branchPickerOpen = false;
 			await actions.viewBranchReadOnly(b.name);
 		}
 	}
@@ -113,7 +107,7 @@
 	// strip collaborators of unpushed work. onConfirm throws on failure so the
 	// dialog stays open and the error toast explains why.
 	function requestDelete(b: BranchInfo): void {
-		open = false;
+		app.branchPickerOpen = false;
 		const hasRemote = !!b.upstream;
 		confirmDelete({
 			title: `Delete branch "${b.name}"?`,
@@ -134,7 +128,7 @@
 	}
 
 	async function openPR(pr: PRSummary): Promise<void> {
-		open = false;
+		app.branchPickerOpen = false;
 		await actions.checkoutPR(pr);
 	}
 
@@ -148,7 +142,7 @@
 			canView: app.viewPR?.number !== pr.number
 		});
 		if (action === 'view') {
-			open = false;
+			app.branchPickerOpen = false;
 			await actions.viewPRReadOnly(pr);
 		} else if (action === 'copyUrl') {
 			await actions.copyToClipboard(pr.url);
@@ -158,17 +152,17 @@
 	}
 
 	function openCreate(): void {
-		open = false;
+		app.branchPickerOpen = false;
 		actions.openCreateBranchDialog();
 	}
 
 	type Row = { kind: 'heading'; label: string } | { kind: 'branch'; branch: BranchInfo };
 
 	// Flatten the default + recent sections (and their headings) into a single
-	// list of rows. Everything lives inside one virtualized scroll container so
-	// the whole popover scrolls together rather than the recent list scrolling
-	// on its own. Filtering is applied here (rather than via Command's built-in
-	// matcher) because the rows are virtualized and not all present in the DOM.
+	// list of rows so the whole popover scrolls together rather than the recent
+	// list scrolling on its own. Filtering is applied here (rather than via
+	// Command's built-in matcher) so headings can be dropped alongside their
+	// section and the row model stays the single source of truth.
 	const rows = $derived.by(() => {
 		const defaultName = app.activeRepo?.defaultBranch;
 		const needle = filter.trim().toLowerCase();
@@ -195,13 +189,9 @@
 		return result;
 	});
 
-	const listHeight = $derived(
-		Math.min(MAX_LIST_HEIGHT, Math.max(ITEM_SIZE, rows.length * ITEM_SIZE))
-	);
-
 	// PR rows, filtered by title / number / author / branch. A trailing
 	// `loadMore` sentinel row is appended whenever more pages remain — once it
-	// scrolls into the virtualized window it triggers the next fetch.
+	// scrolls into view it triggers the next fetch.
 	type PRRow = { kind: 'pr'; pr: PRSummary } | { kind: 'loadMore' };
 	const prRows = $derived.by(() => {
 		const needle = filter.trim().toLowerCase();
@@ -217,10 +207,6 @@
 		if (app.prsHasMore && needle === '') result.push({ kind: 'loadMore' });
 		return result;
 	});
-
-	const prListHeight = $derived(
-		Math.min(MAX_LIST_HEIGHT, Math.max(PR_ITEM_SIZE, prRows.length * PR_ITEM_SIZE))
-	);
 
 	// The status glyph + tint for a PR: green open, grey draft, red closed,
 	// purple merged.
@@ -245,11 +231,21 @@
 		return { icon: GitPullRequest, class: 'text-success', label: 'Open' };
 	}
 
-	// Svelte action: fire a "load more" the moment the sentinel row mounts (i.e.
-	// scrolls into the virtualized window). The store guards against overlapping
-	// and redundant loads, so remounts on scroll are safe.
-	function loadMoreOnMount(_node: HTMLElement) {
-		void actions.loadMorePRs();
+	// Svelte action: fire a "load more" when the sentinel row scrolls into view.
+	// With the list no longer virtualized the sentinel is always mounted, so we
+	// watch it with an IntersectionObserver (rooted at the scroll container)
+	// rather than firing on mount, which would eagerly page in everything. The
+	// store guards against overlapping and redundant loads.
+	function loadMoreOnVisible(node: HTMLElement) {
+		const root = node.closest<HTMLElement>('[data-slot="command-list"]');
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) void actions.loadMorePRs();
+			},
+			{ root, rootMargin: '120px' }
+		);
+		io.observe(node);
+		return { destroy: () => io.disconnect() };
 	}
 
 	// Re-derive on `nowTick` so the relative timestamps stay live while the
@@ -293,7 +289,7 @@
 	const triggerLabel = $derived(viewedPRLabel() ?? viewedBranch() ?? 'no branch');
 </script>
 
-<Popover.Root bind:open>
+<Popover.Root bind:open={app.branchPickerOpen}>
 	<Popover.Trigger
 		disabled={!app.activeRepo}
 		class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'font-normal')}
@@ -306,23 +302,16 @@
 		<ChevronDown class="size-3.5 text-muted-foreground" />
 	</Popover.Trigger>
 	<Popover.Content align="start" class="w-[26rem] p-0">
-		<Tabs.Root value={tab} onValueChange={selectTab}>
-			<!-- Underline tabs across the top of the picker. -->
-			<Tabs.List
-				variant="line"
-				class="h-9 w-full justify-start gap-3 rounded-none border-b border-border bg-transparent px-3 py-0"
-			>
-				<Tabs.Trigger value="branches" class="h-full flex-none px-0 py-0 text-sm">
-					Branches
-				</Tabs.Trigger>
-				<Tabs.Trigger
-					value="prs"
-					class="h-full flex-none px-0 py-0 text-sm"
-					onmouseenter={preloadPRs}
-				>
+		<UnderlineTabs.Root value={tab} onValueChange={selectTab} class="gap-0 pt-1.5">
+			<!-- Underline tabs across the top of the picker. The active underline
+			     aligns with the list's bottom border; gap-0 keeps the search box
+			     tucked right under it. -->
+			<UnderlineTabs.List class="px-2">
+				<UnderlineTabs.Trigger value="branches" class="text-sm">Branches</UnderlineTabs.Trigger>
+				<UnderlineTabs.Trigger value="prs" class="text-sm" onmouseenter={preloadPRs}>
 					Pull Requests
-				</Tabs.Trigger>
-			</Tabs.List>
+				</UnderlineTabs.Trigger>
+			</UnderlineTabs.List>
 
 			<Command.Root shouldFilter={false}>
 				<!-- Sticky header: filter input on the left; "New branch" appears on
@@ -346,83 +335,82 @@
 					{/if}
 				</div>
 
-				<Tabs.Content value="branches" class="mt-0">
-					<Command.List class="max-h-[320px] overflow-hidden">
+				<!-- Render only the active tab's body. bits-ui keeps inactive
+				     Tabs.Content panels mounted (just hidden), which would leave the
+				     other tab's Command.Items in this shared Command.Root and let the
+				     filter input's arrow keys land on rows you can't see. -->
+				{#if tab === 'branches'}
+					<Command.List class="max-h-[320px]">
 						{#if app.branches.length === 0}
 							<div class="px-3 py-6 text-center text-xs text-muted-foreground">No branches</div>
 						{:else if rows.length === 0}
 							<div class="px-3 py-6 text-center text-xs text-muted-foreground">No matches</div>
 						{:else}
 							<Command.Group class="p-1">
-								<VirtualList
-									width="100%"
-									itemSize={ITEM_SIZE}
-									itemCount={rows.length}
-									height={listHeight}
-								>
-									{#snippet item({ index, style })}
-										{@const row = rows[index]}
-										<div {style}>
-											{#if row.kind === 'heading'}
-												<div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-													{row.label}
-												</div>
-											{:else}
-												{@const b = row.branch}
-												{@const isViewed = b.name === viewedBranch()}
-												{@const drifted = isViewingOtherBranch()}
-												<Command.Item
-													value={b.name}
-													onSelect={() => checkout(b.name)}
-													oncontextmenu={(e) => showContextMenu(e, b)}
-													class={cn('flex items-center gap-2', isViewed && 'bg-accent/60')}
-												>
-													<!-- The row you're looking at gets an eye while reviewing a
-													     branch read-only; the checked-out branch keeps the green
-													     branch glyph. With no drift these are the same row. -->
-													{#if drifted && isViewed}
-														<Eye class="size-3.5 text-foreground" aria-label="Viewing read-only" />
-													{:else}
-														<GitBranch
-															class={cn(
-																'size-3.5',
-																b.current ? 'text-success' : 'text-muted-foreground'
-															)}
-														/>
-													{/if}
-													<span
-														class={cn(
-															'min-w-0 flex-1 truncate font-mono text-xs',
-															isViewed && 'font-semibold'
-														)}
-													>
-														{b.name}
-													</span>
-													<!-- Surface the disk truth: while drifted, mark which branch is
-													     actually checked out so it's never hidden. -->
-													{#if drifted && b.current}
-														<span
-															class="shrink-0 rounded bg-foreground/10 px-1 py-0.5 text-[10px] leading-none font-medium text-muted-foreground"
-														>
-															checked out
-														</span>
-													{/if}
-													{#if relativeFor(b)}
-														<span class="shrink-0 text-[10px] text-muted-foreground">
-															{relativeFor(b)}
-														</span>
-													{/if}
-												</Command.Item>
-											{/if}
+								<!-- Rows render straight into the list (no virtualization) so
+								     bits-ui Command can move selection through them and scroll the
+								     highlighted row into view on arrow keys. `content-visibility`
+								     keeps the off-screen rows cheap to lay out on a busy repo. -->
+								{#each rows as row (row.kind === 'heading' ? `h:${row.label}` : `b:${row.branch.name}`)}
+									{#if row.kind === 'heading'}
+										<div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+											{row.label}
 										</div>
-									{/snippet}
-								</VirtualList>
+									{:else}
+										{@const b = row.branch}
+										{@const isViewed = b.name === viewedBranch()}
+										{@const drifted = isViewingOtherBranch()}
+										<Command.Item
+											value={b.name}
+											onSelect={() => checkout(b.name)}
+											oncontextmenu={(e) => showContextMenu(e, b)}
+											class={cn(
+												'flex items-center gap-2 [content-visibility:auto] [contain-intrinsic-size:auto_28px]',
+												isViewed && 'bg-accent/60'
+											)}
+										>
+											<!-- The row you're looking at gets an eye while reviewing a
+											     branch read-only; the checked-out branch keeps the green
+											     branch glyph. With no drift these are the same row. -->
+											{#if drifted && isViewed}
+												<Eye class="size-3.5 text-foreground" aria-label="Viewing read-only" />
+											{:else}
+												<GitBranch
+													class={cn(
+														'size-3.5',
+														b.current ? 'text-success' : 'text-muted-foreground'
+													)}
+												/>
+											{/if}
+											<span
+												class={cn(
+													'min-w-0 flex-1 truncate font-mono text-xs',
+													isViewed && 'font-semibold'
+												)}
+											>
+												{b.name}
+											</span>
+											<!-- Surface the disk truth: while drifted, mark which branch is
+											     actually checked out so it's never hidden. -->
+											{#if drifted && b.current}
+												<span
+													class="shrink-0 rounded bg-foreground/10 px-1 py-0.5 text-[10px] leading-none font-medium text-muted-foreground"
+												>
+													checked out
+												</span>
+											{/if}
+											{#if relativeFor(b)}
+												<span class="shrink-0 text-[10px] text-muted-foreground">
+													{relativeFor(b)}
+												</span>
+											{/if}
+										</Command.Item>
+									{/if}
+								{/each}
 							</Command.Group>
 						{/if}
 					</Command.List>
-				</Tabs.Content>
-
-				<Tabs.Content value="prs" class="mt-0">
+				{:else}
 					{#if hasUpstream}
 						<!-- Fork repos can browse their own PRs or their upstream's. -->
 						<div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
@@ -452,7 +440,7 @@
 							</div>
 						</div>
 					{/if}
-					<Command.List class="max-h-[320px] overflow-hidden">
+					<Command.List class="max-h-[320px]">
 						{#if app.loading.prs}
 							<div
 								class="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground"
@@ -468,63 +456,57 @@
 							<div class="px-3 py-6 text-center text-xs text-muted-foreground">No matches</div>
 						{:else}
 							<Command.Group class="p-1">
-								<VirtualList
-									width="100%"
-									itemSize={PR_ITEM_SIZE}
-									itemCount={prRows.length}
-									height={prListHeight}
-								>
-									{#snippet item({ index, style })}
-										{@const row = prRows[index]}
-										<div {style}>
-											{#if row.kind === 'loadMore'}
-												<div
-													use:loadMoreOnMount
-													class="flex items-center justify-center gap-2 py-3 text-[10px] text-muted-foreground"
-												>
-													<Loader2 class="size-3 animate-spin" />
-													Loading more…
-												</div>
-											{:else}
-												{@const pr = row.pr}
-												{@const status = prStatus(pr)}
-												{@const isViewed = app.viewPR?.number === pr.number}
-												{@const Icon = isViewed ? Eye : status.icon}
-												<button
-													type="button"
-													onclick={() => openPR(pr)}
-													oncontextmenu={(e) => showPRContextMenu(e, pr)}
-													title={pr.title}
-													class={cn(
-														'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent',
-														isViewed && 'bg-accent/60'
-													)}
-												>
-													<Icon
-														class={cn(
-															'size-4 shrink-0',
-															isViewed ? 'text-foreground' : status.class
-														)}
-														aria-label={isViewed ? 'Viewing read-only' : status.label}
-													/>
-													<div class="flex min-w-0 flex-1 flex-col">
-														<span class="truncate text-xs font-medium">
-															{pr.title}
-														</span>
-														<span class="truncate text-[10px] text-muted-foreground">
-															#{pr.number} · {pr.author} · {prRelative(pr)}
-														</span>
-													</div>
-												</button>
-											{/if}
+								<!-- Rows render straight into the list (no virtualization) so
+								     bits-ui Command can move selection through them and scroll the
+								     highlighted row into view on arrow keys. The trailing sentinel
+								     pages in more PRs once it scrolls into view. -->
+								{#each prRows as row (row.kind === 'pr' ? `pr:${row.pr.number}` : 'loadMore')}
+									{#if row.kind === 'loadMore'}
+										<div
+											use:loadMoreOnVisible
+											class="flex items-center justify-center gap-2 py-3 text-[10px] text-muted-foreground"
+										>
+											<Loader2 class="size-3 animate-spin" />
+											Loading more…
 										</div>
-									{/snippet}
-								</VirtualList>
+									{:else}
+										{@const pr = row.pr}
+										{@const status = prStatus(pr)}
+										{@const isViewed = app.viewPR?.number === pr.number}
+										{@const Icon = isViewed ? Eye : status.icon}
+										<!-- A Command.Item (not a bare button) so the filter input's
+										     arrow keys move selection through the list, matching the
+										     Branches tab. -->
+										<Command.Item
+											value={`pr-${pr.number}`}
+											onSelect={() => openPR(pr)}
+											oncontextmenu={(e) => showPRContextMenu(e, pr)}
+											title={pr.title}
+											class={cn(
+												'gap-2.5 [content-visibility:auto] [contain-intrinsic-size:auto_48px]',
+												isViewed && 'bg-accent/60'
+											)}
+										>
+											<Icon
+												class={cn('size-4 shrink-0', isViewed ? 'text-foreground' : status.class)}
+												aria-label={isViewed ? 'Viewing read-only' : status.label}
+											/>
+											<div class="flex min-w-0 flex-1 flex-col">
+												<span class="truncate text-xs font-medium">
+													{pr.title}
+												</span>
+												<span class="truncate text-[10px] text-muted-foreground">
+													#{pr.number} · {pr.author} · {prRelative(pr)}
+												</span>
+											</div>
+										</Command.Item>
+									{/if}
+								{/each}
 							</Command.Group>
 						{/if}
 					</Command.List>
-				</Tabs.Content>
+				{/if}
 			</Command.Root>
-		</Tabs.Root>
+		</UnderlineTabs.Root>
 	</Popover.Content>
 </Popover.Root>

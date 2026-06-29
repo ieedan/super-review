@@ -1,5 +1,7 @@
 import type { Preview } from '@storybook/svelte-vite';
+import type { AnimationMode } from '@super-review/core/types';
 import { installApiStub } from './api-stub';
+import AnimationsScope from '../src/lib/AnimationsScope.svelte';
 import './preview.css';
 
 // Stand in for the Electron preload bridge before any component mounts.
@@ -29,7 +31,8 @@ const preview: Preview = {
 	},
 	initialGlobals: {
 		theme: 'dark',
-		accent: 'flame'
+		accent: 'flame',
+		animations: 'all'
 	},
 	globalTypes: {
 		theme: {
@@ -55,12 +58,28 @@ const preview: Preview = {
 				],
 				dynamicTitle: true
 			}
+		},
+		animations: {
+			description: 'Animation level',
+			toolbar: {
+				title: 'Animations',
+				icon: 'lightning',
+				items: [
+					{ value: 'none', title: 'None' },
+					{ value: 'accents', title: 'Accents' },
+					{ value: 'all', title: 'All' }
+				],
+				dynamicTitle: true
+			}
 		}
 	},
 	decorators: [
 		(story, context) => {
 			applyTheme(context.globals.theme ?? 'dark', context.globals.accent ?? 'flame');
-			return story();
+			return {
+				Component: AnimationsScope,
+				props: { mode: (context.globals.animations ?? 'all') as AnimationMode }
+			};
 		}
 	]
 };

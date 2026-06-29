@@ -25,7 +25,6 @@
 
 	type Row = { kind: 'header'; label: string } | { kind: 'repo'; repo: RepoInfo };
 
-	let open = $state(false);
 	let filter = $state('');
 
 	// Refresh dirty markers on open and clear the filter on close. Keying off
@@ -33,17 +32,17 @@
 	// selecting a repo, the context-menu actions, and the dialogs all close the
 	// picker by setting `open` directly, which never fires onOpenChange.
 	$effect(() => {
-		if (open) void actions.refreshDirtyRepos();
+		if (app.repoPickerOpen) void actions.refreshDirtyRepos();
 		else filter = '';
 	});
 
 	async function pick(id: string): Promise<void> {
-		open = false;
+		app.repoPickerOpen = false;
 		await actions.switchRepo(id);
 	}
 
 	function openAddRepo(): void {
-		open = false;
+		app.repoPickerOpen = false;
 		actions.openAddRepoDialog();
 	}
 
@@ -71,7 +70,7 @@
 		} else if (action === 'settings') {
 			await actions.switchRepo(repo.id);
 			actions.openRepoSettingsDialog();
-			open = false;
+			app.repoPickerOpen = false;
 		}
 	}
 
@@ -96,7 +95,7 @@
 				await actions.removeRepo(repo.id, checked);
 				// Close the picker once the removal lands so the user drops straight
 				// onto the newly-active repo instead of back into the open list.
-				open = false;
+				app.repoPickerOpen = false;
 			}
 		});
 	}
@@ -177,7 +176,7 @@
 	);
 </script>
 
-<Popover.Root bind:open>
+<Popover.Root bind:open={app.repoPickerOpen}>
 	<Popover.Trigger class={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-[260px]')}>
 		{#if app.activeRepo}
 			<RepoIcon repo={app.activeRepo} size="sm" />
