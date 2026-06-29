@@ -1,10 +1,10 @@
 import type { Hotkeys } from './hotkeys.js';
-import type { RepoUsageStats } from './usage-stats.js';
+import type { RepoUsageStats, StatMetric } from './usage-stats.js';
 
-// Re-exported so renderer/main code can reach the usage-stats type through the
+// Re-exported so renderer/main code can reach the usage-stats types through the
 // same `@super-review/core/types` (and `@shared/types`) surface as everything
 // else. The pure helpers live in the `./usage-stats` subpath.
-export type { RepoUsageStats } from './usage-stats.js';
+export type { RepoUsageStats, StatMetric } from './usage-stats.js';
 
 export interface RepoInfo {
 	id: string;
@@ -1452,6 +1452,9 @@ export interface UserPrefs {
 	// header's right-click menu. Missing keys fall back to DEFAULT_FILE_HEADER_ITEMS
 	// so older persisted prefs (and any future additions) default to visible.
 	fileHeaderItems: FileHeaderItemVisibility;
+	// Which metric widgets the stats Overview shows, in order. Customized from the
+	// Overview's widget picker. Falls back to DEFAULT_STATS_WIDGETS when unset.
+	statsWidgets?: StatMetric[];
 }
 
 // A user-registered file icon: every file whose path matches `pattern` is

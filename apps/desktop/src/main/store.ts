@@ -24,6 +24,7 @@ import { DEFAULT_HOTKEYS } from '@shared/hotkeys.js';
 import {
 	addToDay,
 	dayKey,
+	DEFAULT_STATS_WIDGETS,
 	emptyStats,
 	emptyStoredStats,
 	projectStats,
@@ -122,7 +123,8 @@ const defaults: Schema = {
 		signCommits: true,
 		headerItems: DEFAULT_HEADER_ITEMS,
 		fileHeaderItems: DEFAULT_FILE_HEADER_ITEMS,
-		sidebarControls: DEFAULT_SIDEBAR_CONTROLS
+		sidebarControls: DEFAULT_SIDEBAR_CONTROLS,
+		statsWidgets: [...DEFAULT_STATS_WIDGETS]
 	},
 	seen: {},
 	seenInherited: {},

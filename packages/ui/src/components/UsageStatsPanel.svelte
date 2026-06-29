@@ -14,18 +14,22 @@
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Activity from '@lucide/svelte/icons/activity';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import type { LucideIcon } from '@lucide/svelte';
 	import { Chart, Svg, Calendar } from 'layerchart/svg';
 	import { timeWeek } from 'd3-time';
 	import { onMount } from 'svelte';
 	import {
 		dayKey,
+		DEFAULT_STATS_WIDGETS,
 		metricTotal,
 		type DailyCounts,
 		type RepoUsageStats,
 		type StatMetric
 	} from '@super-review/core/usage-stats';
 	import { actions, app } from '@super-review/ui/store.svelte';
+	import * as Popover from './ui/popover';
+	import { Checkbox } from './ui/checkbox';
 
 	// 'all' is the Overview; otherwise a single metric.
 	type View = 'all' | StatMetric;
@@ -77,10 +81,28 @@
 		return out;
 	});
 
-	// Per-metric all-time totals, for the Overview widgets.
-	const widgets = $derived(
-		METRICS.map((m) => ({ ...m, total: metricTotal(source.daily[m.key] ?? {}) }))
+	// Which metric widgets the Overview shows, in the user's chosen order (falling
+	// back to the default set). The customize popover writes this through prefs.
+	const shownWidgets = $derived<StatMetric[]>(
+		app.prefs?.statsWidgets ?? [...DEFAULT_STATS_WIDGETS]
 	);
+
+	// The shown widgets resolved to their meta + all-time total, in pref order.
+	const widgets = $derived(
+		shownWidgets
+			.map((key) => METRICS.find((m) => m.key === key))
+			.filter((m): m is (typeof METRICS)[number] => Boolean(m))
+			.map((m) => ({ ...m, total: metricTotal(source.daily[m.key] ?? {}) }))
+	);
+
+	// Toggle a metric in/out of the Overview widgets. Adding appends to the end so
+	// the user's existing order is preserved.
+	function toggleWidget(key: StatMetric, on: boolean): void {
+		const next = on
+			? [...shownWidgets.filter((k) => k !== key), key]
+			: shownWidgets.filter((k) => k !== key);
+		void actions.setStatsWidgets(next);
+	}
 
 	// --- KPIs (single metric) -------------------------------------------------
 	const now = new Date();
@@ -104,18 +126,18 @@
 	const nf = new Intl.NumberFormat();
 	const fmt = (n: number) => nf.format(n);
 
-	// --- Heatmap (a fixed run of whole weeks, sized to fill the width) ---------
+	// --- Heatmap (a run of whole weeks that fills the panel width) -------------
 	let containerWidth = $state(0);
-	// Aim for ~15px cells, then back-solve the cell size to fill the width exactly
-	// so the grid is a clean rectangle flush to both edges. Whole weeks only (end
-	// rounded up to the next week boundary) keeps every column 7 cells tall.
+	// Pick a week count near a ~15px target, then let the cell size be the exact
+	// fractional width / weeks so the grid spans the full container with no
+	// leftover gutter. Whole weeks only (end rounded up to the next week boundary)
+	// keeps every column 7 cells tall, so it reads as a clean rectangle.
 	const TARGET_CELL = 15;
 	const weeks = $derived(
-		containerWidth > 0 ? Math.max(16, Math.min(30, Math.round(containerWidth / TARGET_CELL))) : 24
+		containerWidth > 0 ? Math.max(12, Math.min(53, Math.round(containerWidth / TARGET_CELL))) : 26
 	);
-	const cellSize = $derived(containerWidth > 0 ? Math.floor(containerWidth / weeks) : TARGET_CELL);
-	const chartHeight = $derived(7 * cellSize);
-	const centerOffset = $derived(Math.max(0, (containerWidth - cellSize * weeks) / 2));
+	const cellSize = $derived(containerWidth > 0 ? containerWidth / weeks : TARGET_CELL);
+	const chartHeight = $derived(Math.round(7 * cellSize));
 
 	const rangeEnd = $derived(timeWeek.ceil(now));
 	const rangeStart = $derived(timeWeek.offset(rangeEnd, -weeks));
@@ -159,41 +181,78 @@
 </script>
 
 <div class="w-full">
-	<!-- View picker -->
-	<div class="relative inline-block">
-		<select
-			bind:value={view}
-			aria-label="Stats view"
-			class="h-8 w-auto appearance-none rounded-lg border border-input bg-transparent py-1 pr-8 pl-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-		>
-			<option value="all">Overview</option>
-			{#each METRICS as m (m.key)}
-				<option value={m.key}>{m.label}</option>
-			{/each}
-		</select>
-		<ChevronDown
-			class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-		/>
+	<!-- View picker + (Overview) widget customizer -->
+	<div class="flex items-center justify-between gap-2">
+		<div class="relative inline-block">
+			<select
+				bind:value={view}
+				aria-label="Stats view"
+				class="h-8 w-auto appearance-none rounded-lg border border-input bg-transparent py-1 pr-8 pl-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+			>
+				<option value="all">Overview</option>
+				{#each METRICS as m (m.key)}
+					<option value={m.key}>{m.label}</option>
+				{/each}
+			</select>
+			<ChevronDown
+				class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+			/>
+		</div>
+
+		{#if isOverview}
+			<Popover.Root>
+				<Popover.Trigger
+					class="flex h-8 items-center gap-1.5 rounded-lg border border-input bg-transparent px-2.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+				>
+					<SlidersHorizontal class="size-3.5" />
+					Customize
+				</Popover.Trigger>
+				<Popover.Content class="w-56 p-1.5" align="end">
+					<p class="px-1.5 py-1 text-[11px] text-muted-foreground">Show widgets</p>
+					{#each METRICS as m (m.key)}
+						{@const Icon = m.icon}
+						{@const checked = shownWidgets.includes(m.key)}
+						<label
+							class="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-sm hover:bg-muted"
+						>
+							<Checkbox {checked} onCheckedChange={(v) => toggleWidget(m.key, v === true)} />
+							<Icon class="size-3.5 text-muted-foreground" />
+							{m.label}
+						</label>
+					{/each}
+				</Popover.Content>
+			</Popover.Root>
+		{/if}
 	</div>
 
 	{#if isOverview}
-		<!-- Overview: one widget per metric -->
-		<div class="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-			{#each widgets as w (w.key)}
-				{@const Icon = w.icon}
-				<button
-					type="button"
-					class="rounded-md border border-border bg-card/30 px-2.5 py-1.5 text-left transition-colors hover:bg-accent"
-					onclick={() => (view = w.key)}
-				>
-					<div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-						<Icon class="size-3.5" />
-						{w.short}
-					</div>
-					<div class="mt-0.5 text-lg leading-tight font-semibold tabular-nums">{fmt(w.total)}</div>
-				</button>
-			{/each}
-		</div>
+		<!-- Overview: one widget per chosen metric -->
+		{#if widgets.length > 0}
+			<div class="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+				{#each widgets as w (w.key)}
+					{@const Icon = w.icon}
+					<button
+						type="button"
+						class="rounded-md border border-border bg-card/30 px-2.5 py-1.5 text-left transition-colors hover:bg-accent"
+						onclick={() => (view = w.key)}
+					>
+						<div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+							<Icon class="size-3.5" />
+							{w.short}
+						</div>
+						<div class="mt-0.5 text-lg leading-tight font-semibold tabular-nums">
+							{fmt(w.total)}
+						</div>
+					</button>
+				{/each}
+			</div>
+		{:else}
+			<p
+				class="mt-3 rounded-md border border-dashed border-border px-3 py-2 text-center text-xs text-muted-foreground"
+			>
+				No widgets selected. Use Customize to add some.
+			</p>
+		{/if}
 	{:else}
 		<!-- Single metric: timeframe KPIs -->
 		<div class="mt-3 grid grid-cols-4 gap-1.5">
@@ -222,7 +281,7 @@
 		>
 			<Chart data={calendarData} x={(d: DayData) => d.date}>
 				<Svg>
-					<g transform="translate({centerOffset}, 0)">
+					<g>
 						<Calendar start={rangeStart} end={rangeEnd} {cellSize}>
 							{#snippet children({ cells, cellSize })}
 								{#each cells as cell (cell.x + '-' + cell.y)}

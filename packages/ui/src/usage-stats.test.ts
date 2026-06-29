@@ -3,6 +3,7 @@ import {
 	addToDay,
 	aggregateStats,
 	dayKey,
+	DEFAULT_STATS_WIDGETS,
 	emptyStats,
 	emptyStoredStats,
 	metricTotal,
@@ -10,6 +11,14 @@ import {
 	STAT_METRICS,
 	type RepoUsageStats
 } from '@super-review/core/usage-stats';
+
+describe('DEFAULT_STATS_WIDGETS', () => {
+	it('is a non-empty set of real, unique metrics', () => {
+		expect(DEFAULT_STATS_WIDGETS.length).toBeGreaterThan(0);
+		expect(new Set(DEFAULT_STATS_WIDGETS).size).toBe(DEFAULT_STATS_WIDGETS.length);
+		for (const m of DEFAULT_STATS_WIDGETS) expect(STAT_METRICS).toContain(m);
+	});
+});
 
 describe('dayKey', () => {
 	it('formats a local date as zero-padded YYYY-MM-DD', () => {

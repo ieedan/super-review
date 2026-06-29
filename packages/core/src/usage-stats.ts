@@ -30,6 +30,16 @@ export const STAT_METRICS: readonly StatMetric[] = [
 	'commentsWritten'
 ];
 
+// The metric widgets the stats Overview shows by default, in order. Users can
+// add/remove/reorder them (persisted in UserPrefs.statsWidgets); this is the
+// fallback when they haven't customized it.
+export const DEFAULT_STATS_WIDGETS: readonly StatMetric[] = [
+	'commitsAuthored',
+	'prsMerged',
+	'filesReviewed',
+	'locReviewed'
+];
+
 // A single metric's activity, keyed by local day (`dayKey`) -> count for that day.
 // Days with no activity are simply absent.
 export type DailyCounts = Record<string, number>;

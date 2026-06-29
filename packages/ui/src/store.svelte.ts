@@ -37,6 +37,7 @@ import type {
 	PushStatus,
 	RepoInfo,
 	RepoUsageStats,
+	StatMetric,
 	Session,
 	SessionSummary,
 	HeaderItemVisibility,
@@ -2878,6 +2879,10 @@ export const actions = {
 	async setSignCommits(value: boolean): Promise<void> {
 		app.signCommits = value;
 		app.prefs = await window.api.state.setPrefs({ signCommits: value });
+	},
+	// Persist the metric widgets shown on the stats Overview (order preserved).
+	async setStatsWidgets(widgets: StatMetric[]): Promise<void> {
+		app.prefs = await window.api.state.setPrefs({ statsWidgets: widgets });
 	},
 	// Show/hide a single optional header control (sidebar toggle, changeset,
 	// editor, terminal) from the header's right-click menu. Updates the local
