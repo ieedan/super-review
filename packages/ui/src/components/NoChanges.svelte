@@ -18,8 +18,10 @@
 	);
 </script>
 
-<div class="grid h-full w-full place-items-center">
-	<div class="w-full max-w-md px-6">
+<div
+	class="flex h-full w-full flex-col items-center justify-center gap-8 overflow-y-auto px-6 py-10"
+>
+	<div class="w-full max-w-md">
 		<h1 class="text-center text-2xl font-semibold">No local changes</h1>
 		<p class="mt-2 text-center text-sm text-muted-foreground">
 			There are no uncommitted changes in this repository. Here are some things you can do next.
@@ -73,9 +75,9 @@
 				</button>
 			{/if}
 		</div>
+	</div>
 
-		<div class="mt-6">
-			<UsageStatsPanel compact />
-		</div>
+	<div class="w-full max-w-2xl">
+		<UsageStatsPanel />
 	</div>
 </div>

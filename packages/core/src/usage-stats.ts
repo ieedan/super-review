@@ -1,100 +1,106 @@
 // Local, per-repo usage statistics. Everything here is pure and browser-safe so
-// the renderer can import the type and the aggregation helper directly, while the
-// Electron main process persists the stored shape (see apps/desktop store.ts).
+// the renderer can import the types and helpers directly, while the Electron main
+// process persists the stored shape (see apps/desktop store.ts).
 //
 // Nothing in this module touches the network: usage stats are computed and stored
 // entirely on the user's machine.
+//
+// Stats are kept as per-day buckets per metric (a `dayKey -> count` map) rather
+// than running totals, so the UI can render a contribution-style heatmap and
+// time-windowed KPIs ("today", "this month") on top of the same data.
 
-// The public, display-ready shape. `filesReviewed` and `sessionsReviewed` are
-// derived from the deduped sets in StoredRepoStats so they can never drift from
-// the data backing them.
+export type StatMetric =
+	| 'filesReviewed'
+	| 'locReviewed'
+	| 'prsMerged'
+	| 'branchesCreated'
+	| 'commitsAuthored'
+	| 'sessionsReviewed'
+	| 'commentsWritten';
+
+// All metrics, in canonical (display) order. Iterate this when building empty
+// shapes or merging, so adding a metric is a one-line change.
+export const STAT_METRICS: readonly StatMetric[] = [
+	'filesReviewed',
+	'locReviewed',
+	'prsMerged',
+	'branchesCreated',
+	'commitsAuthored',
+	'sessionsReviewed',
+	'commentsWritten'
+];
+
+// A single metric's activity, keyed by local day (`dayKey`) -> count for that day.
+// Days with no activity are simply absent.
+export type DailyCounts = Record<string, number>;
+
+// The public, display-ready shape: one daily-bucket map per metric, plus the
+// first time the repo recorded any activity.
 export interface RepoUsageStats {
-	// Distinct file contents the user has marked seen (deduped by content hash, so
-	// re-reviewing the same content does not recount, but reviewing genuinely
-	// changed content does).
-	filesReviewed: number;
-	// Lines of code (additions + deletions) across those distinct file contents.
-	locReviewed: number;
-	prsMerged: number;
-	branchesCreated: number;
-	commitsAuthored: number;
-	// Distinct guided-tour sessions opened.
-	sessionsReviewed: number;
-	commentsWritten: number;
-	// When the repo's stats first started accumulating (ms epoch), or null when the
-	// repo has no recorded activity yet.
+	daily: Record<StatMetric, DailyCounts>;
 	firstUsedAt: number | null;
 }
 
-// The persisted shape. Counts that need de-duplication keep the underlying sets
-// (as arrays, for JSON storage) rather than a bare number, so we can tell whether
-// a sig/session id is new before counting it.
-export interface StoredRepoStats {
-	locReviewed: number;
-	prsMerged: number;
-	branchesCreated: number;
-	commitsAuthored: number;
-	commentsWritten: number;
-	// Content signatures of every distinct file content marked seen in this repo.
+// The persisted shape. Adds the de-duplication sets used to decide whether a
+// file (by content signature) or session (by id) is new before it is counted;
+// these never reach the renderer.
+export interface StoredRepoStats extends RepoUsageStats {
 	reviewedSigs: string[];
-	// Ids of every distinct session opened in this repo.
 	reviewedSessionIds: string[];
-	firstUsedAt: number | null;
 }
 
-export function emptyStoredStats(): StoredRepoStats {
-	return {
-		locReviewed: 0,
-		prsMerged: 0,
-		branchesCreated: 0,
-		commitsAuthored: 0,
-		commentsWritten: 0,
-		reviewedSigs: [],
-		reviewedSessionIds: [],
-		firstUsedAt: null
-	};
+// A stable, sortable local-day key: `YYYY-MM-DD` in the machine's own timezone
+// (the same wall-clock day the user sees). The single source of truth for the
+// bucket key format, shared by the recorder (main) and the readers (renderer).
+export function dayKey(date: Date): string {
+	const y = date.getFullYear();
+	const m = `${date.getMonth() + 1}`.padStart(2, '0');
+	const d = `${date.getDate()}`.padStart(2, '0');
+	return `${y}-${m}-${d}`;
+}
+
+function emptyDaily(): Record<StatMetric, DailyCounts> {
+	const daily = {} as Record<StatMetric, DailyCounts>;
+	for (const m of STAT_METRICS) daily[m] = {};
+	return daily;
 }
 
 export function emptyStats(): RepoUsageStats {
-	return {
-		filesReviewed: 0,
-		locReviewed: 0,
-		prsMerged: 0,
-		branchesCreated: 0,
-		commitsAuthored: 0,
-		sessionsReviewed: 0,
-		commentsWritten: 0,
-		firstUsedAt: null
-	};
+	return { daily: emptyDaily(), firstUsedAt: null };
 }
 
-// Project the persisted shape to the display shape, deriving the deduped counts
-// from their backing sets.
+export function emptyStoredStats(): StoredRepoStats {
+	return { ...emptyStats(), reviewedSigs: [], reviewedSessionIds: [] };
+}
+
+// Add `n` to a metric's bucket for `key`, creating the bucket as needed.
+export function addToDay(daily: DailyCounts, key: string, n: number): void {
+	daily[key] = (daily[key] ?? 0) + n;
+}
+
+// Sum every day's count for one metric (its all-time total).
+export function metricTotal(daily: DailyCounts): number {
+	let total = 0;
+	for (const v of Object.values(daily)) total += v;
+	return total;
+}
+
+// Project the persisted shape to the display shape (drops the dedup sets).
 export function projectStats(s: StoredRepoStats): RepoUsageStats {
-	return {
-		filesReviewed: s.reviewedSigs.length,
-		locReviewed: s.locReviewed,
-		prsMerged: s.prsMerged,
-		branchesCreated: s.branchesCreated,
-		commitsAuthored: s.commitsAuthored,
-		sessionsReviewed: s.reviewedSessionIds.length,
-		commentsWritten: s.commentsWritten,
-		firstUsedAt: s.firstUsedAt
-	};
+	return { daily: s.daily, firstUsedAt: s.firstUsedAt };
 }
 
-// Sum the counters across repos for an "all repos" roll-up. `firstUsedAt` becomes
-// the earliest non-null timestamp (when the user first used any of them).
+// Merge two daily-bucket maps by summing each day.
+function mergeDaily(into: DailyCounts, from: DailyCounts): void {
+	for (const [key, v] of Object.entries(from)) addToDay(into, key, v);
+}
+
+// Sum the per-day buckets across repos for an "all repos" roll-up. `firstUsedAt`
+// becomes the earliest non-null timestamp (when the user first used any of them).
 export function aggregateStats(all: RepoUsageStats[]): RepoUsageStats {
 	const total = emptyStats();
 	for (const s of all) {
-		total.filesReviewed += s.filesReviewed;
-		total.locReviewed += s.locReviewed;
-		total.prsMerged += s.prsMerged;
-		total.branchesCreated += s.branchesCreated;
-		total.commitsAuthored += s.commitsAuthored;
-		total.sessionsReviewed += s.sessionsReviewed;
-		total.commentsWritten += s.commentsWritten;
+		for (const m of STAT_METRICS) mergeDaily(total.daily[m], s.daily[m] ?? {});
 		if (s.firstUsedAt !== null) {
 			total.firstUsedAt =
 				total.firstUsedAt === null ? s.firstUsedAt : Math.min(total.firstUsedAt, s.firstUsedAt);

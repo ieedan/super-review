@@ -1,8 +1,9 @@
 <script lang="ts">
-	// Local usage stats, shown two ways. The full panel (Settings ▸ Stats) leads
-	// with an "all repos" roll-up of headline numbers, then a per-repo breakdown
-	// table. The compact variant (the unstaged empty state) shows a single muted
-	// row for the active repo. All numbers are local; nothing is sent anywhere.
+	// Local usage stats as a small dashboard: a tab per metric, KPI cards for that
+	// metric (today / this month / all time / best day), and a contribution-style
+	// heatmap of the last six months — the same layerchart Calendar the commits
+	// tab uses. A scope toggle switches between the active repo and an all-repos
+	// roll-up. Every number is local; nothing is sent anywhere.
 	import FileText from '@lucide/svelte/icons/file-text';
 	import Code from '@lucide/svelte/icons/code';
 	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
@@ -11,156 +12,210 @@
 	import BookOpen from '@lucide/svelte/icons/book-open';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import type { LucideIcon } from '@lucide/svelte';
-	import type { RepoUsageStats } from '@super-review/core/types';
+	import { Chart, Svg, Calendar } from 'layerchart/svg';
+	import { timeWeek } from 'd3-time';
 	import { onMount } from 'svelte';
+	import {
+		dayKey,
+		metricTotal,
+		type DailyCounts,
+		type RepoUsageStats,
+		type StatMetric
+	} from '@super-review/core/usage-stats';
 	import { actions, app } from '@super-review/ui/store.svelte';
-	import * as Table from './ui/table';
+	import * as Tabs from './ui/tabs';
+	import { cn } from '@super-review/ui/utils';
 
-	let { compact = false }: { compact?: boolean } = $props();
+	let selectedMetric = $state<StatMetric>('filesReviewed');
+	let scope = $state<'repo' | 'all'>('repo');
 
-	// Load (or refresh) stats whenever the panel mounts; the numbers only move on
-	// the user's own actions, so a fetch-on-open is enough.
 	onMount(() => {
 		void actions.loadStats();
 	});
 
-	// The headline metrics in display order, shared by both variants.
-	const METRICS: { key: keyof RepoUsageStats; label: string; icon: LucideIcon }[] = [
-		{ key: 'filesReviewed', label: 'Files reviewed', icon: FileText },
-		{ key: 'locReviewed', label: 'Lines reviewed', icon: Code },
-		{ key: 'prsMerged', label: 'PRs merged', icon: GitPullRequest },
-		{ key: 'branchesCreated', label: 'Branches created', icon: GitBranch },
-		{ key: 'commitsAuthored', label: 'Commits authored', icon: GitCommitHorizontal },
-		{ key: 'sessionsReviewed', label: 'Sessions reviewed', icon: BookOpen },
-		{ key: 'commentsWritten', label: 'Comments written', icon: MessageSquare }
+	const METRICS: { key: StatMetric; label: string; short: string; icon: LucideIcon }[] = [
+		{ key: 'filesReviewed', label: 'Files reviewed', short: 'Files', icon: FileText },
+		{ key: 'locReviewed', label: 'Lines reviewed', short: 'Lines', icon: Code },
+		{ key: 'prsMerged', label: 'PRs merged', short: 'PRs', icon: GitPullRequest },
+		{ key: 'branchesCreated', label: 'Branches created', short: 'Branches', icon: GitBranch },
+		{
+			key: 'commitsAuthored',
+			label: 'Commits authored',
+			short: 'Commits',
+			icon: GitCommitHorizontal
+		},
+		{ key: 'sessionsReviewed', label: 'Sessions reviewed', short: 'Sessions', icon: BookOpen },
+		{ key: 'commentsWritten', label: 'Comments written', short: 'Comments', icon: MessageSquare }
 	];
 
-	// Aggregate across all repos for the full panel's headline; the compact strip
-	// shows just the active repo.
-	const aggregate = $derived(actions.aggregateStats());
-	const active = $derived(app.usageStats);
+	const meta = $derived(METRICS.find((m) => m.key === selectedMetric)!);
+	const MetaIcon = $derived(meta.icon);
 
-	// Repos that have any recorded activity, newest-activity-first, for the table.
-	const breakdown = $derived.by(() => {
-		const byRepo = app.usageStatsByRepo ?? {};
-		return app.repos
-			.map((r) => ({ repo: r, stats: byRepo[r.id] }))
-			.filter((row): row is { repo: (typeof app.repos)[number]; stats: RepoUsageStats } =>
-				Boolean(row.stats && row.stats.firstUsedAt !== null)
-			)
-			.sort((a, b) => (b.stats.firstUsedAt ?? 0) - (a.stats.firstUsedAt ?? 0));
-	});
+	// The stats backing the view: a single repo, or the summed all-repos roll-up.
+	const source = $derived<RepoUsageStats>(
+		scope === 'all' ? actions.aggregateStats() : (app.usageStats ?? actions.aggregateStats())
+	);
+	const daily = $derived<DailyCounts>(source.daily[selectedMetric] ?? {});
+
+	// Offer the all-repos roll-up only when there's more than one repo to roll up.
+	const showScope = $derived(app.repos.length > 1);
+
+	// --- KPIs -----------------------------------------------------------------
+	const now = new Date();
+	const todayKey = dayKey(now);
+	const monthPrefix = `${now.getFullYear()}-${`${now.getMonth() + 1}`.padStart(2, '0')}`;
+
+	const today = $derived(daily[todayKey] ?? 0);
+	const thisMonth = $derived(
+		Object.entries(daily).reduce((sum, [k, v]) => (k.startsWith(monthPrefix) ? sum + v : sum), 0)
+	);
+	const allTime = $derived(metricTotal(daily));
+	const bestDay = $derived(Object.values(daily).reduce((max, v) => Math.max(max, v), 0));
+
+	const KPIS = $derived([
+		{ label: 'Today', value: today },
+		{ label: 'This month', value: thisMonth },
+		{ label: 'All time', value: allTime },
+		{ label: 'Best day', value: bestDay }
+	]);
 
 	const nf = new Intl.NumberFormat();
-	function fmt(n: number): string {
-		return nf.format(n);
+	const fmt = (n: number) => nf.format(n);
+
+	// --- Heatmap (last 6 months, mirrors CommitsEmptyState) -------------------
+	const rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+	const rangeStart = new Date(now.getFullYear(), now.getMonth() - 5, now.getDate());
+
+	const CELL_SIZE = 14;
+	const LABEL_HEIGHT = 22;
+	const calWidth = (timeWeek.count(rangeStart, rangeEnd) + 1) * CELL_SIZE;
+	const chartHeight = 7 * CELL_SIZE + LABEL_HEIGHT;
+
+	let containerWidth = $state(0);
+	const centerOffset = $derived(Math.max(0, (containerWidth - calWidth) / 2));
+
+	type DayData = { date: Date; count: number };
+
+	function parseDayKey(key: string): Date {
+		const [y, m, d] = key.split('-').map(Number);
+		return new Date(y, m - 1, d);
 	}
 
-	// "Active since" as a plain date, or a placeholder when nothing is recorded yet.
-	function activeSince(at: number | null): string {
-		if (at === null) return 'not yet';
-		return new Date(at).toLocaleDateString(undefined, {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric'
-		});
+	const calendarData = $derived<DayData[]>(
+		Object.entries(daily).map(([key, count]) => ({ date: parseDayKey(key), count }))
+	);
+
+	// Shade relative to the metric's busiest day so both small counts (PRs) and
+	// large ones (lines) read well, rather than fixed thresholds tuned for commits.
+	function cellFill(count: number): string {
+		if (count <= 0 || bestDay <= 0) return 'var(--color-muted)';
+		const r = count / bestDay;
+		if (r <= 0.25) return 'color-mix(in oklab, var(--color-primary) 25%, var(--color-muted))';
+		if (r <= 0.5) return 'color-mix(in oklab, var(--color-primary) 45%, var(--color-muted))';
+		if (r <= 0.75) return 'color-mix(in oklab, var(--color-primary) 70%, var(--color-muted))';
+		return 'var(--color-primary)';
 	}
 </script>
 
-{#if compact}
-	{#if active && active.firstUsedAt !== null}
-		<div class="border-t border-border pt-4">
-			<div
-				class="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground"
+<div class="w-full">
+	<!-- Metric tabs + scope toggle -->
+	<div class="flex items-center justify-between gap-2">
+		<Tabs.Root value={selectedMetric} onValueChange={(v) => (selectedMetric = v as StatMetric)}>
+			<Tabs.List
+				class="no-scrollbar h-auto w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
 			>
 				{#each METRICS as m (m.key)}
 					{@const Icon = m.icon}
-					<span class="flex items-center gap-1">
-						<Icon class="size-3.5 opacity-60" />
-						<span class="font-medium text-foreground">{fmt(active[m.key] as number)}</span>
-						{m.label.toLowerCase()}
-					</span>
+					<Tabs.Trigger
+						value={m.key}
+						class="h-7 flex-none gap-1.5 rounded-md border-0 px-2.5 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+					>
+						<Icon class="size-3.5" />
+						{m.short}
+					</Tabs.Trigger>
 				{/each}
-			</div>
-			<p class="mt-2 text-center text-[11px] text-muted-foreground/70">
-				Your local review stats for this repository.
-			</p>
-		</div>
-	{/if}
-{:else}
-	<div class="space-y-6">
-		<div>
-			<h2 class="text-sm font-semibold">All repositories</h2>
-			<p class="mt-0.5 text-xs text-muted-foreground">
-				Everything you have reviewed locally, across every repository. None of this leaves your
-				machine.
-			</p>
-			<div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-				{#each METRICS as m (m.key)}
-					{@const Icon = m.icon}
-					<div class="rounded-lg border border-border bg-card/30 p-3">
-						<div class="flex items-center gap-1.5 text-xs text-muted-foreground">
-							<Icon class="size-3.5" />
-							{m.label}
-						</div>
-						<div class="mt-1 text-xl font-semibold tabular-nums">
-							{fmt(aggregate[m.key] as number)}
-						</div>
-					</div>
-				{/each}
-			</div>
-			<p class="mt-2 text-xs text-muted-foreground">
-				Active since {activeSince(aggregate.firstUsedAt)}
-			</p>
-		</div>
+			</Tabs.List>
+		</Tabs.Root>
 
-		{#if breakdown.length > 0}
-			<div>
-				<h2 class="text-sm font-semibold">By repository</h2>
-				<div class="mt-3 overflow-hidden rounded-lg border border-border">
-					<Table.Root>
-						<Table.Header>
-							<Table.Row>
-								<Table.Head>Repository</Table.Head>
-								<Table.Head class="text-right">Files</Table.Head>
-								<Table.Head class="text-right">Lines</Table.Head>
-								<Table.Head class="text-right">PRs</Table.Head>
-								<Table.Head class="text-right">Branches</Table.Head>
-								<Table.Head class="text-right">Commits</Table.Head>
-								<Table.Head class="text-right">Sessions</Table.Head>
-								<Table.Head class="text-right">Comments</Table.Head>
-							</Table.Row>
-						</Table.Header>
-						<Table.Body>
-							{#each breakdown as row (row.repo.id)}
-								<Table.Row>
-									<Table.Cell class="font-medium">{row.repo.name}</Table.Cell>
-									<Table.Cell class="text-right tabular-nums"
-										>{fmt(row.stats.filesReviewed)}</Table.Cell
-									>
-									<Table.Cell class="text-right tabular-nums"
-										>{fmt(row.stats.locReviewed)}</Table.Cell
-									>
-									<Table.Cell class="text-right tabular-nums">{fmt(row.stats.prsMerged)}</Table.Cell
-									>
-									<Table.Cell class="text-right tabular-nums"
-										>{fmt(row.stats.branchesCreated)}</Table.Cell
-									>
-									<Table.Cell class="text-right tabular-nums"
-										>{fmt(row.stats.commitsAuthored)}</Table.Cell
-									>
-									<Table.Cell class="text-right tabular-nums"
-										>{fmt(row.stats.sessionsReviewed)}</Table.Cell
-									>
-									<Table.Cell class="text-right tabular-nums"
-										>{fmt(row.stats.commentsWritten)}</Table.Cell
-									>
-								</Table.Row>
-							{/each}
-						</Table.Body>
-					</Table.Root>
-				</div>
+		{#if showScope}
+			<div class="flex flex-none items-center gap-0.5 rounded-md border border-border p-0.5">
+				<button
+					type="button"
+					class={cn(
+						'rounded px-2 py-0.5 text-xs',
+						scope === 'repo'
+							? 'bg-muted text-foreground'
+							: 'text-muted-foreground hover:text-foreground'
+					)}
+					onclick={() => (scope = 'repo')}
+				>
+					This repo
+				</button>
+				<button
+					type="button"
+					class={cn(
+						'rounded px-2 py-0.5 text-xs',
+						scope === 'all'
+							? 'bg-muted text-foreground'
+							: 'text-muted-foreground hover:text-foreground'
+					)}
+					onclick={() => (scope = 'all')}
+				>
+					All repos
+				</button>
 			</div>
 		{/if}
 	</div>
-{/if}
+
+	<!-- KPI cards -->
+	<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+		{#each KPIS as kpi (kpi.label)}
+			<div class="rounded-lg border border-border bg-card/30 p-3">
+				<div class="text-2xl font-semibold tabular-nums">{fmt(kpi.value)}</div>
+				<div class="mt-0.5 text-xs text-muted-foreground">{kpi.label}</div>
+			</div>
+		{/each}
+	</div>
+
+	<!-- Heatmap -->
+	<div class="mt-4">
+		<div class="flex items-center justify-between">
+			<h3 class="flex items-center gap-1.5 text-sm font-medium">
+				<MetaIcon class="size-4 text-muted-foreground" />
+				{meta.label}
+			</h3>
+			<span class="text-xs text-muted-foreground">last 6 months</span>
+		</div>
+		<div
+			class="mt-2 w-full overflow-hidden"
+			style="height: {chartHeight}px"
+			bind:clientWidth={containerWidth}
+		>
+			<Chart data={calendarData} x={(d: DayData) => d.date} padding={{ top: LABEL_HEIGHT }}>
+				<Svg>
+					<g transform="translate({centerOffset}, 0)">
+						<Calendar start={rangeStart} end={rangeEnd} monthLabel cellSize={CELL_SIZE}>
+							{#snippet children({ cells, cellSize })}
+								{#each cells as cell (cell.x + '-' + cell.y)}
+									<rect
+										x={cell.x + 1}
+										y={cell.y + 1}
+										width={Math.max(0, cellSize[0] - 2)}
+										height={Math.max(0, cellSize[1] - 2)}
+										rx="2"
+										style="fill: {cellFill(cell.data?.count ?? 0)}"
+									/>
+								{/each}
+							{/snippet}
+						</Calendar>
+					</g>
+				</Svg>
+			</Chart>
+		</div>
+		{#if allTime === 0}
+			<p class="mt-1 text-center text-xs text-muted-foreground">
+				No {meta.label.toLowerCase()} recorded yet. Your activity will show up here as you review.
+			</p>
+		{/if}
+	</div>
+</div>
