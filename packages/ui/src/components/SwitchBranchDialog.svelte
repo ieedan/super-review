@@ -48,7 +48,7 @@
 {#snippet optionCard(id: string, value: string, title: string, description: string)}
 	<label
 		for={id}
-		class="flex cursor-pointer flex-col rounded-lg border border-border leading-snug transition-colors has-[[data-state=checked]]:border-primary/30 has-[[data-state=checked]]:bg-primary/5 dark:has-[[data-state=checked]]:border-primary/20 dark:has-[[data-state=checked]]:bg-primary/10"
+		class="flex min-w-0 cursor-pointer flex-col rounded-lg border border-border leading-snug transition-colors has-[[data-state=checked]]:border-primary/30 has-[[data-state=checked]]:bg-primary/5 dark:has-[[data-state=checked]]:border-primary/20 dark:has-[[data-state=checked]]:bg-primary/10"
 	>
 		<div class="flex w-full flex-row items-center gap-3 p-3">
 			<div class="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
@@ -74,8 +74,8 @@
 			</Dialog.Description>
 		</Dialog.Header>
 
-		<form class="grid gap-4" onsubmit={confirm}>
-			<RadioGroup bind:value={choice} disabled={busy} class="gap-2">
+		<form class="grid min-w-0 gap-4" onsubmit={confirm}>
+			<RadioGroup bind:value={choice} disabled={busy} class="min-w-0 gap-2">
 				{@render optionCard(
 					'switch-branch-leave',
 					'leave',

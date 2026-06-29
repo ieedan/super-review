@@ -6678,3 +6678,53 @@ export const actions = {
 		}
 	}
 };
+
+// Centralized controller for user-initiated navigation *into* the diff: the
+// sidebar file list and comments panel, the command palette, the session tour,
+// and find results all jump through here. Every entry first makes sure the diff
+// is actually on screen (see `reveal`) before delegating to the underlying
+// `actions` primitive, so a caller never has to know about the completion
+// overlay or any other precondition. Add new "jump to X in the diff" features
+// here so that handling stays in one place instead of being copy-pasted (and
+// forgotten) at each call site.
+export const diff = {
+	// Make the diff list visible before we scroll within it. Today that means
+	// clearing the Branch-tab "You've seen it all" completion overlay, which sits
+	// over the diff once everything is seen and would otherwise swallow the jump
+	// (the section scrolls underneath an opaque cover, so the click looks dead).
+	// Guarded on the branch actually being fully-seen so we never set the
+	// dismissed flag early and suppress the next celebration.
+	reveal(): void {
+		if (allBranchChangesSeen()) actions.dismissSeenItAll();
+	},
+
+	// Open a file's diff and scroll it into view (expanding it if collapsed).
+	openAndScrollToFile(path: string): void {
+		diff.reveal();
+		actions.scrollToFile(path);
+	},
+
+	// Scroll a local review comment's inline annotation into view.
+	scrollToComment(id: string): void {
+		diff.reveal();
+		actions.revealComment(id);
+	},
+
+	// Scroll a PR review comment's inline thread into view.
+	scrollToPRComment(path: string, id: number): void {
+		diff.reveal();
+		actions.revealPRComment(path, id);
+	},
+
+	// Scroll a tour callout's note within its file into view.
+	scrollToCallout(path: string, calloutId: string): void {
+		diff.reveal();
+		actions.scrollToCallout(path, calloutId);
+	},
+
+	// Scroll a tour step's header into view (Sessions tab).
+	scrollToStep(stepId: string): void {
+		diff.reveal();
+		actions.scrollToStep(stepId);
+	}
+};

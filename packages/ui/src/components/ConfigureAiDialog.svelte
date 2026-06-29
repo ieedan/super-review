@@ -96,7 +96,8 @@
 		const prefix = scope === 'global' ? '~/' : '';
 		const paths: string[] = [];
 		for (const { target, artifact } of plannedItems) {
-			const loc = artifact === 'skill' ? HARNESS_AI_PATHS[target].skill : HARNESS_AI_PATHS[target].subagent;
+			const loc =
+				artifact === 'skill' ? HARNESS_AI_PATHS[target].skill : HARNESS_AI_PATHS[target].subagent;
 			if (!loc) continue;
 			const rel = scope === 'project' ? loc.project : loc.global;
 			if (rel === null) continue;
@@ -177,7 +178,8 @@
 				actions.closeAiConfigDialog();
 			} else {
 				failures = failed.map(
-					(f) => `${HARNESS_AI_PATHS[f.item.target].label} ${f.item.artifact}: ${f.error ?? 'failed'}`
+					(f) =>
+						`${HARNESS_AI_PATHS[f.item.target].label} ${f.item.artifact}: ${f.error ?? 'failed'}`
 				);
 			}
 		} finally {
@@ -350,9 +352,7 @@
 					</div>
 
 					{#if failures.length > 0}
-						<div
-							class="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs"
-						>
+						<div class="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs">
 							<p class="font-medium text-destructive">Some files could not be written:</p>
 							<ul class="mt-1 list-disc pl-4 text-muted-foreground">
 								{#each failures as f (f)}

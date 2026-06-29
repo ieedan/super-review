@@ -2,7 +2,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import FileMinus from '@lucide/svelte/icons/file-minus';
 	import FileEdit from '@lucide/svelte/icons/file-edit';
-	import { actions, app } from '@super-review/ui/store.svelte';
+	import { actions, app, diff } from '@super-review/ui/store.svelte';
 	import { cn } from '@super-review/ui/utils';
 	import FileIcon from './FileIcon.svelte';
 	import { tourGroups, calloutsForFile } from '@super-review/ui/session-tour';
@@ -33,7 +33,7 @@
 			<button
 				type="button"
 				class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-accent/60"
-				onclick={() => actions.scrollToStep(group.id)}
+				onclick={() => diff.scrollToStep(group.id)}
 			>
 				{#if !group.synthetic}
 					<span
@@ -80,7 +80,7 @@
 						<button
 							type="button"
 							class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left outline-hidden"
-							onclick={() => actions.scrollToFile(file.path)}
+							onclick={() => diff.openAndScrollToFile(file.path)}
 							title={file.path}
 						>
 							{#if app.showFileIcons}
@@ -111,7 +111,7 @@
 						<button
 							type="button"
 							class="flex w-full items-center gap-1.5 py-0.5 pr-2 pl-8 text-left text-[10px] text-muted-foreground hover:text-foreground"
-							onclick={() => actions.scrollToCallout(file.path, callout.id)}
+							onclick={() => diff.scrollToCallout(file.path, callout.id)}
 							title={callout.body}
 						>
 							<span class="size-1 flex-none rounded-full bg-primary"></span>

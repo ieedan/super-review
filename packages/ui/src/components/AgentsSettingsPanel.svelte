@@ -103,7 +103,9 @@
 				<p class="mt-0.5 text-xs text-muted-foreground">{s.hint}</p>
 				<div class="mt-3 space-y-1.5">
 					{#if rows.length === 0}
-						<p class="rounded-md border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground">
+						<p
+							class="rounded-md border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground"
+						>
 							Nothing installed here yet.
 						</p>
 					{:else}

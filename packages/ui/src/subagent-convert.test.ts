@@ -26,9 +26,13 @@ describe('toCodexToml', () => {
 	});
 
 	it('strips wrapping quotes from frontmatter values', () => {
-		const quoted = ['---', 'name: "quoted-name"', "description: 'single quoted'", '---', 'Body'].join(
-			'\n'
-		);
+		const quoted = [
+			'---',
+			'name: "quoted-name"',
+			"description: 'single quoted'",
+			'---',
+			'Body'
+		].join('\n');
 		const toml = toCodexToml(quoted);
 		expect(toml).toContain('name = "quoted-name"');
 		expect(toml).toContain('description = "single quoted"');

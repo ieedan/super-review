@@ -36,7 +36,12 @@ export const SKILL_FILES = ['SKILL.md', 'document-session.md', 'review-comments.
 // The agents folded into the shared `.agents` target. Drives both the collage
 // icon on the `.agents` row and its hover-card, so the user can see exactly which
 // agents selecting `.agents` covers.
-export const AGENTS_CONVENTION_HARNESSES: HarnessKind[] = ['cursor', 'codex', 'opencode', 'copilot'];
+export const AGENTS_CONVENTION_HARNESSES: HarnessKind[] = [
+	'cursor',
+	'codex',
+	'opencode',
+	'copilot'
+];
 
 const AGENT_MD = `${SUBAGENT_NAME}.md`;
 
@@ -94,7 +99,10 @@ export const HARNESS_AI_PATHS: Record<TargetKind, TargetPaths> = {
 	// subagent location and is offered separately when a subagent is selected.
 	codex: {
 		label: 'Codex',
-		subagent: { project: `.codex/agents/${SUBAGENT_NAME}.toml`, global: `.codex/agents/${SUBAGENT_NAME}.toml` },
+		subagent: {
+			project: `.codex/agents/${SUBAGENT_NAME}.toml`,
+			global: `.codex/agents/${SUBAGENT_NAME}.toml`
+		},
 		subagentFormat: 'toml',
 		detectDir: '.codex'
 	}

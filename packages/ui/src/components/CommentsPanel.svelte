@@ -16,6 +16,7 @@
 	import {
 		actions,
 		app,
+		diff,
 		isPRCommentContext,
 		effectiveCommentsSidebarTab
 	} from '@super-review/ui/store.svelte';
@@ -257,11 +258,11 @@
 									'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
 									(root.isResolved || root.isOutdated) && 'opacity-60'
 								]}
-								onclick={() => actions.revealPRComment(root.path, root.id)}
+								onclick={() => diff.scrollToPRComment(root.path, root.id)}
 								onkeydown={(e) => {
 									if (e.key === 'Enter' || e.key === ' ') {
 										e.preventDefault();
-										actions.revealPRComment(root.path, root.id);
+										diff.scrollToPRComment(root.path, root.id);
 									}
 								}}
 							>
@@ -389,11 +390,11 @@
 									'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
 									(resolved || outdated) && 'opacity-60'
 								]}
-								onclick={() => actions.revealComment(c.id)}
+								onclick={() => diff.scrollToComment(c.id)}
 								onkeydown={(e) => {
 									if (e.key === 'Enter' || e.key === ' ') {
 										e.preventDefault();
-										actions.revealComment(c.id);
+										diff.scrollToComment(c.id);
 									}
 								}}
 							>
