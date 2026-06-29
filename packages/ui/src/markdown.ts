@@ -228,3 +228,14 @@ export async function renderMarkdown(src: string, theme: 'light' | 'dark'): Prom
 	const combined = (fm ? frontmatterTableHtml(fm.rows) : '') + html;
 	return DOMPurify.sanitize(combined, { USE_PROFILES: { html: true } });
 }
+
+/**
+ * Render a single line of Markdown to sanitized inline HTML — links, emphasis,
+ * inline code, etc., but no block wrapper (`<p>`), headings, or lists. For
+ * short strings like an npm package description, where the raw `[text](url)`
+ * syntax should become a real link instead of being shown verbatim.
+ */
+export async function renderMarkdownInline(src: string): Promise<string> {
+	const html = (await marked.parseInline(src, { async: true })) as string;
+	return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+}

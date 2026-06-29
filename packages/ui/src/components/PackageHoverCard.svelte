@@ -32,7 +32,7 @@
 		setPackageHoverPinned
 	} from '@super-review/ui/package-hover.svelte';
 	import { app } from '@super-review/ui/store.svelte';
-	import { renderMarkdown } from '@super-review/ui/markdown';
+	import { renderMarkdown, renderMarkdownInline } from '@super-review/ui/markdown';
 	import '@super-review/ui/markdown.css';
 	import type { NpmPackageInfo, ReleaseNotes } from '@super-review/core/types';
 
@@ -240,6 +240,29 @@
 		};
 	});
 
+	// The package description rendered as inline markdown, so links/emphasis in
+	// it become real elements instead of raw `[text](url)` syntax (and a long
+	// bare URL collapses into a link rather than overflowing the card). Computed
+	// into local state from an effect since the render is async.
+	const description = $derived(
+		infoState?.status === 'loaded' ? (infoState.info.description ?? '') : ''
+	);
+	let renderedDescription = $state('');
+	$effect(() => {
+		const src = description;
+		if (!src.trim()) {
+			renderedDescription = '';
+			return;
+		}
+		let cancelled = false;
+		void renderMarkdownInline(src).then((html) => {
+			if (!cancelled) renderedDescription = html;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+
 	// Resolve a package.json version range to a concrete version present in the
 	// registry's `time` map. We don't ship a semver resolver, so we take the
 	// first `x.y.z` in the range — the common `^`/`~`/exact cases all pin to that
@@ -391,8 +414,9 @@
 						{@const info = infoState.info}
 						{#if target.kind === 'name'}
 							<!-- Package card: description, latest, license, links. -->
-							{#if info.description}
-								<p class="text-foreground/90">{info.description}</p>
+							{#if renderedDescription}
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+								<div class="markdown-body text-sm text-foreground/90">{@html renderedDescription}</div>
 							{/if}
 							{@const dep = deprecationFor(info, null)}
 							{#if dep}
