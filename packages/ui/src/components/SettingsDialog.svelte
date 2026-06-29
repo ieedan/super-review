@@ -69,6 +69,10 @@
 	import { ACCENTS } from '@super-review/ui/accents';
 	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '@super-review/ui/diff-themes';
 	import { resolveIconSrc } from '@super-review/ui/file-icons';
+	import {
+		searchSettings,
+		type SettingsSearchEntry
+	} from '@super-review/ui/settings-search';
 	import type {
 		Accent,
 		AnimationMode,
@@ -81,6 +85,9 @@
 	} from '@super-review/core/types';
 
 	let activeTab = $state<SettingsTab>('accounts');
+	let settingsSearchQuery = $state('');
+
+	const settingsSearchResults = $derived(searchSettings(settingsSearchQuery));
 
 	const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
 		{ id: 'accounts', label: 'Accounts', icon: User },
@@ -417,6 +424,15 @@
 	async function setDefaultAccount(id: string): Promise<void> {
 		await actions.setDefaultGithubAccount(id);
 	}
+
+	async function goToSetting(entry: SettingsSearchEntry): Promise<void> {
+		settingsSearchQuery = '';
+		activeTab = entry.tab;
+		const id = `settings-${entry.id}`;
+		await tick();
+		await tick();
+		document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
 </script>
 
 {#snippet editorIcon(editor: EditorKind)}
@@ -449,10 +465,40 @@
 	{/if}
 {/snippet}
 
-<SettingsShell bind:open={dialogOpen} title="Settings" tabs={TABS} bind:activeTab onClose={cancel}>
+<SettingsShell
+	bind:open={dialogOpen}
+	title="Settings"
+	tabs={TABS}
+	bind:activeTab
+	onClose={cancel}
+	enableSearch
+	bind:searchQuery={settingsSearchQuery}
+>
+	{#snippet searchResults()}
+		{#if settingsSearchResults.length === 0}
+			<p class="text-sm text-muted-foreground">No settings match "{settingsSearchQuery}".</p>
+		{:else}
+			<ul class="space-y-1">
+				{#each settingsSearchResults as entry (entry.id)}
+					<li>
+						<button
+							type="button"
+							class="flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left hover:bg-muted/60"
+							onclick={() => goToSetting(entry)}
+						>
+							<span class="text-sm font-medium">{entry.title}</span>
+							<span class="text-xs text-muted-foreground">{entry.description}</span>
+							<span class="text-[10px] text-muted-foreground/80">{entry.tabLabel}</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	{/snippet}
+
 	{#snippet content(_tab)}
 		{#if activeTab === 'accounts'}
-			<section class="space-y-5">
+			<section id="settings-github-accounts" class="scroll-mt-4 space-y-5">
 				<div>
 					<h3 class="text-base font-semibold">GitHub.com</h3>
 					{#if app.githubAccounts.length === 0}
@@ -522,7 +568,7 @@
 			</section>
 		{:else if activeTab === 'appearance'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-theme" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Theme</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Choose a light or dark appearance.</p>
 
@@ -542,7 +588,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-accent" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Accent</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Color for primary buttons, highlights, links, and focus rings.
@@ -569,7 +615,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-ui-font" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">UI font</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Font used for the sidebar, lists, and app chrome.
@@ -586,7 +632,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-code-font" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Code font</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Font used for diffs and code.</p>
 
@@ -601,7 +647,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-diff-view" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Diff view</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Choose how changes are displayed.</p>
 
@@ -621,7 +667,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-diff-theme" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Diff theme</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Syntax highlighting theme for diff code blocks. Each theme has a light and dark variant
@@ -660,7 +706,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-diff-layout" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Diff layout</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Choose whether all changed files render in one scrollable list or one file's diff shows
@@ -680,7 +726,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-file-icons" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">File icons</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Show language-specific icons next to file names in the sidebar.
@@ -702,7 +748,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-animations" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Animations</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How much motion the UI uses. "Accents only" keeps hover/focus transitions and small
@@ -724,7 +770,7 @@
 			</section>
 		{:else if activeTab === 'behavior'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-arrow-navigation" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Arrow-key navigation</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Choose what happens when you move the keyboard cursor onto a file with the arrow keys in
@@ -744,7 +790,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-merged-branches" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Merged branches</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						What to do when a checked-out branch's PR is merged.
@@ -781,7 +827,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-reviewing" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Reviewing</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How the review view tracks which files you've already looked at.
@@ -805,7 +851,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-commits" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Commits</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How commits you make in Super Review are signed.
@@ -825,7 +871,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-recent-repositories" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Recent repositories</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How many recently opened repositories the repository picker lists in its "Recent"
@@ -838,7 +884,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-large-diffs" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Large diffs</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Diffs with more changed lines than this are hidden behind a "Load diff" button by
@@ -1013,7 +1059,7 @@
 			</section>
 		{:else if activeTab === 'app'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-window-size" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Window size</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						The size the window opens at, in pixels. Takes effect the next time the app launches.
@@ -1055,7 +1101,7 @@
 					{/if}
 				</div>
 
-				<div class="flex items-start gap-2.5">
+				<div id="settings-start-maximized" class="scroll-mt-4 flex items-start gap-2.5">
 					<Checkbox id="start-maximized" bind:checked={draftStartMaximized} class="mt-0.5" />
 					<label for="start-maximized" class="grid cursor-pointer gap-0.5 leading-snug">
 						<span class="text-sm font-medium">Start maximized</span>
@@ -1067,7 +1113,7 @@
 			</section>
 		{:else if activeTab === 'editor'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-external-editor" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">External editor</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in editor" button.</p>
 
@@ -1100,7 +1146,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-terminal" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Terminal</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in terminal" button.</p>
 
@@ -1133,7 +1179,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-changesets" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Additional integrations</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Optional features for specific repos.</p>
 
@@ -1163,7 +1209,7 @@
 			</section>
 		{:else if activeTab === 'hotkeys'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-hotkeys" class="scroll-mt-4">
 					<div class="flex items-center justify-between gap-2">
 						<h3 class="text-base font-semibold">Keyboard shortcuts</h3>
 						{#if !hotkeysAreDefault}
@@ -1182,7 +1228,8 @@
 						{#each HOTKEY_ACTIONS as action (action)}
 							{@const conflictWith = hotkeyConflict(action)}
 							<li
-								class="flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2"
+								id="settings-hotkey-{action}"
+								class="scroll-mt-4 flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2"
 							>
 								<div class="min-w-0 flex-1">
 									<div class="text-sm font-medium">

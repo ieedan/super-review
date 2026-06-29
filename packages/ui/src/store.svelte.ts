@@ -86,7 +86,8 @@ export type SettingsTab =
 	| 'editor'
 	| 'hotkeys'
 	| 'stats';
-export type SettingsScrollTarget = 'hidden-files';
+import type { SettingsSectionId } from '@super-review/ui/settings-search';
+export type SettingsScrollTarget = SettingsSectionId;
 import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
 import { tourFileOrder, tourGroups } from '@super-review/ui/session-tour';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
