@@ -371,9 +371,10 @@ interface AppState {
 	// this tab — so the view holds its place instead of snapping back to the top.
 	scrollAnchor: ScrollAnchor | null;
 	lastRefreshAt: number | null;
-	// Local usage stats for the active repo, and every repo keyed by id. Loaded
-	// lazily by actions.loadStats() when a stats surface opens; null until then.
-	usageStats: RepoUsageStats | null;
+	// Local usage stats for every repo, keyed by id. Loaded lazily by
+	// actions.loadStats() when a stats surface opens; null until then. The active
+	// repo's slice is derived on demand (actions.activeRepoStats) so it tracks
+	// repo switches instead of going stale on a one-time snapshot.
 	usageStatsByRepo: Record<string, RepoUsageStats> | null;
 	fetchingOrigin: boolean;
 	nowTick: number;
@@ -855,7 +856,6 @@ const initial: AppState = {
 	scrollRequest: null,
 	scrollAnchor: null,
 	lastRefreshAt: null,
-	usageStats: null,
 	usageStatsByRepo: null,
 	fetchingOrigin: false,
 	nowTick: 0,
@@ -3232,6 +3232,10 @@ export const actions = {
 			// they're re-resolved for the new repo by refreshBranchPR below.
 			app.forkPrompt = null;
 			app.repoPushAccess = null;
+			// If a stats surface has loaded this session, refresh the per-repo map so
+			// the panel reflects the repo we're switching to (and any activity since
+			// the last load). activeRepoStats already re-points off the cached map.
+			if (app.usageStatsByRepo) void actions.loadStats();
 			await Promise.all([refreshRepos(), restoreContextTab(contextTabByRepo.get(repo.id), true)]);
 			await refreshBranchPR();
 		}
@@ -3392,10 +3396,18 @@ export const actions = {
 	// roll-up and per-repo breakdown). Called when a stats surface opens; the
 	// numbers only change on the user's own actions, so a fetch-on-open is enough.
 	async loadStats(): Promise<void> {
-		const byRepo = await window.api.stats.getAll();
-		app.usageStatsByRepo = byRepo;
+		app.usageStatsByRepo = await window.api.stats.getAll();
+	},
+
+	// The active repo's stats, read live from the loaded per-repo map so it
+	// follows repo switches (the map is keyed by id; switchRepo just re-points
+	// the active repo). Falls back to the all-repos roll-up when no repo is
+	// active, e.g. opened from a global surface.
+	activeRepoStats(): RepoUsageStats {
+		const byRepo = app.usageStatsByRepo;
 		const activeId = app.activeRepo?.id;
-		app.usageStats = activeId ? (byRepo[activeId] ?? emptyStats()) : null;
+		if (byRepo && activeId) return byRepo[activeId] ?? emptyStats();
+		return aggregateStats(Object.values(byRepo ?? {}));
 	},
 
 	// The summed "all repos" roll-up, derived from the loaded per-repo map.
