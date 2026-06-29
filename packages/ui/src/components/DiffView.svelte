@@ -188,6 +188,7 @@
 	let observer = $state<IntersectionObserver | null>(null);
 	let loadMoreSentinel = $state<HTMLElement | null>(null);
 	let lastNonce = 0;
+	let lastCommentNonce = 0;
 
 	// Grow the incremental render window when the bottom sentinel nears the
 	// viewport. The generous bottom rootMargin mounts the next batch a screen ahead
@@ -322,6 +323,22 @@
 		lastNonce = req.nonce;
 		if (req.calloutId) return;
 		void revealAndScrollTo(req);
+	});
+
+	// A comment jump from the sidebar (`revealComment`/`revealPRComment`) is scrolled
+	// to by the owning DiffFileSection — but only if that section is mounted. In the
+	// scroll layout we mount just the first `renderLimit` plan items, so a comment on
+	// a file past the window has no section in the DOM, its scroll effect never runs,
+	// and the click appears to do nothing (the file never opens). Grow the window to
+	// include the target file the same way a file-row jump does; once its section
+	// mounts it reads the still-current `commentScrollTarget` and scrolls itself in.
+	$effect(() => {
+		const req = app.commentScrollTarget;
+		if (!req || req.nonce === lastCommentNonce || !scrollContainer) return;
+		lastCommentNonce = req.nonce;
+		if (app.diffLayout === 'single') return;
+		const idx = displayPlan.findIndex((it) => it.kind === 'file' && it.file.path === req.path);
+		if (idx >= renderLimit) renderLimit = idx + RENDER_CHUNK;
 	});
 
 	// Scroll to a sidebar-requested file/step, first growing the incremental
