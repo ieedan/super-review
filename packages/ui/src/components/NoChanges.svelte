@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Code from '@lucide/svelte/icons/code';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Github from './icons/GithubIcon.svelte';
 	import UsageStatsPanel from './UsageStatsPanel.svelte';
@@ -101,6 +102,7 @@
 								Open the repository page in your browser.
 							</div>
 						</div>
+						<ExternalLink class="size-4 shrink-0 self-center text-muted-foreground" />
 					</button>
 				{/if}
 			</div>

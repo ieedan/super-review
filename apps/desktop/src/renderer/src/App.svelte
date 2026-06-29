@@ -17,6 +17,7 @@
 	import SwitchBranchDialog from '@super-review/ui/components/SwitchBranchDialog.svelte';
 	import ChangesetDialog from '@super-review/ui/components/ChangesetDialog.svelte';
 	import ChangesetReviewDialog from '@super-review/ui/components/ChangesetReviewDialog.svelte';
+	import ConfigureAiDialog from '@super-review/ui/components/ConfigureAiDialog.svelte';
 	import BranchMenu from '@super-review/ui/components/BranchMenu.svelte';
 	import RepositoryMenu from '@super-review/ui/components/RepositoryMenu.svelte';
 	import AddRepoDialog from '@super-review/ui/components/AddRepoDialog.svelte';
@@ -549,6 +550,7 @@
 <SwitchBranchDialog />
 <ChangesetDialog />
 <ChangesetReviewDialog />
+<ConfigureAiDialog />
 <BranchMenu />
 <RepositoryMenu />
 <AddRepoDialog />

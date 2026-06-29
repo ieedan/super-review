@@ -67,7 +67,11 @@ import type {
 	RepoInfo,
 	RepoUsageStats,
 	Session,
-	SkillStatus,
+	AiConfigStatus,
+	AiConfigApplyRequest,
+	AiConfigApplyResult,
+	AiConfigInstallItem,
+	AiConfigRemoveResult,
 	SessionSummary,
 	TerminalKind,
 	UserPrefs
@@ -150,7 +154,7 @@ import {
 	watchCommentsDir
 } from '@super-review/core';
 import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from '@super-review/core';
-import { getSkillStatus, installSkill } from './skill-service.js';
+import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-service.js';
 import { listTemplates } from '@super-review/core';
 import {
 	addStat,
@@ -2280,17 +2284,26 @@ export function registerIpc(): void {
 
 	ipcMain.handle('comments:unwatch', (e): void => clearCommentWatch(e.sender.id));
 
-	// ─── Skill ─────────────────────────────────────────────────────────────
+	// ─── AI file configuration ───────────────────────────────────────────────
 	// The super-review skill teaches an agent how/when to record a session and
-	// resolve review comments.
-	// The UI checks the active repo's skill status and offers to drop the skill
-	// in when it isn't installed, or update it when the bundled copy is newer.
+	// resolve review comments; the tour-author subagent authors the review tour.
+	// The Configure dialog checks where they're installed across every supported
+	// coding agent and writes them to the targets/scopes the user picks.
 	ipcMain.handle(
-		'skill:status',
-		async (_e, repoId: string): Promise<SkillStatus> => getSkillStatus(repoOrThrow(repoId).path)
+		'aiConfig:status',
+		async (_e, repoId: string): Promise<AiConfigStatus> =>
+			getAiConfigStatus(repoOrThrow(repoId).path)
 	);
 
-	ipcMain.handle('skill:install', async (_e, repoId: string): Promise<void> => {
-		await installSkill(repoOrThrow(repoId).path);
-	});
+	ipcMain.handle(
+		'aiConfig:apply',
+		async (_e, repoId: string, request: AiConfigApplyRequest): Promise<AiConfigApplyResult> =>
+			applyAiConfig(repoOrThrow(repoId).path, request)
+	);
+
+	ipcMain.handle(
+		'aiConfig:remove',
+		async (_e, repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult> =>
+			removeAiConfig(repoOrThrow(repoId).path, item)
+	);
 }

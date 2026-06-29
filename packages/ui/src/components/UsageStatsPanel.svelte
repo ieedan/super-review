@@ -68,8 +68,9 @@
 	const unit = $derived(isOverview ? 'actions' : (meta?.label.toLowerCase() ?? ''));
 
 	// The active repo's stats (falling back to the all-repos roll-up when no repo
-	// is active, e.g. opened from a global surface).
-	const source = $derived<RepoUsageStats>(app.usageStats ?? actions.aggregateStats());
+	// is active, e.g. opened from a global surface). Read live from the store so
+	// it re-points when the user switches repos while the panel is open.
+	const source = $derived<RepoUsageStats>(actions.activeRepoStats());
 
 	// The day buckets feeding the heatmap + KPIs: a single metric, or the summed
 	// activity across the event metrics for the Overview.

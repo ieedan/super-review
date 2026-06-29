@@ -34,8 +34,8 @@
 	import { harnessLabel } from '@super-review/ui/harness-logos';
 	import {
 		actions,
-		allBranchChangesSeen,
 		app,
+		diff,
 		canViewBranchTab,
 		isPRCommentContext,
 		isReadOnlyView,
@@ -338,16 +338,10 @@
 	const addDisplay = $derived(Math.round(addTween.current));
 	const delDisplay = $derived(Math.round(delTween.current));
 
-	// Jumping to a file from the sidebar while the "You've seen it all" state is
-	// up should reveal that file's diff, so dismiss the overlay. Guarded on the
-	// state actually being completable so we never set the dismissed flag while
-	// the branch is below fully-seen (which would suppress the next completion).
-	function dismissSeenItAllForNav(): void {
-		if (allBranchChangesSeen()) actions.dismissSeenItAll();
-	}
-
 	function pick(path: string): void {
-		dismissSeenItAllForNav();
+		// Picking a file re-engages with the diff, so make sure it's on screen (the
+		// "You've seen it all" overlay, if up, is cleared by `diff.reveal`).
+		diff.reveal();
 		focusedPath = path;
 		selectionAnchor = path;
 		// Plain open (click / keyboard) collapses any multi-selection to this file.
@@ -396,7 +390,7 @@
 	function onFileClick(e: MouseEvent, file: ChangedFile): void {
 		// Any click on a file row (plain, shift-range, or cmd-toggle) counts as
 		// re-engaging with the diff, so clear the completion state if it's up.
-		dismissSeenItAllForNav();
+		diff.reveal();
 		if (e.shiftKey && selectionAnchor) {
 			actions.setSelectedFiles(filePathsBetween(selectionAnchor, file.path));
 			focusedPath = file.path;

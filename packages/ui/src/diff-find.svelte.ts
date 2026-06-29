@@ -9,7 +9,7 @@
 // shadow DOM as Pierre streamed shiki tokens.
 
 import { tick, untrack } from 'svelte';
-import { actions, app, getCachedDiff, setCachedDiff } from '@super-review/ui/store.svelte';
+import { actions, app, diff, getCachedDiff, setCachedDiff } from '@super-review/ui/store.svelte';
 import { diffContextKey } from '@super-review/core/diff-context';
 import { sessionIdFromManifestPath } from '@super-review/core/session-manifest';
 import type { ChangedFile, DiffContext, DiffData } from '@super-review/core/types';
@@ -631,7 +631,7 @@ async function navigateTo(index: number): Promise<void> {
 		// expands the file if collapsed, and scrolls to it; the section then mounts
 		// and registers, waking us. Without this, find silently does nothing for any
 		// match in a file beyond the window — the "breaks down on a big branch" bug.
-		actions.scrollToFile(target.filePath);
+		diff.openAndScrollToFile(target.filePath);
 		await waitForSectionRegistered(target.filePath);
 		if (myToken !== navToken) return;
 		// Give the freshly-mounted section a tick to flush its `hidden`/host DOM
