@@ -1,9 +1,8 @@
 <script lang="ts">
-	// Local usage stats as a small dashboard: a tab per metric, KPI cards for that
-	// metric (today / this month / all time / best day), and a contribution-style
-	// heatmap of the last six months — the same layerchart Calendar the commits
-	// tab uses. A scope toggle switches between the active repo and an all-repos
-	// roll-up. Every number is local; nothing is sent anywhere.
+	// Local usage stats for the active repo as a small dashboard: a metric picker,
+	// KPI cards for that metric (today / this month / all time / best day), and a
+	// contribution-style heatmap of the last six months — the same layerchart
+	// Calendar the commits tab uses. Every number is local; nothing is sent away.
 	import FileText from '@lucide/svelte/icons/file-text';
 	import Code from '@lucide/svelte/icons/code';
 	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
@@ -11,6 +10,7 @@
 	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import BookOpen from '@lucide/svelte/icons/book-open';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import type { LucideIcon } from '@lucide/svelte';
 	import { Chart, Svg, Calendar } from 'layerchart/svg';
 	import { timeWeek } from 'd3-time';
@@ -23,11 +23,8 @@
 		type StatMetric
 	} from '@super-review/core/usage-stats';
 	import { actions, app } from '@super-review/ui/store.svelte';
-	import * as Tabs from './ui/tabs';
-	import { cn } from '@super-review/ui/utils';
 
-	let selectedMetric = $state<StatMetric>('filesReviewed');
-	let scope = $state<'repo' | 'all'>('repo');
+	let selectedMetric = $state<StatMetric>('commitsAuthored');
 
 	onMount(() => {
 		void actions.loadStats();
@@ -51,14 +48,10 @@
 	const meta = $derived(METRICS.find((m) => m.key === selectedMetric)!);
 	const MetaIcon = $derived(meta.icon);
 
-	// The stats backing the view: a single repo, or the summed all-repos roll-up.
-	const source = $derived<RepoUsageStats>(
-		scope === 'all' ? actions.aggregateStats() : (app.usageStats ?? actions.aggregateStats())
-	);
+	// The active repo's stats (falling back to the all-repos roll-up when no repo
+	// is active, e.g. opened from a global surface).
+	const source = $derived<RepoUsageStats>(app.usageStats ?? actions.aggregateStats());
 	const daily = $derived<DailyCounts>(source.daily[selectedMetric] ?? {});
-
-	// Offer the all-repos roll-up only when there's more than one repo to roll up.
-	const showScope = $derived(app.repos.length > 1);
 
 	// --- KPIs -----------------------------------------------------------------
 	const now = new Date();
@@ -86,11 +79,17 @@
 	const rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 	const rangeStart = new Date(now.getFullYear(), now.getMonth() - 5, now.getDate());
 
-	const CELL_SIZE = 11;
-	const calWidth = (timeWeek.count(rangeStart, rangeEnd) + 1) * CELL_SIZE;
-	const chartHeight = 7 * CELL_SIZE;
+	const weeks = timeWeek.count(rangeStart, rangeEnd) + 1;
 
 	let containerWidth = $state(0);
+	// Size cells to fill the panel width (which matches the cards above it), so the
+	// heatmap is as wide as its container rather than a fixed grid. Clamped so cells
+	// stay tappable but never balloon on a wide settings pane.
+	const cellSize = $derived(
+		containerWidth > 0 ? Math.max(10, Math.min(16, Math.floor(containerWidth / weeks))) : 12
+	);
+	const calWidth = $derived(cellSize * weeks);
+	const chartHeight = $derived(7 * cellSize);
 	const centerOffset = $derived(Math.max(0, (containerWidth - calWidth) / 2));
 
 	type DayData = { date: Date; count: number };
@@ -127,54 +126,21 @@
 	}
 </script>
 
-<div class="mx-auto w-full max-w-xl">
-	<!-- Metric tabs + scope toggle -->
-	<div class="flex items-center justify-between gap-2">
-		<Tabs.Root value={selectedMetric} onValueChange={(v) => (selectedMetric = v as StatMetric)}>
-			<Tabs.List
-				class="no-scrollbar h-auto w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
-			>
-				{#each METRICS as m (m.key)}
-					{@const Icon = m.icon}
-					<Tabs.Trigger
-						value={m.key}
-						class="h-7 flex-none gap-1.5 rounded-md border-0 px-2.5 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-					>
-						<Icon class="size-3.5" />
-						{m.short}
-					</Tabs.Trigger>
-				{/each}
-			</Tabs.List>
-		</Tabs.Root>
-
-		{#if showScope}
-			<div class="flex flex-none items-center gap-0.5 rounded-md border border-border p-0.5">
-				<button
-					type="button"
-					class={cn(
-						'rounded px-2 py-0.5 text-xs',
-						scope === 'repo'
-							? 'bg-muted text-foreground'
-							: 'text-muted-foreground hover:text-foreground'
-					)}
-					onclick={() => (scope = 'repo')}
-				>
-					This repo
-				</button>
-				<button
-					type="button"
-					class={cn(
-						'rounded px-2 py-0.5 text-xs',
-						scope === 'all'
-							? 'bg-muted text-foreground'
-							: 'text-muted-foreground hover:text-foreground'
-					)}
-					onclick={() => (scope = 'all')}
-				>
-					All repos
-				</button>
-			</div>
-		{/if}
+<div class="w-full">
+	<!-- Metric picker -->
+	<div class="relative inline-block">
+		<select
+			bind:value={selectedMetric}
+			aria-label="Metric"
+			class="h-8 w-auto appearance-none rounded-lg border border-input bg-transparent py-1 pr-8 pl-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+		>
+			{#each METRICS as m (m.key)}
+				<option value={m.key}>{m.label}</option>
+			{/each}
+		</select>
+		<ChevronDown
+			class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+		/>
 	</div>
 
 	<!-- KPI cards -->
@@ -204,7 +170,7 @@
 			<Chart data={calendarData} x={(d: DayData) => d.date}>
 				<Svg>
 					<g transform="translate({centerOffset}, 0)">
-						<Calendar start={rangeStart} end={rangeEnd} cellSize={CELL_SIZE}>
+						<Calendar start={rangeStart} end={rangeEnd} {cellSize}>
 							{#snippet children({ cells, cellSize })}
 								{#each cells as cell (cell.x + '-' + cell.y)}
 									<rect
