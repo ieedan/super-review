@@ -219,7 +219,7 @@
 					<SlidersHorizontal class="size-3.5" />
 					Customize
 				</Popover.Trigger>
-				<Popover.Content class="w-52 p-1" align="end">
+				<Popover.Content class="w-52 p-1 gap-0" align="end">
 					<p class="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">Show widgets</p>
 					{#each METRICS as m (m.key)}
 						{@const Icon = m.icon}
