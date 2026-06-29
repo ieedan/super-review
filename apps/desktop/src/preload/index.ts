@@ -356,6 +356,10 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('state:getSeenSignatures', repoId, contextKey) as Promise<
 				Record<string, string>
 			>,
+		getInheritedSeen: (repoId, contextKey, fileDiffSigs) =>
+			ipcRenderer.invoke('state:getInheritedSeen', repoId, contextKey, fileDiffSigs) as Promise<
+				string[]
+			>,
 		setFileSeen: (repoId, contextKey, filePath, seen, sig) =>
 			ipcRenderer.invoke(
 				'state:setFileSeen',

@@ -83,7 +83,13 @@ export function bootDemo(): void {
 	app.viewMode = 'unified';
 	app.diffLayout = 'scroll';
 	app.showFileIcons = true;
-	app.sidebarTabs = { sessions: false, history: false };
+	app.sidebarTabs = {
+		sessions: false,
+		history: false,
+		reviewProgress: true,
+		lineCounts: true,
+		collapseToggle: true
+	};
 	// Hide the "collapse all seen" control; keep the list/tree toggle.
 	app.sidebarControls = { collapseSeen: false, viewToggle: true };
 	app.changedFiles = MOCK_FILES as never;

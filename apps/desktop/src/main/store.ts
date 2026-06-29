@@ -43,6 +43,13 @@ interface Schema {
 	// file later changes (see UserPrefs.unmarkSeenOnChange). Older builds stored a
 	// bare filePath[]; normalizeSeen migrates that shape on read (empty sigs).
 	seen: Record<string, Record<string, Record<string, string>>>;
+	// seenInherited[repoId][contextKey] = { [filePath]: diffSig }. Records the diff
+	// signatures we *auto*-marked seen because the same change was reviewed under
+	// another context (getInheritedSeen). Kept separate from `seen` so that when the
+	// user manually un-sees an auto-marked file, this remembers we already applied
+	// that diff and we don't re-inherit it on the next refresh. A new diff (changed
+	// signature) is eligible to inherit again.
+	seenInherited: Record<string, Record<string, Record<string, string>>>;
 	// collapsedFiles[repoId][contextKey] = filePath[]
 	collapsedFiles: Record<string, Record<string, string[]>>;
 	// fileLists[repoId][contextKey] = the last-computed changed-file list for that
@@ -105,6 +112,7 @@ const defaults: Schema = {
 		sidebarControls: DEFAULT_SIDEBAR_CONTROLS
 	},
 	seen: {},
+	seenInherited: {},
 	collapsedFiles: {},
 	fileLists: {},
 	branchBases: {},
@@ -353,6 +361,58 @@ export function getSeen(repoId: string, contextKey: string): string[] {
 // older builds (or marked seen before signatures were tracked) report ''.
 export function getSeenSignatures(repoId: string, contextKey: string): Record<string, string> {
 	return normalizeSeen(db().seen[repoId]?.[contextKey]);
+}
+
+// Paths in `contextKey` whose diff was already marked seen under a *different*
+// context for this repo. `fileDiffSigs` maps each currently-shown file to its
+// `<base>..<dst>` blob-OID signature; a match against another context's stored
+// signature for the same path means the change is byte-for-byte identical, so it
+// can carry the seen mark across. Only diff-form (`..`) signatures participate —
+// a bare dst OID or stat fallback can't prove the *whole* diff matched.
+export function getInheritedSeen(
+	repoId: string,
+	contextKey: string,
+	fileDiffSigs: Record<string, string>
+): string[] {
+	const byCtx = db().seen[repoId];
+	if (!byCtx) return [];
+	const seenHere = normalizeSeen(byCtx[contextKey]);
+	const appliedAll = (db().seenInherited[repoId] ??= {});
+	const appliedHere = (appliedAll[contextKey] ??= {});
+	const applied: string[] = [];
+	for (const [path, sig] of Object.entries(fileDiffSigs)) {
+		// Only a whole-diff signature (`<base>..<dst>`) proves the change is the
+		// same; a bare OID or stat fallback can't carry across contexts.
+		if (!sig.includes('..')) continue;
+		// Already seen here (directly or from a prior inherit) — nothing to do.
+		if (seenHere[path]) continue;
+		// We already auto-applied this exact diff once; respect the user's choice
+		// since (un-saw it, or it's gone) instead of re-inheriting every refresh.
+		if (appliedHere[path] === sig) continue;
+		// Is this same diff marked seen under any *other* context for this repo?
+		const matchesElsewhere = Object.entries(byCtx).some(
+			([otherKey, otherSeen]) => otherKey !== contextKey && normalizeSeen(otherSeen)[path] === sig
+		);
+		if (!matchesElsewhere) continue;
+		applied.push(path);
+		appliedHere[path] = sig;
+		seenHere[path] = sig;
+	}
+	if (applied.length > 0) {
+		// Persist the inherited marks as real seen entries so they survive refreshes
+		// independent of the source context, plus the applied-record guard.
+		(db().seen[repoId] ??= {})[contextKey] = seenHere;
+		// Collapse them too, matching the manual "mark seen and advance" flow — an
+		// already-reviewed file shouldn't take up space expanded. Only the freshly
+		// applied paths, so a later manual expand sticks (the guard above won't
+		// re-apply, so we won't re-collapse).
+		const repoCollapsed = (db().collapsedFiles[repoId] ??= {});
+		const collapsedHere = new Set(repoCollapsed[contextKey] ?? []);
+		for (const path of applied) collapsedHere.add(path);
+		repoCollapsed[contextKey] = [...collapsedHere];
+		flush();
+	}
+	return applied;
 }
 
 export function setSeen(
