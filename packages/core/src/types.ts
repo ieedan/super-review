@@ -1606,14 +1606,71 @@ export type ReleaseNotesRangeResult =
 	| { ok: true; releases: ReleaseNotes[]; truncated: boolean }
 	| { ok: false; error: string };
 
-// Install/update state of the super-review skill in a repo. `installed` is
-// driven by the presence of `.agents/skills/super-review/SKILL.md`;
-// `updateAvailable` is true when an installed copy's `metadata.version` is
-// behind the bundled skill (or has no version at all). Always false when not
-// installed.
-export interface SkillStatus {
+// ─── AI file configuration ────────────────────────────────────────────────
+// The "Configure AI files" feature installs the super-review skill and the
+// tour-author subagent into the directories each coding agent reads, at project
+// or global (home) scope. See ai-config-paths.ts for the per-harness path table.
+
+// Which artifact an install targets, and at which scope.
+export type AiArtifact = 'skill' | 'subagent';
+export type AiScope = 'project' | 'global';
+// An install target: the shared `.agents` convention (covers the skill for
+// Cursor, Codex, opencode, and Copilot, plus subagents for the agents that read
+// `.agents/agents`), or an agent that needs its own location. Claude Code reads
+// only its own dirs. Codex reads the skill from `.agents` but needs its subagent
+// in a native TOML file, so it's offered separately when a subagent is selected.
+export type TargetKind = 'standard' | 'claude-code' | 'codex';
+
+// Detected install state for one artifact at one scope of one target. `installed`
+// is the presence of the skill dir's SKILL.md / the subagent file;
+// `updateAvailable` is true when an installed copy is behind the bundled one
+// (skill: `metadata.version` compare; subagent: content compare). Always false
+// when not installed.
+export interface AiArtifactStatus {
 	installed: boolean;
 	updateAvailable: boolean;
+	// Resolved absolute path (shown in the dialog as the destination).
+	path: string;
+}
+
+// Per-target detection. A missing `skill`/`subagent` key means the target has no
+// such location. A `global: null` slot means the artifact has no global location
+// (e.g. Copilot custom agents are repository-only).
+export interface TargetAiStatus {
+	target: TargetKind;
+	// Whether the harness appears installed (its home config dir exists). Always
+	// true for the `standard` target (the shared base).
+	harnessDetected: boolean;
+	skill?: { project: AiArtifactStatus; global: AiArtifactStatus | null };
+	subagent?: { project: AiArtifactStatus; global: AiArtifactStatus | null };
+}
+
+// Full detection across every target for a repo. The rollups drive the
+// "Configure AI files?" / "Update AI files?" notices without re-scanning.
+export interface AiConfigStatus {
+	targets: TargetAiStatus[];
+	anyInstalled: boolean;
+	anyUpdateAvailable: boolean;
+}
+
+// One requested write; the Configure dialog emits a list of these.
+export interface AiConfigInstallItem {
+	target: TargetKind;
+	artifact: AiArtifact;
+	scope: AiScope;
+}
+export interface AiConfigApplyRequest {
+	items: AiConfigInstallItem[];
+}
+// Per-item outcome so a single failed write (e.g. a permission error on a global
+// path) surfaces without aborting the rest.
+export interface AiConfigApplyResult {
+	results: Array<{ item: AiConfigInstallItem; ok: boolean; error?: string }>;
+}
+// Outcome of removing one installed skill/subagent from disk.
+export interface AiConfigRemoveResult {
+	ok: boolean;
+	error?: string;
 }
 
 export interface PreloadAPI {
@@ -2068,14 +2125,19 @@ export interface PreloadAPI {
 		watch(repoId: string | null): Promise<void>;
 		unwatch(): Promise<void>;
 	};
-	skill: {
-		// Whether the super-review skill is installed in the repo
-		// (`.agents/skills/super-review/SKILL.md` exists), and if so whether the
-		// bundled skill is newer than the installed copy (an update is available).
-		status(repoId: string): Promise<SkillStatus>;
-		// Write the bundled super-review skill into the repo (install or update —
-		// the whole skill directory is replaced wholesale either way).
-		install(repoId: string): Promise<void>;
+	aiConfig: {
+		// Detect which AI files (skill + tour-author subagent) are configured for
+		// the repo across every target and scope, so the Configure dialog can
+		// reflect current state and the notices know whether anything is installed.
+		status(repoId: string): Promise<AiConfigStatus>;
+		// Write the selected skill/subagent files to the chosen targets and scopes.
+		// Each item is reported independently so one failed write doesn't abort the
+		// rest.
+		apply(repoId: string, request: AiConfigApplyRequest): Promise<AiConfigApplyResult>;
+		// Delete one installed skill (directory) or subagent (file) from disk. The
+		// target/artifact/scope resolves to a known location in the main process, so
+		// the renderer can never ask to delete an arbitrary path.
+		remove(repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult>;
 	};
 	npm: {
 		// Fetch trimmed npm-registry metadata for a package, for the package.json

@@ -1,5 +1,9 @@
 import type {
 	Accent,
+	AiConfigStatus,
+	AiConfigApplyRequest,
+	AiConfigApplyResult,
+	AiConfigInstallItem,
 	AppPlatform,
 	BranchInfo,
 	ChangedFile,
@@ -84,6 +88,7 @@ export type SettingsTab =
 	| 'behavior'
 	| 'app'
 	| 'editor'
+	| 'agents'
 	| 'hotkeys'
 	| 'stats';
 export type SettingsScrollTarget = 'hidden-files';
@@ -212,21 +217,20 @@ interface AppState {
 	// The commit whose diff is currently open, or null when the History tab is
 	// showing the list. Ephemeral — not persisted across launches.
 	activeCommit: CommitInfo | null;
-	// Whether the super-review skill is installed in the active repo. null
-	// while unknown (no active repo, or the check hasn't returned yet); false
-	// drives the "Install skill" prompts in the header and sessions empty state.
-	skillInstalled: boolean | null;
-	// Whether the installed skill is behind the bundled one (older or un-versioned
-	// `metadata.version`) and an update is on offer. null while unknown; true only
-	// when the skill is installed, so it drives the "Update the skill?" notice.
-	skillUpdateAvailable: boolean | null;
-	// Whether the user dismissed the "Install the skill" notice above the commit
+	// Where the super-review skill + tour-author subagent are configured across
+	// every coding agent for the active repo, or null while unknown (no active
+	// repo, or the check hasn't returned yet). `anyInstalled === false` drives the
+	// "Configure AI files?" prompts in the header and sessions empty state.
+	aiConfigStatus: AiConfigStatus | null;
+	// Whether the user dismissed the "Configure AI files?" notice above the commit
 	// box. In-memory only and reset on every repo switch, so it stays hidden while
-	// you work in this repo but returns if the skill is still missing next time.
-	skillInstallDismissed: boolean;
-	// Whether the user dismissed the "Update the skill?" notice. Same in-memory,
-	// reset-per-repo-switch lifetime as skillInstallDismissed.
-	skillUpdateDismissed: boolean;
+	// you work in this repo but returns if nothing is configured next time.
+	aiConfigNoticeDismissed: boolean;
+	// Whether the user dismissed the "Update AI files?" notice. Same in-memory,
+	// reset-per-repo-switch lifetime as aiConfigNoticeDismissed.
+	aiConfigUpdateDismissed: boolean;
+	// Whether the "Configure AI files" dialog is open.
+	aiConfigDialogOpen: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
 	// changeset?" prompt above the commit box). null while unknown / not the
 	// working-tree context.
@@ -790,10 +794,10 @@ const initial: AppState = {
 	commits: [],
 	historyForkPoint: null,
 	activeCommit: null,
-	skillInstalled: null,
-	skillUpdateAvailable: null,
-	skillInstallDismissed: false,
-	skillUpdateDismissed: false,
+	aiConfigStatus: null,
+	aiConfigNoticeDismissed: false,
+	aiConfigUpdateDismissed: false,
+	aiConfigDialogOpen: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
 	changesetPromptDismissed: false,
@@ -1533,9 +1537,10 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	app.activeRepo = repo;
 	applyRepoViewLayout(repo.id);
 	repoFrecency.use(repo.id);
-	// Kick off the local skill check immediately — it only needs activeRepo and is
-	// a single filesystem stat, so don't strand it behind the slow network work below.
-	void refreshSkillStatus();
+	// Kick off the local AI-config check immediately — it only needs activeRepo and
+	// is a handful of filesystem stats, so don't strand it behind the slow network
+	// work below.
+	void refreshAiConfigStatus();
 	applyContextTab('unstaged');
 	app.diffContext = { kind: 'workingTree' };
 	// A read-only view (branch or PR) belongs to the previous repo — drop it.
@@ -2546,21 +2551,20 @@ function formatPRThreadPrompt(thread: PRReviewComment[]): string {
 	return `${head}\n\n${turns.join('\n\n')}`;
 }
 
-// Check the super-review skill's install/update status in the active repo and
-// store the result. Failure-silent — leaves the answer unknown (null) so the
-// install/update prompts stay hidden rather than flashing on a transient error.
-async function refreshSkillStatus(): Promise<void> {
+// Check where the super-review skill + tour-author subagent are configured in
+// the active repo and store the result. Failure-silent — leaves the answer
+// unknown (null) so the configure/update prompts stay hidden rather than
+// flashing on a transient error.
+async function refreshAiConfigStatus(): Promise<void> {
 	if (!app.activeRepo) {
-		app.skillInstalled = null;
-		app.skillUpdateAvailable = null;
+		app.aiConfigStatus = null;
 		return;
 	}
 	const repoId = app.activeRepo.id;
 	try {
-		const status = await window.api.skill.status(repoId);
+		const status = await window.api.aiConfig.status(repoId);
 		if (app.activeRepo?.id === repoId) {
-			app.skillInstalled = status.installed;
-			app.skillUpdateAvailable = status.updateAvailable;
+			app.aiConfigStatus = status;
 		}
 	} catch {
 		// Leave unknown — don't surface a banner over a non-critical check.
@@ -2967,11 +2971,11 @@ export const actions = {
 	dismissChangesetWarning(): void {
 		app.changesetWarningDismissed = true;
 	},
-	dismissSkillInstall(): void {
-		app.skillInstallDismissed = true;
+	dismissAiConfigNotice(): void {
+		app.aiConfigNoticeDismissed = true;
 	},
-	dismissSkillUpdate(): void {
-		app.skillUpdateDismissed = true;
+	dismissAiConfigUpdate(): void {
+		app.aiConfigUpdateDismissed = true;
 	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;
@@ -3091,7 +3095,7 @@ export const actions = {
 			rememberViewLayout();
 			// Local filesystem stat — fire it now so it isn't stranded behind the tab
 			// restore + network PR lookup below.
-			void refreshSkillStatus();
+			void refreshAiConfigStatus();
 			// Restore the last tab. Shared with switchRepo so the active repo also
 			// seeds its per-repo tab memory for this session.
 			await restoreContextTab(app.prefs.contextTab);
@@ -3126,7 +3130,7 @@ export const actions = {
 			if (app.activeRepo) {
 				repoFrecency.use(app.activeRepo.id);
 				// Local filesystem stat — fire it now, not behind the network PR lookup.
-				void refreshSkillStatus();
+				void refreshAiConfigStatus();
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 				await refreshBranchPR();
 			}
@@ -3153,7 +3157,7 @@ export const actions = {
 			if (app.activeRepo) {
 				repoFrecency.use(app.activeRepo.id);
 				// Local filesystem stat — fire it now, not behind the network PR lookup.
-				void refreshSkillStatus();
+				void refreshAiConfigStatus();
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 				await refreshBranchPR();
 			}
@@ -3188,9 +3192,9 @@ export const actions = {
 			app.activeRepo = repo;
 			applyRepoViewLayout(repo.id);
 			repoFrecency.use(repo.id);
-			// Local filesystem stat — fire it now so the skill banner resolves without
-			// waiting on the network PR lookup below.
-			void refreshSkillStatus();
+			// Local filesystem stats — fire them now so the configure banner resolves
+			// without waiting on the network PR lookup below.
+			void refreshAiConfigStatus();
 			// Switching repos drops any tab-scoped file search; restoreContextTab
 			// below lands on whichever tab this repo was last left on.
 			app.fileSearchQuery = '';
@@ -3214,10 +3218,9 @@ export const actions = {
 			app.activeCommit = null;
 			app.commits = [];
 			app.historyForkPoint = null;
-			app.skillInstalled = null;
-			app.skillUpdateAvailable = null;
-			app.skillInstallDismissed = false;
-			app.skillUpdateDismissed = false;
+			app.aiConfigStatus = null;
+			app.aiConfigNoticeDismissed = false;
+			app.aiConfigUpdateDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
 			app.prs = [];
@@ -3252,10 +3255,9 @@ export const actions = {
 			app.unstagedFileCount = 0;
 			app.branches = [];
 			app.selectedFile = null;
-			app.skillInstalled = null;
-			app.skillUpdateAvailable = null;
-			app.skillInstallDismissed = false;
-			app.skillUpdateDismissed = false;
+			app.aiConfigStatus = null;
+			app.aiConfigNoticeDismissed = false;
+			app.aiConfigUpdateDismissed = false;
 		}
 	},
 
@@ -3560,25 +3562,61 @@ export const actions = {
 		app.diffContext = { kind: 'workingTree' };
 	},
 
-	// Re-check whether the super-review skill is installed in the active repo
-	// (e.g. after the repo's `.agents/skills` dir may have changed on disk).
-	async refreshSkillStatus(): Promise<void> {
-		await refreshSkillStatus();
+	// Re-check where the super-review skill + subagent are configured in the
+	// active repo (e.g. after the repo's `.agents` dirs may have changed on disk).
+	async refreshAiConfigStatus(): Promise<void> {
+		await refreshAiConfigStatus();
 	},
 
-	// Install (or update) the super-review skill in the active repo, then
-	// re-check so the install/update prompts clear once it's current. The bundled
-	// skill replaces the repo's copy wholesale, so the same action covers both.
-	async installSkill(): Promise<void> {
-		if (!app.activeRepo) return;
+	// Open the "Configure AI files" dialog.
+	openAiConfigDialog(): void {
+		app.aiConfigDialogOpen = true;
+	},
+
+	// Close the "Configure AI files" dialog.
+	closeAiConfigDialog(): void {
+		app.aiConfigDialogOpen = false;
+	},
+
+	// Reveal a file or directory in the OS file manager (Finder / Explorer),
+	// selecting it. Used by the Agents settings section to jump to an installed
+	// skill or subagent on disk.
+	async revealPath(fullPath: string): Promise<void> {
 		try {
-			await window.api.skill.install(app.activeRepo.id);
-			await refreshSkillStatus();
-			// Installing writes the skill files into the working tree — surface them
-			// as unstaged changes right away instead of waiting for the next poll.
-			await refreshFiles();
+			await window.api.shell.showItemInFolder(fullPath);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Delete one installed skill/subagent from disk, then re-check status (and
+	// refresh files, since a project-scope delete shows up in the working tree).
+	// Throws on failure so a caller's confirm dialog can stay open.
+	async removeAiConfig(item: AiConfigInstallItem): Promise<void> {
+		if (!app.activeRepo) return;
+		const result = await window.api.aiConfig.remove(app.activeRepo.id, item);
+		if (!result.ok) throw new Error(result.error ?? 'Failed to delete');
+		await refreshAiConfigStatus();
+		await refreshFiles();
+	},
+
+	// Write the selected skill/subagent files to the chosen targets and scopes,
+	// then re-check so the configure/update prompts clear once everything's
+	// current. Returns the per-item result so the dialog can surface any failed
+	// writes inline. Skill installs replace the target dir wholesale, so the same
+	// action covers install and update.
+	async applyAiConfig(request: AiConfigApplyRequest): Promise<AiConfigApplyResult | null> {
+		if (!app.activeRepo) return null;
+		try {
+			const result = await window.api.aiConfig.apply(app.activeRepo.id, request);
+			await refreshAiConfigStatus();
+			// Project-scope writes land in the working tree — surface them as
+			// unstaged changes right away instead of waiting for the next poll.
+			await refreshFiles();
+			return result;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return null;
 		}
 	},
 

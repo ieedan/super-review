@@ -59,7 +59,10 @@ import type {
 	RepoUsageStats,
 	Session,
 	SessionSummary,
-	SkillStatus,
+	AiConfigStatus,
+	AiConfigApplyRequest,
+	AiConfigApplyResult,
+	AiConfigRemoveResult,
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
 	TerminalKind,
@@ -451,9 +454,12 @@ const api: PreloadAPI = {
 		watch: (repoId) => ipcRenderer.invoke('comments:watch', repoId) as Promise<void>,
 		unwatch: () => ipcRenderer.invoke('comments:unwatch') as Promise<void>
 	},
-	skill: {
-		status: (repoId) => ipcRenderer.invoke('skill:status', repoId) as Promise<SkillStatus>,
-		install: (repoId) => ipcRenderer.invoke('skill:install', repoId) as Promise<void>
+	aiConfig: {
+		status: (repoId) => ipcRenderer.invoke('aiConfig:status', repoId) as Promise<AiConfigStatus>,
+		apply: (repoId, request) =>
+			ipcRenderer.invoke('aiConfig:apply', repoId, request) as Promise<AiConfigApplyResult>,
+		remove: (repoId, item) =>
+			ipcRenderer.invoke('aiConfig:remove', repoId, item) as Promise<AiConfigRemoveResult>
 	},
 	npm: {
 		getPackageInfo: (name) =>
