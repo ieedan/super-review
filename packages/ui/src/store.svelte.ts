@@ -253,6 +253,13 @@ interface AppState {
 	// back to the single active file.
 	selectedFiles: SvelteSet<string>;
 	seenFiles: SvelteSet<string>;
+	// The first file currently visible in the diff viewport that is *not* yet
+	// seen, tracked by the diff scroll handler. Unlike `selectedFile` (which
+	// follows the topmost visible section by position alone, seen or not), this
+	// is the file Cmd/Ctrl+Enter should act on: marking the file under your eyes
+	// rather than re-clearing an already-seen header pinned at the top. Null when
+	// nothing unseen is on screen.
+	firstVisibleUnseenFile: string | null;
 	// Whether the "You've seen it all" completion state on the Branch tab has been
 	// dismissed via "Keep Reviewing". Transient (never persisted): it's reset the
 	// moment the branch drops below fully-seen, so finishing review again re-shows
@@ -780,6 +787,7 @@ const initial: AppState = {
 	selectedFile: null,
 	selectedFiles: new SvelteSet(),
 	seenFiles: new SvelteSet(),
+	firstVisibleUnseenFile: null,
 	seenItAllDismissed: false,
 	seenItAllAnimate: false,
 	excludedFromCommit: new SvelteSet(),
@@ -3495,6 +3503,14 @@ export const actions = {
 		if (app.selectedFile === path) return;
 		app.selectedFile = path;
 		if (app.selectedFiles.size <= 1) app.selectedFiles = new SvelteSet([path]);
+	},
+
+	// The diff scroll handler reports the first on-screen file that is still
+	// unseen (or null when everything visible is already cleared). Cmd/Ctrl+Enter
+	// reads this so it marks the file the reviewer is actually looking at instead
+	// of an already-seen header pinned at the viewport top.
+	setFirstVisibleUnseen(path: string | null): void {
+		if (app.firstVisibleUnseenFile !== path) app.firstVisibleUnseenFile = path;
 	},
 
 	// The diff scroll handler reports the file at the top of the viewport and how

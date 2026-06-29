@@ -140,11 +140,16 @@
 		},
 		// Mark the open file seen and jump to the next change (default
 		// Cmd/Ctrl+Enter). Skipped while typing so it doesn't steal the same combo
-		// from the commit/comment composers, which use it to submit.
+		// from the commit/comment composers, which use it to submit. Targets the
+		// first on-screen *unseen* file rather than `selectedFile`: the latter
+		// follows the topmost visible section by position and can sit on an
+		// already-seen header pinned at the top, which made the first press merely
+		// scroll to the next change instead of marking the one in view.
 		markSeenNext: (e) => {
-			if (isEditableTarget(e.target) || !app.selectedFile) return;
+			const target = app.firstVisibleUnseenFile ?? app.selectedFile;
+			if (isEditableTarget(e.target) || !target) return;
 			e.preventDefault();
-			void actions.markSeenAndAdvance(app.selectedFile);
+			void actions.markSeenAndAdvance(target);
 		}
 	};
 

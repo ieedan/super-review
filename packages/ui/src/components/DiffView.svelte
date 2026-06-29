@@ -364,6 +364,9 @@
 		// never fires — yet which file is the first *expanded* one on screen can
 		// change, so the active highlight must be recomputed.
 		void app.collapsedFiles.size;
+		// Re-run when seen state changes (mark seen, clear, bulk sidebar actions) so
+		// `firstVisibleUnseenFile` recomputes even when no collapse/scroll fires.
+		void app.seenFiles.size;
 		if (!scrollContainer) return;
 		const el = scrollContainer;
 		let ticking = false;
@@ -419,6 +422,21 @@
 				const sec = sections.find((s) => s.getAttribute('data-file-path') === active);
 				if (sec) actions.recordScrollAnchor(active, sec.getBoundingClientRect().top - containerTop);
 			}
+			// Separately track the first on-screen section that is still unseen, in
+			// document order. This is what Cmd/Ctrl+Enter acts on: the active file
+			// above follows position alone and can land on a seen header pinned at the
+			// top, but the reviewer means to mark the unseen change actually in view.
+			let firstUnseen: string | null = null;
+			for (const section of sections) {
+				const path = section.getAttribute('data-file-path');
+				if (!path || app.seenFiles.has(path)) continue;
+				const rect = section.getBoundingClientRect();
+				if (rect.bottom > containerTop && rect.top < containerBottom) {
+					firstUnseen = path;
+					break;
+				}
+			}
+			actions.setFirstVisibleUnseen(firstUnseen);
 		}
 
 		function schedule(): void {
