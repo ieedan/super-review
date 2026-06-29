@@ -822,6 +822,26 @@ export type HeaderContextMenuResult = {
 	checked: boolean;
 } | null;
 
+// A single toggle in the empty view's right-click native context menu. `key` is
+// the EmptyViewItemVisibility field it controls; `checked` is its current state.
+export interface EmptyViewContextMenuItem {
+	key: keyof EmptyViewItemVisibility;
+	label: string;
+	checked: boolean;
+}
+
+// Params for the empty view's native context menu: the toggle items to show.
+export interface EmptyViewContextMenuParams {
+	items: EmptyViewContextMenuItem[];
+}
+
+// What the empty view context menu returns: the toggled item's key and its new
+// checked state. `null` (from the IPC) means the menu was dismissed.
+export type EmptyViewContextMenuResult = {
+	key: keyof EmptyViewItemVisibility;
+	checked: boolean;
+} | null;
+
 // A single toggle in a diff file header's "Show in file header" native context
 // menu. `key` is the FileHeaderItemVisibility field it controls; `checked` is
 // its current state.
@@ -1267,6 +1287,27 @@ export const DEFAULT_HEADER_ITEMS: HeaderItemVisibility = {
 	terminal: true
 };
 
+// Which blocks the "No local changes" empty view shows. Each is toggled from the
+// empty view's right-click native context menu; missing keys fall back to
+// DEFAULT_EMPTY_VIEW_ITEMS so older prefs (and future additions) default visible.
+export interface EmptyViewItemVisibility {
+	// The "Open in <editor>" action card.
+	editor: boolean;
+	// The "Show in Finder/Explorer/File Manager" action card.
+	reveal: boolean;
+	// The "View on GitHub" action card.
+	github: boolean;
+	// The local usage-stats dashboard.
+	stats: boolean;
+}
+
+export const DEFAULT_EMPTY_VIEW_ITEMS: EmptyViewItemVisibility = {
+	editor: true,
+	reveal: true,
+	github: true,
+	stats: true
+};
+
 // Which of the sidebar's optional tab-strip-row items are shown. The Unstaged
 // and Branch tabs have their own contextual visibility (a read-only view hides
 // Unstaged; a default-branch checkout hides Branch), so only Sessions and
@@ -1455,6 +1496,9 @@ export interface UserPrefs {
 	// Which metric widgets the stats Overview shows, in order. Customized from the
 	// Overview's widget picker. Falls back to DEFAULT_STATS_WIDGETS when unset.
 	statsWidgets?: StatMetric[];
+	// Which blocks the "No local changes" empty view shows. Toggled from its
+	// right-click menu. Missing keys fall back to DEFAULT_EMPTY_VIEW_ITEMS.
+	emptyViewItems: EmptyViewItemVisibility;
 }
 
 // A user-registered file icon: every file whose path matches `pattern` is
@@ -2092,6 +2136,11 @@ export interface PreloadAPI {
 		// Pop up the header's "Show in header" customization context menu. Resolves
 		// to the toggled item and its new state, or null when dismissed.
 		showHeaderContextMenu(params: HeaderContextMenuParams): Promise<HeaderContextMenuResult>;
+		// Pop up the empty view's "Show on this screen" customization context menu.
+		// Resolves to the toggled item and its new state, or null when dismissed.
+		showEmptyViewContextMenu(
+			params: EmptyViewContextMenuParams
+		): Promise<EmptyViewContextMenuResult>;
 		// Pop up the sidebar tab strip's "Show tab" customization context menu.
 		// Resolves to the toggled tab and its new state, or null when dismissed.
 		showTabsContextMenu(params: TabsContextMenuParams): Promise<TabsContextMenuResult>;

@@ -206,13 +206,22 @@
 	}
 
 	// A single shared tooltip that follows the hovered cell (one element, not one
-	// popover per cell). Positioned relative to the heatmap container.
+	// popover per cell), positioned relative to the heatmap container. It anchors
+	// at the cursor and flips horizontally near the edges so it never clips.
 	let heatmapEl = $state<HTMLDivElement | null>(null);
-	let tip = $state<{ x: number; y: number; text: string } | null>(null);
+	let tip = $state<{
+		x: number;
+		y: number;
+		text: string;
+		align: 'left' | 'center' | 'right';
+	} | null>(null);
 	function showTip(e: PointerEvent, date: Date): void {
 		if (!heatmapEl) return;
 		const r = heatmapEl.getBoundingClientRect();
-		tip = { x: e.clientX - r.left, y: e.clientY - r.top, text: dayTooltip(date) };
+		const x = e.clientX - r.left;
+		const ratio = r.width > 0 ? x / r.width : 0.5;
+		const align = ratio > 0.7 ? 'right' : ratio < 0.3 ? 'left' : 'center';
+		tip = { x, y: e.clientY - r.top, text: dayTooltip(date), align };
 	}
 
 	// Shade relative to the busiest day so both small counts (PRs) and large ones
@@ -344,40 +353,45 @@
 	<!-- Heatmap -->
 	<div class="mt-3">
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div
-			bind:this={heatmapEl}
-			class="relative w-full overflow-hidden"
-			style="height: {chartHeight}px"
-			bind:clientWidth={containerWidth}
-			onpointerleave={() => (tip = null)}
-		>
-			<Chart data={calendarData} x={(d: DayData) => d.date}>
-				<Svg>
-					<g>
-						<Calendar start={rangeStart} end={rangeEnd} {cellSize}>
-							{#snippet children({ cells, cellSize })}
-								{#each cells as cell (cell.x + '-' + cell.y)}
-									<!-- svelte-ignore a11y_no_static_element_interactions -->
-									<rect
-										x={cell.x + 1}
-										y={cell.y + 1}
-										width={Math.max(0, cellSize[0] - 2)}
-										height={Math.max(0, cellSize[1] - 2)}
-										rx="2"
-										style="fill: {cellFill(cell.data?.count ?? 0)}"
-										onpointermove={(e) => showTip(e, cell.data.date)}
-									></rect>
-								{/each}
-							{/snippet}
-						</Calendar>
-					</g>
-				</Svg>
-			</Chart>
+		<div bind:this={heatmapEl} class="relative w-full" onpointerleave={() => (tip = null)}>
+			<div
+				class="w-full overflow-hidden"
+				style="height: {chartHeight}px"
+				bind:clientWidth={containerWidth}
+			>
+				<Chart data={calendarData} x={(d: DayData) => d.date}>
+					<Svg>
+						<g>
+							<Calendar start={rangeStart} end={rangeEnd} {cellSize}>
+								{#snippet children({ cells, cellSize })}
+									{#each cells as cell (cell.x + '-' + cell.y)}
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<rect
+											x={cell.x + 1}
+											y={cell.y + 1}
+											width={Math.max(0, cellSize[0] - 2)}
+											height={Math.max(0, cellSize[1] - 2)}
+											rx="2"
+											style="fill: {cellFill(cell.data?.count ?? 0)}"
+											onpointermove={(e) => showTip(e, cell.data.date)}
+										></rect>
+									{/each}
+								{/snippet}
+							</Calendar>
+						</g>
+					</Svg>
+				</Chart>
+			</div>
 
 			{#if tip}
 				<div
-					class="pointer-events-none absolute z-20 max-w-[90%] -translate-x-1/2 -translate-y-full truncate rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md"
-					style="left: {tip.x}px; top: {tip.y - 6}px"
+					class="pointer-events-none absolute z-20 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md"
+					style="left: {tip.x}px; top: {tip.y - 6}px; transform: translateY(-100%) {tip.align ===
+					'center'
+						? 'translateX(-50%)'
+						: tip.align === 'right'
+							? 'translateX(-100%)'
+							: ''}"
 				>
 					{tip.text}
 				</div>

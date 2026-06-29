@@ -40,6 +40,7 @@ import type {
 	StatMetric,
 	Session,
 	SessionSummary,
+	EmptyViewItemVisibility,
 	HeaderItemVisibility,
 	FileHeaderItemVisibility,
 	SidebarTabVisibility,
@@ -49,6 +50,7 @@ import type {
 	ViewMode
 } from '@super-review/core/types';
 import {
+	DEFAULT_EMPTY_VIEW_ITEMS,
 	DEFAULT_FILE_HEADER_ITEMS,
 	DEFAULT_HEADER_ITEMS,
 	DEFAULT_SIDEBAR_TABS,
@@ -2883,6 +2885,13 @@ export const actions = {
 	// Persist the metric widgets shown on the stats Overview (order preserved).
 	async setStatsWidgets(widgets: StatMetric[]): Promise<void> {
 		app.prefs = await window.api.state.setPrefs({ statsWidgets: widgets });
+	},
+	// Show/hide one block of the empty view (an action card or the stats panel).
+	async setEmptyViewItem(key: keyof EmptyViewItemVisibility, value: boolean): Promise<void> {
+		const current = app.prefs?.emptyViewItems ?? { ...DEFAULT_EMPTY_VIEW_ITEMS };
+		app.prefs = await window.api.state.setPrefs({
+			emptyViewItems: { ...current, [key]: value }
+		});
 	},
 	// Show/hide a single optional header control (sidebar toggle, changeset,
 	// editor, terminal) from the header's right-click menu. Updates the local

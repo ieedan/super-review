@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import {
+	DEFAULT_EMPTY_VIEW_ITEMS,
 	DEFAULT_FILE_HEADER_ITEMS,
 	DEFAULT_HEADER_ITEMS,
 	DEFAULT_SIDEBAR_CONTROLS,
@@ -124,7 +125,8 @@ const defaults: Schema = {
 		headerItems: DEFAULT_HEADER_ITEMS,
 		fileHeaderItems: DEFAULT_FILE_HEADER_ITEMS,
 		sidebarControls: DEFAULT_SIDEBAR_CONTROLS,
-		statsWidgets: [...DEFAULT_STATS_WIDGETS]
+		statsWidgets: [...DEFAULT_STATS_WIDGETS],
+		emptyViewItems: DEFAULT_EMPTY_VIEW_ITEMS
 	},
 	seen: {},
 	seenInherited: {},
@@ -393,6 +395,8 @@ export function getPrefs(): UserPrefs {
 	merged.fileHeaderItems = { ...defaults.prefs.fileHeaderItems, ...merged.fileHeaderItems };
 	// And for the sidebar controls-row buttons.
 	merged.sidebarControls = { ...defaults.prefs.sidebarControls, ...merged.sidebarControls };
+	// And for the empty view's blocks.
+	merged.emptyViewItems = { ...defaults.prefs.emptyViewItems, ...merged.emptyViewItems };
 	return merged;
 }
 

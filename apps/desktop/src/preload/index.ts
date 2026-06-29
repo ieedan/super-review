@@ -28,6 +28,7 @@ import type {
 	FeedbackResult,
 	FileContextMenuAction,
 	HeaderContextMenuResult,
+	EmptyViewContextMenuResult,
 	FileHeaderContextMenuResult,
 	HelpMenuAction,
 	GithubAccount,
@@ -514,6 +515,11 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('menu:showCommitContextMenu') as Promise<CommitContextMenuAction | null>,
 		showHeaderContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
+		showEmptyViewContextMenu: (params) =>
+			ipcRenderer.invoke(
+				'menu:showEmptyViewContextMenu',
+				params
+			) as Promise<EmptyViewContextMenuResult>,
 		showTabsContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
 		showSidebarControlsContextMenu: (params) =>

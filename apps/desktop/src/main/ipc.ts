@@ -56,6 +56,8 @@ import type {
 	RepoContextMenuParams,
 	HeaderContextMenuParams,
 	HeaderContextMenuResult,
+	EmptyViewContextMenuParams,
+	EmptyViewContextMenuResult,
 	FileHeaderContextMenuParams,
 	FileHeaderContextMenuResult,
 	TabsContextMenuParams,
@@ -1892,6 +1894,34 @@ export function registerIpc(): void {
 
 			const menu = Menu.buildFromTemplate(template);
 			return await new Promise<HeaderContextMenuResult>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
+	// The empty view's "Show on this screen" menu. Same shape as the header menu:
+	// a checkbox per toggleable block; the chosen item and its new state come back.
+	ipcMain.handle(
+		'menu:showEmptyViewContextMenu',
+		async (e, params: EmptyViewContextMenuParams): Promise<EmptyViewContextMenuResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: EmptyViewContextMenuResult = null;
+			const template: MenuItemConstructorOptions[] = params.items.map(
+				(it): MenuItemConstructorOptions => ({
+					label: it.label,
+					type: 'checkbox',
+					checked: it.checked,
+					click: (menuItem) => {
+						chosen = { key: it.key, checked: menuItem.checked };
+					}
+				})
+			);
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<EmptyViewContextMenuResult>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)
