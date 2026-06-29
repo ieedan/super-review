@@ -130,6 +130,12 @@ export interface ChangedFile {
 	// be undefined when git can't supply one (e.g. a deleted file), in which case
 	// callers fall back to the stat-based signature.
 	contentSig?: string;
+	// The blob OID of the file's *old* (pre-diff) side: HEAD for the working
+	// tree, the merge-base for a branch/PR. Together with contentSig it identifies
+	// the whole diff, so a "seen" mark can carry across contexts that show the
+	// same change against different bases. Undefined when there is no old side (an
+	// added/untracked file) or git couldn't supply one.
+	baseContentSig?: string;
 }
 
 export interface DiffData {
@@ -1261,20 +1267,33 @@ export const DEFAULT_HEADER_ITEMS: HeaderItemVisibility = {
 	terminal: true
 };
 
-// Which of the sidebar's optional file-list tabs are shown. The Unstaged and
-// Branch tabs have their own contextual visibility (a read-only view hides
+// Which of the sidebar's optional tab-strip-row items are shown. The Unstaged
+// and Branch tabs have their own contextual visibility (a read-only view hides
 // Unstaged; a default-branch checkout hides Branch), so only Sessions and
-// History are user-toggleable — hidden/shown via the tab strip's right-click
-// native context menu, mirroring the header's "Show in header" menu.
+// History are user-toggleable. The trailing summary (review progress, changed-
+// line counts) and the collapse-sidebar button that share the row are toggled
+// here too. All hidden/shown via the tab strip's right-click native context
+// menu, mirroring the header's "Show in header" menu.
 export interface SidebarTabVisibility {
 	sessions: boolean;
 	history: boolean;
+	// The "seen / total" review-progress count (hidden on the Unstaged tab).
+	reviewProgress: boolean;
+	// The +additions / −deletions changed-line totals.
+	lineCounts: boolean;
+	// The collapse-sidebar button (panel-left icon) pinned to the right of the
+	// row. Distinct from the header's `changesToggle`, which reopens the sidebar
+	// from the top bar once collapsed.
+	collapseToggle: boolean;
 }
 
-// Both optional tabs shown by default; the user hides what they don't want.
+// Everything shown by default; the user hides what they don't want.
 export const DEFAULT_SIDEBAR_TABS: SidebarTabVisibility = {
 	sessions: true,
-	history: true
+	history: true,
+	reviewProgress: true,
+	lineCounts: true,
+	collapseToggle: true
 };
 
 // Which of the sidebar's file-controls-row buttons are shown. The file search
@@ -1378,7 +1397,7 @@ export interface UserPrefs {
 	// commits pushed to the branch, or further working-tree edits), clear its seen
 	// mark so it resurfaces for re-review. On by default. Detected by comparing a
 	// per-file content signature captured at mark-seen time against the current
-	// one (see fileContentSig in the renderer store).
+	// one (see fileSeenSig in the renderer store).
 	unmarkSeenOnChange: boolean;
 	// User-configurable keyboard shortcuts, keyed by action. See DEFAULT_HOTKEYS
 	// in @shared/hotkeys for the defaults and matching semantics.
@@ -1873,6 +1892,17 @@ export interface PreloadAPI {
 		// compares these against the current files' signatures on refresh. Paths
 		// marked seen before this was tracked map to an empty string.
 		getSeenSignatures(repoId: string, contextKey: string): Promise<Record<string, string>>;
+		// Given the diff signatures (`<base>..<dst>` blob-OID pairs) of the files
+		// shown in `contextKey`, return the paths whose identical diff was already
+		// marked seen under a *different* context for the same repo. Lets a file
+		// reviewed in one tab (e.g. unstaged) count as seen in another (e.g. the
+		// branch) when the change is byte-for-byte the same. Only `oid:`-form
+		// signatures match; stat fallbacks never carry across contexts.
+		getInheritedSeen(
+			repoId: string,
+			contextKey: string,
+			fileDiffSigs: Record<string, string>
+		): Promise<string[]>;
 		// `sig` is the file's content signature at mark-seen time; stored alongside
 		// the seen mark so a later change can be detected. Omitted when un-seeing.
 		setFileSeen(

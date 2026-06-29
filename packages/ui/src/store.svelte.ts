@@ -984,21 +984,32 @@ function filesCacheKey(repoId: string, ctx: DiffContext): string {
 	return `${repoId}::${diffContextKey(ctx)}`;
 }
 
-// A fingerprint of a changed file's content, captured when the file is marked
-// seen and re-checked on every refresh. When it changes — new commits pushed to a
-// branch, or further working-tree edits — the seen mark is cleared so the file
-// resurfaces (gated by the unmarkSeenOnChange pref). Prefer the content signature
-// git supplies (the destination blob OID, or the worktree blob hash from the diff
-// patch), which moves on any real edit — even one that keeps the same +/- counts.
-// Fall back to the stat-based signature when git couldn't supply one (e.g. a
-// deleted file, or older cached data) so the behavior degrades rather than breaks.
-function fileContentSig(f: ChangedFile): string {
-	if (f.contentSig) return `oid:${f.contentSig}`;
+// A fingerprint of a changed file's diff, captured when the file is marked seen
+// and re-checked on every refresh. It serves two jobs: clearing the seen mark
+// when the file changes (new commits, more edits), and carrying the mark across
+// contexts that show the *same* change (see getInheritedSeen). So it encodes the
+// whole diff as `oid:<base>..<dst>` — the old and new blob OIDs git supplies. The
+// base is empty for an added file (no old side), which still matches another
+// added file of identical content. Falls back to a stat-based signature when git
+// couldn't supply OIDs (e.g. a deleted file, or older cached data); a stat
+// signature has no `..`, so it never carries across contexts — only resurfaces.
+function fileSeenSig(f: ChangedFile): string {
+	if (f.contentSig) return `oid:${f.baseContentSig ?? ''}..${f.contentSig}`;
 	return `${f.status}:${f.additions}:${f.deletions}:${f.isBinary ? 'b' : 't'}`;
 }
 
+// The destination (new-content) portion of a seen signature, used to detect when
+// a file *changed* since it was marked seen — that's a move of the new side,
+// independent of the base. Tolerates the legacy `oid:<dst>` form (no `..`) that
+// older builds stored, so an upgrade doesn't read every seen file as changed.
+function seenSigContent(sig: string): string {
+	if (!sig.startsWith('oid:')) return sig;
+	const i = sig.indexOf('..');
+	return i === -1 ? sig.slice(4) : sig.slice(i + 2);
+}
+
 // Whether two signatures describe content the same way, so a difference between
-// them actually means the content changed. `fileContentSig` emits an `oid:`
+// them actually means the content changed. `fileSeenSig` emits an `oid:`
 // signature when git supplied a blob OID and a stat-based one otherwise — and a
 // single failed/empty git diff (e.g. transient index.lock contention) drops the
 // OID for *every* file in the list at once, flipping all of them to the stat
@@ -1006,6 +1017,42 @@ function fileContentSig(f: ChangedFile): string {
 // and wrongly clear every seen mark, so only compare like with like.
 function sigsComparable(a: string, b: string): boolean {
 	return a.startsWith('oid:') === b.startsWith('oid:');
+}
+
+// Auto-mark files whose exact diff was already reviewed under another context, so
+// the same change reviewed once (e.g. unstaged) doesn't have to be re-reviewed on
+// the branch/PR that carries it. Runs after the authoritative paint, off the
+// critical path: it hands the main process each not-yet-seen file's diff
+// signature, and main returns the ones matching a seen diff elsewhere — having
+// already persisted those marks and recorded that it applied them, so a later
+// manual un-see sticks instead of re-inheriting on the next refresh. The matches
+// fold into the live seen set and the in-memory cache snapshot.
+async function inheritSeenAcrossContexts(
+	repoId: string,
+	reviewKey: string,
+	files: ChangedFile[],
+	cacheKey: string,
+	stale: () => boolean
+): Promise<void> {
+	const sigs: Record<string, string> = {};
+	for (const f of files) {
+		if (!app.seenFiles.has(f.path)) sigs[f.path] = fileSeenSig(f);
+	}
+	if (Object.keys(sigs).length === 0) return;
+	const inherited = await window.api.state.getInheritedSeen(repoId, reviewKey, sigs);
+	if (stale() || inherited.length === 0) return;
+	// Fold the inherited paths into the live seen + collapsed sets (the main
+	// process already persisted both) so they show as reviewed and collapsed
+	// immediately, without waiting for the next refresh to reload them.
+	const cached = filesCache.get(cacheKey);
+	for (const p of inherited) {
+		app.seenFiles.add(p);
+		app.collapsedFiles.add(p);
+		if (cached) {
+			cached.seenFiles.add(p);
+			cached.collapsedFiles.add(p);
+		}
+	}
 }
 
 // Paint the file list from the per-context cache for the current diff context,
@@ -2627,8 +2674,12 @@ async function refreshFiles(): Promise<void> {
 			for (const file of files) {
 				if (!seenSet.has(file.path)) continue;
 				const prevSig = seenSigs[file.path];
-				const curSig = fileContentSig(file);
-				if (prevSig && sigsComparable(prevSig, curSig) && prevSig !== curSig) {
+				const curSig = fileSeenSig(file);
+				if (
+					prevSig &&
+					sigsComparable(prevSig, curSig) &&
+					seenSigContent(prevSig) !== seenSigContent(curSig)
+				) {
 					seenSet.delete(file.path);
 					void window.api.state.setFileSeen(repoId, reviewKey, file.path, false);
 				}
@@ -2699,6 +2750,12 @@ async function refreshFiles(): Promise<void> {
 		const files = paint(raw, seenList, seenSigs, collapsedList, true);
 		// Persist the fresh list so the next cold start can paint it immediately.
 		void window.api.state.setCachedFileList(repoId, ctxKey, files);
+		// Carry the seen mark across contexts: a file whose exact diff was already
+		// reviewed elsewhere (e.g. the same change seen unstaged, now on the branch)
+		// is auto-marked seen here so it isn't re-reviewed. The main process matches
+		// diff signatures, persists the inherited marks, and remembers it applied
+		// them — so a later manual un-see sticks rather than re-inheriting on refresh.
+		void inheritSeenAcrossContexts(repoId, reviewKey, files, cacheKey, stale);
 		// Remember the checked-out branch's base so the next cold start targets the
 		// same (PR) base from the first paint, keeping the seen-state context key
 		// stable. Clear it when the diff fell back to the default branch (e.g. the
@@ -3626,7 +3683,7 @@ export const actions = {
 		// Stamp the file's current content signature when marking it seen so a later
 		// change (new commits, more edits) can clear the mark on refresh.
 		const file = app.changedFiles.find((f) => f.path === filePath);
-		const sig = next && file ? fileContentSig(file) : undefined;
+		const sig = next && file ? fileSeenSig(file) : undefined;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
 		await window.api.state.setFileSeen(
 			app.activeRepo.id,

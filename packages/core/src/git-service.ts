@@ -1092,7 +1092,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				additions: ns.additions,
 				deletions: ns.deletions,
 				isBinary: ns.binary,
-				contentSig: oidMap.get(p)
+				contentSig: oidMap.get(p)?.dst,
+				baseContentSig: oidMap.get(p)?.base
 			});
 		}
 
@@ -1114,7 +1115,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 					additions: ns.additions,
 					deletions: ns.deletions,
 					isBinary: ns.binary,
-					contentSig: untrackedOids.get(p)
+					contentSig: untrackedOids.get(p)?.dst,
+					baseContentSig: untrackedOids.get(p)?.base
 				});
 			}
 		}
@@ -1176,7 +1178,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				additions: ns.additions,
 				deletions: ns.deletions,
 				isBinary: ns.binary,
-				contentSig: oidMap.get(p)
+				contentSig: oidMap.get(p)?.dst,
+				baseContentSig: oidMap.get(p)?.base
 			});
 			// numstat returns nothing for untracked files (git doesn't track them)
 			// and sometimes for staged adds depending on what's in the index.
@@ -1201,6 +1204,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 							additions: counted.additions,
 							isBinary: counted.binary,
 							contentSig: counted.sig ?? files[index].contentSig
+							// An untracked file has no old side, so baseContentSig stays
+							// undefined and its diff identity rests on the content alone.
 						};
 					}
 				})
@@ -1261,7 +1266,8 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				additions: ns.additions,
 				deletions: ns.deletions,
 				isBinary: ns.binary,
-				contentSig: oidMap.get(p)
+				contentSig: oidMap.get(p)?.dst,
+				baseContentSig: oidMap.get(p)?.base
 			});
 		}
 	}
@@ -1274,45 +1280,61 @@ interface NumstatRow {
 	binary: boolean;
 }
 
-// Map each changed file's path to its destination blob OID, parsed from
-// `git diff --raw` output. Lines look like:
+// A file's blob OIDs on both sides of a diff. `dst` is the new content's hash;
+// `base` is the old content's hash, absent when there is no old side (an added
+// file, whose old blob is the all-zero sha). Together they identify the diff
+// itself — two files with the same (base, dst) pair produce a byte-identical
+// patch — which is what lets a "seen" mark carry across contexts.
+interface DiffOids {
+	dst: string;
+	base?: string;
+}
+
+// Drop git's all-zero sha sentinel (an unhashed or empty side) to undefined.
+function realOid(sha: string | undefined): string | undefined {
+	return sha && !/^0+$/.test(sha) ? sha : undefined;
+}
+
+// Map each changed file's path to its blob OIDs, parsed from `git diff --raw`
+// output. Lines look like:
 //   :100644 100644 <srcsha> <dstsha> M\tpath
 //   :100644 100644 <srcsha> <dstsha> R100\toldpath\tnewpath
 // The OID is git's content hash, so it differs whenever the file's content
 // differs — even an edit that keeps the same +/- counts. An all-zero dst sha
 // means git didn't hash that side (a worktree blob under --raw); skip it so the
 // caller falls back to the stat signature.
-function parseRawOids(raw: string): Map<string, string> {
-	const map = new Map<string, string>();
+function parseRawOids(raw: string): Map<string, DiffOids> {
+	const map = new Map<string, DiffOids>();
 	for (const line of raw.split('\n').filter(Boolean)) {
 		const tabIdx = line.indexOf('\t');
 		if (tabIdx === -1) continue;
 		const meta = line.slice(0, tabIdx).split(' ');
-		const dstSha = meta[3];
-		if (!dstSha || /^0+$/.test(dstSha)) continue;
+		const dst = realOid(meta[3]);
+		if (!dst) continue;
 		const paths = line.slice(tabIdx + 1).split('\t');
 		const p = paths[paths.length - 1];
-		map.set(p, dstSha);
+		map.set(p, { dst, base: realOid(meta[2]) });
 	}
 	return map;
 }
 
-// Map each file's path to its destination blob OID, parsed from a full
-// `git diff` patch. Unlike `--raw`, the patch makes git hash the working-tree
-// content, so the `index <src>..<dst>` line carries a real dst OID even for
-// unstaged edits — the only batched way to get a content signature for the
-// working tree. Pure renames (100% similar) have no index line and are simply
-// absent, so the caller falls back to the stat signature for them.
-function parsePatchOids(patch: string): Map<string, string> {
-	const map = new Map<string, string>();
+// Map each file's path to its blob OIDs, parsed from a full `git diff` patch.
+// Unlike `--raw`, the patch makes git hash the working-tree content, so the
+// `index <src>..<dst>` line carries a real dst OID even for unstaged edits — the
+// only batched way to get a content signature for the working tree. Pure renames
+// (100% similar) have no index line and are simply absent, so the caller falls
+// back to the stat signature for them.
+function parsePatchOids(patch: string): Map<string, DiffOids> {
+	const map = new Map<string, DiffOids>();
 	let currentPath: string | undefined;
 	for (const line of patch.split('\n')) {
 		if (line.startsWith('diff --git ')) {
 			const bIdx = line.indexOf(' b/');
 			currentPath = bIdx === -1 ? undefined : line.slice(bIdx + 3);
 		} else if (currentPath && line.startsWith('index ')) {
-			const m = line.match(/^index [0-9a-f]+\.\.([0-9a-f]+)/);
-			if (m && !/^0+$/.test(m[1])) map.set(currentPath, m[1]);
+			const m = line.match(/^index ([0-9a-f]+)\.\.([0-9a-f]+)/);
+			const dst = realOid(m?.[2]);
+			if (dst) map.set(currentPath, { dst, base: realOid(m?.[1]) });
 		}
 	}
 	return map;

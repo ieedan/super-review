@@ -599,16 +599,29 @@
 		void actions.setContextTab(v as ContextTab);
 	}
 
-	// Right-click the tab strip to show/hide the optional Sessions / History tabs,
-	// via a native context menu — the same pattern as the header's customization
-	// menu. Each item is a checkbox reflecting its current visibility; the native
-	// menu reports back the single item toggled, which we persist.
+	// Right-click the tab strip row to show/hide its optional items — the Sessions
+	// / History tabs, plus the trailing review-progress count, changed-line totals
+	// and collapse-sidebar button — via a native context menu, the same pattern as
+	// the header's customization menu. Each item is a checkbox reflecting its
+	// current visibility; the native menu reports back the single item toggled,
+	// which we persist.
 	async function onTabStripContextMenu(e: MouseEvent): Promise<void> {
 		e.preventDefault();
 		const result = await window.api.menu.showTabsContextMenu({
 			items: [
 				{ key: 'sessions', label: 'Sessions', checked: app.sidebarTabs.sessions },
-				{ key: 'history', label: 'History', checked: app.sidebarTabs.history }
+				{ key: 'history', label: 'History', checked: app.sidebarTabs.history },
+				{
+					key: 'reviewProgress',
+					label: 'Review progress',
+					checked: app.sidebarTabs.reviewProgress
+				},
+				{ key: 'lineCounts', label: 'Line counts', checked: app.sidebarTabs.lineCounts },
+				{
+					key: 'collapseToggle',
+					label: 'Collapse sidebar button',
+					checked: app.sidebarTabs.collapseToggle
+				}
 			]
 		});
 		if (result) void actions.setSidebarTab(result.key, result.checked);
@@ -870,8 +883,15 @@
 	<Sidebar.Header class="gap-0 p-0">
 		<!-- Combined header — context tabs on the left, then seen/total + adds/dels
          totals, and the collapse trigger pinned right. Matches the diff sticky
-         header height so their bottom borders line up across panes. -->
-		<div class="@container flex h-11 items-center gap-2 border-b border-border px-2">
+         header height so their bottom borders line up across panes. Right-click
+         anywhere in the row to show/hide its optional items; binding the menu to
+         the whole row (not just the tab strip) keeps it reachable over the
+         trailing controls, so a hidden item can still be turned back on. -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="@container flex h-11 items-center gap-2 border-b border-border px-2"
+			oncontextmenu={onTabStripContextMenu}
+		>
 			{#if app.stashView}
 				<!-- Viewing the managed stash: the tab strip is replaced with a back
              button returning to the working tree, and a label. The Restore /
@@ -920,13 +940,12 @@
 			{:else}
 				<!-- Tab strip: drives which diff context fuels the file list. -->
 				<Tabs.Root value={app.contextTab} onValueChange={setTab} class="min-w-0 flex-1 gap-0">
-					<!-- Right-click the strip to show/hide the optional Sessions / History
-					     tabs, via a native context menu (mirrors the header's menu). -->
+					<!-- The row's right-click customization menu is bound on the parent
+					     container, so it covers the trailing controls too. -->
 					<Tabs.List
 						bind:ref={tabsListEl}
 						class="no-scrollbar w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
 						style={tabsMask ? `-webkit-mask-image:${tabsMask};mask-image:${tabsMask};` : undefined}
-						oncontextmenu={onTabStripContextMenu}
 					>
 						<!-- Unstaged is the working tree of the checked-out branch. While a
 						     branch or PR is being reviewed read-only there's no working tree
@@ -988,31 +1007,37 @@
 				</Tabs.Root>
 			{/if}
 
-			<!-- Seen/total + adds/dels totals. Hidden via a container query once the
-			     sidebar is too narrow to fit them beside the tabs, so the floor only
-			     needs to cover the tabs + collapse trigger. -->
-			{#if app.changedFiles.length > 0}
+			<!-- Seen/total + adds/dels totals. Each is independently hidable from the
+			     tab strip's right-click menu; the review progress also only shows off
+			     the Unstaged tab. Hidden via a container query once the sidebar is too
+			     narrow to fit them beside the tabs, so the floor only needs to cover
+			     the tabs + collapse trigger. -->
+			{#if app.changedFiles.length > 0 && (app.sidebarTabs.lineCounts || (app.sidebarTabs.reviewProgress && app.contextTab !== 'unstaged'))}
 				<div class="flex shrink-0 items-center gap-2 @max-[400px]:hidden">
-					{#if app.contextTab !== 'unstaged'}
+					{#if app.sidebarTabs.reviewProgress && app.contextTab !== 'unstaged'}
 						<span class="text-xs text-muted-foreground tabular-nums">
 							<span class="font-medium">{seenDisplay}/{app.changedFiles.length}</span>
 						</span>
 					{/if}
-					<span class="text-[11px] tabular-nums">
-						<span class="text-success">+{addDisplay}</span>
-						<span class="ml-0.5 text-destructive">−{delDisplay}</span>
-					</span>
+					{#if app.sidebarTabs.lineCounts}
+						<span class="text-[11px] tabular-nums">
+							<span class="text-success">+{addDisplay}</span>
+							<span class="ml-0.5 text-destructive">−{delDisplay}</span>
+						</span>
+					{/if}
 				</div>
 			{/if}
-			<Button
-				variant="ghost"
-				size="icon-sm"
-				class="shrink-0"
-				title={`Collapse sidebar (${toggleShortcut})`}
-				onclick={() => sidebar.toggle()}
-			>
-				<PanelLeft class="size-3.5" />
-			</Button>
+			{#if app.sidebarTabs.collapseToggle}
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					class="shrink-0"
+					title={`Collapse sidebar (${toggleShortcut})`}
+					onclick={() => sidebar.toggle()}
+				>
+					<PanelLeft class="size-3.5" />
+				</Button>
+			{/if}
 		</div>
 
 		{#if app.stashView}

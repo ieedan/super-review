@@ -161,6 +161,7 @@ import {
 	getCommitDraft,
 	getPrefs,
 	getRepo,
+	getInheritedSeen,
 	getSeen,
 	getSeenSignatures,
 	getStats,
@@ -2043,6 +2044,18 @@ export function registerIpc(): void {
 		'state:getSeenSignatures',
 		async (_e, repoId: string, contextKey: string): Promise<Record<string, string>> => {
 			return getSeenSignatures(repoId, contextKey);
+		}
+	);
+
+	ipcMain.handle(
+		'state:getInheritedSeen',
+		async (
+			_e,
+			repoId: string,
+			contextKey: string,
+			fileDiffSigs: Record<string, string>
+		): Promise<string[]> => {
+			return getInheritedSeen(repoId, contextKey, fileDiffSigs);
 		}
 	);
 
