@@ -45,6 +45,10 @@ jobs:
           # Full history + tags so changesets can build changelogs and the
           # release gate below can see existing version tags.
           fetch-depth: 0
+          # changesets/action sets its own git credentials; leaving checkout's
+          # persisted http.extraheader in place causes "Duplicate header:
+          # Authorization" on push (actions/checkout#2299).
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
