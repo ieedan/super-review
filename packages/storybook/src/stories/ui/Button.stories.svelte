@@ -66,20 +66,3 @@
 		</div>
 	{/snippet}
 </Story>
-
-<!--
-	Performance: a dense grid of every variant x size combination, repeated, to
-	prove the button renders cheaply at scale (hover/focus transitions, the flame
-	gradient and shadow all multiplied across hundreds of instances).
--->
-<Story name="Performance (600 buttons)">
-	{#snippet template()}
-		<div class="grid max-w-5xl grid-cols-8 gap-2">
-			{#each Array(600) as _, i (i)}
-				<Button variant={VARIANTS[i % VARIANTS.length]} size={SIZES[i % SIZES.length]}>
-					#{i}
-				</Button>
-			{/each}
-		</div>
-	{/snippet}
-</Story>
