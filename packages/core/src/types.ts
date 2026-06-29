@@ -1,4 +1,10 @@
 import type { Hotkeys } from './hotkeys.js';
+import type { RepoUsageStats } from './usage-stats.js';
+
+// Re-exported so renderer/main code can reach the usage-stats type through the
+// same `@super-review/core/types` (and `@shared/types`) surface as everything
+// else. The pure helpers live in the `./usage-stats` subpath.
+export type { RepoUsageStats } from './usage-stats.js';
 
 export interface RepoInfo {
 	id: string;
@@ -1906,6 +1912,22 @@ export interface PreloadAPI {
 		setBranchBase(repoId: string, branch: string, base: string | null): Promise<void>;
 		getCommitDraft(repoId: string): Promise<CommitDraft>;
 		setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
+	};
+	// Local usage statistics. All counters are stored on disk per repo; nothing is
+	// sent anywhere. Counts that need de-duplication (files by content, sessions by
+	// id) are recorded with the dedup key so re-marking the same thing never
+	// inflates the totals; the rest are bumped server-side from their own handlers.
+	stats: {
+		// The display-ready stats for one repo (zeroed when none recorded yet).
+		get(repoId: string): Promise<RepoUsageStats>;
+		// Every repo's stats keyed by repoId, for the aggregate roll-up + breakdown.
+		getAll(): Promise<Record<string, RepoUsageStats>>;
+		// Record a file marked seen: `sig` is its content signature (deduped against
+		// every sig ever reviewed in the repo) and `loc` its additions + deletions,
+		// added to the LOC total only the first time that content is seen.
+		recordFileReviewed(repoId: string, sig: string, loc: number): Promise<void>;
+		// Record a guided-tour session opened, deduped by session id.
+		recordSessionReviewed(repoId: string, sessionId: string): Promise<void>;
 	};
 	icons: {
 		// Resolve a custom-icon source to an `<img>`-ready src. `https:`/`data:`

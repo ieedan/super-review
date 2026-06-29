@@ -63,6 +63,7 @@ import type {
 	SidebarControlsContextMenuParams,
 	SidebarControlsContextMenuResult,
 	RepoInfo,
+	RepoUsageStats,
 	Session,
 	SkillStatus,
 	SessionSummary,
@@ -150,8 +151,10 @@ import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from '@su
 import { getSkillStatus, installSkill } from './skill-service.js';
 import { listTemplates } from '@super-review/core';
 import {
+	bumpStat,
 	clearCollapsedFiles,
 	clearSeen,
+	getAllStats,
 	getBranchBase,
 	getCachedFileList,
 	getCollapsedFiles,
@@ -160,7 +163,10 @@ import {
 	getRepo,
 	getSeen,
 	getSeenSignatures,
+	getStats,
 	listRepos,
+	recordFileReviewed,
+	recordSessionReviewed,
 	removeRepo,
 	setBranchBase,
 	setCachedFileList,
@@ -650,8 +656,11 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'git:createBranch',
-		async (_e, repoId: string, name: string, opts: { base?: string; checkout: boolean }) =>
-			createBranch(repoOrThrow(repoId).path, name, opts)
+		async (_e, repoId: string, name: string, opts: { base?: string; checkout: boolean }) => {
+			const result = await createBranch(repoOrThrow(repoId).path, name, opts);
+			if (result.ok) bumpStat(repoId, 'branchesCreated');
+			return result;
+		}
 	);
 
 	ipcMain.handle(
@@ -878,7 +887,9 @@ export function registerIpc(): void {
 			const repo = repoOrThrow(repoId);
 			const identity = gh.resolveCommitIdentity(repo.githubAccountId);
 			const signing = await gh.resolveCommitSigning(repo.githubAccountId);
-			return commit(repo.path, message, files, identity, signing);
+			const result = await commit(repo.path, message, files, identity, signing);
+			if (result.ok) bumpStat(repoId, 'commitsAuthored');
+			return result;
 		}
 	);
 
@@ -1536,7 +1547,7 @@ export function registerIpc(): void {
 			if (!owner || !name) {
 				throw new Error('This repository does not have a GitHub remote.');
 			}
-			return gh.mergePullRequest(
+			const result = await gh.mergePullRequest(
 				owner,
 				name,
 				prNumber,
@@ -1545,6 +1556,8 @@ export function registerIpc(): void {
 				commitTitle,
 				commitMessage
 			);
+			if (result.merged) bumpStat(repoId, 'prsMerged');
+			return result;
 		}
 	);
 
@@ -1982,6 +1995,22 @@ export function registerIpc(): void {
 		async (_e, patch: Partial<UserPrefs>): Promise<UserPrefs> => setPrefs(patch)
 	);
 
+	// ─── Usage stats ───────────────────────────────────────────────────────
+	ipcMain.handle(
+		'stats:get',
+		async (_e, repoId: string): Promise<RepoUsageStats> => getStats(repoId)
+	);
+	ipcMain.handle(
+		'stats:getAll',
+		async (): Promise<Record<string, RepoUsageStats>> => getAllStats()
+	);
+	ipcMain.handle('stats:recordFileReviewed', async (_e, repoId: string, sig: string, loc: number) =>
+		recordFileReviewed(repoId, sig, loc)
+	);
+	ipcMain.handle('stats:recordSessionReviewed', async (_e, repoId: string, sessionId: string) =>
+		recordSessionReviewed(repoId, sessionId)
+	);
+
 	// ─── Icons ─────────────────────────────────────────────────────────────
 	ipcMain.handle(
 		'icons:resolveCustomIcon',
@@ -2159,8 +2188,11 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'comments:add',
-		async (_e, repoId: string, input: NewLocalCommentInput): Promise<LocalComment> =>
-			addComment(repoOrThrow(repoId).path, input)
+		async (_e, repoId: string, input: NewLocalCommentInput): Promise<LocalComment> => {
+			const comment = await addComment(repoOrThrow(repoId).path, input);
+			bumpStat(repoId, 'commentsWritten');
+			return comment;
+		}
 	);
 
 	ipcMain.handle(

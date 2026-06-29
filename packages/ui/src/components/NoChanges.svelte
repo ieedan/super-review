@@ -2,6 +2,7 @@
 	import Code from '@lucide/svelte/icons/code';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Github from './icons/GithubIcon.svelte';
+	import UsageStatsPanel from './UsageStatsPanel.svelte';
 	import { actions, app, effectiveEditor, EDITOR_LABELS } from '@super-review/ui/store.svelte';
 
 	// Which repo-level actions can we actually offer? Each card only renders
@@ -71,6 +72,10 @@
 					</div>
 				</button>
 			{/if}
+		</div>
+
+		<div class="mt-6">
+			<UsageStatsPanel compact />
 		</div>
 	</div>
 </div>

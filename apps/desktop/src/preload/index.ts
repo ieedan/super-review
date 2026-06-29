@@ -55,6 +55,7 @@ import type {
 	RepositoryMenuAction,
 	RepositoryMenuState,
 	RepoInfo,
+	RepoUsageStats,
 	Session,
 	SessionSummary,
 	SkillStatus,
@@ -399,6 +400,14 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('state:getCommitDraft', repoId) as Promise<CommitDraft>,
 		setCommitDraft: (repoId, draft) =>
 			ipcRenderer.invoke('state:setCommitDraft', repoId, draft) as Promise<void>
+	},
+	stats: {
+		get: (repoId) => ipcRenderer.invoke('stats:get', repoId) as Promise<RepoUsageStats>,
+		getAll: () => ipcRenderer.invoke('stats:getAll') as Promise<Record<string, RepoUsageStats>>,
+		recordFileReviewed: (repoId, sig, loc) =>
+			ipcRenderer.invoke('stats:recordFileReviewed', repoId, sig, loc) as Promise<void>,
+		recordSessionReviewed: (repoId, sessionId) =>
+			ipcRenderer.invoke('stats:recordSessionReviewed', repoId, sessionId) as Promise<void>
 	},
 	icons: {
 		resolveCustomIcon: (source) =>

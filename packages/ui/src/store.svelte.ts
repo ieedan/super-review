@@ -36,6 +36,7 @@ import type {
 	PublishRepoOptions,
 	PushStatus,
 	RepoInfo,
+	RepoUsageStats,
 	Session,
 	SessionSummary,
 	HeaderItemVisibility,
@@ -54,6 +55,7 @@ import {
 	WINDOW_BOUNDS
 } from '@super-review/core/types';
 import { diffContextKey, reviewContextKey } from '@super-review/core/diff-context';
+import { aggregateStats, emptyStats } from '@super-review/core/usage-stats';
 import {
 	buildDiscardPatch,
 	buildFilteredPatch,
@@ -73,7 +75,14 @@ import {
 	POOL_PERSISTENT_RENDER_OPTIONS
 } from '@super-review/ui/diff-worker-pool';
 
-export type SettingsTab = 'accounts' | 'appearance' | 'behavior' | 'app' | 'editor' | 'hotkeys';
+export type SettingsTab =
+	| 'accounts'
+	| 'appearance'
+	| 'behavior'
+	| 'app'
+	| 'editor'
+	| 'hotkeys'
+	| 'stats';
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
 import { tourFileOrder, tourGroups } from '@super-review/ui/session-tour';
@@ -355,6 +364,10 @@ interface AppState {
 	// this tab — so the view holds its place instead of snapping back to the top.
 	scrollAnchor: ScrollAnchor | null;
 	lastRefreshAt: number | null;
+	// Local usage stats for the active repo, and every repo keyed by id. Loaded
+	// lazily by actions.loadStats() when a stats surface opens; null until then.
+	usageStats: RepoUsageStats | null;
+	usageStatsByRepo: Record<string, RepoUsageStats> | null;
 	fetchingOrigin: boolean;
 	nowTick: number;
 	platform: AppPlatform;
@@ -830,6 +843,8 @@ const initial: AppState = {
 	scrollRequest: null,
 	scrollAnchor: null,
 	lastRefreshAt: null,
+	usageStats: null,
+	usageStatsByRepo: null,
 	fetchingOrigin: false,
 	nowTick: 0,
 	platform: 'darwin',
@@ -3293,6 +3308,21 @@ export const actions = {
 		}
 	},
 
+	// Load local usage stats for the active repo and every repo (for the aggregate
+	// roll-up and per-repo breakdown). Called when a stats surface opens; the
+	// numbers only change on the user's own actions, so a fetch-on-open is enough.
+	async loadStats(): Promise<void> {
+		const byRepo = await window.api.stats.getAll();
+		app.usageStatsByRepo = byRepo;
+		const activeId = app.activeRepo?.id;
+		app.usageStats = activeId ? (byRepo[activeId] ?? emptyStats()) : null;
+	},
+
+	// The summed "all repos" roll-up, derived from the loaded per-repo map.
+	aggregateStats(): RepoUsageStats {
+		return aggregateStats(Object.values(app.usageStatsByRepo ?? {}));
+	},
+
 	// Open a session's frozen diff: drives the file list + diff view through the
 	// existing context machinery via a `session` DiffContext. Also loads the full
 	// session detail (incl. tour steps) so the tour can render.
@@ -3313,6 +3343,9 @@ export const actions = {
 		app.fileSearchQuery = '';
 		if (app.activeRepo) {
 			const repoId = app.activeRepo.id;
+			// Count this session toward usage stats (deduped by id in main, so
+			// re-opening the same session never recounts).
+			void window.api.stats.recordSessionReviewed(repoId, id);
 			void window.api.sessions.get(repoId, id, ref).then((detail) => {
 				// Guard against a slow fetch landing after the user moved on.
 				if (app.activeSessionId === id && app.activeRepo?.id === repoId) {
@@ -3602,6 +3635,16 @@ export const actions = {
 			next,
 			sig
 		);
+		// Record the file toward the repo's usage stats. Main dedupes by `sig`, so a
+		// re-mark of the same content is a no-op there; reviewing changed content
+		// (new sig) counts again. Skipped when un-marking or when we have no sig.
+		if (next && sig && file) {
+			void window.api.stats.recordFileReviewed(
+				app.activeRepo.id,
+				sig,
+				file.additions + file.deletions
+			);
+		}
 	},
 
 	// The changed files in the order the user is currently viewing them: filtered

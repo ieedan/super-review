@@ -21,6 +21,12 @@ export interface PRBranchLink {
 }
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
 import { DEFAULT_HOTKEYS } from '@shared/hotkeys.js';
+import {
+	emptyStoredStats,
+	projectStats,
+	type RepoUsageStats,
+	type StoredRepoStats
+} from '@super-review/core/usage-stats';
 
 export interface StoredGithubAccount extends GithubAccount {
 	token: string;
@@ -66,6 +72,8 @@ interface Schema {
 	activeGithubAccountId: string | null;
 	// Legacy single-token field — migrated lazily, see github-service.
 	githubToken: string | null;
+	// Local usage statistics keyed by repoId. Purely on-disk; never sent anywhere.
+	stats: Record<string, StoredRepoStats>;
 }
 
 const defaults: Schema = {
@@ -112,7 +120,8 @@ const defaults: Schema = {
 	prBranches: {},
 	githubAccounts: {},
 	activeGithubAccountId: null,
-	githubToken: null
+	githubToken: null,
+	stats: {}
 };
 
 export const store = new Store<Schema>({ defaults, name: 'super-review' });
@@ -222,6 +231,7 @@ export function removeRepo(id: string): void {
 	delete d.branchBases[id];
 	delete d.commitDrafts[id];
 	delete d.prBranches[id];
+	delete d.stats[id];
 	if (d.prefs.activeRepoId === id) d.prefs = { ...d.prefs, activeRepoId: undefined };
 	flush();
 }
@@ -538,5 +548,69 @@ export function removeGithubAccount(id: string): void {
 	for (const repo of Object.values(d.repos)) {
 		if (repo.githubAccountId === id) delete repo.githubAccountId;
 	}
+	flush();
+}
+
+// --- Local usage statistics --------------------------------------------------
+// All on-disk, never sent anywhere. Deduped counts (files by content sig,
+// sessions by id) keep their backing sets so re-recording the same key is a
+// no-op; the rest are plain counters bumped from their own IPC handlers.
+
+function ensureStats(repoId: string): StoredRepoStats {
+	const d = db();
+	let s = d.stats[repoId];
+	if (!s) {
+		s = emptyStoredStats();
+		d.stats[repoId] = s;
+	}
+	return s;
+}
+
+// Stamp the repo's "active since" the first time it records any activity.
+function markUsed(s: StoredRepoStats): void {
+	if (s.firstUsedAt === null) s.firstUsedAt = Date.now();
+}
+
+export function getStats(repoId: string): RepoUsageStats {
+	const s = db().stats[repoId];
+	return s ? projectStats(s) : projectStats(emptyStoredStats());
+}
+
+export function getAllStats(): Record<string, RepoUsageStats> {
+	const out: Record<string, RepoUsageStats> = {};
+	for (const [id, s] of Object.entries(db().stats)) out[id] = projectStats(s);
+	return out;
+}
+
+// Record a file marked seen, deduped by content signature. Only the first time a
+// given content is seen does it count toward filesReviewed / locReviewed.
+export function recordFileReviewed(repoId: string, sig: string, loc: number): void {
+	if (!sig) return;
+	const s = ensureStats(repoId);
+	if (s.reviewedSigs.includes(sig)) return;
+	s.reviewedSigs.push(sig);
+	s.locReviewed += Math.max(0, loc);
+	markUsed(s);
+	flush();
+}
+
+// Record a guided-tour session opened, deduped by session id.
+export function recordSessionReviewed(repoId: string, sessionId: string): void {
+	if (!sessionId) return;
+	const s = ensureStats(repoId);
+	if (s.reviewedSessionIds.includes(sessionId)) return;
+	s.reviewedSessionIds.push(sessionId);
+	markUsed(s);
+	flush();
+}
+
+export type StatCounter = 'prsMerged' | 'branchesCreated' | 'commitsAuthored' | 'commentsWritten';
+
+// Increment one of the plain counters by one. Called from the main-process
+// handler that performs the action (so it only counts real successes).
+export function bumpStat(repoId: string, key: StatCounter): void {
+	const s = ensureStats(repoId);
+	s[key] += 1;
+	markUsed(s);
 	flush();
 }
