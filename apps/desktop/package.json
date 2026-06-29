@@ -1,6 +1,6 @@
 {
 	"name": "@super-review/desktop",
-	"version": "0.1.15",
+	"version": "0.1.16",
 	"description": "A faster, saner desktop UI for reviewing agent-written code",
 	"main": "out/main/index.js",
 	"type": "module",

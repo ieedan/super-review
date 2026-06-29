@@ -1,5 +1,11 @@
 # super-review
 
+## 0.0.6
+
+### Patch Changes
+
+- fix: `comment list --pr` now matches the desktop app's GitHub account per repo. It finds the app's config across dev and packaged installs, and honors the app's per-repo account pin, so a private repo owned by a secondary (non-default) account resolves instead of 404ing. ([`f1a6012`](https://github.com/ieedan/super-review/commit/f1a601214651e57304316fe97d06ffe4f8bbde9f))
+
 ## 0.0.5
 
 ### Patch Changes
