@@ -75,6 +75,7 @@
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
 	import SessionDiffCard from './SessionDiffCard.svelte';
 	import { calloutsForFile } from '@super-review/ui/session-tour';
+	import { localCommentOutdated } from '@super-review/ui/comment-outdated';
 	import type {
 		ChangedFile,
 		DiffContext,
@@ -489,14 +490,16 @@
 	// comments sidebar can badge comments whose anchored line is gone — they no
 	// longer render inline, so the sidebar is the only place they can surface.
 	// Touches only this file's ids (file paths are unique across sections, so no
-	// contention). While the diff is unloaded (`localFileExtent` null) we can't
-	// tell, so we drop this file's ids rather than guess. Cleaned up on destroy.
+	// contention). A deleted file marks its RIGHT-side comments outdated straight
+	// from `file.status` (no diff needed), so they badge even before the section is
+	// scrolled into view to load its all-removed diff. Otherwise, while the diff is
+	// unloaded (`localFileExtent` null) we can't tell, so we drop this file's ids
+	// rather than guess. Cleaned up on destroy.
 	$effect(() => {
 		const extent = localFileExtent;
+		const fileDeleted = file.status === 'deleted';
 		for (const c of fileLocalComments) {
-			const outdated =
-				extent != null && c.startLine > (c.side === 'LEFT' ? extent.left : extent.right);
-			if (outdated) app.outdatedLocalCommentIds.add(c.id);
+			if (localCommentOutdated(c, { fileDeleted, extent })) app.outdatedLocalCommentIds.add(c.id);
 			else app.outdatedLocalCommentIds.delete(c.id);
 		}
 	});
@@ -596,10 +599,12 @@
 
 		for (const c of orderedLocalComments) {
 			// undefined while the diff is still loading (don't claim outdated yet);
-			// otherwise true when the anchored line no longer exists in the file.
-			const outdated = localFileExtent
-				? c.startLine > (c.side === 'LEFT' ? localFileExtent.left : localFileExtent.right)
-				: undefined;
+			// otherwise true when the anchored line no longer exists in the file (a
+			// deleted file takes its RIGHT-side comments straight from the status).
+			const outdated = localCommentOutdated(c, {
+				fileDeleted: file.status === 'deleted',
+				extent: localFileExtent
+			});
 			let meta = localCommentMetaCache.get(c.id);
 			// Invalidate when the comment object was replaced (e.g. resolved) or its
 			// outdated status changed (the diff shifted under it).
