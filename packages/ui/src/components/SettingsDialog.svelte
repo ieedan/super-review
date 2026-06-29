@@ -11,6 +11,7 @@
 	import Palette from '@lucide/svelte/icons/palette';
 	import Plus from '@lucide/svelte/icons/plus';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import User from '@lucide/svelte/icons/user';
 	import X from '@lucide/svelte/icons/x';
@@ -91,6 +92,232 @@
 		{ id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
 		{ id: 'stats', label: 'Stats', icon: BarChart3 }
 	];
+
+	const TAB_BY_ID = new Map(TABS.map((t) => [t.id, t]));
+
+	// Flat, searchable index of every settings section. `anchor` is the id of the
+	// section element to scroll to when a result is picked (see goToSetting); the
+	// matching markup carries `id={anchor}` and `scroll-mt-4`. `keywords` widens
+	// matches to terms a user might type that aren't in the visible title.
+	type SettingsEntry = {
+		tab: SettingsTab;
+		anchor: string;
+		title: string;
+		description: string;
+		keywords: string;
+	};
+
+	const SETTINGS_INDEX: SettingsEntry[] = [
+		{
+			tab: 'accounts',
+			anchor: 'settings-accounts-github',
+			title: 'GitHub.com',
+			description: 'Sign in to review pull requests and post comments.',
+			keywords: 'account sign in login github default avatar pull request token'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-theme',
+			title: 'Theme',
+			description: 'Choose a light or dark appearance.',
+			keywords: 'light dark mode color appearance'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-accent',
+			title: 'Accent',
+			description: 'Color for primary buttons, highlights, links, and focus rings.',
+			keywords: 'color accent highlight link button focus ring'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-ui-font',
+			title: 'UI font',
+			description: 'Font used for the sidebar, lists, and app chrome.',
+			keywords: 'font typeface ui sidebar chrome text'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-code-font',
+			title: 'Code font',
+			description: 'Font used for diffs and code.',
+			keywords: 'font typeface code monospace diff'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-diff-view',
+			title: 'Diff view',
+			description: 'Choose how changes are displayed.',
+			keywords: 'diff split unified view changes'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-diff-theme',
+			title: 'Diff theme',
+			description: 'Syntax highlighting theme for diff code blocks.',
+			keywords: 'diff theme syntax highlighting colors'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-diff-layout',
+			title: 'Diff layout',
+			description: 'One scrollable list or one file at a time.',
+			keywords: 'diff layout scroll single file list'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-file-icons',
+			title: 'File icons',
+			description: 'Show language-specific icons next to file names.',
+			keywords: 'file icons language sidebar'
+		},
+		{
+			tab: 'appearance',
+			anchor: 'settings-animations',
+			title: 'Animations',
+			description: 'How much motion the UI uses.',
+			keywords: 'animation motion transitions reduce'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-arrow-nav',
+			title: 'Arrow-key navigation',
+			description: 'What happens when you arrow onto a file in the sidebar.',
+			keywords: 'arrow key navigation keyboard file open sidebar'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-merged-branches',
+			title: 'Merged branches',
+			description: "What to do when a checked-out branch's PR is merged.",
+			keywords: 'merged branch pull request switch remove delete'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-reviewing',
+			title: 'Reviewing',
+			description: "How review tracks which files you've already looked at.",
+			keywords: 'review seen unseen mark files'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-commits',
+			title: 'Commits',
+			description: 'How commits you make in Super Review are signed.',
+			keywords: 'commit sign signing ssh key verified'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-recent-repos',
+			title: 'Recent repositories',
+			description: 'How many recent repositories the picker lists.',
+			keywords: 'recent repositories repos picker count history'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-large-diffs',
+			title: 'Large diffs',
+			description: 'Hide big diffs behind a "Load diff" button.',
+			keywords: 'large diff lines load limit performance'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-hidden-files',
+			title: 'Hidden files',
+			description: 'Glob patterns whose diffs are hidden by default.',
+			keywords: 'hidden files glob pattern lock build ignore'
+		},
+		{
+			tab: 'behavior',
+			anchor: 'settings-custom-file-icons',
+			title: 'Custom file icons',
+			description: 'Give files matching a glob pattern your own icon.',
+			keywords: 'custom file icon glob pattern image'
+		},
+		{
+			tab: 'app',
+			anchor: 'settings-window-size',
+			title: 'Window size',
+			description: 'The size the window opens at, in pixels.',
+			keywords: 'window size width height pixels maximize'
+		},
+		{
+			tab: 'app',
+			anchor: 'settings-start-maximized',
+			title: 'Start maximized',
+			description: 'Open the window maximized to fill the screen.',
+			keywords: 'window maximize fullscreen start launch'
+		},
+		{
+			tab: 'editor',
+			anchor: 'settings-external-editor',
+			title: 'External editor',
+			description: 'Used by the "Open in editor" button.',
+			keywords: 'editor external vscode cursor zed xcode visual studio'
+		},
+		{
+			tab: 'editor',
+			anchor: 'settings-terminal',
+			title: 'Terminal',
+			description: 'Used by the "Open in terminal" button.',
+			keywords: 'terminal iterm warp ghostty powershell command prompt'
+		},
+		{
+			tab: 'editor',
+			anchor: 'settings-changesets',
+			title: 'Changesets',
+			description: 'Additional integrations for specific repos.',
+			keywords: 'changesets integration changelog version'
+		},
+		{
+			tab: 'hotkeys',
+			anchor: 'settings-hotkeys',
+			title: 'Keyboard shortcuts',
+			description: 'Customize the key combinations for app actions.',
+			keywords:
+				'hotkey keyboard shortcut binding keys ' +
+				HOTKEY_ACTIONS.map((a) => HOTKEY_LABELS[a].label).join(' ')
+		},
+		{
+			tab: 'stats',
+			anchor: 'settings-stats',
+			title: 'Usage statistics',
+			description: 'Local stats about your reviewing activity.',
+			keywords: 'stats statistics usage activity metrics'
+		}
+	];
+
+	let searchQuery = $state('');
+	const trimmedQuery = $derived(searchQuery.trim());
+	const searching = $derived(trimmedQuery.length > 0);
+
+	const searchResults = $derived.by(() => {
+		if (!searching) return [];
+		const terms = trimmedQuery.toLowerCase().split(/\s+/).filter(Boolean);
+		return SETTINGS_INDEX.filter((entry) => {
+			const tabLabel = TAB_BY_ID.get(entry.tab)?.label ?? '';
+			const haystack =
+				`${entry.title} ${entry.description} ${entry.keywords} ${tabLabel}`.toLowerCase();
+			return terms.every((t) => haystack.includes(t));
+		});
+	});
+
+	// Jump from a search result to its section: switch to the owning tab, drop the
+	// query so the tab renders, then scroll the section into view and flash it.
+	function goToSetting(entry: SettingsEntry): void {
+		searchQuery = '';
+		activeTab = entry.tab;
+		void tick().then(async () => {
+			await tick();
+			const el = document.getElementById(entry.anchor);
+			if (!el) return;
+			el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			el.classList.remove('settings-flash');
+			// Re-trigger the animation if the same section is targeted twice.
+			void el.offsetWidth;
+			el.classList.add('settings-flash');
+		});
+	}
 
 	const EDITOR_LABELS: Record<EditorKind, string> = {
 		cursor: 'Cursor',
@@ -183,6 +410,7 @@
 
 	$effect(() => {
 		if (dialogOpen) {
+			searchQuery = '';
 			draftViewMode = app.viewMode;
 			draftDiffLayout = app.diffLayout;
 			draftShowFileIcons = app.showFileIcons;
@@ -449,11 +677,83 @@
 	{/if}
 {/snippet}
 
-<SettingsShell bind:open={dialogOpen} title="Settings" tabs={TABS} bind:activeTab onClose={cancel}>
+{#snippet searchBox()}
+	<div class="relative">
+		<Search
+			class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+		/>
+		<Input
+			bind:value={searchQuery}
+			placeholder="Search settings"
+			aria-label="Search settings"
+			class="h-8 pr-7 pl-7"
+			onkeydown={(e) => {
+				if (e.key === 'Escape' && searchQuery) {
+					// Clear the query instead of letting Escape close the dialog.
+					e.preventDefault();
+					e.stopPropagation();
+					searchQuery = '';
+				}
+			}}
+		/>
+		{#if searchQuery}
+			<button
+				type="button"
+				title="Clear search"
+				class="absolute top-1/2 right-1.5 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+				onclick={() => (searchQuery = '')}
+			>
+				<X class="size-3.5" />
+			</button>
+		{/if}
+	</div>
+{/snippet}
+
+<SettingsShell
+	bind:open={dialogOpen}
+	title="Settings"
+	tabs={TABS}
+	bind:activeTab
+	onClose={cancel}
+	onSelectTab={() => (searchQuery = '')}
+	search={searchBox}
+>
 	{#snippet content(_tab)}
-		{#if activeTab === 'accounts'}
+		{#if searching}
+			{#if searchResults.length === 0}
+				<div class="flex h-full flex-col items-center justify-center gap-2 text-center">
+					<Search class="size-6 text-muted-foreground" />
+					<p class="text-sm text-muted-foreground">No settings match “{trimmedQuery}”.</p>
+				</div>
+			{:else}
+				<ul class="space-y-1.5">
+					{#each searchResults as entry (entry.anchor)}
+						{@const resultTab = TAB_BY_ID.get(entry.tab)}
+						{@const ResultIcon = resultTab?.icon}
+						<li>
+							<button
+								type="button"
+								class="flex w-full items-start gap-3 rounded-md border border-border bg-card/40 px-3 py-2 text-left hover:bg-muted/50"
+								onclick={() => goToSetting(entry)}
+							>
+								{#if ResultIcon}
+									<ResultIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+								{/if}
+								<div class="min-w-0 flex-1">
+									<div class="flex items-baseline gap-2">
+										<span class="text-sm font-medium">{entry.title}</span>
+										<span class="text-[10px] text-muted-foreground">{resultTab?.label}</span>
+									</div>
+									<p class="truncate text-xs text-muted-foreground">{entry.description}</p>
+								</div>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{:else if activeTab === 'accounts'}
 			<section class="space-y-5">
-				<div>
+				<div id="settings-accounts-github" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">GitHub.com</h3>
 					{#if app.githubAccounts.length === 0}
 						<p class="mt-1 text-xs text-muted-foreground">
@@ -522,7 +822,7 @@
 			</section>
 		{:else if activeTab === 'appearance'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-theme" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Theme</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Choose a light or dark appearance.</p>
 
@@ -542,7 +842,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-accent" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Accent</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Color for primary buttons, highlights, links, and focus rings.
@@ -569,7 +869,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-ui-font" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">UI font</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Font used for the sidebar, lists, and app chrome.
@@ -586,7 +886,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-code-font" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Code font</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Font used for diffs and code.</p>
 
@@ -601,7 +901,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-diff-view" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Diff view</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Choose how changes are displayed.</p>
 
@@ -621,7 +921,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-diff-theme" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Diff theme</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Syntax highlighting theme for diff code blocks. Each theme has a light and dark variant
@@ -660,7 +960,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-diff-layout" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Diff layout</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Choose whether all changed files render in one scrollable list or one file's diff shows
@@ -680,7 +980,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-file-icons" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">File icons</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Show language-specific icons next to file names in the sidebar.
@@ -702,7 +1002,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-animations" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Animations</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How much motion the UI uses. "Accents only" keeps hover/focus transitions and small
@@ -724,7 +1024,7 @@
 			</section>
 		{:else if activeTab === 'behavior'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-arrow-nav" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Arrow-key navigation</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Choose what happens when you move the keyboard cursor onto a file with the arrow keys in
@@ -744,7 +1044,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-merged-branches" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Merged branches</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						What to do when a checked-out branch's PR is merged.
@@ -781,7 +1081,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-reviewing" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Reviewing</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How the review view tracks which files you've already looked at.
@@ -805,7 +1105,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-commits" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Commits</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How commits you make in Super Review are signed.
@@ -825,7 +1125,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-recent-repos" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Recent repositories</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						How many recently opened repositories the repository picker lists in its "Recent"
@@ -838,7 +1138,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-large-diffs" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Large diffs</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Diffs with more changed lines than this are hidden behind a "Load diff" button by
@@ -1013,7 +1313,7 @@
 			</section>
 		{:else if activeTab === 'app'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-window-size" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Window size</h3>
 					<p class="mt-1 text-xs text-muted-foreground">
 						The size the window opens at, in pixels. Takes effect the next time the app launches.
@@ -1055,7 +1355,7 @@
 					{/if}
 				</div>
 
-				<div class="flex items-start gap-2.5">
+				<div id="settings-start-maximized" class="flex scroll-mt-4 items-start gap-2.5">
 					<Checkbox id="start-maximized" bind:checked={draftStartMaximized} class="mt-0.5" />
 					<label for="start-maximized" class="grid cursor-pointer gap-0.5 leading-snug">
 						<span class="text-sm font-medium">Start maximized</span>
@@ -1067,7 +1367,7 @@
 			</section>
 		{:else if activeTab === 'editor'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-external-editor" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">External editor</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in editor" button.</p>
 
@@ -1100,7 +1400,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-terminal" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Terminal</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in terminal" button.</p>
 
@@ -1133,7 +1433,7 @@
 					</div>
 				</div>
 
-				<div>
+				<div id="settings-changesets" class="scroll-mt-4">
 					<h3 class="text-base font-semibold">Additional integrations</h3>
 					<p class="mt-1 text-xs text-muted-foreground">Optional features for specific repos.</p>
 
@@ -1163,7 +1463,7 @@
 			</section>
 		{:else if activeTab === 'hotkeys'}
 			<section class="space-y-6">
-				<div>
+				<div id="settings-hotkeys" class="scroll-mt-4">
 					<div class="flex items-center justify-between gap-2">
 						<h3 class="text-base font-semibold">Keyboard shortcuts</h3>
 						{#if !hotkeysAreDefault}
@@ -1209,7 +1509,9 @@
 				</div>
 			</section>
 		{:else if activeTab === 'stats'}
-			<UsageStatsPanel />
+			<div id="settings-stats" class="scroll-mt-4">
+				<UsageStatsPanel />
+			</div>
 		{/if}
 	{/snippet}
 
@@ -1218,3 +1520,21 @@
 		<Button size="sm" onclick={save} disabled={hasHotkeyConflict}>Save</Button>
 	{/snippet}
 </SettingsShell>
+
+<style>
+	/* Brief ring drawn around a settings section after it's jumped to from a
+	   search result, so the eye lands on the right place. One-shot; the box-shadow
+	   returns to transparent when the animation ends. */
+	:global(.settings-flash) {
+		animation: settings-flash-ring 1.2s ease-out;
+		border-radius: 0.5rem;
+	}
+	@keyframes settings-flash-ring {
+		0% {
+			box-shadow: 0 0 0 2px var(--color-primary);
+		}
+		100% {
+			box-shadow: 0 0 0 2px transparent;
+		}
+	}
+</style>
