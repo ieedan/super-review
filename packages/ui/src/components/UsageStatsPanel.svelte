@@ -104,15 +104,38 @@
 		void actions.setStatsWidgets(next);
 	}
 
-	// Drag-and-drop reordering of the Overview widgets: drop the dragged widget in
-	// front of the one it's dropped onto, then persist the new order.
+	// Drag-and-drop reordering of the Overview widgets. We track which widget is
+	// being dragged and, while hovering, which side of which widget it would land
+	// on (so an item can move to either side of any neighbor — the naive
+	// insert-before-target alone can't move an item one slot to the right). The
+	// `dropTarget` also drives the insertion bar so the drop point is visible.
 	let dragKey = $state<StatMetric | null>(null);
-	function dropOn(targetKey: StatMetric): void {
+	let dropTarget = $state<{ key: StatMetric; after: boolean } | null>(null);
+
+	// Which side of `targetKey` the pointer is on, from its horizontal midpoint.
+	function sideFromPointer(e: DragEvent): boolean {
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		return e.clientX > r.left + r.width / 2;
+	}
+
+	function dragOver(e: DragEvent, targetKey: StatMetric): void {
+		e.preventDefault();
+		if (!dragKey || targetKey === dragKey) {
+			dropTarget = null;
+			return;
+		}
+		dropTarget = { key: targetKey, after: sideFromPointer(e) };
+	}
+
+	function drop(): void {
 		const from = dragKey;
+		const target = dropTarget;
 		dragKey = null;
-		if (!from || from === targetKey) return;
+		dropTarget = null;
+		if (!from || !target || from === target.key) return;
 		const order = shownWidgets.filter((k) => k !== from);
-		order.splice(order.indexOf(targetKey), 0, from);
+		const idx = order.indexOf(target.key) + (target.after ? 1 : 0);
+		order.splice(idx, 0, from);
 		void actions.setStatsWidgets(order);
 	}
 
@@ -163,10 +186,6 @@
 
 	const calendarData = $derived<DayData[]>(
 		Object.entries(daily).map(([key, count]) => ({ date: parseDayKey(key), count }))
-	);
-
-	const since = $derived(
-		rangeStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 	);
 
 	// Tooltip text for one day: the date plus its count, shown via a native SVG
@@ -247,30 +266,44 @@
 			<div class="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
 				{#each widgets as w (w.key)}
 					{@const Icon = w.icon}
-					<button
-						type="button"
-						draggable="true"
-						class={[
-							'cursor-grab rounded-md border border-border bg-card/30 px-2.5 py-1.5 text-left transition-colors hover:bg-accent active:cursor-grabbing',
-							dragKey === w.key && 'opacity-40'
-						]}
-						onclick={() => (view = w.key)}
-						ondragstart={() => (dragKey = w.key)}
-						ondragend={() => (dragKey = null)}
-						ondragover={(e) => e.preventDefault()}
-						ondrop={(e) => {
-							e.preventDefault();
-							dropOn(w.key);
-						}}
-					>
-						<div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-							<Icon class="size-3.5" />
-							{w.short}
-						</div>
-						<div class="mt-0.5 text-lg leading-tight font-semibold tabular-nums">
-							{fmt(w.total)}
-						</div>
-					</button>
+					{@const showBar = dropTarget?.key === w.key}
+					<div class="relative">
+						<!-- Insertion bar: shows which side the dragged widget will drop on. -->
+						{#if showBar}
+							<span
+								class="absolute inset-y-1 z-10 w-0.5 rounded-full bg-primary {dropTarget?.after
+									? '-right-1'
+									: '-left-1'}"
+							></span>
+						{/if}
+						<button
+							type="button"
+							draggable="true"
+							class={[
+								'w-full cursor-grab rounded-md border border-border bg-card/30 px-2.5 py-1.5 text-left transition-colors hover:bg-accent active:cursor-grabbing',
+								dragKey === w.key && 'opacity-40'
+							]}
+							onclick={() => (view = w.key)}
+							ondragstart={() => (dragKey = w.key)}
+							ondragend={() => {
+								dragKey = null;
+								dropTarget = null;
+							}}
+							ondragover={(e) => dragOver(e, w.key)}
+							ondrop={(e) => {
+								e.preventDefault();
+								drop();
+							}}
+						>
+							<div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+								<Icon class="size-3.5" />
+								{w.short}
+							</div>
+							<div class="mt-0.5 text-lg leading-tight font-semibold tabular-nums">
+								{fmt(w.total)}
+							</div>
+						</button>
+					</div>
 				{/each}
 			</div>
 		{:else}
@@ -294,13 +327,10 @@
 
 	<!-- Heatmap -->
 	<div class="mt-3">
-		<div class="flex items-center justify-between">
-			<h3 class="flex items-center gap-1.5 text-xs font-medium">
-				<HeadIcon class="size-3.5 text-muted-foreground" />
-				{headLabel}
-			</h3>
-			<span class="text-[11px] text-muted-foreground">since {since}</span>
-		</div>
+		<h3 class="flex items-center gap-1.5 text-xs font-medium">
+			<HeadIcon class="size-3.5 text-muted-foreground" />
+			{headLabel}
+		</h3>
 		<div
 			class="mt-1.5 w-full overflow-hidden"
 			style="height: {chartHeight}px"
