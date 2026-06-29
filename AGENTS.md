@@ -126,18 +126,18 @@ existing codebase style is exempt unless you're asked to change it.)
 ### Document your work after every checkpoint
 
 After every checkpoint you reach in a coding task (a feature done, a bug fixed,
-a logical unit of work completed), create a super-review session locally so a
-human can review your changes as a guided tour.
+a logical unit of work completed), delegate to the
+**`super-review-tour-author`** subagent to create or update a super-review session locally. Do not author the tour
+yourself; the subagent inspects the diff, writes the tour, and runs the CLI.
 
-Run (use the same `--key` for the whole conversation so re-runs update the same
-session instead of creating duplicates):
+Launch it with the Task tool (or your harness's equivalent) and pass:
 
-```bash
-pnpx super-review session save --key "<your conversation/run id>" --tour '<tour json>'
-```
-
-For the tour JSON shape, callouts, and all flags, see
-[.agents/skills/super-review/document-session.md](.agents/skills/super-review/document-session.md).
+- **`--key`**: your conversation/run id. Use the same id for the whole
+  conversation so re-runs update the same session instead of creating duplicates.
+- **Checkpoint summary**: what you accomplished, the approach you took, and
+  anything a reviewer should scrutinize.
+- **Commit state**: whether changes are still uncommitted (default) or already
+  committed on a branch (the subagent should pass `--committed`).
 
 ### Use native context menus
 
