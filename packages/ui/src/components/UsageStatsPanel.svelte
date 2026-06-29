@@ -6,6 +6,7 @@
 	// sized to fill the panel width, so it reads as a clean rectangle. Every number
 	// is local; nothing is sent away.
 	import FileText from '@lucide/svelte/icons/file-text';
+	import FilePlus from '@lucide/svelte/icons/file-plus';
 	import Code from '@lucide/svelte/icons/code';
 	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
 	import GitBranch from '@lucide/svelte/icons/git-branch';
@@ -45,6 +46,8 @@
 			short: 'Commits',
 			icon: GitCommitHorizontal
 		},
+		{ key: 'filesCommitted', label: 'Files committed', short: 'Files committed', icon: FilePlus },
+		{ key: 'linesCommitted', label: 'Lines committed', short: 'Lines committed', icon: Code },
 		{ key: 'prsMerged', label: 'PRs merged', short: 'PRs', icon: GitPullRequest },
 		{ key: 'branchesCreated', label: 'Branches created', short: 'Branches', icon: GitBranch },
 		{ key: 'filesReviewed', label: 'Files reviewed', short: 'Files', icon: FileText },
@@ -53,10 +56,11 @@
 		{ key: 'commentsWritten', label: 'Comments written', short: 'Comments', icon: MessageSquare }
 	];
 
-	// Metrics that are discrete events (so they can be summed into one "activity"
-	// number); lines are a magnitude, not a count, so they sit out of the combined
-	// heatmap but still get their own overview widget.
-	const ACTIVITY_METRICS = METRICS.filter((m) => m.key !== 'locReviewed').map((m) => m.key);
+	// Metrics that are discrete events (summable into one "activity" number).
+	// Volume metrics (lines/files committed, lines reviewed) are magnitudes, not
+	// counts, so they sit out of the combined heatmap but keep their own widgets.
+	const VOLUME_METRICS = new Set<StatMetric>(['locReviewed', 'linesCommitted', 'filesCommitted']);
+	const ACTIVITY_METRICS = METRICS.filter((m) => !VOLUME_METRICS.has(m.key)).map((m) => m.key);
 
 	const isOverview = $derived(view === 'all');
 	const meta = $derived(METRICS.find((m) => m.key === view));

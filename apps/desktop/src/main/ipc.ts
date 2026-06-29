@@ -153,6 +153,7 @@ import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from '@su
 import { getSkillStatus, installSkill } from './skill-service.js';
 import { listTemplates } from '@super-review/core';
 import {
+	addStat,
 	bumpStat,
 	clearCollapsedFiles,
 	clearSeen,
@@ -891,7 +892,11 @@ export function registerIpc(): void {
 			const identity = gh.resolveCommitIdentity(repo.githubAccountId);
 			const signing = await gh.resolveCommitSigning(repo.githubAccountId);
 			const result = await commit(repo.path, message, files, identity, signing);
-			if (result.ok) bumpStat(repoId, 'commitsAuthored');
+			if (result.ok) {
+				bumpStat(repoId, 'commitsAuthored');
+				addStat(repoId, 'filesCommitted', result.filesCommitted ?? 0);
+				addStat(repoId, 'linesCommitted', result.linesCommitted ?? 0);
+			}
 			return result;
 		}
 	);

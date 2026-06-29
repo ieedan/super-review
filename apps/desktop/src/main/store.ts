@@ -191,6 +191,9 @@ function migrateStats(): boolean {
 			prsMerged: typeof legacy.prsMerged === 'number' ? legacy.prsMerged : 0,
 			branchesCreated: typeof legacy.branchesCreated === 'number' ? legacy.branchesCreated : 0,
 			commitsAuthored: typeof legacy.commitsAuthored === 'number' ? legacy.commitsAuthored : 0,
+			// Added after the flat-counter era, so legacy entries have no value here.
+			filesCommitted: 0,
+			linesCommitted: 0,
 			sessionsReviewed: migrated.reviewedSessionIds.length,
 			commentsWritten: typeof legacy.commentsWritten === 'number' ? legacy.commentsWritten : 0
 		};
@@ -676,6 +679,9 @@ function ensureStats(repoId: string): StoredRepoStats {
 		s = emptyStoredStats();
 		d.stats[repoId] = s;
 	}
+	// Backfill buckets for metrics added in later releases so a stored entry from
+	// before they existed can still be recorded into without a crash.
+	for (const m of STAT_METRICS) if (!s.daily[m]) s.daily[m] = {};
 	return s;
 }
 
@@ -732,4 +738,11 @@ export type StatCounter = 'prsMerged' | 'branchesCreated' | 'commitsAuthored' | 
 // successes).
 export function bumpStat(repoId: string, key: StatCounter): void {
 	recordToday(ensureStats(repoId), key, 1);
+}
+
+// Add `n` to a metric's today bucket (for volume metrics like files/lines
+// committed, where each event contributes more than one). No-op when n <= 0.
+export function addStat(repoId: string, key: StatMetric, n: number): void {
+	if (n <= 0) return;
+	recordToday(ensureStats(repoId), key, n);
 }

@@ -15,6 +15,8 @@ export type StatMetric =
 	| 'prsMerged'
 	| 'branchesCreated'
 	| 'commitsAuthored'
+	| 'filesCommitted'
+	| 'linesCommitted'
 	| 'sessionsReviewed'
 	| 'commentsWritten';
 
@@ -26,6 +28,8 @@ export const STAT_METRICS: readonly StatMetric[] = [
 	'prsMerged',
 	'branchesCreated',
 	'commitsAuthored',
+	'filesCommitted',
+	'linesCommitted',
 	'sessionsReviewed',
 	'commentsWritten'
 ];

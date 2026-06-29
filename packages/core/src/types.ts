@@ -1148,6 +1148,10 @@ export interface ManagedStash {
 export interface CommitResult {
 	ok: boolean;
 	error?: string;
+	// Stats for the commit that was just created (the new HEAD vs its parent),
+	// used to record "files/lines committed" usage stats. Present only on success.
+	filesCommitted?: number;
+	linesCommitted?: number;
 }
 
 // One file's contribution to a commit. For whole-file staging only `path`
