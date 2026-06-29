@@ -82,14 +82,13 @@
 	const nf = new Intl.NumberFormat();
 	const fmt = (n: number) => nf.format(n);
 
-	// --- Heatmap (last 6 months, mirrors CommitsEmptyState) -------------------
+	// --- Heatmap (last 6 months) ----------------------------------------------
 	const rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 	const rangeStart = new Date(now.getFullYear(), now.getMonth() - 5, now.getDate());
 
-	const CELL_SIZE = 14;
-	const LABEL_HEIGHT = 22;
+	const CELL_SIZE = 11;
 	const calWidth = (timeWeek.count(rangeStart, rangeEnd) + 1) * CELL_SIZE;
-	const chartHeight = 7 * CELL_SIZE + LABEL_HEIGHT;
+	const chartHeight = 7 * CELL_SIZE;
 
 	let containerWidth = $state(0);
 	const centerOffset = $derived(Math.max(0, (containerWidth - calWidth) / 2));
@@ -105,6 +104,17 @@
 		Object.entries(daily).map(([key, count]) => ({ date: parseDayKey(key), count }))
 	);
 
+	// Tooltip text for one day: the date plus its count, shown via a native SVG
+	// <title> so we don't mount a popover per cell (there are ~180 of them).
+	function cellTitle(date: Date, count: number): string {
+		const when = date.toLocaleDateString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			year: 'numeric'
+		});
+		return `${when}: ${fmt(count)} ${meta.label.toLowerCase()}`;
+	}
+
 	// Shade relative to the metric's busiest day so both small counts (PRs) and
 	// large ones (lines) read well, rather than fixed thresholds tuned for commits.
 	function cellFill(count: number): string {
@@ -117,7 +127,7 @@
 	}
 </script>
 
-<div class="w-full">
+<div class="mx-auto w-full max-w-xl">
 	<!-- Metric tabs + scope toggle -->
 	<div class="flex items-center justify-between gap-2">
 		<Tabs.Root value={selectedMetric} onValueChange={(v) => (selectedMetric = v as StatMetric)}>
@@ -168,33 +178,33 @@
 	</div>
 
 	<!-- KPI cards -->
-	<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+	<div class="mt-3 grid grid-cols-4 gap-1.5">
 		{#each KPIS as kpi (kpi.label)}
-			<div class="rounded-lg border border-border bg-card/30 p-3">
-				<div class="text-2xl font-semibold tabular-nums">{fmt(kpi.value)}</div>
-				<div class="mt-0.5 text-xs text-muted-foreground">{kpi.label}</div>
+			<div class="rounded-md border border-border bg-card/30 px-2.5 py-1.5">
+				<div class="text-lg leading-tight font-semibold tabular-nums">{fmt(kpi.value)}</div>
+				<div class="text-[11px] text-muted-foreground">{kpi.label}</div>
 			</div>
 		{/each}
 	</div>
 
 	<!-- Heatmap -->
-	<div class="mt-4">
+	<div class="mt-3">
 		<div class="flex items-center justify-between">
-			<h3 class="flex items-center gap-1.5 text-sm font-medium">
-				<MetaIcon class="size-4 text-muted-foreground" />
+			<h3 class="flex items-center gap-1.5 text-xs font-medium">
+				<MetaIcon class="size-3.5 text-muted-foreground" />
 				{meta.label}
 			</h3>
-			<span class="text-xs text-muted-foreground">last 6 months</span>
+			<span class="text-[11px] text-muted-foreground">last 6 months</span>
 		</div>
 		<div
-			class="mt-2 w-full overflow-hidden"
+			class="mt-1.5 w-full overflow-hidden"
 			style="height: {chartHeight}px"
 			bind:clientWidth={containerWidth}
 		>
-			<Chart data={calendarData} x={(d: DayData) => d.date} padding={{ top: LABEL_HEIGHT }}>
+			<Chart data={calendarData} x={(d: DayData) => d.date}>
 				<Svg>
 					<g transform="translate({centerOffset}, 0)">
-						<Calendar start={rangeStart} end={rangeEnd} monthLabel cellSize={CELL_SIZE}>
+						<Calendar start={rangeStart} end={rangeEnd} cellSize={CELL_SIZE}>
 							{#snippet children({ cells, cellSize })}
 								{#each cells as cell (cell.x + '-' + cell.y)}
 									<rect
@@ -204,7 +214,9 @@
 										height={Math.max(0, cellSize[1] - 2)}
 										rx="2"
 										style="fill: {cellFill(cell.data?.count ?? 0)}"
-									/>
+									>
+										<title>{cellTitle(cell.data.date, cell.data?.count ?? 0)}</title>
+									</rect>
 								{/each}
 							{/snippet}
 						</Calendar>
@@ -213,7 +225,7 @@
 			</Chart>
 		</div>
 		{#if allTime === 0}
-			<p class="mt-1 text-center text-xs text-muted-foreground">
+			<p class="mt-1 text-center text-[11px] text-muted-foreground">
 				No {meta.label.toLowerCase()} recorded yet. Your activity will show up here as you review.
 			</p>
 		{/if}
