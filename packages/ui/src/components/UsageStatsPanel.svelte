@@ -12,7 +12,6 @@
 	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import BookOpen from '@lucide/svelte/icons/book-open';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
-	import Activity from '@lucide/svelte/icons/activity';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import type { LucideIcon } from '@lucide/svelte';
@@ -61,7 +60,6 @@
 
 	const isOverview = $derived(view === 'all');
 	const meta = $derived(METRICS.find((m) => m.key === view));
-	const HeadIcon = $derived(meta?.icon ?? Activity);
 	const headLabel = $derived(isOverview ? 'Activity' : (meta?.label ?? ''));
 	const unit = $derived(isOverview ? 'actions' : (meta?.label.toLowerCase() ?? ''));
 
@@ -188,15 +186,33 @@
 		Object.entries(daily).map(([key, count]) => ({ date: parseDayKey(key), count }))
 	);
 
-	// Tooltip text for one day: the date plus its count, shown via a native SVG
-	// <title> so we don't mount a popover per cell.
-	function cellTitle(date: Date, count: number): string {
+	// A description of what happened on one day. For a single metric it's that
+	// metric's count; for the Overview it breaks down every metric with activity
+	// that day, so the heatmap is legible without a per-metric label.
+	function dayTooltip(date: Date): string {
+		const key = dayKey(date);
 		const when = date.toLocaleDateString(undefined, {
 			month: 'short',
 			day: 'numeric',
 			year: 'numeric'
 		});
-		return `${when}: ${fmt(count)} ${unit}`;
+		if (!isOverview) {
+			return `${when}: ${fmt(source.daily[view as StatMetric]?.[key] ?? 0)} ${unit}`;
+		}
+		const parts = METRICS.map((m) => ({ m, n: source.daily[m.key]?.[key] ?? 0 }))
+			.filter((x) => x.n > 0)
+			.map((x) => `${fmt(x.n)} ${x.m.short.toLowerCase()}`);
+		return parts.length ? `${when}: ${parts.join(', ')}` : `${when}: no activity`;
+	}
+
+	// A single shared tooltip that follows the hovered cell (one element, not one
+	// popover per cell). Positioned relative to the heatmap container.
+	let heatmapEl = $state<HTMLDivElement | null>(null);
+	let tip = $state<{ x: number; y: number; text: string } | null>(null);
+	function showTip(e: PointerEvent, date: Date): void {
+		if (!heatmapEl) return;
+		const r = heatmapEl.getBoundingClientRect();
+		tip = { x: e.clientX - r.left, y: e.clientY - r.top, text: dayTooltip(date) };
 	}
 
 	// Shade relative to the busiest day so both small counts (PRs) and large ones
@@ -327,14 +343,13 @@
 
 	<!-- Heatmap -->
 	<div class="mt-3">
-		<h3 class="flex items-center gap-1.5 text-xs font-medium">
-			<HeadIcon class="size-3.5 text-muted-foreground" />
-			{headLabel}
-		</h3>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="mt-1.5 w-full overflow-hidden"
+			bind:this={heatmapEl}
+			class="relative w-full overflow-hidden"
 			style="height: {chartHeight}px"
 			bind:clientWidth={containerWidth}
+			onpointerleave={() => (tip = null)}
 		>
 			<Chart data={calendarData} x={(d: DayData) => d.date}>
 				<Svg>
@@ -342,6 +357,7 @@
 						<Calendar start={rangeStart} end={rangeEnd} {cellSize}>
 							{#snippet children({ cells, cellSize })}
 								{#each cells as cell (cell.x + '-' + cell.y)}
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<rect
 										x={cell.x + 1}
 										y={cell.y + 1}
@@ -349,15 +365,23 @@
 										height={Math.max(0, cellSize[1] - 2)}
 										rx="2"
 										style="fill: {cellFill(cell.data?.count ?? 0)}"
-									>
-										<title>{cellTitle(cell.data.date, cell.data?.count ?? 0)}</title>
-									</rect>
+										onpointermove={(e) => showTip(e, cell.data.date)}
+									></rect>
 								{/each}
 							{/snippet}
 						</Calendar>
 					</g>
 				</Svg>
 			</Chart>
+
+			{#if tip}
+				<div
+					class="pointer-events-none absolute z-20 max-w-[90%] -translate-x-1/2 -translate-y-full truncate rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md"
+					style="left: {tip.x}px; top: {tip.y - 6}px"
+				>
+					{tip.text}
+				</div>
+			{/if}
 		</div>
 		{#if allTime === 0}
 			<p class="mt-1 text-center text-[11px] text-muted-foreground">
