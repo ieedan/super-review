@@ -415,8 +415,10 @@
 						{#if target.kind === 'name'}
 							<!-- Package card: description, latest, license, links. -->
 							{#if renderedDescription}
-								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-								<div class="markdown-body text-sm text-foreground/90">{@html renderedDescription}</div>
+								<div class="markdown-body text-sm text-foreground/90">
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+									{@html renderedDescription}
+								</div>
 							{/if}
 							{@const dep = deprecationFor(info, null)}
 							{#if dep}

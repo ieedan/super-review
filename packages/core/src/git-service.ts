@@ -10,6 +10,7 @@ import type {
 	ChangedFile,
 	CommitFileSelection,
 	CommitInfo,
+	CommitResult,
 	CommitSigning,
 	CreateRepoOptions,
 	DiffContext,
@@ -2411,11 +2412,6 @@ export async function abortStashPop(repoPath: string): Promise<void> {
 	await git.raw(['reset', '--hard', 'HEAD']).catch(() => {});
 }
 
-export interface CommitResult {
-	ok: boolean;
-	error?: string;
-}
-
 // Whether a thrown git error is the "pathspec '<x>' did not match any files"
 // failure — git's response when a path is absent from both the worktree and the
 // index (e.g. a rename's old side once the move is staged as a unit).
@@ -2540,16 +2536,41 @@ export async function commit(
 			await runSignedOrFallback(signing, (cfg, sign) =>
 				git.raw([...cfg, ...identityArgs, 'commit', ...sign, '-m', trimmed, '--', ...paths])
 			);
-			return { ok: true };
+			return { ok: true, ...(await headCommitStats(git)) };
 		}
 
 		await commitPartial(repoPath, trimmed, files, identity, signing);
-		return { ok: true };
+		return { ok: true, ...(await headCommitStats(git)) };
 	} catch (err) {
 		return {
 			ok: false,
 			error: err instanceof Error ? err.message : String(err)
 		};
+	}
+}
+
+// File + line counts for the commit now at HEAD (vs its parent, or the empty
+// tree for a root commit). Drives the "files/lines committed" usage stats.
+// Best-effort: any failure yields zeros rather than failing the commit.
+async function headCommitStats(
+	git: SimpleGit
+): Promise<{ filesCommitted: number; linesCommitted: number }> {
+	try {
+		const hasParent = await git
+			.raw(['rev-parse', '--verify', '--quiet', 'HEAD^'])
+			.then(() => true)
+			.catch(() => false);
+		const range = hasParent ? ['HEAD^', 'HEAD'] : [EMPTY_TREE, 'HEAD'];
+		const map = parseNumstat(await git.raw(['diff', '--numstat', ...range]));
+		let filesCommitted = 0;
+		let linesCommitted = 0;
+		for (const row of map.values()) {
+			filesCommitted++;
+			linesCommitted += row.additions + row.deletions;
+		}
+		return { filesCommitted, linesCommitted };
+	} catch {
+		return { filesCommitted: 0, linesCommitted: 0 };
 	}
 }
 

@@ -13,7 +13,8 @@
 		"./diff-context": "./src/diff-context.ts",
 		"./diff-defer": "./src/diff-defer.ts",
 		"./diff-staging": "./src/diff-staging.ts",
-		"./session-manifest": "./src/session-manifest.ts"
+		"./session-manifest": "./src/session-manifest.ts",
+		"./usage-stats": "./src/usage-stats.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit"

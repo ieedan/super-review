@@ -34,6 +34,7 @@
 		"picomatch": "^4.0.4",
 		"runed": "^0.37.1",
 		"svelte-tiny-virtual-list": "^3.0.1",
+		"svelte-toolbelt": "^0.10.6",
 		"tailwind-merge": "^2.6.0",
 		"tailwind-variants": "^3.2.2"
 	},

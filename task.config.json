@@ -5,8 +5,12 @@
 			"tasks": {
 				"check": {
 					"tasks": {
+						"format": {
+							"command": "pnpm format"
+						},
 						"lint": {
-							"command": "pnpm lint"
+							"command": "pnpm lint",
+							"dependsOn": ["ci:check:format"]
 						},
 						"typecheck": {
 							"command": "pnpm typecheck",

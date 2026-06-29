@@ -110,6 +110,25 @@
 			e.preventDefault();
 			actions.focusSidebarSearch();
 		},
+		// Open the header repository switcher. The default (Shift+R) has no
+		// Cmd/Ctrl/Alt, so skip it while typing in an editable target to avoid
+		// hijacking a capital R in the commit/comment composers.
+		openRepoPicker: (e) => {
+			const hk = app.hotkeys.openRepoPicker;
+			if (!hk.mod && !hk.alt && isEditableTarget(e.target)) return;
+			e.preventDefault();
+			actions.toggleRepoPicker();
+		},
+		// Open the header branch / pull request picker. Same editable-target guard
+		// as the repo picker, and a no-op until a repo is open (the trigger is
+		// disabled then anyway).
+		openBranchPicker: (e) => {
+			const hk = app.hotkeys.openBranchPicker;
+			if (!hk.mod && !hk.alt && isEditableTarget(e.target)) return;
+			if (!app.activeRepo) return;
+			e.preventDefault();
+			actions.toggleBranchPicker();
+		},
 		// Collapse/expand the sidebar by driving the pane handle directly, keeping
 		// the layout the single source of truth (onCollapse/onExpand sync back).
 		toggleSidebar: (e) => {

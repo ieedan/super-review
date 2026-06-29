@@ -17,6 +17,8 @@ export interface Hotkey {
 export const HOTKEY_ACTIONS = [
 	'searchFilesPalette',
 	'searchFilesSidebar',
+	'openRepoPicker',
+	'openBranchPicker',
 	'toggleSidebar',
 	'toggleCommentsSidebar',
 	'openConversationSidebar',
@@ -36,6 +38,14 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 	searchFilesSidebar: {
 		label: 'Search files (sidebar)',
 		description: 'Jump to the file-search box in the sidebar.'
+	},
+	openRepoPicker: {
+		label: 'Open repository picker',
+		description: 'Open the repository switcher in the header.'
+	},
+	openBranchPicker: {
+		label: 'Open branch picker',
+		description: 'Open the branch / pull request picker in the header.'
 	},
 	toggleSidebar: {
 		label: 'Toggle sidebar',
@@ -62,6 +72,8 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 export const DEFAULT_HOTKEYS: Hotkeys = {
 	searchFilesPalette: { key: 'p', mod: true },
 	searchFilesSidebar: { key: '/' },
+	openRepoPicker: { key: 'r', shift: true },
+	openBranchPicker: { key: 'b', shift: true },
 	toggleSidebar: { key: 'b', mod: true },
 	toggleCommentsSidebar: { key: 'l', mod: true },
 	openConversationSidebar: { key: 'l', mod: true, shift: true },

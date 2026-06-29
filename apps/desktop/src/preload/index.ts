@@ -28,6 +28,7 @@ import type {
 	FeedbackResult,
 	FileContextMenuAction,
 	HeaderContextMenuResult,
+	EmptyViewContextMenuResult,
 	FileHeaderContextMenuResult,
 	HelpMenuAction,
 	GithubAccount,
@@ -55,6 +56,7 @@ import type {
 	RepositoryMenuAction,
 	RepositoryMenuState,
 	RepoInfo,
+	RepoUsageStats,
 	Session,
 	SessionSummary,
 	SkillStatus,
@@ -404,6 +406,14 @@ const api: PreloadAPI = {
 		setCommitDraft: (repoId, draft) =>
 			ipcRenderer.invoke('state:setCommitDraft', repoId, draft) as Promise<void>
 	},
+	stats: {
+		get: (repoId) => ipcRenderer.invoke('stats:get', repoId) as Promise<RepoUsageStats>,
+		getAll: () => ipcRenderer.invoke('stats:getAll') as Promise<Record<string, RepoUsageStats>>,
+		recordFileReviewed: (repoId, sig, loc) =>
+			ipcRenderer.invoke('stats:recordFileReviewed', repoId, sig, loc) as Promise<void>,
+		recordSessionReviewed: (repoId, sessionId) =>
+			ipcRenderer.invoke('stats:recordSessionReviewed', repoId, sessionId) as Promise<void>
+	},
 	icons: {
 		resolveCustomIcon: (source) =>
 			ipcRenderer.invoke('icons:resolveCustomIcon', source) as Promise<string | null>,
@@ -505,6 +515,11 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('menu:showCommitContextMenu') as Promise<CommitContextMenuAction | null>,
 		showHeaderContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
+		showEmptyViewContextMenu: (params) =>
+			ipcRenderer.invoke(
+				'menu:showEmptyViewContextMenu',
+				params
+			) as Promise<EmptyViewContextMenuResult>,
 		showTabsContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
 		showSidebarControlsContextMenu: (params) =>

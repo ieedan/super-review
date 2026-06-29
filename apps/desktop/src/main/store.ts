@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import {
+	DEFAULT_EMPTY_VIEW_ITEMS,
 	DEFAULT_FILE_HEADER_ITEMS,
 	DEFAULT_HEADER_ITEMS,
 	DEFAULT_SIDEBAR_CONTROLS,
@@ -21,6 +22,18 @@ export interface PRBranchLink {
 }
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
 import { DEFAULT_HOTKEYS } from '@shared/hotkeys.js';
+import {
+	addToDay,
+	dayKey,
+	DEFAULT_STATS_WIDGETS,
+	emptyStats,
+	emptyStoredStats,
+	projectStats,
+	STAT_METRICS,
+	type RepoUsageStats,
+	type StatMetric,
+	type StoredRepoStats
+} from '@super-review/core/usage-stats';
 
 export interface StoredGithubAccount extends GithubAccount {
 	token: string;
@@ -73,6 +86,8 @@ interface Schema {
 	activeGithubAccountId: string | null;
 	// Legacy single-token field — migrated lazily, see github-service.
 	githubToken: string | null;
+	// Local usage statistics keyed by repoId. Purely on-disk; never sent anywhere.
+	stats: Record<string, StoredRepoStats>;
 }
 
 const defaults: Schema = {
@@ -109,7 +124,9 @@ const defaults: Schema = {
 		signCommits: true,
 		headerItems: DEFAULT_HEADER_ITEMS,
 		fileHeaderItems: DEFAULT_FILE_HEADER_ITEMS,
-		sidebarControls: DEFAULT_SIDEBAR_CONTROLS
+		sidebarControls: DEFAULT_SIDEBAR_CONTROLS,
+		statsWidgets: [...DEFAULT_STATS_WIDGETS],
+		emptyViewItems: DEFAULT_EMPTY_VIEW_ITEMS
 	},
 	seen: {},
 	seenInherited: {},
@@ -120,7 +137,8 @@ const defaults: Schema = {
 	prBranches: {},
 	githubAccounts: {},
 	activeGithubAccountId: null,
-	githubToken: null
+	githubToken: null,
+	stats: {}
 };
 
 export const store = new Store<Schema>({ defaults, name: 'super-review' });
@@ -138,8 +156,52 @@ function db(): Schema {
 	if (!cache) {
 		cache = { ...defaults, ...(store.store as Partial<Schema>) };
 		if (migrateBranchReviewKeys()) flush();
+		if (migrateStats()) flush();
 	}
 	return cache;
+}
+
+// One-time migration: usage stats used to be flat running totals (filesReviewed
+// derived from a sig set, plus plain counters). They're now per-day buckets so
+// the UI can draw a heatmap. Fold any legacy entry into the new shape, seeding
+// its old totals onto its first-used day (the only date we have for them) so the
+// numbers a user already accumulated aren't lost. Returns whether anything moved.
+function migrateStats(): boolean {
+	if (!cache) return false;
+	let changed = false;
+	for (const [id, raw] of Object.entries(cache.stats)) {
+		const entry = raw as Partial<StoredRepoStats> & Record<string, unknown>;
+		if (entry.daily) continue; // already the new shape
+		const legacy = entry as Record<string, unknown>;
+		const firstUsedAt = typeof legacy.firstUsedAt === 'number' ? legacy.firstUsedAt : null;
+		const seedDay = dayKey(new Date(firstUsedAt ?? Date.now()));
+		const migrated = emptyStoredStats();
+		migrated.firstUsedAt = firstUsedAt;
+		migrated.reviewedSigs = Array.isArray(legacy.reviewedSigs)
+			? (legacy.reviewedSigs as string[])
+			: [];
+		migrated.reviewedSessionIds = Array.isArray(legacy.reviewedSessionIds)
+			? (legacy.reviewedSessionIds as string[])
+			: [];
+		// Old totals: filesReviewed/sessionsReviewed came from the set sizes, the
+		// rest were plain numeric fields. Seed each onto the first-used day.
+		const seed: Record<StatMetric, number> = {
+			filesReviewed: migrated.reviewedSigs.length,
+			locReviewed: typeof legacy.locReviewed === 'number' ? legacy.locReviewed : 0,
+			prsMerged: typeof legacy.prsMerged === 'number' ? legacy.prsMerged : 0,
+			branchesCreated: typeof legacy.branchesCreated === 'number' ? legacy.branchesCreated : 0,
+			commitsAuthored: typeof legacy.commitsAuthored === 'number' ? legacy.commitsAuthored : 0,
+			// Added after the flat-counter era, so legacy entries have no value here.
+			filesCommitted: 0,
+			linesCommitted: 0,
+			sessionsReviewed: migrated.reviewedSessionIds.length,
+			commentsWritten: typeof legacy.commentsWritten === 'number' ? legacy.commentsWritten : 0
+		};
+		for (const m of STAT_METRICS) if (seed[m] > 0) addToDay(migrated.daily[m], seedDay, seed[m]);
+		cache.stats[id] = migrated;
+		changed = true;
+	}
+	return changed;
 }
 
 // One-time migration: review state (seen / collapsed files) used to be keyed by
@@ -230,6 +292,7 @@ export function removeRepo(id: string): void {
 	delete d.branchBases[id];
 	delete d.commitDrafts[id];
 	delete d.prBranches[id];
+	delete d.stats[id];
 	if (d.prefs.activeRepoId === id) d.prefs = { ...d.prefs, activeRepoId: undefined };
 	flush();
 }
@@ -335,6 +398,8 @@ export function getPrefs(): UserPrefs {
 	merged.fileHeaderItems = { ...defaults.prefs.fileHeaderItems, ...merged.fileHeaderItems };
 	// And for the sidebar controls-row buttons.
 	merged.sidebarControls = { ...defaults.prefs.sidebarControls, ...merged.sidebarControls };
+	// And for the empty view's blocks.
+	merged.emptyViewItems = { ...defaults.prefs.emptyViewItems, ...merged.emptyViewItems };
 	return merged;
 }
 
@@ -599,4 +664,85 @@ export function removeGithubAccount(id: string): void {
 		if (repo.githubAccountId === id) delete repo.githubAccountId;
 	}
 	flush();
+}
+
+// --- Local usage statistics --------------------------------------------------
+// All on-disk, never sent anywhere. Activity is bucketed per day per metric so
+// the UI can draw a contribution heatmap and time-windowed KPIs. Deduped metrics
+// (files by content sig, sessions by id) keep their backing sets so re-recording
+// the same key is a no-op; the rest are bumped from their own IPC handlers.
+
+function ensureStats(repoId: string): StoredRepoStats {
+	const d = db();
+	let s = d.stats[repoId];
+	if (!s) {
+		s = emptyStoredStats();
+		d.stats[repoId] = s;
+	}
+	// Backfill buckets for metrics added in later releases so a stored entry from
+	// before they existed can still be recorded into without a crash.
+	for (const m of STAT_METRICS) if (!s.daily[m]) s.daily[m] = {};
+	return s;
+}
+
+// Stamp the repo's "active since" the first time it records any activity.
+function markUsed(s: StoredRepoStats): void {
+	if (s.firstUsedAt === null) s.firstUsedAt = Date.now();
+}
+
+// Add `n` to a metric's bucket for today (the machine's local day).
+function recordToday(s: StoredRepoStats, metric: StatMetric, n: number): void {
+	addToDay(s.daily[metric], dayKey(new Date()), n);
+	markUsed(s);
+	flush();
+}
+
+export function getStats(repoId: string): RepoUsageStats {
+	const s = db().stats[repoId];
+	return s ? projectStats(s) : emptyStats();
+}
+
+export function getAllStats(): Record<string, RepoUsageStats> {
+	const out: Record<string, RepoUsageStats> = {};
+	for (const [id, s] of Object.entries(db().stats)) out[id] = projectStats(s);
+	return out;
+}
+
+// Record a file marked seen, deduped by content signature. Only the first time a
+// given content is seen does it count toward filesReviewed / locReviewed.
+export function recordFileReviewed(repoId: string, sig: string, loc: number): void {
+	if (!sig) return;
+	const s = ensureStats(repoId);
+	if (s.reviewedSigs.includes(sig)) return;
+	s.reviewedSigs.push(sig);
+	const today = dayKey(new Date());
+	addToDay(s.daily.filesReviewed, today, 1);
+	addToDay(s.daily.locReviewed, today, Math.max(0, loc));
+	markUsed(s);
+	flush();
+}
+
+// Record a guided-tour session opened, deduped by session id.
+export function recordSessionReviewed(repoId: string, sessionId: string): void {
+	if (!sessionId) return;
+	const s = ensureStats(repoId);
+	if (s.reviewedSessionIds.includes(sessionId)) return;
+	s.reviewedSessionIds.push(sessionId);
+	recordToday(s, 'sessionsReviewed', 1);
+}
+
+export type StatCounter = 'prsMerged' | 'branchesCreated' | 'commitsAuthored' | 'commentsWritten';
+
+// Increment one of the plain metrics by one for today. Called from the
+// main-process handler that performs the action (so it only counts real
+// successes).
+export function bumpStat(repoId: string, key: StatCounter): void {
+	recordToday(ensureStats(repoId), key, 1);
+}
+
+// Add `n` to a metric's today bucket (for volume metrics like files/lines
+// committed, where each event contributes more than one). No-op when n <= 0.
+export function addStat(repoId: string, key: StatMetric, n: number): void {
+	if (n <= 0) return;
+	recordToday(ensureStats(repoId), key, n);
 }

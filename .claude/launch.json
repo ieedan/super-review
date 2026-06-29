@@ -7,6 +7,12 @@
 			"runtimeArgs": ["--filter", "@super-review/docs", "dev"],
 			"port": 5273,
 			"autoPort": true
+		},
+		{
+			"name": "storybook",
+			"runtimeExecutable": "pnpm",
+			"runtimeArgs": ["storybook"],
+			"port": 6006
 		}
 	]
 }

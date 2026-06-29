@@ -1,4 +1,10 @@
 import type { Hotkeys } from './hotkeys.js';
+import type { RepoUsageStats, StatMetric } from './usage-stats.js';
+
+// Re-exported so renderer/main code can reach the usage-stats types through the
+// same `@super-review/core/types` (and `@shared/types`) surface as everything
+// else. The pure helpers live in the `./usage-stats` subpath.
+export type { RepoUsageStats, StatMetric } from './usage-stats.js';
 
 export interface RepoInfo {
 	id: string;
@@ -816,6 +822,26 @@ export type HeaderContextMenuResult = {
 	checked: boolean;
 } | null;
 
+// A single toggle in the empty view's right-click native context menu. `key` is
+// the EmptyViewItemVisibility field it controls; `checked` is its current state.
+export interface EmptyViewContextMenuItem {
+	key: keyof EmptyViewItemVisibility;
+	label: string;
+	checked: boolean;
+}
+
+// Params for the empty view's native context menu: the toggle items to show.
+export interface EmptyViewContextMenuParams {
+	items: EmptyViewContextMenuItem[];
+}
+
+// What the empty view context menu returns: the toggled item's key and its new
+// checked state. `null` (from the IPC) means the menu was dismissed.
+export type EmptyViewContextMenuResult = {
+	key: keyof EmptyViewItemVisibility;
+	checked: boolean;
+} | null;
+
 // A single toggle in a diff file header's "Show in file header" native context
 // menu. `key` is the FileHeaderItemVisibility field it controls; `checked` is
 // its current state.
@@ -1122,6 +1148,10 @@ export interface ManagedStash {
 export interface CommitResult {
 	ok: boolean;
 	error?: string;
+	// Stats for the commit that was just created (the new HEAD vs its parent),
+	// used to record "files/lines committed" usage stats. Present only on success.
+	filesCommitted?: number;
+	linesCommitted?: number;
 }
 
 // One file's contribution to a commit. For whole-file staging only `path`
@@ -1259,6 +1289,27 @@ export const DEFAULT_HEADER_ITEMS: HeaderItemVisibility = {
 	changeset: true,
 	editor: true,
 	terminal: true
+};
+
+// Which blocks the "No local changes" empty view shows. Each is toggled from the
+// empty view's right-click native context menu; missing keys fall back to
+// DEFAULT_EMPTY_VIEW_ITEMS so older prefs (and future additions) default visible.
+export interface EmptyViewItemVisibility {
+	// The "Open in <editor>" action card.
+	editor: boolean;
+	// The "Show in Finder/Explorer/File Manager" action card.
+	reveal: boolean;
+	// The "View on GitHub" action card.
+	github: boolean;
+	// The local usage-stats dashboard.
+	stats: boolean;
+}
+
+export const DEFAULT_EMPTY_VIEW_ITEMS: EmptyViewItemVisibility = {
+	editor: true,
+	reveal: true,
+	github: true,
+	stats: true
 };
 
 // Which of the sidebar's optional tab-strip-row items are shown. The Unstaged
@@ -1446,6 +1497,12 @@ export interface UserPrefs {
 	// header's right-click menu. Missing keys fall back to DEFAULT_FILE_HEADER_ITEMS
 	// so older persisted prefs (and any future additions) default to visible.
 	fileHeaderItems: FileHeaderItemVisibility;
+	// Which metric widgets the stats Overview shows, in order. Customized from the
+	// Overview's widget picker. Falls back to DEFAULT_STATS_WIDGETS when unset.
+	statsWidgets?: StatMetric[];
+	// Which blocks the "No local changes" empty view shows. Toggled from its
+	// right-click menu. Missing keys fall back to DEFAULT_EMPTY_VIEW_ITEMS.
+	emptyViewItems: EmptyViewItemVisibility;
 }
 
 // A user-registered file icon: every file whose path matches `pattern` is
@@ -1937,6 +1994,22 @@ export interface PreloadAPI {
 		getCommitDraft(repoId: string): Promise<CommitDraft>;
 		setCommitDraft(repoId: string, draft: CommitDraft): Promise<void>;
 	};
+	// Local usage statistics. All counters are stored on disk per repo; nothing is
+	// sent anywhere. Counts that need de-duplication (files by content, sessions by
+	// id) are recorded with the dedup key so re-marking the same thing never
+	// inflates the totals; the rest are bumped server-side from their own handlers.
+	stats: {
+		// The display-ready stats for one repo (zeroed when none recorded yet).
+		get(repoId: string): Promise<RepoUsageStats>;
+		// Every repo's stats keyed by repoId, for the aggregate roll-up + breakdown.
+		getAll(): Promise<Record<string, RepoUsageStats>>;
+		// Record a file marked seen: `sig` is its content signature (deduped against
+		// every sig ever reviewed in the repo) and `loc` its additions + deletions,
+		// added to the LOC total only the first time that content is seen.
+		recordFileReviewed(repoId: string, sig: string, loc: number): Promise<void>;
+		// Record a guided-tour session opened, deduped by session id.
+		recordSessionReviewed(repoId: string, sessionId: string): Promise<void>;
+	};
 	icons: {
 		// Resolve a custom-icon source to an `<img>`-ready src. `https:`/`data:`
 		// sources pass through unchanged; an absolute local path is read and
@@ -2067,6 +2140,11 @@ export interface PreloadAPI {
 		// Pop up the header's "Show in header" customization context menu. Resolves
 		// to the toggled item and its new state, or null when dismissed.
 		showHeaderContextMenu(params: HeaderContextMenuParams): Promise<HeaderContextMenuResult>;
+		// Pop up the empty view's "Show on this screen" customization context menu.
+		// Resolves to the toggled item and its new state, or null when dismissed.
+		showEmptyViewContextMenu(
+			params: EmptyViewContextMenuParams
+		): Promise<EmptyViewContextMenuResult>;
 		// Pop up the sidebar tab strip's "Show tab" customization context menu.
 		// Resolves to the toggled tab and its new state, or null when dismissed.
 		showTabsContextMenu(params: TabsContextMenuParams): Promise<TabsContextMenuResult>;
