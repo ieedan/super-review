@@ -296,8 +296,8 @@
 							}}
 						>
 							<div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-								<Icon class="size-3.5" />
-								{w.short}
+								<Icon class="size-3.5 shrink-0" />
+								<span class="truncate">{w.label}</span>
 							</div>
 							<div class="mt-0.5 text-lg leading-tight font-semibold tabular-nums">
 								{fmt(w.total)}
