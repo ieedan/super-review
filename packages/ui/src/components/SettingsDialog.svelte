@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import AppWindow from '@lucide/svelte/icons/app-window';
 	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
+	import Bot from '@lucide/svelte/icons/bot';
 	import Check from '@lucide/svelte/icons/check';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Code2 from '@lucide/svelte/icons/code-2';
@@ -40,6 +41,7 @@
 	import SettingOptionCard from './SettingOptionCard.svelte';
 	import ThemePreview from './ThemePreview.svelte';
 	import UsageStatsPanel from './UsageStatsPanel.svelte';
+	import AgentsSettingsPanel from './AgentsSettingsPanel.svelte';
 	import {
 		actions,
 		app,
@@ -88,6 +90,7 @@
 		{ id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
 		{ id: 'app', label: 'App', icon: AppWindow },
 		{ id: 'editor', label: 'Integrations', icon: Code2 },
+		{ id: 'agents', label: 'Agents', icon: Bot },
 		{ id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
 		{ id: 'stats', label: 'Stats', icon: BarChart3 }
 	];
@@ -1208,6 +1211,8 @@
 					</ul>
 				</div>
 			</section>
+		{:else if activeTab === 'agents'}
+			<AgentsSettingsPanel />
 		{:else if activeTab === 'stats'}
 			<UsageStatsPanel />
 		{/if}

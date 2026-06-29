@@ -9,6 +9,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
+import { SUBAGENT_NAME } from '@super-review/core/ai-config-paths';
 
 // Where the skill lives inside a repo. Agents discover a skill by the presence
 // of `<dir>/SKILL.md`, so this path is both what we check for (detection) and
@@ -29,6 +30,19 @@ export function bundledSkillDir(): string {
 		: path.join(app.getAppPath(), '..', '..', SUPER_REVIEW_SKILL_DIR);
 }
 
+// Absolute path to the bundled tour-author subagent markdown we copy from on
+// install. Mirrors `bundledSkillDir`:
+// - Packaged: electron-builder ships `.agents/agents/super-review-tour-author.md`
+//   to `<resources>/agents/super-review-tour-author.md` (extraResources).
+// - Dev: read the dogfooded copy at the repo root, two levels up from
+//   `apps/desktop`.
+export function bundledSubagentFile(): string {
+	const fileName = `${SUBAGENT_NAME}.md`;
+	return app.isPackaged
+		? path.join(process.resourcesPath, 'agents', fileName)
+		: path.join(app.getAppPath(), '..', '..', '.agents', 'agents', fileName);
+}
+
 // Parse the skill's version from its SKILL.md frontmatter `metadata.version`.
 // The skill ships a monotonically increasing integer that we bump whenever its
 // files change; the app compares an installed copy's version against the bundled
@@ -47,8 +61,8 @@ export function parseSkillVersion(skillMd: string): number | null {
 }
 
 // The version of the skill we ship and would install, read from the bundled
-// SKILL.md so it always matches what `installSkill` writes. null if the bundled
-// skill somehow has no version — in which case we never prompt an update.
+// SKILL.md so it always matches what the skill install writes. null if the
+// bundled skill somehow has no version — in which case we never prompt an update.
 export async function bundledSkillVersion(): Promise<number | null> {
 	try {
 		const src = await fs.readFile(path.join(bundledSkillDir(), 'SKILL.md'), 'utf8');

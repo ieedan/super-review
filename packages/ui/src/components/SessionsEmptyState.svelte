@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { app } from '@super-review/ui/store.svelte';
-	import InstallSkillButton from './InstallSkillButton.svelte';
+	import ConfigureAiButton from './ConfigureAiButton.svelte';
 
 	// Main-panel placeholder on the Sessions tab when no session is open.
 	const hasSessions = $derived(app.sessions.length > 0);
@@ -15,13 +15,13 @@
 			</p>
 		{:else}
 			<h2 class="text-lg font-semibold">No sessions yet</h2>
-			{#if app.skillInstalled === false}
+			{#if app.aiConfigStatus?.anyInstalled === false}
 				<p class="mt-2 text-sm text-muted-foreground">
-					Get started with sessions by installing the skill. It lets coding agents document their
+					Get started by configuring AI files for your coding agent. They let it document its
 					changes here for review.
 				</p>
 				<div class="mt-5 flex justify-center">
-					<InstallSkillButton />
+					<ConfigureAiButton />
 				</div>
 			{:else}
 				<p class="mt-2 text-sm text-muted-foreground">

@@ -7,7 +7,7 @@ const HARNESS_LABELS: Record<HarnessKind, string> = {
 	'claude-code': 'Claude Code',
 	cursor: 'Cursor',
 	codex: 'Codex',
-	opencode: 'opencode',
+	opencode: 'OpenCode',
 	copilot: 'GitHub Copilot',
 	other: 'Agent'
 };

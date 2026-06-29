@@ -4,8 +4,8 @@
 	//    package with no actual changes on this branch.
 	//  - "Add a changeset?" — a releasable package changed but no changeset covers
 	//    it yet.
-	//  - "Install the skill" — the super-review skill isn't installed in this repo,
-	//    so coding agents can't document their changes here for review.
+	//  - "Configure AI files" — nothing is configured in this repo yet, so coding
+	//    agents can't document their changes here for review.
 	// They render through Stack, which arranges them like a Sonner stack (hover to
 	// expand, dismiss one by one with a smooth exit).
 	import OfflineIcon from '@iconify/svelte/dist/OfflineIcon.svelte';
@@ -13,7 +13,7 @@
 	import { SUPER_REVIEW_ICON } from '@super-review/ui/file-icons';
 	import { Button } from './ui/button';
 	import ChangesetLogo from './ChangesetLogo.svelte';
-	import InstallSkillButton from './InstallSkillButton.svelte';
+	import ConfigureAiButton from './ConfigureAiButton.svelte';
 	import NoticeCard from './NoticeCard.svelte';
 	import Stack from './stack/Stack.svelte';
 
@@ -35,26 +35,28 @@
 	});
 	const showWarning = $derived(unnecessary.length > 0 && !app.changesetWarningDismissed);
 
-	// The skill check returns false only on a definitive "not installed"; null
+	// `anyInstalled === false` is a definitive "nothing configured"; a null status
 	// (unknown / still checking) keeps the prompt hidden rather than flashing it.
-	const showSkill = $derived(app.skillInstalled === false && !app.skillInstallDismissed);
-
-	// Offer an update when the skill is installed but behind the bundled one.
-	// Requires installed === true, so this and showSkill are mutually exclusive.
-	const showSkillUpdate = $derived(
-		app.skillInstalled === true && app.skillUpdateAvailable === true && !app.skillUpdateDismissed
+	const showConfigure = $derived(
+		app.aiConfigStatus?.anyInstalled === false && !app.aiConfigNoticeDismissed
 	);
 
-	type Notice = { id: 'warning' | 'add' | 'skill' | 'skill-update' };
+	// Offer an update when something is configured but behind the bundled copy.
+	// Requires anyInstalled, so this and showConfigure are mutually exclusive.
+	const showConfigUpdate = $derived(
+		app.aiConfigStatus?.anyUpdateAvailable === true && !app.aiConfigUpdateDismissed
+	);
+
+	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' };
 
 	// Front-first (index 0 is the fully-visible front card; later ones peek behind
-	// it). "Add a changeset?" leads, then the skill nudge, and the unnecessary-
+	// it). "Add a changeset?" leads, then the AI-config nudge, and the unnecessary-
 	// changeset warning sits at the back of the pile.
 	const notices = $derived.by(() => {
 		const list: Notice[] = [];
 		if (showAdd) list.push({ id: 'add' });
-		if (showSkill) list.push({ id: 'skill' });
-		if (showSkillUpdate) list.push({ id: 'skill-update' });
+		if (showConfigure) list.push({ id: 'ai-config' });
+		if (showConfigUpdate) list.push({ id: 'ai-config-update' });
 		if (showWarning) list.push({ id: 'warning' });
 		return list;
 	});
@@ -64,8 +66,8 @@
 	function dismissNotice(n: Notice): void {
 		if (n.id === 'warning') actions.dismissChangesetWarning();
 		else if (n.id === 'add') actions.dismissChangesetPrompt();
-		else if (n.id === 'skill-update') actions.dismissSkillUpdate();
-		else actions.dismissSkillInstall();
+		else if (n.id === 'ai-config-update') actions.dismissAiConfigUpdate();
+		else actions.dismissAiConfigNotice();
 	}
 </script>
 
@@ -114,7 +116,7 @@
 							</Button>
 						{/snippet}
 					</NoticeCard>
-				{:else if n.id === 'skill-update'}
+				{:else if n.id === 'ai-config-update'}
 					<NoticeCard
 						onDismiss={dismiss}
 						dismissTitle="Dismiss"
@@ -123,28 +125,23 @@
 						{#snippet logo()}
 							<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-4 shrink-0" />
 						{/snippet}
-						Update the skill?
+						Update AI files?
 						{#snippet action()}
-							<InstallSkillButton
-								size="xs"
-								variant="outline"
-								label="Update"
-								pendingLabel="Updating…"
-							/>
+							<ConfigureAiButton size="xs" variant="outline" label="Update" />
 						{/snippet}
 					</NoticeCard>
 				{:else}
 					<NoticeCard
 						onDismiss={dismiss}
 						dismissTitle="Dismiss"
-						tooltip="Install the super-review skill so coding agents can document their changes here for review."
+						tooltip="Configure the super-review skill and subagent so coding agents can document their changes here for review."
 					>
 						{#snippet logo()}
 							<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-4 shrink-0" />
 						{/snippet}
-						Install the skill?
+						Configure AI files?
 						{#snippet action()}
-							<InstallSkillButton size="xs" variant="outline" label="Install" />
+							<ConfigureAiButton size="xs" variant="outline" label="Configure" />
 						{/snippet}
 					</NoticeCard>
 				{/if}
