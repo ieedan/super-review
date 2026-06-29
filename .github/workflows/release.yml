@@ -66,7 +66,7 @@ jobs:
       # private desktop/docs/core packages are skipped by `changeset publish`.
       - name: Create Version PR / publish CLI
         id: changesets
-        uses: changesets/action@v2
+        uses: changesets/action@v2.0.0-next.2
         with:
           version: pnpm changeset:version
           publish: pnpm ci:release
