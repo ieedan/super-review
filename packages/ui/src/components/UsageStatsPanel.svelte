@@ -104,6 +104,18 @@
 		void actions.setStatsWidgets(next);
 	}
 
+	// Drag-and-drop reordering of the Overview widgets: drop the dragged widget in
+	// front of the one it's dropped onto, then persist the new order.
+	let dragKey = $state<StatMetric | null>(null);
+	function dropOn(targetKey: StatMetric): void {
+		const from = dragKey;
+		dragKey = null;
+		if (!from || from === targetKey) return;
+		const order = shownWidgets.filter((k) => k !== from);
+		order.splice(order.indexOf(targetKey), 0, from);
+		void actions.setStatsWidgets(order);
+	}
+
 	// --- KPIs (single metric) -------------------------------------------------
 	const now = new Date();
 	const todayKey = dayKey(now);
@@ -207,15 +219,19 @@
 					<SlidersHorizontal class="size-3.5" />
 					Customize
 				</Popover.Trigger>
-				<Popover.Content class="w-56 p-1.5" align="end">
-					<p class="px-1.5 py-1 text-[11px] text-muted-foreground">Show widgets</p>
+				<Popover.Content class="w-52 p-1" align="end">
+					<p class="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">Show widgets</p>
 					{#each METRICS as m (m.key)}
 						{@const Icon = m.icon}
 						{@const checked = shownWidgets.includes(m.key)}
 						<label
-							class="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-sm hover:bg-muted"
+							class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-[13px] hover:bg-muted"
 						>
-							<Checkbox {checked} onCheckedChange={(v) => toggleWidget(m.key, v === true)} />
+							<Checkbox
+								{checked}
+								class="size-3.5"
+								onCheckedChange={(v) => toggleWidget(m.key, v === true)}
+							/>
 							<Icon class="size-3.5 text-muted-foreground" />
 							{m.label}
 						</label>
@@ -233,8 +249,19 @@
 					{@const Icon = w.icon}
 					<button
 						type="button"
-						class="rounded-md border border-border bg-card/30 px-2.5 py-1.5 text-left transition-colors hover:bg-accent"
+						draggable="true"
+						class={[
+							'cursor-grab rounded-md border border-border bg-card/30 px-2.5 py-1.5 text-left transition-colors hover:bg-accent active:cursor-grabbing',
+							dragKey === w.key && 'opacity-40'
+						]}
 						onclick={() => (view = w.key)}
+						ondragstart={() => (dragKey = w.key)}
+						ondragend={() => (dragKey = null)}
+						ondragover={(e) => e.preventDefault()}
+						ondrop={(e) => {
+							e.preventDefault();
+							dropOn(w.key);
+						}}
 					>
 						<div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
 							<Icon class="size-3.5" />

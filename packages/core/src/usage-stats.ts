@@ -36,8 +36,7 @@ export const STAT_METRICS: readonly StatMetric[] = [
 export const DEFAULT_STATS_WIDGETS: readonly StatMetric[] = [
 	'commitsAuthored',
 	'prsMerged',
-	'filesReviewed',
-	'locReviewed'
+	'filesReviewed'
 ];
 
 // A single metric's activity, keyed by local day (`dayKey`) -> count for that day.
