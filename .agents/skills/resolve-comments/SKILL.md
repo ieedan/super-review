@@ -5,112 +5,52 @@ metadata:
   version: 1
 ---
 
-# Resolve review comments
+Follow and complete the following steps:
+- [ ] [#1](#1-find-the-comments)
+- [ ] [#2](#2-address-the-comments)
+- [ ] [#3](#3-resolve-the-comments)
 
-Reviewers leave **inline comments** on your diff in the Super Review desktop app.
-This skill is the loop for clearing them: list what is open, fix each one in code,
-then reply to and resolve it from the `super-review` CLI. Comments live in two
-places and the CLI reaches each differently:
+# 1. Find the comments
 
-- **Local branch comments** - written by the reviewer's desktop app into a
-  per-machine SQLite database (`~/.super-review/comments.db`). `comment list`,
-  `reply`, `resolve`, and `unresolve` all act on these. They are scoped to the
-  branch you are on, read from git, so you never name the branch.
-- **GitHub PR comments** - inline review comments on the pull request.
-  `comment list --pr` reads these over the GitHub API. This is **list-only**:
-  there is no CLI command to resolve a PR review thread (see Gotchas).
+Find comments made on the local machine (skip to [#1a](#1a-finding-comments-as-a-cloud-agent) if you are a cloud agent)
 
-All commands run through `npx super-review` (published CLI, currently `0.0.6`).
-Paths below are relative to the repo root.
-
-## Run the workflow (agent path)
-
-`comment list --unresolved` is how you find the work. It reads the branch from
-git, so you do not pass a branch name:
-
-```bash
-npx super-review comment list --unresolved
+```sh
+npx super-review comment list --unresolved # finds all local unresolved comments
 ```
 
-The human-readable list groups replies under their thread root:
+If there are no local comments then run:
 
-```text
-<id>  [open]  <path>:L<range>  <first line of the root comment>
-  ↳ <reply-id>  <first line of the reply>
+```sh
+npx super-review comment list --unresolved --pr # finds any review comments on the associated PR for this branch
 ```
 
-Add `--json` for the raw records (every field, including `inReplyTo` and
-resolution state). For each open comment: **fix it in code**, then resolve it.
-`--harness` sets which agent's logo shows in the app; it is one of
-`claude-code`, `cursor`, `codex`, `opencode`, `copilot`, `other`:
+## 1a. Finding comments as a cloud agent
 
-```bash
-npx super-review comment resolve <id> --harness claude-code
+Use the tools available to you to find any UNRESOLVED review comments on the PR associated with the current branch.
+
+# 2. Address the comments
+
+Read and ensure each comment is still valid and not outdated/resolved. Comments that require more information should receive a reply see [#3](#3-resolve-the-comments)
+
+Once each comment has been validated you should develop a task list. Group related comments in the task list to promote the ability to resolve different issues concurrently.
+
+> [!TIP]
+> If there are multiple comment groups and you have the ability to you can spin up subagents to resolve multiple comments at the same time each subagent updating the task list.
+
+Once your task list is complete you can move on to #3
+
+# 3. Resolve the comments
+
+Once you're ready you can reply to comments. 
+
+If you are working with local comments use the resolve command in the CLI (otherwise skip to [3a](#3a-resolving-pr-comments)):
+
+```sh
+npx super-review comment resolve <id> --harness <your harness>
 ```
 
-Link the session that documents your fix so the reviewer can jump from the
-comment to your tour (the `--key` you saved the session under; the CLI validates
-it exists):
+> Make sure to pass your harness to the --harness flag the options are (claude-code, cursor, codex, opencode, copilot, other) this will help users understand who resolved this comment
 
-```bash
-npx super-review comment resolve <id> --harness claude-code --session "<your-session-key>"
-```
+## 3a. Resolving PR comments
 
-Reply when the reviewer needs a short explanation the diff does not make obvious
-(`--message` or stdin also work for the body):
-
-```bash
-npx super-review comment reply <id> --harness claude-code "Restored the + operator."
-```
-
-`comment unresolve <id>` reopens one you resolved by mistake. `--name <label>`
-overrides the harness label on a reply or resolve.
-
-### Reading PR comments instead
-
-When you are a remote/cloud agent in a fresh checkout, there are **no** local
-comments (the database lives on the reviewer's machine), so `comment list`
-returns nothing. Read the PR's inline review comments instead. With no number it
-detects the open PR for the current branch; pass a number to pin one:
-
-```bash
-npx super-review comment list --pr
-npx super-review comment list --pr 42
-```
-
-This needs a GitHub token: the Super Review app's sign-in, or `GH_TOKEN` /
-`GITHUB_TOKEN`. Output is tagged `[review]` with the author. To _resolve_ a PR
-thread, address it in code and resolve the thread on GitHub (reply + resolve via
-the GitHub API/MCP); the CLI does not do this.
-
-## Gotchas
-
-- **PR resolve is not a CLI op.** `comment resolve` only marks _local_ comments.
-  GitHub review threads have no "resolved" state in the REST API the CLI uses
-  (it is a GraphQL concept), so PR threads listed by `--pr` are tagged `[review]`,
-  not open/resolved, and you resolve them on GitHub, not here.
-- **No local comments on a fresh checkout.** Local comments are per-machine. A
-  cloud/remote agent finds none with `comment list`; use `--pr` instead. This is
-  expected, not an error.
-- **`--pr` needs a real github.com origin.** It parses owner/repo from the
-  `origin` remote. In this container, git rewrites github remotes to a local
-  proxy URL, so `--pr` fails with `couldn't determine the GitHub owner/repo from
-the 'origin' remote`. On a normal machine with a `github.com` origin it works.
-- **Resolution is thread-level.** `--unresolved` drops a whole thread once its
-  root is resolved; replies never carry their own resolved state.
-- **No CLI creates comments.** Only the desktop app writes them. To try the loop
-  without a real reviewer, seed `~/.super-review/comments.db` directly (see
-  "Dry-running without real comments").
-
-## Troubleshooting
-
-- `error: no session with id "<key>" in this repo` - the `--session` key you
-  passed to `resolve` does not match a saved session. Save the session first, or
-  drop `--session`.
-- `error: no comment with id "<id>" in this repo` - wrong id. Re-run
-  `comment list` (ids change nothing, but a resolved/renamed thread may have
-  moved) and copy the id from the current output.
-- `error: empty reply: ...` - `reply` got no body. Pass it as the argument,
-  `--message`, or on stdin.
-- `no GitHub token available` on `--pr` - sign in with the Super Review app or
-  export `GH_TOKEN` / `GITHUB_TOKEN`.
+If you are working with comments on a PR use the tools available to you to resolve them and reply to them when necessary. Most of the time resolving a PR comment is enough (obvious bugs, simple changes in behavior, larger refactors where a reply isn't enough) but there are also situations where you should reply (tradeoffs that should be noted, asking for more information)
