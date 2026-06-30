@@ -16,8 +16,8 @@
 	import {
 		AGENTS_CONVENTION_HARNESSES,
 		AI_CONFIG_TARGETS,
-		HARNESS_AI_PATHS,
-		SKILL_FILES
+		BUNDLED_SKILLS,
+		HARNESS_AI_PATHS
 	} from '@super-review/core/ai-config-paths';
 	import type { AiConfigInstallItem, AiScope, TargetKind } from '@super-review/core/types';
 
@@ -31,8 +31,13 @@
 
 	const open = $derived(app.aiConfigDialogOpen);
 
-	// Step 1: what to install (both on by default).
-	let installSkill = $state(true);
+	// A skill is selected by directory name. Initial state: every bundled skill on.
+	function allSkillsSelected(): Record<string, boolean> {
+		return Object.fromEntries(BUNDLED_SKILLS.map((s) => [s.name, true]));
+	}
+
+	// Step 1: what to install (all on by default).
+	let installSkills = $state<Record<string, boolean>>(allSkillsSelected());
 	let installSubagent = $state(true);
 	// Step 2: where.
 	let scope = $state<AiScope>('project');
@@ -53,7 +58,7 @@
 		const isOpen = app.aiConfigDialogOpen;
 		if (isOpen && !wasOpen) {
 			untrack(() => {
-				installSkill = true;
+				installSkills = allSkillsSelected();
 				installSubagent = true;
 				scope = 'project';
 				selectedTargets = { standard: true, 'claude-code': false, codex: false };
@@ -65,7 +70,9 @@
 		wasOpen = isOpen;
 	});
 
-	const anyArtifact = $derived(installSkill || installSubagent);
+	const selectedSkillNames = $derived(BUNDLED_SKILLS.filter((s) => installSkills[s.name]));
+	const anySkill = $derived(selectedSkillNames.length > 0);
+	const anyArtifact = $derived(anySkill || installSubagent);
 	// Codex carries only a subagent (its skill rides on `.agents`), so it's only
 	// offered when a subagent is being installed.
 	const visibleTargets = $derived(
@@ -73,13 +80,17 @@
 	);
 	const selectedTargetList = $derived(visibleTargets.filter((t) => selectedTargets[t]));
 
-	// The (target, artifact) writes the current selection implies, skipping any
-	// artifact a target doesn't carry (e.g. Codex has no skill of its own).
+	// The (target, artifact[, skill]) writes the current selection implies, skipping
+	// any artifact a target doesn't carry (e.g. Codex has no skill of its own). Each
+	// selected skill becomes its own item.
 	const plannedItems = $derived.by(() => {
-		const items: { target: TargetKind; artifact: 'skill' | 'subagent' }[] = [];
+		const items: { target: TargetKind; artifact: 'skill' | 'subagent'; skill?: string }[] = [];
 		for (const target of selectedTargetList) {
 			const p = HARNESS_AI_PATHS[target];
-			if (installSkill && p.skill) items.push({ target, artifact: 'skill' });
+			if (p.skillsBase) {
+				for (const s of selectedSkillNames)
+					items.push({ target, artifact: 'skill', skill: s.name });
+			}
 			if (installSubagent && p.subagent) items.push({ target, artifact: 'subagent' });
 		}
 		return items;
@@ -95,15 +106,20 @@
 	const previewPaths = $derived.by(() => {
 		const prefix = scope === 'global' ? '~/' : '';
 		const paths: string[] = [];
-		for (const { target, artifact } of plannedItems) {
-			const loc =
-				artifact === 'skill' ? HARNESS_AI_PATHS[target].skill : HARNESS_AI_PATHS[target].subagent;
-			if (!loc) continue;
-			const rel = scope === 'project' ? loc.project : loc.global;
-			if (rel === null) continue;
+		for (const { target, artifact, skill } of plannedItems) {
+			const p = HARNESS_AI_PATHS[target];
 			if (artifact === 'skill') {
-				for (const f of SKILL_FILES) paths.push(`${prefix}${rel}/${f}`);
+				const base = p.skillsBase;
+				if (!base) continue;
+				const rel = scope === 'project' ? base.project : base.global;
+				if (rel === null) continue;
+				const files = BUNDLED_SKILLS.find((s) => s.name === skill)?.files ?? [];
+				for (const f of files) paths.push(`${prefix}${rel}/${skill}/${f}`);
 			} else {
+				const loc = p.subagent;
+				if (!loc) continue;
+				const rel = scope === 'project' ? loc.project : loc.global;
+				if (rel === null) continue;
 				paths.push(`${prefix}${rel}`);
 			}
 		}
@@ -164,10 +180,11 @@
 
 	async function submit(): Promise<void> {
 		if (!canConfigure) return;
-		const items: AiConfigInstallItem[] = plannedItems.map(({ target, artifact }) => ({
+		const items: AiConfigInstallItem[] = plannedItems.map(({ target, artifact, skill }) => ({
 			target,
 			artifact,
-			scope
+			scope,
+			...(skill ? { skill } : {})
 		}));
 		applying = true;
 		failures = [];
@@ -226,22 +243,22 @@
 					<div class="min-h-0 flex-1">
 						{#if step === 1}
 							<div class="grid gap-2">
-								<label
-									for="ai-skill"
-									class="flex cursor-pointer items-start gap-2.5 rounded-md border border-border px-3 py-2.5 transition-colors has-[[data-state=checked]]:border-primary/40 has-[[data-state=checked]]:bg-primary/5"
-								>
-									<Checkbox
-										id="ai-skill"
-										checked={installSkill}
-										onCheckedChange={(v) => (installSkill = v === true)}
-									/>
-									<span class="grid gap-0.5">
-										<span class="text-sm font-medium">Skill</span>
-										<span class="text-xs text-muted-foreground">
-											Teaches agents how and when to record a review session here.
+								{#each BUNDLED_SKILLS as skill (skill.name)}
+									<label
+										for={`ai-skill-${skill.name}`}
+										class="flex cursor-pointer items-start gap-2.5 rounded-md border border-border px-3 py-2.5 transition-colors has-[[data-state=checked]]:border-primary/40 has-[[data-state=checked]]:bg-primary/5"
+									>
+										<Checkbox
+											id={`ai-skill-${skill.name}`}
+											checked={installSkills[skill.name] ?? false}
+											onCheckedChange={(v) => (installSkills[skill.name] = v === true)}
+										/>
+										<span class="grid gap-0.5">
+											<span class="text-sm font-medium">{skill.label}</span>
+											<span class="text-xs text-muted-foreground">{skill.description}</span>
 										</span>
-									</span>
-								</label>
+									</label>
+								{/each}
 								<label
 									for="ai-subagent"
 									class="flex cursor-pointer items-start gap-2.5 rounded-md border border-border px-3 py-2.5 transition-colors has-[[data-state=checked]]:border-primary/40 has-[[data-state=checked]]:bg-primary/5"

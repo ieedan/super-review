@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	AI_CONFIG_TARGETS,
 	AGENTS_CONVENTION_HARNESSES,
+	BUNDLED_SKILLS,
 	HARNESS_AI_PATHS,
-	SKILL_DIR_NAME,
-	SKILL_FILES,
 	SUBAGENT_NAME
 } from '@super-review/core/ai-config-paths';
 
@@ -19,7 +18,7 @@ describe('HARNESS_AI_PATHS', () => {
 
 	it('gives Codex a TOML subagent and no skill of its own (skill rides on .agents)', () => {
 		const codex = HARNESS_AI_PATHS.codex;
-		expect(codex.skill).toBeUndefined();
+		expect(codex.skillsBase).toBeUndefined();
 		expect(codex.subagentFormat).toBe('toml');
 		expect(codex.subagent).toEqual({
 			project: `.codex/agents/${SUBAGENT_NAME}.toml`,
@@ -28,11 +27,11 @@ describe('HARNESS_AI_PATHS', () => {
 		expect(codex.detectDir).toBe('.codex');
 	});
 
-	it('writes the .agents convention for the shared target (skill + subagent)', () => {
+	it('writes the .agents convention for the shared target (skills base + subagent)', () => {
 		const md = `${SUBAGENT_NAME}.md`;
-		expect(HARNESS_AI_PATHS.standard.skill).toEqual({
-			project: `.agents/skills/${SKILL_DIR_NAME}`,
-			global: `.agents/skills/${SKILL_DIR_NAME}`
+		expect(HARNESS_AI_PATHS.standard.skillsBase).toEqual({
+			project: '.agents/skills',
+			global: '.agents/skills'
 		});
 		expect(HARNESS_AI_PATHS.standard.subagent).toEqual({
 			project: `.agents/agents/${md}`,
@@ -44,9 +43,9 @@ describe('HARNESS_AI_PATHS', () => {
 
 	it('gives Claude Code its own .claude dirs (it does not read .agents)', () => {
 		const md = `${SUBAGENT_NAME}.md`;
-		expect(HARNESS_AI_PATHS['claude-code'].skill).toEqual({
-			project: `.claude/skills/${SKILL_DIR_NAME}`,
-			global: `.claude/skills/${SKILL_DIR_NAME}`
+		expect(HARNESS_AI_PATHS['claude-code'].skillsBase).toEqual({
+			project: '.claude/skills',
+			global: '.claude/skills'
 		});
 		expect(HARNESS_AI_PATHS['claude-code'].subagent).toEqual({
 			project: `.claude/agents/${md}`,
@@ -59,8 +58,13 @@ describe('HARNESS_AI_PATHS', () => {
 		expect(AGENTS_CONVENTION_HARNESSES).toEqual(['cursor', 'codex', 'opencode', 'copilot']);
 	});
 
-	it('exposes the bundled skill file list for the preview tree', () => {
-		expect(SKILL_FILES).toContain('SKILL.md');
-		expect(SKILL_FILES.length).toBeGreaterThan(0);
+	it('bundles the super-review and resolve-comments skills, each with files', () => {
+		const names = BUNDLED_SKILLS.map((s) => s.name);
+		expect(names).toContain('super-review');
+		expect(names).toContain('resolve-comments');
+		for (const skill of BUNDLED_SKILLS) {
+			expect(skill.files).toContain('SKILL.md');
+			expect(skill.files.length).toBeGreaterThan(0);
+		}
 	});
 });

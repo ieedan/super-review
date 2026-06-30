@@ -1641,7 +1641,10 @@ export interface TargetAiStatus {
 	// Whether the harness appears installed (its home config dir exists). Always
 	// true for the `standard` target (the shared base).
 	harnessDetected: boolean;
-	skill?: { project: AiArtifactStatus; global: AiArtifactStatus | null };
+	// One entry per bundled skill the target can carry (each its own directory,
+	// versioned independently), or undefined when the target has no skill location
+	// of its own. `name` is the skill's directory name (its install identity).
+	skills?: Array<{ name: string; project: AiArtifactStatus; global: AiArtifactStatus | null }>;
 	subagent?: { project: AiArtifactStatus; global: AiArtifactStatus | null };
 }
 
@@ -1658,6 +1661,9 @@ export interface AiConfigInstallItem {
 	target: TargetKind;
 	artifact: AiArtifact;
 	scope: AiScope;
+	// Which bundled skill to write, by directory name. Required when
+	// `artifact === 'skill'`; ignored for the subagent.
+	skill?: string;
 }
 export interface AiConfigApplyRequest {
 	items: AiConfigInstallItem[];
