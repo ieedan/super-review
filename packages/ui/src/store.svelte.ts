@@ -2680,7 +2680,8 @@ async function refreshFiles(): Promise<void> {
 		seenList: string[],
 		seenSigs: Record<string, string>,
 		collapsedList: string[],
-		unmarkChanged: boolean
+		unmarkChanged: boolean,
+		retained?: Set<string>
 	): ChangedFile[] => {
 		// Sort by path so the diff view and the sidebar tree agree on order —
 		// otherwise the "first file in the tree" can land mid-list in the diff
@@ -2696,9 +2697,14 @@ async function refreshFiles(): Promise<void> {
 		// time against the current one; a missing/empty stored signature (older
 		// data) is left alone since we have no baseline. Persist each clear so the
 		// mark stays gone across refreshes. Opt-out via the unmarkSeenOnChange pref.
+		// `retained` paths are exempt: the reviewer already saw the whole new diff
+		// across a chain of contexts (e.g. reviewed it on the branch, then reviewed
+		// a follow-up edit unstaged, then committed), so resurfacing it would force
+		// a needless re-review. The store has already rolled their signature forward.
 		if (unmarkChanged && app.unmarkSeenOnChange) {
 			for (const file of files) {
 				if (!seenSet.has(file.path)) continue;
+				if (retained?.has(file.path)) continue;
 				const prevSig = seenSigs[file.path];
 				const curSig = fileSeenSig(file);
 				if (
@@ -2773,7 +2779,16 @@ async function refreshFiles(): Promise<void> {
 
 		const raw = await window.api.git.listChangedFiles(repoId, ctx);
 		if (stale()) return;
-		const files = paint(raw, seenList, seenSigs, collapsedList, true);
+		// Before the unmark-on-change pass runs, ask the store which already-seen
+		// files whose diff changed are still spanned by a chain of reviewed diffs
+		// (this context's prior reviewed state plus other contexts'), so they keep
+		// their mark instead of resurfacing. Must read the fresh signatures while the
+		// prior reviewed edge is still on disk — the unmark pass would delete it.
+		const freshSigs: Record<string, string> = {};
+		for (const f of raw) freshSigs[f.path] = fileSeenSig(f);
+		const retained = new Set(await window.api.state.getRetainedSeen(repoId, reviewKey, freshSigs));
+		if (stale()) return;
+		const files = paint(raw, seenList, seenSigs, collapsedList, true, retained);
 		// Persist the fresh list so the next cold start can paint it immediately.
 		void window.api.state.setCachedFileList(repoId, ctxKey, files);
 		// Carry the seen mark across contexts: a file whose exact diff was already

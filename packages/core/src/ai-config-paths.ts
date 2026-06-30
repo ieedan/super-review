@@ -45,10 +45,10 @@ export interface BundledSkill {
 // `files` in sync with the real directory under `.agents/skills/<name>/`.
 export const BUNDLED_SKILLS: BundledSkill[] = [
 	{
-		name: 'super-review',
-		label: 'Review tour skill',
+		name: 'document-session',
+		label: 'Document session skill',
 		description: 'Teaches agents how and when to record a review session here.',
-		files: ['SKILL.md', 'document-session.md', 'review-comments.md']
+		files: ['SKILL.md']
 	},
 	{
 		name: 'resolve-comments',

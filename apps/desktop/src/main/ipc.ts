@@ -169,6 +169,7 @@ import {
 	getPrefs,
 	getRepo,
 	getInheritedSeen,
+	getRetainedSeen,
 	getSeen,
 	getSeenSignatures,
 	getStats,
@@ -2095,6 +2096,18 @@ export function registerIpc(): void {
 			fileDiffSigs: Record<string, string>
 		): Promise<string[]> => {
 			return getInheritedSeen(repoId, contextKey, fileDiffSigs);
+		}
+	);
+
+	ipcMain.handle(
+		'state:getRetainedSeen',
+		async (
+			_e,
+			repoId: string,
+			contextKey: string,
+			fileDiffSigs: Record<string, string>
+		): Promise<string[]> => {
+			return getRetainedSeen(repoId, contextKey, fileDiffSigs);
 		}
 	);
 

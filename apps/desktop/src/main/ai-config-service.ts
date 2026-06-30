@@ -81,20 +81,36 @@ async function detectSubagent(
 		return { installed: false, updateAvailable: false, path: absFile };
 	}
 	const expected = await renderSubagent(format);
-	return { installed: true, updateAvailable: current !== expected, path: absFile };
+	// The subagent is no longer bundled, so without a template we can't tell
+	// whether a legacy install is stale; report it installed but not updatable.
+	return {
+		installed: true,
+		updateAvailable: expected !== null && current !== expected,
+		path: absFile
+	};
 }
 
 // The subagent contents we would write for a given format, derived from the
-// bundled markdown. Cached for the life of a detection/apply pass.
+// bundled markdown. The subagent is no longer offered for install and its
+// template is no longer shipped, so a missing file is expected: treat it as "no
+// template" rather than an error so detection of any legacy install still works.
+// Cached for the life of a detection/apply pass.
+let subagentMarkdownLoaded = false;
 let subagentMarkdownCache: string | null = null;
-async function bundledSubagentMarkdown(): Promise<string> {
-	if (subagentMarkdownCache === null) {
-		subagentMarkdownCache = await fs.readFile(bundledSubagentFile(), 'utf8');
+async function bundledSubagentMarkdown(): Promise<string | null> {
+	if (!subagentMarkdownLoaded) {
+		try {
+			subagentMarkdownCache = await fs.readFile(bundledSubagentFile(), 'utf8');
+		} catch {
+			subagentMarkdownCache = null;
+		}
+		subagentMarkdownLoaded = true;
 	}
 	return subagentMarkdownCache;
 }
-async function renderSubagent(format: TargetPaths['subagentFormat']): Promise<string> {
+async function renderSubagent(format: TargetPaths['subagentFormat']): Promise<string | null> {
 	const markdown = await bundledSubagentMarkdown();
+	if (markdown === null) return null;
 	return format === 'toml' ? toCodexToml(markdown) : markdown;
 }
 
@@ -126,6 +142,7 @@ async function detectArtifact(
 export async function getAiConfigStatus(repoPath: string): Promise<AiConfigStatus> {
 	// Reset the per-pass cache so a skill/subagent edited on disk between calls is
 	// re-read.
+	subagentMarkdownLoaded = false;
 	subagentMarkdownCache = null;
 	const targets: TargetAiStatus[] = [];
 	for (const target of AI_CONFIG_TARGETS) {
@@ -219,8 +236,13 @@ async function writeArtifact(
 		await fs.mkdir(path.dirname(dest), { recursive: true });
 		await fs.cp(bundledSkillDir(skill!), dest, { recursive: true });
 	} else {
+		const contents = await renderSubagent(format);
+		// The subagent template is no longer bundled, so there is nothing to write.
+		// This path is unreachable from the dialog (subagents are no longer offered);
+		// fail loudly if something requests one anyway.
+		if (contents === null) throw new Error('subagent template is no longer bundled');
 		await fs.mkdir(path.dirname(dest), { recursive: true });
-		await fs.writeFile(dest, await renderSubagent(format), 'utf8');
+		await fs.writeFile(dest, contents, 'utf8');
 	}
 }
 
@@ -228,6 +250,7 @@ export async function applyAiConfig(
 	repoPath: string,
 	request: AiConfigApplyRequest
 ): Promise<AiConfigApplyResult> {
+	subagentMarkdownLoaded = false;
 	subagentMarkdownCache = null;
 	// Dedupe by resolved path so any two items that map to the same destination are
 	// written once and share the outcome (an idempotency guard).

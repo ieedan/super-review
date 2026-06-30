@@ -34,6 +34,7 @@ import {
 	type StatMetric,
 	type StoredRepoStats
 } from '@super-review/core/usage-stats';
+import { computeInheritedSeen, computeRetainedSeen } from '@super-review/core/seen-inheritance';
 
 export interface StoredGithubAccount extends GithubAccount {
 	token: string;
@@ -428,12 +429,12 @@ export function getSeenSignatures(repoId: string, contextKey: string): Record<st
 	return normalizeSeen(db().seen[repoId]?.[contextKey]);
 }
 
-// Paths in `contextKey` whose diff was already marked seen under a *different*
-// context for this repo. `fileDiffSigs` maps each currently-shown file to its
-// `<base>..<dst>` blob-OID signature; a match against another context's stored
-// signature for the same path means the change is byte-for-byte identical, so it
-// can carry the seen mark across. Only diff-form (`..`) signatures participate —
-// a bare dst OID or stat fallback can't prove the *whole* diff matched.
+// Paths in `contextKey` whose diff is already covered by seen marks under a
+// *different* context for this repo. `fileDiffSigs` maps each currently-shown
+// file to its `<base>..<dst>` blob-OID signature; the change carries the seen
+// mark across when another context (or a chain of them) reviewed the same span of
+// blob OIDs. The decision logic lives in `@super-review/core/seen-inheritance`
+// (pure + unit tested); here we just persist the marks it returns.
 export function getInheritedSeen(
 	repoId: string,
 	contextKey: string,
@@ -444,24 +445,10 @@ export function getInheritedSeen(
 	const seenHere = normalizeSeen(byCtx[contextKey]);
 	const appliedAll = (db().seenInherited[repoId] ??= {});
 	const appliedHere = (appliedAll[contextKey] ??= {});
-	const applied: string[] = [];
-	for (const [path, sig] of Object.entries(fileDiffSigs)) {
-		// Only a whole-diff signature (`<base>..<dst>`) proves the change is the
-		// same; a bare OID or stat fallback can't carry across contexts.
-		if (!sig.includes('..')) continue;
-		// Already seen here (directly or from a prior inherit) — nothing to do.
-		if (seenHere[path]) continue;
-		// We already auto-applied this exact diff once; respect the user's choice
-		// since (un-saw it, or it's gone) instead of re-inheriting every refresh.
-		if (appliedHere[path] === sig) continue;
-		// Is this same diff marked seen under any *other* context for this repo?
-		const matchesElsewhere = Object.entries(byCtx).some(
-			([otherKey, otherSeen]) => otherKey !== contextKey && normalizeSeen(otherSeen)[path] === sig
-		);
-		if (!matchesElsewhere) continue;
-		applied.push(path);
-		appliedHere[path] = sig;
-		seenHere[path] = sig;
+	const applied = computeInheritedSeen(byCtx, contextKey, appliedHere, fileDiffSigs);
+	for (const path of applied) {
+		appliedHere[path] = fileDiffSigs[path];
+		seenHere[path] = fileDiffSigs[path];
 	}
 	if (applied.length > 0) {
 		// Persist the inherited marks as real seen entries so they survive refreshes
@@ -478,6 +465,28 @@ export function getInheritedSeen(
 		flush();
 	}
 	return applied;
+}
+
+// Files in `contextKey` that should keep their seen mark even though their diff
+// changed, because a chain of reviewed diffs (this context's own prior reviewed
+// state plus other contexts') still spans the new diff. Rolls each retained
+// path's stored signature forward to the new value so it stays seen and the next
+// change is measured against the now-current reviewed state. Called *before* the
+// renderer's unmark-on-change step so the prior reviewed edge is still intact.
+export function getRetainedSeen(
+	repoId: string,
+	contextKey: string,
+	fileDiffSigs: Record<string, string>
+): string[] {
+	const byCtx = db().seen[repoId];
+	if (!byCtx) return [];
+	const retained = computeRetainedSeen(byCtx, contextKey, fileDiffSigs);
+	if (retained.length === 0) return [];
+	const seenHere = normalizeSeen(byCtx[contextKey]);
+	for (const path of retained) seenHere[path] = fileDiffSigs[path];
+	(db().seen[repoId] ??= {})[contextKey] = seenHere;
+	flush();
+	return retained;
 }
 
 export function setSeen(

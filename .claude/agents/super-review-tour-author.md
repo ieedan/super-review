@@ -1,1 +1,0 @@
-../../.agents/agents/super-review-tour-author.md

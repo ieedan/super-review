@@ -15,6 +15,7 @@
 		"./diff-context": "./src/diff-context.ts",
 		"./diff-defer": "./src/diff-defer.ts",
 		"./diff-staging": "./src/diff-staging.ts",
+		"./seen-inheritance": "./src/seen-inheritance.ts",
 		"./session-manifest": "./src/session-manifest.ts",
 		"./usage-stats": "./src/usage-stats.ts"
 	},

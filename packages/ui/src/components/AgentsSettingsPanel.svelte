@@ -145,8 +145,7 @@
 		<div>
 			<h3 class="text-base font-semibold">Agent files</h3>
 			<p class="mt-1 text-xs text-muted-foreground">
-				The super-review skills and tour-author subagent installed for your coding agents, and where
-				each one lives on disk.
+				The super-review skills installed for your coding agents, and where each one lives on disk.
 			</p>
 		</div>
 		<Button variant="outline" size="sm" class="shrink-0" onclick={openConfigure}>

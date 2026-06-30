@@ -38,7 +38,6 @@
 
 	// Step 1: what to install (all on by default).
 	let installSkills = $state<Record<string, boolean>>(allSkillsSelected());
-	let installSubagent = $state(true);
 	// Step 2: where.
 	let scope = $state<AiScope>('project');
 	// Step 3: which targets. `.agents` on by default; the rest opt-in.
@@ -59,7 +58,6 @@
 		if (isOpen && !wasOpen) {
 			untrack(() => {
 				installSkills = allSkillsSelected();
-				installSubagent = true;
 				scope = 'project';
 				selectedTargets = { standard: true, 'claude-code': false, codex: false };
 				step = 1;
@@ -72,11 +70,12 @@
 
 	const selectedSkillNames = $derived(BUNDLED_SKILLS.filter((s) => installSkills[s.name]));
 	const anySkill = $derived(selectedSkillNames.length > 0);
-	const anyArtifact = $derived(anySkill || installSubagent);
-	// Codex carries only a subagent (its skill rides on `.agents`), so it's only
-	// offered when a subagent is being installed.
+	const anyArtifact = $derived(anySkill);
+	// Only targets that carry a skill of their own are offered. Codex reads its
+	// skills from `.agents` (no skill location of its own) and the tour-author
+	// subagent is no longer installed from here, so Codex drops out.
 	const visibleTargets = $derived(
-		AI_CONFIG_TARGETS.filter((t) => t !== 'codex' || installSubagent)
+		AI_CONFIG_TARGETS.filter((t) => HARNESS_AI_PATHS[t].skillsBase != null)
 	);
 	const selectedTargetList = $derived(visibleTargets.filter((t) => selectedTargets[t]));
 
@@ -91,7 +90,6 @@
 				for (const s of selectedSkillNames)
 					items.push({ target, artifact: 'skill', skill: s.name });
 			}
-			if (installSubagent && p.subagent) items.push({ target, artifact: 'subagent' });
 		}
 		return items;
 	});
@@ -106,22 +104,13 @@
 	const previewPaths = $derived.by(() => {
 		const prefix = scope === 'global' ? '~/' : '';
 		const paths: string[] = [];
-		for (const { target, artifact, skill } of plannedItems) {
-			const p = HARNESS_AI_PATHS[target];
-			if (artifact === 'skill') {
-				const base = p.skillsBase;
-				if (!base) continue;
-				const rel = scope === 'project' ? base.project : base.global;
-				if (rel === null) continue;
-				const files = BUNDLED_SKILLS.find((s) => s.name === skill)?.files ?? [];
-				for (const f of files) paths.push(`${prefix}${rel}/${skill}/${f}`);
-			} else {
-				const loc = p.subagent;
-				if (!loc) continue;
-				const rel = scope === 'project' ? loc.project : loc.global;
-				if (rel === null) continue;
-				paths.push(`${prefix}${rel}`);
-			}
+		for (const { target, skill } of plannedItems) {
+			const base = HARNESS_AI_PATHS[target].skillsBase;
+			if (!base) continue;
+			const rel = scope === 'project' ? base.project : base.global;
+			if (rel === null) continue;
+			const files = BUNDLED_SKILLS.find((s) => s.name === skill)?.files ?? [];
+			for (const f of files) paths.push(`${prefix}${rel}/${skill}/${f}`);
 		}
 		return paths;
 	});
@@ -259,22 +248,6 @@
 										</span>
 									</label>
 								{/each}
-								<label
-									for="ai-subagent"
-									class="flex cursor-pointer items-start gap-2.5 rounded-md border border-border px-3 py-2.5 transition-colors has-[[data-state=checked]]:border-primary/40 has-[[data-state=checked]]:bg-primary/5"
-								>
-									<Checkbox
-										id="ai-subagent"
-										checked={installSubagent}
-										onCheckedChange={(v) => (installSubagent = v === true)}
-									/>
-									<span class="grid gap-0.5">
-										<span class="text-sm font-medium">Subagent</span>
-										<span class="text-xs text-muted-foreground">
-											The tour-author that turns a diff into a guided review tour.
-										</span>
-									</span>
-								</label>
 								{#if !anyArtifact}
 									<p class="text-xs text-destructive">Select at least one file to continue.</p>
 								{/if}
@@ -327,14 +300,6 @@
 											<span class="truncate text-sm font-medium">
 												{HARNESS_AI_PATHS[target].label}
 											</span>
-											{#if target === 'codex'}
-												<span
-													class="shrink-0 text-[11px] text-muted-foreground"
-													title="Codex reads the skill from .agents; its subagent installs as a .codex/agents TOML file."
-												>
-													subagent only
-												</span>
-											{/if}
 										</span>
 										{#if target === 'standard'}
 											<Tooltip.Provider delayDuration={150}>

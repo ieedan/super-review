@@ -2037,6 +2037,17 @@ export interface PreloadAPI {
 			contextKey: string,
 			fileDiffSigs: Record<string, string>
 		): Promise<string[]>;
+		// Given the fresh diff signatures of the files shown in `contextKey`, return
+		// the paths whose mark should be *kept* even though their diff changed,
+		// because a chain of reviewed diffs (this context's prior reviewed state plus
+		// other contexts') still spans the new diff. Rolls their stored signature
+		// forward. Called before the unmark-on-change pass so it can override it for
+		// files the reviewer has, in effect, already seen end to end.
+		getRetainedSeen(
+			repoId: string,
+			contextKey: string,
+			fileDiffSigs: Record<string, string>
+		): Promise<string[]>;
 		// `sig` is the file's content signature at mark-seen time; stored alongside
 		// the seen mark so a later change can be detected. Omitted when un-seeing.
 		setFileSeen(

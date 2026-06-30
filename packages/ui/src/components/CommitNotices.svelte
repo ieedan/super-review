@@ -134,7 +134,7 @@
 					<NoticeCard
 						onDismiss={dismiss}
 						dismissTitle="Dismiss"
-						tooltip="Configure the super-review skill and subagent so coding agents can document their changes here for review."
+						tooltip="Configure the super-review skills so coding agents can document their changes here for review."
 					>
 						{#snippet logo()}
 							<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-4 shrink-0" />

@@ -65,7 +65,6 @@
 	const isOverview = $derived(view === 'all');
 	const meta = $derived(METRICS.find((m) => m.key === view));
 	const headLabel = $derived(isOverview ? 'Activity' : (meta?.label ?? ''));
-	const unit = $derived(isOverview ? 'actions' : (meta?.label.toLowerCase() ?? ''));
 
 	// The active repo's stats (falling back to the all-repos roll-up when no repo
 	// is active, e.g. opened from a global surface). Read live from the store so
@@ -191,10 +190,12 @@
 		Object.entries(daily).map(([key, count]) => ({ date: parseDayKey(key), count }))
 	);
 
-	// A description of what happened on one day. For a single metric it's that
-	// metric's count; for the Overview it breaks down every metric with activity
-	// that day, so the heatmap is legible without a per-metric label.
-	function dayTooltip(date: Date): string {
+	// A description of what happened on one day, laid out as a date header plus one
+	// labelled row per metric. For a single metric it's that metric's count; for
+	// the Overview it breaks down every metric with activity that day, so the
+	// heatmap is legible without a per-metric label.
+	type TipRow = { label: string; value: string };
+	function dayTooltip(date: Date): { when: string; rows: TipRow[] } {
 		const key = dayKey(date);
 		const when = date.toLocaleDateString(undefined, {
 			month: 'short',
@@ -202,12 +203,13 @@
 			year: 'numeric'
 		});
 		if (!isOverview) {
-			return `${when}: ${fmt(source.daily[view as StatMetric]?.[key] ?? 0)} ${unit}`;
+			const n = source.daily[view as StatMetric]?.[key] ?? 0;
+			return { when, rows: [{ label: meta?.label ?? '', value: fmt(n) }] };
 		}
-		const parts = METRICS.map((m) => ({ m, n: source.daily[m.key]?.[key] ?? 0 }))
+		const rows = METRICS.map((m) => ({ m, n: source.daily[m.key]?.[key] ?? 0 }))
 			.filter((x) => x.n > 0)
-			.map((x) => `${fmt(x.n)} ${x.m.short.toLowerCase()}`);
-		return parts.length ? `${when}: ${parts.join(', ')}` : `${when}: no activity`;
+			.map((x) => ({ label: x.m.label, value: fmt(x.n) }));
+		return { when, rows };
 	}
 
 	// A single shared tooltip that follows the hovered cell (one element, not one
@@ -217,7 +219,8 @@
 	let tip = $state<{
 		x: number;
 		y: number;
-		text: string;
+		when: string;
+		rows: TipRow[];
 		align: 'left' | 'center' | 'right';
 	} | null>(null);
 	function showTip(e: PointerEvent, date: Date): void {
@@ -226,7 +229,7 @@
 		const x = e.clientX - r.left;
 		const ratio = r.width > 0 ? x / r.width : 0.5;
 		const align = ratio > 0.7 ? 'right' : ratio < 0.3 ? 'left' : 'center';
-		tip = { x, y: e.clientY - r.top, text: dayTooltip(date), align };
+		tip = { x, y: e.clientY - r.top, ...dayTooltip(date), align };
 	}
 
 	// Shade relative to the busiest day so both small counts (PRs) and large ones
@@ -390,7 +393,7 @@
 
 			{#if tip}
 				<div
-					class="pointer-events-none absolute z-20 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md"
+					class="pointer-events-none absolute z-20 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1.5 text-xs text-popover-foreground shadow-md"
 					style="left: {tip.x}px; top: {tip.y - 6}px; transform: translateY(-100%) {tip.align ===
 					'center'
 						? 'translateX(-50%)'
@@ -398,7 +401,19 @@
 							? 'translateX(-100%)'
 							: ''}"
 				>
-					{tip.text}
+					<div class="font-medium">{tip.when}</div>
+					{#if tip.rows.length > 0}
+						<div class="mt-1 flex flex-col gap-0.5">
+							{#each tip.rows as row (row.label)}
+								<div class="flex items-center justify-between gap-4 text-muted-foreground">
+									<span>{row.label}</span>
+									<span class="font-medium text-popover-foreground tabular-nums">{row.value}</span>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<div class="mt-1 text-muted-foreground">No activity</div>
+					{/if}
 				</div>
 			{/if}
 		</div>
