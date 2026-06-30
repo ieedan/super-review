@@ -20,6 +20,7 @@ import type {
 } from '@shared/types.js';
 import {
 	AI_CONFIG_TARGETS,
+	BUNDLED_SKILLS,
 	HARNESS_AI_PATHS,
 	type ArtifactLocation,
 	type TargetPaths
@@ -40,17 +41,27 @@ function resolveLoc(repoPath: string, scope: AiScope, rel: string): string {
 	return path.join(base, ...rel.split('/'));
 }
 
+// The full skill-directory location (`<base>/<name>`) for one bundled skill,
+// derived from the target's skills base. POSIX-joined so it matches the stored
+// relative-path style that `resolveLoc` splits on.
+function skillLocation(base: ArtifactLocation, skillName: string): ArtifactLocation {
+	return {
+		project: `${base.project}/${skillName}`,
+		global: base.global === null ? null : `${base.global}/${skillName}`
+	};
+}
+
 // Detect a skill directory: installed when its SKILL.md exists; an update is on
-// offer when the installed `metadata.version` is behind the bundled skill (an
-// un-versioned copy counts as oldest).
-async function detectSkill(absDir: string): Promise<AiArtifactStatus> {
+// offer when the installed `metadata.version` is behind the bundled skill of the
+// same name (an un-versioned copy counts as oldest).
+async function detectSkill(absDir: string, skillName: string): Promise<AiArtifactStatus> {
 	let source: string;
 	try {
 		source = await fs.readFile(path.join(absDir, 'SKILL.md'), 'utf8');
 	} catch {
 		return { installed: false, updateAvailable: false, path: absDir };
 	}
-	const bundled = await bundledSkillVersion();
+	const bundled = await bundledSkillVersion(skillName);
 	const installed = parseSkillVersion(source);
 	const updateAvailable = bundled !== null && (installed === null || installed < bundled);
 	return { installed: true, updateAvailable, path: absDir };
@@ -123,8 +134,17 @@ export async function getAiConfigStatus(repoPath: string): Promise<AiConfigStatu
 			target,
 			harnessDetected: await detectHarnessInstalled(paths.detectDir)
 		};
-		if (paths.skill) {
-			entry.skill = await detectArtifact(repoPath, paths.skill, detectSkill);
+		if (paths.skillsBase) {
+			// One entry per bundled skill, each living in its own `<base>/<name>` dir.
+			entry.skills = await Promise.all(
+				BUNDLED_SKILLS.map(async (skill) => {
+					const loc = skillLocation(paths.skillsBase!, skill.name);
+					const detected = await detectArtifact(repoPath, loc, (abs) =>
+						detectSkill(abs, skill.name)
+					);
+					return { name: skill.name, ...detected };
+				})
+			);
 		}
 		if (paths.subagent) {
 			entry.subagent = await detectArtifact(repoPath, paths.subagent, (abs) =>
@@ -136,9 +156,11 @@ export async function getAiConfigStatus(repoPath: string): Promise<AiConfigStatu
 	// Roll up across every artifact/scope so the notices know whether anything is
 	// configured or behind, without re-walking the matrix in the renderer.
 	const slots = targets.flatMap((t) =>
-		[t.skill?.project, t.skill?.global, t.subagent?.project, t.subagent?.global].filter(
-			(s): s is AiArtifactStatus => s != null
-		)
+		[
+			...(t.skills ?? []).flatMap((s) => [s.project, s.global]),
+			t.subagent?.project,
+			t.subagent?.global
+		].filter((s): s is AiArtifactStatus => s != null)
 	);
 	return {
 		targets,
@@ -153,15 +175,33 @@ export async function getAiConfigStatus(repoPath: string): Promise<AiConfigStatu
 function resolveItem(
 	repoPath: string,
 	item: AiConfigInstallItem
-): { dest: string; artifact: AiArtifact; format: TargetPaths['subagentFormat'] } | string {
+):
+	| { dest: string; artifact: AiArtifact; format: TargetPaths['subagentFormat']; skill?: string }
+	| string {
 	const paths = HARNESS_AI_PATHS[item.target];
-	const loc = item.artifact === 'skill' ? paths.skill : paths.subagent;
-	if (!loc) return `${item.target} has no ${item.artifact} location`;
+	if (item.artifact === 'skill') {
+		if (!paths.skillsBase) return `${item.target} has no skill location`;
+		if (!item.skill) return `${item.target} skill install is missing a skill name`;
+		if (!BUNDLED_SKILLS.some((s) => s.name === item.skill)) {
+			return `unknown skill "${item.skill}"`;
+		}
+		const loc = skillLocation(paths.skillsBase, item.skill);
+		const rel = item.scope === 'project' ? loc.project : loc.global;
+		if (rel === null) return `${item.target} skill has no global location`;
+		return {
+			dest: resolveLoc(repoPath, item.scope, rel),
+			artifact: 'skill',
+			format: paths.subagentFormat,
+			skill: item.skill
+		};
+	}
+	const loc = paths.subagent;
+	if (!loc) return `${item.target} has no subagent location`;
 	const rel = item.scope === 'project' ? loc.project : loc.global;
-	if (rel === null) return `${item.target} ${item.artifact} has no global location`;
+	if (rel === null) return `${item.target} subagent has no global location`;
 	return {
 		dest: resolveLoc(repoPath, item.scope, rel),
-		artifact: item.artifact,
+		artifact: 'subagent',
 		format: paths.subagentFormat
 	};
 }
@@ -169,14 +209,15 @@ function resolveItem(
 async function writeArtifact(
 	dest: string,
 	artifact: AiArtifact,
-	format: TargetPaths['subagentFormat']
+	format: TargetPaths['subagentFormat'],
+	skill?: string
 ): Promise<void> {
 	if (artifact === 'skill') {
 		// Replace the skill directory wholesale so re-installing upgrades a stale
 		// copy and prunes files dropped from newer versions of the skill.
 		await fs.rm(dest, { recursive: true, force: true });
 		await fs.mkdir(path.dirname(dest), { recursive: true });
-		await fs.cp(bundledSkillDir(), dest, { recursive: true });
+		await fs.cp(bundledSkillDir(skill!), dest, { recursive: true });
 	} else {
 		await fs.mkdir(path.dirname(dest), { recursive: true });
 		await fs.writeFile(dest, await renderSubagent(format), 'utf8');
@@ -201,7 +242,7 @@ export async function applyAiConfig(
 		let outcome = byDest.get(resolved.dest);
 		if (!outcome) {
 			try {
-				await writeArtifact(resolved.dest, resolved.artifact, resolved.format);
+				await writeArtifact(resolved.dest, resolved.artifact, resolved.format, resolved.skill);
 				outcome = { ok: true };
 			} catch (err) {
 				outcome = { ok: false, error: err instanceof Error ? err.message : String(err) };

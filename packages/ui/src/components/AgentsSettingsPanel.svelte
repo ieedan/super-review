@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import Download from '@lucide/svelte/icons/download';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Settings2 from '@lucide/svelte/icons/settings-2';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -8,7 +9,11 @@
 	import AgentsConventionIcon from './AgentsConventionIcon.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { actions, app } from '@super-review/ui/store.svelte';
-	import { AI_CONFIG_TARGETS, HARNESS_AI_PATHS } from '@super-review/core/ai-config-paths';
+	import {
+		AI_CONFIG_TARGETS,
+		BUNDLED_SKILLS,
+		HARNESS_AI_PATHS
+	} from '@super-review/core/ai-config-paths';
 	import type { AiArtifact, AiArtifactStatus, AiScope, TargetKind } from '@super-review/core/types';
 
 	// Re-detect on open so the panel reflects files that changed on disk since the
@@ -26,19 +31,29 @@
 
 	const ARTIFACT_LABELS: Record<AiArtifact, string> = { skill: 'Skill', subagent: 'Subagent' };
 
-	type Row = { target: TargetKind; artifact: AiArtifact; slot: AiArtifactStatus };
+	// A friendly label for an installed skill, falling back to its directory name.
+	function skillLabel(name: string): string {
+		return BUNDLED_SKILLS.find((s) => s.name === name)?.label ?? name;
+	}
 
-	// The installed skill/subagent files at a given scope, across every target.
+	// `skill` carries the bundled skill's directory name for skill rows (needed to
+	// reinstall/update or remove the right one); it's undefined for subagent rows.
+	type Row = { target: TargetKind; artifact: AiArtifact; slot: AiArtifactStatus; skill?: string };
+
+	// The installed skill/subagent files at a given scope, across every target. Each
+	// bundled skill is its own row so it can be updated or removed independently.
 	function rowsForScope(scope: AiScope): Row[] {
 		const rows: Row[] = [];
 		for (const target of AI_CONFIG_TARGETS) {
 			const t = status?.targets.find((x) => x.target === target);
 			if (!t) continue;
-			for (const artifact of ['skill', 'subagent'] as AiArtifact[]) {
-				const group = artifact === 'skill' ? t.skill : t.subagent;
-				const slot = group ? group[scope] : null;
-				if (slot && slot.installed) rows.push({ target, artifact, slot });
+			for (const skill of t.skills ?? []) {
+				const slot = skill[scope];
+				if (slot && slot.installed)
+					rows.push({ target, artifact: 'skill', slot, skill: skill.name });
 			}
+			const sub = t.subagent ? t.subagent[scope] : null;
+			if (sub && sub.installed) rows.push({ target, artifact: 'subagent', slot: sub });
 		}
 		return rows;
 	}
@@ -72,9 +87,42 @@
 			details: { caption: 'Path', value: row.slot.path },
 			confirm: { text: 'Delete' },
 			onConfirm: async () => {
-				await actions.removeAiConfig({ target: row.target, artifact: row.artifact, scope });
+				await actions.removeAiConfig({
+					target: row.target,
+					artifact: row.artifact,
+					scope,
+					...(row.skill ? { skill: row.skill } : {})
+				});
 			}
 		});
+	}
+
+	// Tracks which rows are mid-update so the button shows progress and can't be
+	// double-clicked. Keyed the same way as the row `#each`.
+	let updating = $state<Record<string, boolean>>({});
+	const rowKey = (row: Row, scope: AiScope): string =>
+		`${scope}:${row.target}:${row.artifact}:${row.skill ?? ''}`;
+
+	// Re-install the bundled copy over the installed one, upgrading it to the
+	// current version. Same write the Configure dialog performs for this one item.
+	async function updateRow(row: Row, scope: AiScope): Promise<void> {
+		const key = rowKey(row, scope);
+		if (updating[key]) return;
+		updating[key] = true;
+		try {
+			await actions.applyAiConfig({
+				items: [
+					{
+						target: row.target,
+						artifact: row.artifact,
+						scope,
+						...(row.skill ? { skill: row.skill } : {})
+					}
+				]
+			});
+		} finally {
+			updating[key] = false;
+		}
 	}
 </script>
 
@@ -83,7 +131,7 @@
 		<div>
 			<h3 class="text-base font-semibold">Agent files</h3>
 			<p class="mt-1 text-xs text-muted-foreground">
-				The super-review skill and tour-author subagent installed for your coding agents, and where
+				The super-review skills and tour-author subagent installed for your coding agents, and where
 				each one lives on disk.
 			</p>
 		</div>
@@ -109,7 +157,7 @@
 							Nothing installed here yet.
 						</p>
 					{:else}
-						{#each rows as row (`${row.target}:${row.artifact}`)}
+						{#each rows as row (`${row.target}:${row.artifact}:${row.skill ?? ''}`)}
 							<div class="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
 								{#if row.target === 'standard'}
 									<AgentsConventionIcon size={18} />
@@ -119,14 +167,21 @@
 								<div class="min-w-0 flex-1">
 									<div class="flex items-center gap-1.5 text-sm leading-tight">
 										<span class="font-medium">{HARNESS_AI_PATHS[row.target].label}</span>
-										<span class="text-muted-foreground">{ARTIFACT_LABELS[row.artifact]}</span>
+										<span class="text-muted-foreground">
+											{row.skill ? skillLabel(row.skill) : ARTIFACT_LABELS[row.artifact]}
+										</span>
 										{#if row.slot.updateAvailable}
-											<span
-												class="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary"
-												title="A newer version is bundled with the app."
+											{@const key = rowKey(row, s.key)}
+											<button
+												type="button"
+												class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-60"
+												title="A newer version is bundled with the app. Click to update."
+												disabled={updating[key]}
+												onclick={() => updateRow(row, s.key)}
 											>
-												update available
-											</span>
+												<Download class="size-2.5 {updating[key] ? 'animate-pulse' : ''}" />
+												{updating[key] ? 'updating…' : 'update available'}
+											</button>
 										{/if}
 									</div>
 									<div
