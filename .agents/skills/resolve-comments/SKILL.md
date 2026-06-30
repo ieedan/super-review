@@ -83,43 +83,6 @@ This needs a GitHub token: the Super Review app's sign-in, or `GH_TOKEN` /
 thread, address it in code and resolve the thread on GitHub (reply + resolve via
 the GitHub API/MCP); the CLI does not do this.
 
-## Dry-running without real comments
-
-Only the desktop app creates comments, so a repo a reviewer has not touched has
-none to practice on. To exercise the loop yourself, seed a row straight into the
-app database (`~/.super-review/comments.db`), keyed by the repo's absolute path
-and the branch head (`branch:<base>..<head>`, or `workingTree`):
-
-```bash
-node --experimental-sqlite -e '
-const {DatabaseSync}=require("node:sqlite"),path=require("path"),os=require("os"),{randomUUID}=require("crypto");
-const repo=process.cwd();
-const db=new DatabaseSync(path.join(os.homedir(),".super-review","comments.db"));
-db.exec("CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY,repo TEXT,context_key TEXT,path TEXT,side TEXT,start_line INTEGER,end_line INTEGER,body TEXT,author TEXT,created_at INTEGER,updated_at INTEGER,in_reply_to TEXT,resolved_at INTEGER,resolved_by TEXT,resolved_session_id TEXT)");
-const now=Date.now();
-db.prepare("INSERT INTO comments (id,repo,context_key,path,side,start_line,end_line,body,author,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-  .run(randomUUID(),repo,"workingTree","README.md","RIGHT",1,1,"Example open comment.",JSON.stringify({kind:"human",name:"Reviewer"}),now,now);
-'
-npx super-review comment list --unresolved   # the seeded comment appears
-```
-
-`--experimental-sqlite` is needed on Node 22/23; it is built in on Node 24+.
-
-## Build a local CLI (only if testing unpublished changes)
-
-The skill uses the published CLI via `npx`; you only need this to test local
-edits to `packages/cli`. The electron postinstall fails on the network in a
-headless container, so skip its binary and the pre-build deps check:
-
-```bash
-export ELECTRON_SKIP_BINARY_DOWNLOAD=1
-pnpm install --frozen-lockfile --config.verify-deps-before-run=false
-pnpm --filter super-review --config.verify-deps-before-run=false build
-node packages/cli/dist/bin.mjs comment --help
-```
-
-`@super-review/core` has no build step; it is bundled into the CLI by tsdown.
-
 ## Gotchas
 
 - **PR resolve is not a CLI op.** `comment resolve` only marks *local* comments.
