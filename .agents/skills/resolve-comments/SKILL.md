@@ -79,13 +79,13 @@ npx super-review comment list --pr 42
 ```
 
 This needs a GitHub token: the Super Review app's sign-in, or `GH_TOKEN` /
-`GITHUB_TOKEN`. Output is tagged `[review]` with the author. To *resolve* a PR
+`GITHUB_TOKEN`. Output is tagged `[review]` with the author. To _resolve_ a PR
 thread, address it in code and resolve the thread on GitHub (reply + resolve via
 the GitHub API/MCP); the CLI does not do this.
 
 ## Gotchas
 
-- **PR resolve is not a CLI op.** `comment resolve` only marks *local* comments.
+- **PR resolve is not a CLI op.** `comment resolve` only marks _local_ comments.
   GitHub review threads have no "resolved" state in the REST API the CLI uses
   (it is a GraphQL concept), so PR threads listed by `--pr` are tagged `[review]`,
   not open/resolved, and you resolve them on GitHub, not here.
@@ -95,7 +95,7 @@ the GitHub API/MCP); the CLI does not do this.
 - **`--pr` needs a real github.com origin.** It parses owner/repo from the
   `origin` remote. In this container, git rewrites github remotes to a local
   proxy URL, so `--pr` fails with `couldn't determine the GitHub owner/repo from
-  the 'origin' remote`. On a normal machine with a `github.com` origin it works.
+the 'origin' remote`. On a normal machine with a `github.com` origin it works.
 - **Resolution is thread-level.** `--unresolved` drops a whole thread once its
   root is resolved; replies never carry their own resolved state.
 - **No CLI creates comments.** Only the desktop app writes them. To try the loop

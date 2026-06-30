@@ -36,33 +36,33 @@ A **session** is a guided **tour** of the changes, written for a human reviewer.
 
 Pass the tour as inline JSON to `--tour`. Required top-level fields on first save (unless supplied via CLI flags):
 
-| Field | Description |
-| --- | --- |
-| `name` | Short title for the whole change |
-| `description` | One or two sentences of overview |
+| Field         | Description                                                                                                                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`        | Short title for the whole change                                                                                                                                                                                               |
+| `description` | One or two sentences of overview                                                                                                                                                                                               |
 | `commitTitle` | Optional. Conventional-commit-style line (e.g. `feat: reply to local review comments`). Pre-fills the commit box in the desktop app when the session's files still match the uncommitted working tree. One line only, no body. |
-| `harness` | One of: `claude-code`, `cursor`, `codex`, `opencode`, `copilot`, `other`. Drives the logo on the session card. |
-| `harnessUrl` | Optional. Link back to this run (resume URL or permalink). |
-| `steps` | Ordered array of tour stops (see below). |
+| `harness`     | One of: `claude-code`, `cursor`, `codex`, `opencode`, `copilot`, `other`. Drives the logo on the session card.                                                                                                                 |
+| `harnessUrl`  | Optional. Link back to this run (resume URL or permalink).                                                                                                                                                                     |
+| `steps`       | Ordered array of tour stops (see below).                                                                                                                                                                                       |
 
 Each **step** object:
 
-| Field | Description |
-| --- | --- |
-| `title` | Short heading for this group of changes |
-| `body` | What this group establishes and why. Markdown supported: **bold**, lists, and `code`. |
-| `files` | Array of repo-relative file paths changed in this step, in reading order |
-| `callouts` | Optional. Array of line-specific notes (see below) |
+| Field      | Description                                                                           |
+| ---------- | ------------------------------------------------------------------------------------- |
+| `title`    | Short heading for this group of changes                                               |
+| `body`     | What this group establishes and why. Markdown supported: **bold**, lists, and `code`. |
+| `files`    | Array of repo-relative file paths changed in this step, in reading order              |
+| `callouts` | Optional. Array of line-specific notes (see below)                                    |
 
 Each **callout** pins commentary to a line range inside one of the step's files, rendered as a note at that spot in the diff:
 
-| Field | Description |
-| --- | --- |
-| `file` | One of the step's `files` |
-| `startLine` | 1-based start line (inclusive) |
-| `endLine` | Optional. 1-based end line (inclusive). Omit for a single line. |
-| `side` | `"new"` (added/current lines, default) or `"old"` (original side) |
-| `body` | Markdown commentary |
+| Field       | Description                                                       |
+| ----------- | ----------------------------------------------------------------- |
+| `file`      | One of the step's `files`                                         |
+| `startLine` | 1-based start line (inclusive)                                    |
+| `endLine`   | Optional. 1-based end line (inclusive). Omit for a single line.   |
+| `side`      | `"new"` (added/current lines, default) or `"old"` (original side) |
+| `body`      | Markdown commentary                                               |
 
 Example tour:
 
@@ -117,19 +117,19 @@ Command: `npx super-review session save`
 
 ### Flags
 
-| Flag | Description |
-| --- | --- |
-| `--key <id>` | **Always pass the same stable id for the same conversation.** Re-runs update the same session instead of creating duplicates. |
-| `--tour <json>` | The tour as inline JSON (see schema above). |
-| `--name`, `--description` | Overview fields. Required on first save unless the tour supplies them. Flags override tour values. |
-| `--commit-title` | Same as tour `commitTitle`. Flags override tour values. |
-| `--harness <name>` | One of: `claude-code`, `cursor`, `codex`, `opencode`, `copilot`, `other`. |
-| `--harness-label "<name>"` | Use with `--harness other` to label an unlisted tool. |
-| `--harness-url <url>` | Link back to this run. |
-| `--cwd <path>` | Repo path; defaults to the current directory. |
-| `--committed` | Capture this branch's committed diff instead of the working tree. |
-| `--base <ref>` | Override the base to diff against (implies `--committed`). |
-| `--head <ref>` | Override the head (implies `--committed`); defaults to the current branch. |
+| Flag                       | Description                                                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `--key <id>`               | **Always pass the same stable id for the same conversation.** Re-runs update the same session instead of creating duplicates. |
+| `--tour <json>`            | The tour as inline JSON (see schema above).                                                                                   |
+| `--name`, `--description`  | Overview fields. Required on first save unless the tour supplies them. Flags override tour values.                            |
+| `--commit-title`           | Same as tour `commitTitle`. Flags override tour values.                                                                       |
+| `--harness <name>`         | One of: `claude-code`, `cursor`, `codex`, `opencode`, `copilot`, `other`.                                                     |
+| `--harness-label "<name>"` | Use with `--harness other` to label an unlisted tool.                                                                         |
+| `--harness-url <url>`      | Link back to this run.                                                                                                        |
+| `--cwd <path>`             | Repo path; defaults to the current directory.                                                                                 |
+| `--committed`              | Capture this branch's committed diff instead of the working tree.                                                             |
+| `--base <ref>`             | Override the base to diff against (implies `--committed`).                                                                    |
+| `--head <ref>`             | Override the head (implies `--committed`); defaults to the current branch.                                                    |
 
 ### Capturing uncommitted vs committed changes
 

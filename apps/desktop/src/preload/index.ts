@@ -60,7 +60,6 @@ import type {
 	Session,
 	SessionSummary,
 	AiConfigStatus,
-	AiConfigApplyRequest,
 	AiConfigApplyResult,
 	AiConfigRemoveResult,
 	TabsContextMenuResult,
