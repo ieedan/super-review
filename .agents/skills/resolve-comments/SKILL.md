@@ -32,9 +32,10 @@ Use the tools available to you to find any UNRESOLVED review comments on the PR 
 
 Read and ensure each comment is still valid and not outdated/resolved. Comments that require more information should receive a reply see [#3](#3-resolve-the-comments). 
 
-Once you've validated the comments, turn them into a task list:
-- Group related comments together so independent issues can be resolved concurrently.
-- When a comment flags an issue in one spot, look for the same pattern across the other changed files and add those fixes to the list too.
+Once you've validated the comments, turn them into a task list. Group related comments together so independent issues can be resolved concurrently.
+
+> [!IMPORTANT]
+> A comment points at ONE example of a problem, not the only one. For every comment, treat the underlying issue as a pattern: search ALL changed files for other places the same issue appears and add a task to fix each one. Do NOT stop at the exact line the reviewer pointed to. A reviewer flagging the same bug in three places is a failure of this step. When you add a comment to the task list, write down the pattern you searched for and the files you checked. Any other files turned up by that search belong in the SAME task-list group as the original comment, so the whole pattern is fixed together.
 
 > [!TIP]
 > If there are multiple comment groups and you have the ability to you can spin up subagents to resolve multiple comments at the same time each subagent updating the task list.
