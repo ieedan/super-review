@@ -121,17 +121,26 @@ async function ghGraphql(
 	return json.data;
 }
 
-// Thread-level resolution lives only in GraphQL (`reviewThreads`), so we fetch
-// the PR's threads and build a `databaseId → isResolved` map. The REST comment
-// `id` equals the GraphQL `databaseId`, which lets us stamp resolution onto the
-// REST comments. Paginated over threads. Mirrors the desktop app's
+// Thread info we can only get from GraphQL: the thread's node `id` (needed to
+// resolve/unresolve it) and its `isResolved` state.
+export interface ThreadInfo {
+	threadId: string;
+	isResolved: boolean;
+}
+
+// Thread-level state lives only in GraphQL (`reviewThreads`), so we fetch the
+// PR's threads and build a `databaseId → ThreadInfo` map. The REST comment `id`
+// equals the GraphQL `databaseId`, which lets us map a comment id back to its
+// thread (for both resolution display and resolve/unresolve). Every comment in a
+// thread maps to the same thread, so a reply id resolves the same thread as its
+// root. Paginated over threads. Mirrors the desktop app's
 // `fetchThreadInfoByCommentId`.
-async function fetchResolutionByCommentId(
+async function fetchThreadInfoByCommentId(
 	owner: string,
 	repo: string,
 	prNumber: number,
 	token: string
-): Promise<Map<number, boolean>> {
+): Promise<Map<number, ThreadInfo>> {
 	const query = `
     query ($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
       repository(owner: $owner, name: $repo) {
@@ -139,6 +148,7 @@ async function fetchResolutionByCommentId(
           reviewThreads(first: 100, after: $cursor) {
             pageInfo { hasNextPage endCursor }
             nodes {
+              id
               isResolved
               comments(first: 100) {
                 nodes { databaseId }
@@ -149,7 +159,7 @@ async function fetchResolutionByCommentId(
       }
     }`;
 
-	const map = new Map<number, boolean>();
+	const map = new Map<number, ThreadInfo>();
 	let cursor: string | null = null;
 	for (;;) {
 		const data = (await ghGraphql(query, { owner, repo, number: prNumber, cursor }, token)) as {
@@ -157,7 +167,11 @@ async function fetchResolutionByCommentId(
 				pullRequest?: {
 					reviewThreads?: {
 						pageInfo?: { hasNextPage?: boolean; endCursor?: string };
-						nodes?: { isResolved: boolean; comments?: { nodes?: { databaseId?: number }[] } }[];
+						nodes?: {
+							id: string;
+							isResolved: boolean;
+							comments?: { nodes?: { databaseId?: number }[] };
+						}[];
 					};
 				};
 			};
@@ -166,13 +180,29 @@ async function fetchResolutionByCommentId(
 		if (!threads) break;
 		for (const t of threads.nodes ?? []) {
 			for (const c of t.comments?.nodes ?? []) {
-				if (c?.databaseId != null) map.set(c.databaseId, t.isResolved);
+				if (c?.databaseId != null)
+					map.set(c.databaseId, { threadId: t.id, isResolved: t.isResolved });
 			}
 		}
 		if (!threads.pageInfo?.hasNextPage || !threads.pageInfo.endCursor) break;
 		cursor = threads.pageInfo.endCursor;
 	}
 	return map;
+}
+
+// The GraphQL node id of the review thread a comment belongs to, or null when
+// the comment id isn't found among the PR's threads. Used by `comment resolve
+// --pr` to turn the numeric comment id a reviewer sees in `list --pr` into the
+// thread id GitHub's resolve mutation requires.
+export async function findThreadIdForComment(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	commentId: number,
+	token: string
+): Promise<string | null> {
+	const info = await fetchThreadInfoByCommentId(owner, repo, prNumber, token);
+	return info.get(commentId)?.threadId ?? null;
 }
 
 // Fetch every inline review comment on a pull request, following pagination,
@@ -198,14 +228,14 @@ export async function listPullRequestReviewComments(
 	// Resolution is best-effort: if GraphQL fails (token scope, GHE without
 	// GraphQL, a transient error) we still return the comments, just with
 	// `isResolved: null` rather than failing the whole listing.
-	let resolution: Map<number, boolean>;
+	let threadInfo: Map<number, ThreadInfo>;
 	try {
-		resolution = await fetchResolutionByCommentId(owner, repo, prNumber, token);
+		threadInfo = await fetchThreadInfoByCommentId(owner, repo, prNumber, token);
 	} catch (err) {
 		console.error(
 			`warning: couldn't fetch thread resolution: ${err instanceof Error ? err.message : String(err)}`
 		);
-		resolution = new Map();
+		threadInfo = new Map();
 	}
 
 	return raw.map((c) => ({
@@ -214,6 +244,67 @@ export async function listPullRequestReviewComments(
 		// maps into the current diff, so GitHub nulls the live `line`. Requiring
 		// `original_line` excludes genuine file-level comments (no line anchor).
 		isOutdated: c.line == null && c.original_line != null,
-		isResolved: resolution.has(c.id) ? (resolution.get(c.id) ?? false) : null
+		isResolved: threadInfo.get(c.id)?.isResolved ?? null
 	}));
+}
+
+// Post a reply to an existing inline review comment thread. GitHub threads the
+// reply under the comment's root automatically. Returns the new comment's
+// numeric id and html_url so the caller can report where it landed.
+export async function replyToPullRequestReviewComment(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	commentId: number,
+	body: string,
+	token: string
+): Promise<{ id: number; html_url: string }> {
+	const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/comments/${commentId}/replies`;
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${token}`,
+			Accept: 'application/vnd.github+json',
+			'Content-Type': 'application/json',
+			'X-GitHub-Api-Version': '2022-11-28'
+		},
+		body: JSON.stringify({ body })
+	});
+	if (!res.ok) {
+		if (res.status === 401) throw new Error('GitHub rejected the token (401). Sign in again.');
+		if (res.status === 404) {
+			throw new Error(
+				`comment #${commentId} not found on ${owner}/${repo} #${prNumber} (or the token can't see it)`
+			);
+		}
+		throw new Error(`GitHub request failed: ${res.status} ${res.statusText}`);
+	}
+	return (await res.json()) as { id: number; html_url: string };
+}
+
+// Resolve or unresolve a review thread via GraphQL (the REST API has no
+// equivalent). Returns the thread's resolved state as GitHub reports it back.
+// Mirrors the desktop app's `setReviewThreadResolved`.
+export async function setReviewThreadResolved(
+	threadId: string,
+	resolved: boolean,
+	token: string
+): Promise<boolean> {
+	const mutation = resolved
+		? `mutation ($threadId: ID!) {
+         resolveReviewThread(input: { threadId: $threadId }) {
+           thread { id isResolved }
+         }
+       }`
+		: `mutation ($threadId: ID!) {
+         unresolveReviewThread(input: { threadId: $threadId }) {
+           thread { id isResolved }
+         }
+       }`;
+	const data = (await ghGraphql(mutation, { threadId }, token)) as {
+		resolveReviewThread?: { thread?: { isResolved?: boolean } };
+		unresolveReviewThread?: { thread?: { isResolved?: boolean } };
+	};
+	const thread = resolved ? data?.resolveReviewThread?.thread : data?.unresolveReviewThread?.thread;
+	return thread?.isResolved ?? resolved;
 }

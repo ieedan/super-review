@@ -1,18 +1,9 @@
 import { Command } from 'commander';
 import path from 'node:path';
-import {
-	getCurrentBranch,
-	listLocalComments,
-	resolveGithubRepo,
-	type LocalComment
-} from '@super-review/core';
+import { getCurrentBranch, listLocalComments, type LocalComment } from '@super-review/core';
 import { fail, repoRoot } from '../../util';
-import {
-	findOpenPrForBranch,
-	listPullRequestReviewComments,
-	resolveGithubToken,
-	type GithubReviewComment
-} from '../../github';
+import { listPullRequestReviewComments, type GithubReviewComment } from '../../github';
+import { parsePrNumber, resolvePrContext } from '../../pr-context';
 
 interface ListOptions {
 	unresolved?: boolean;
@@ -83,43 +74,14 @@ function formatGithubLine(c: GithubReviewComment, isReply: boolean): string {
 // instead of the local, branch-scoped ones. Reuses the desktop app's signed-in
 // token (falling back to GH_TOKEN/GITHUB_TOKEN); never touches the local store.
 async function runListPr(opts: ListOptions, explicitNumber: number | null): Promise<void> {
-	const cwd = path.resolve(opts.cwd ?? process.cwd());
-	const root = await repoRoot(cwd);
-
-	const slug = await resolveGithubRepo(root);
-	if (!slug) fail("couldn't determine the GitHub owner/repo from the 'origin' remote");
-
-	const token = resolveGithubToken(root);
-	if (!token) {
-		fail(
-			'no GitHub token available. Sign in with the Super Review app, or set GH_TOKEN/GITHUB_TOKEN.'
-		);
-	}
-
-	// With a bare `--pr`, find the open PR whose head is the current branch. We
-	// announce the choice on stderr so stdout (especially `--json`) stays clean.
-	let prNumber = explicitNumber;
-	if (prNumber === null) {
-		const branch = await getCurrentBranch(root);
-		if (!branch) fail('not on a branch, so there is no PR to detect. Pass --pr <number>.');
-		let pr;
-		try {
-			pr = await findOpenPrForBranch(slug.owner, slug.repo, branch, token);
-		} catch (err) {
-			fail(err instanceof Error ? err.message : String(err));
-		}
-		if (!pr) {
-			fail(
-				`no open pull request found for branch "${branch}" on ${slug.owner}/${slug.repo}. Pass --pr <number>.`
-			);
-		}
-		prNumber = pr.number;
-		console.error(`using PR #${pr.number}: ${pr.title}`);
-	}
+	const { owner, repo, token, prNumber } = await resolvePrContext(
+		opts.cwd ?? process.cwd(),
+		explicitNumber
+	);
 
 	let comments: GithubReviewComment[];
 	try {
-		comments = await listPullRequestReviewComments(slug.owner, slug.repo, prNumber, token);
+		comments = await listPullRequestReviewComments(owner, repo, prNumber, token);
 	} catch (err) {
 		fail(err instanceof Error ? err.message : String(err));
 	}
@@ -153,7 +115,7 @@ async function runListPr(opts: ListOptions, explicitNumber: number | null): Prom
 	}
 	if (visibleRoots.length === 0) {
 		const what = opts.unresolved ? 'unresolved review comments' : 'review comments';
-		console.log(`no ${what} on ${slug.owner}/${slug.repo} #${prNumber}`);
+		console.log(`no ${what} on ${owner}/${repo} #${prNumber}`);
 		return;
 	}
 	for (const r of visibleRoots) {
@@ -166,15 +128,7 @@ async function runList(opts: ListOptions): Promise<void> {
 	if (opts.pr !== undefined) {
 		// `--pr` alone (boolean `true`) means "detect the PR for this branch";
 		// `--pr <n>` pins an explicit number.
-		let explicit: number | null = null;
-		if (typeof opts.pr === 'string') {
-			const n = Number(opts.pr);
-			if (!Number.isInteger(n) || n <= 0) {
-				fail(`invalid --pr value: ${opts.pr} (expected a positive integer)`);
-			}
-			explicit = n;
-		}
-		return runListPr(opts, explicit);
+		return runListPr(opts, parsePrNumber(opts.pr));
 	}
 
 	const cwd = path.resolve(opts.cwd ?? process.cwd());

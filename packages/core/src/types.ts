@@ -333,6 +333,26 @@ export interface CreateChangesetInput {
 // session card; "other" falls back to a generic icon + `harnessLabel`.
 export type HarnessKind = 'claude-code' | 'cursor' | 'codex' | 'opencode' | 'copilot' | 'other';
 
+// Human display labels for each harness. The matching logos live in the UI's
+// HarnessLogo component; this map is the browser-safe source of truth for the
+// names (used by the CLI's PR attribution footers and the renderer alike).
+const HARNESS_LABELS: Record<HarnessKind, string> = {
+	'claude-code': 'Claude Code',
+	cursor: 'Cursor',
+	codex: 'Codex',
+	opencode: 'OpenCode',
+	copilot: 'GitHub Copilot',
+	other: 'Agent'
+};
+
+// The display label for a harness. `other` has no fixed name, so it falls back
+// to a caller-supplied label (e.g. a session's freeform `harnessLabel`), then to
+// the generic "Agent".
+export function harnessLabel(harness: HarnessKind, fallback?: string): string {
+	if (harness === 'other') return fallback?.trim() || HARNESS_LABELS.other;
+	return HARNESS_LABELS[harness];
+}
+
 // A single changed file frozen into a session: the diff metadata plus the
 // captured patch and file contents, so the session renders without touching
 // git. Contents are "" for added/deleted/binary/truncated sides, matching the

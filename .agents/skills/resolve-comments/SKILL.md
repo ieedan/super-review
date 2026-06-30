@@ -56,6 +56,18 @@ npx super-review comment resolve <id> --harness <your harness>
 
 ## 3a. Resolving PR comments
 
-If you are working with comments on a PR use the tools available to you to resolve them and reply to them when necessary. 
+You can reply to and resolve PR comments directly with the CLI by adding the `--pr` flag. The `<id>` is the numeric comment id from `comment list --pr`.
+
+```sh
+# reply to a PR comment thread
+npx super-review comment reply <id> "<your reply>" --pr --harness <your harness>
+
+# resolve a PR comment thread (posts a short note, then marks it resolved)
+npx super-review comment resolve <id> --pr --harness <your harness>
+```
+
+> Pass `--harness` (claude-code, cursor, codex, opencode, copilot, other) so the note records who acted. The GitHub author of the post is the signed-in user, so the harness and any linked `--session <id>` are added as an attribution footer in the comment body. Add `-m "<note>"` to `resolve` to explain the fix instead of the default "Resolved" note.
+
+If the CLI is not available to you or not authenticated (for example a cloud agent without it installed), use the other tools available to you to resolve and reply instead.
 
 Most of the time resolving a PR comment is enough (obvious bugs, simple changes in behavior, larger refactors where a reply isn't enough) but there are also situations where you should reply (tradeoffs that should be noted, asking for more information).
