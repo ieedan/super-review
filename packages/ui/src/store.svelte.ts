@@ -450,10 +450,12 @@ interface AppState {
 		commit?: { summary: string; description: string };
 	} | null;
 	// Set when a checked-out branch's PR is observed transitioning unmerged →
-	// merged, driving the "switch back to the default branch?" dialog. Cleared
-	// when the user confirms or dismisses. Never set by merely navigating to an
-	// already-merged PR — only by a live transition we observed.
-	mergedSwitchPrompt: { branch: string; defaultBranch: string; prNumber: number } | null;
+	// merged, driving the "switch back to <base>?" dialog. `targetBranch` is the
+	// PR's base branch (what it merged into), so a branch stacked on another
+	// branch returns to that parent rather than always to the default branch.
+	// Cleared when the user confirms or dismisses. Never set by merely navigating
+	// to an already-merged PR — only by a live transition we observed.
+	mergedSwitchPrompt: { branch: string; targetBranch: string; prNumber: number } | null;
 	// Set after switching off a merged branch (via dialog or auto-switch) to drive
 	// the "remove this branch locally?" dialog. Holds the branch to delete.
 	mergedRemovePrompt: { branch: string } | null;
@@ -1643,7 +1645,12 @@ async function refreshPushStatus(): Promise<void> {
 // a live unmerged → merged transition: we only ever prompt the user to switch
 // back to the default branch when a PR we *watched open* becomes merged — never
 // when an already-merged PR is simply navigated to. Session-scoped on purpose.
-let watchedOpenPR: { repoId: string; branch: string; number: number } | null = null;
+let watchedOpenPR: {
+	repoId: string;
+	branch: string;
+	number: number;
+	baseRef: string;
+} | null = null;
 
 // Compare the freshly-resolved `app.branchPR` against the PR we were watching for
 // this branch and fire the merged-branch flow on an unmerged → merged transition.
@@ -1660,9 +1667,10 @@ async function detectBranchPRMerge(
 			? watchedOpenPR
 			: null;
 
-	// Still an open, unmerged PR — (re)arm the watcher and we're done.
+	// Still an open, unmerged PR — (re)arm the watcher and we're done. Capture the
+	// base branch now so we know where to switch back to once it merges.
 	if (pr && !pr.merged) {
-		watchedOpenPR = { repoId, branch, number: pr.number };
+		watchedOpenPR = { repoId, branch, number: pr.number, baseRef: pr.baseRef };
 		return;
 	}
 
@@ -1673,10 +1681,12 @@ async function detectBranchPRMerge(
 	// The watched PR is gone or now reports merged. Confirm the merge before
 	// disarming so a transient lookup miss doesn't silently drop the watch.
 	let merged = pr?.merged === true && pr.number === watching.number;
+	let baseRef = pr?.baseRef ?? watching.baseRef;
 	if (!pr) {
 		try {
 			const full = await window.api.github.getPR(repoId, watching.number);
 			merged = full?.merged === true;
+			if (full?.baseRef) baseRef = full.baseRef;
 		} catch {
 			// Couldn't confirm — keep watching and retry on the next refresh.
 			return;
@@ -1689,32 +1699,34 @@ async function detectBranchPRMerge(
 		return;
 	}
 	watchedOpenPR = null;
-	await onBranchPRMerged(branch, watching.number, defaultBranch);
+	// Switch back to the PR's base branch; fall back to the default branch when
+	// the base is unknown for any reason.
+	await onBranchPRMerged(branch, watching.number, baseRef ?? defaultBranch);
 }
 
-// A watched branch's PR just merged. Either switch back to the default branch
+// A watched branch's PR just merged. Either switch back to the PR's base branch
 // automatically (when the user opted in) or open the confirmation dialog.
 async function onBranchPRMerged(
 	branch: string,
 	prNumber: number,
-	defaultBranch: string
+	targetBranch: string
 ): Promise<void> {
 	// Only relevant while we're actually sitting on the merged branch and there's
-	// a different default branch to return to.
-	if (!app.currentBranch || app.currentBranch !== branch || branch === defaultBranch) return;
+	// a different branch to return to.
+	if (!app.currentBranch || app.currentBranch !== branch || branch === targetBranch) return;
 	if (app.prMergedBehavior === 'nothing') return;
 	if (app.prMergedBehavior === 'switch') {
-		await performSwitchBackAfterMerge(branch, defaultBranch);
+		await performSwitchBackAfterMerge(branch, targetBranch);
 	} else {
-		app.mergedSwitchPrompt = { branch, defaultBranch, prNumber };
+		app.mergedSwitchPrompt = { branch, targetBranch, prNumber };
 	}
 }
 
-// Switch the working tree off the merged branch back to the default branch, then
-// hand off to the remove-branch step (auto-delete or prompt). Shared by the
+// Switch the working tree off the merged branch back to the PR's base branch,
+// then hand off to the remove-branch step (auto-delete or prompt). Shared by the
 // auto-switch path and the switch-back dialog's confirm.
-async function performSwitchBackAfterMerge(branch: string, defaultBranch: string): Promise<void> {
-	const switched = await actions.checkoutBranch(defaultBranch);
+async function performSwitchBackAfterMerge(branch: string, targetBranch: string): Promise<void> {
+	const switched = await actions.checkoutBranch(targetBranch);
 	if (!switched) return;
 	if (app.autoRemoveMergedBranch) {
 		await actions.deleteBranch(branch, { deleteRemote: false });
@@ -2668,7 +2680,8 @@ async function refreshFiles(): Promise<void> {
 		seenList: string[],
 		seenSigs: Record<string, string>,
 		collapsedList: string[],
-		unmarkChanged: boolean
+		unmarkChanged: boolean,
+		retained?: Set<string>
 	): ChangedFile[] => {
 		// Sort by path so the diff view and the sidebar tree agree on order —
 		// otherwise the "first file in the tree" can land mid-list in the diff
@@ -2684,9 +2697,14 @@ async function refreshFiles(): Promise<void> {
 		// time against the current one; a missing/empty stored signature (older
 		// data) is left alone since we have no baseline. Persist each clear so the
 		// mark stays gone across refreshes. Opt-out via the unmarkSeenOnChange pref.
+		// `retained` paths are exempt: the reviewer already saw the whole new diff
+		// across a chain of contexts (e.g. reviewed it on the branch, then reviewed
+		// a follow-up edit unstaged, then committed), so resurfacing it would force
+		// a needless re-review. The store has already rolled their signature forward.
 		if (unmarkChanged && app.unmarkSeenOnChange) {
 			for (const file of files) {
 				if (!seenSet.has(file.path)) continue;
+				if (retained?.has(file.path)) continue;
 				const prevSig = seenSigs[file.path];
 				const curSig = fileSeenSig(file);
 				if (
@@ -2761,7 +2779,16 @@ async function refreshFiles(): Promise<void> {
 
 		const raw = await window.api.git.listChangedFiles(repoId, ctx);
 		if (stale()) return;
-		const files = paint(raw, seenList, seenSigs, collapsedList, true);
+		// Before the unmark-on-change pass runs, ask the store which already-seen
+		// files whose diff changed are still spanned by a chain of reviewed diffs
+		// (this context's prior reviewed state plus other contexts'), so they keep
+		// their mark instead of resurfacing. Must read the fresh signatures while the
+		// prior reviewed edge is still on disk — the unmark pass would delete it.
+		const freshSigs: Record<string, string> = {};
+		for (const f of raw) freshSigs[f.path] = fileSeenSig(f);
+		const retained = new Set(await window.api.state.getRetainedSeen(repoId, reviewKey, freshSigs));
+		if (stale()) return;
+		const files = paint(raw, seenList, seenSigs, collapsedList, true, retained);
 		// Persist the fresh list so the next cold start can paint it immediately.
 		void window.api.state.setCachedFileList(repoId, ctxKey, files);
 		// Carry the seen mark across contexts: a file whose exact diff was already
@@ -4616,7 +4643,13 @@ export const actions = {
 			// waiting for the next branch-PR poll to observe the transition. Disarm
 			// the watcher first so that poll doesn't double-prompt for the same PR.
 			if (watchedOpenPR && watchedOpenPR.number === pr.number) watchedOpenPR = null;
-			void onBranchPRMerged(pr.headRef, pr.number, app.activeRepo.defaultBranch ?? 'main');
+			// Switch back to the PR's base branch (what it merged into), so a branch
+			// stacked on another branch returns there rather than to the default.
+			void onBranchPRMerged(
+				pr.headRef,
+				pr.number,
+				pr.baseRef || (app.activeRepo.defaultBranch ?? 'main')
+			);
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err), 'Merging the pull request');
@@ -6422,7 +6455,7 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ startMaximized: value });
 	},
 
-	// Resolve the "switch back to the default branch?" dialog. `action` is the
+	// Resolve the "switch back to <base>?" dialog. `action` is the
 	// button the user chose; `always` persists that choice as the default so
 	// future merges skip the prompt (either auto-switching or doing nothing).
 	async resolveMergedSwitchPrompt(opts: {
@@ -6434,7 +6467,7 @@ export const actions = {
 		app.mergedSwitchPrompt = null;
 		if (opts.always) await actions.setPrMergedBehavior(opts.action);
 		if (opts.action === 'switch') {
-			await performSwitchBackAfterMerge(prompt.branch, prompt.defaultBranch);
+			await performSwitchBackAfterMerge(prompt.branch, prompt.targetBranch);
 		}
 	},
 

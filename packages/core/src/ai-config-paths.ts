@@ -23,15 +23,40 @@
 
 import type { HarnessKind, TargetKind } from './types.js';
 
-// The skill lives in a directory of this name (contains SKILL.md + supporting
-// files); the subagent is a single markdown file based on this name.
-export const SKILL_DIR_NAME = 'super-review';
+// The subagent is a single markdown file based on this name.
 export const SUBAGENT_NAME = 'super-review-tour-author';
 
-// The files that make up the bundled skill, for the dialog's file-tree preview
-// (the renderer can't read the filesystem). Keep in sync with
-// `.agents/skills/super-review/`.
-export const SKILL_FILES = ['SKILL.md', 'document-session.md', 'review-comments.md'];
+// One skill the app bundles and can install. Each lives in its own directory
+// (`<skillsBase>/<name>/`, e.g. `.agents/skills/super-review`), carries its own
+// `SKILL.md`, and is versioned independently via that file's frontmatter.
+export interface BundledSkill {
+	// Directory name under the skills base; also the install/detect path segment.
+	name: string;
+	// Short label for the dialog's file checkbox.
+	label: string;
+	// One-line hint under the checkbox.
+	description: string;
+	// The files that make up the skill, for the dialog's file-tree preview (the
+	// renderer can't read the filesystem). Keep in sync with `.agents/skills/<name>/`.
+	files: string[];
+}
+
+// Every skill we ship. Order is the dialog's display order. Keep each entry's
+// `files` in sync with the real directory under `.agents/skills/<name>/`.
+export const BUNDLED_SKILLS: BundledSkill[] = [
+	{
+		name: 'document-session',
+		label: 'Document session skill',
+		description: 'Teaches agents how and when to record a review session here.',
+		files: ['SKILL.md']
+	},
+	{
+		name: 'resolve-comments',
+		label: 'Resolve comments skill',
+		description: 'Teaches agents to find and resolve open review comments with the CLI.',
+		files: ['SKILL.md']
+	}
+];
 
 // The agents folded into the shared `.agents` target. Drives both the collage
 // icon on the `.agents` row and its hover-card, so the user can see exactly which
@@ -56,9 +81,10 @@ export interface ArtifactLocation {
 export interface TargetPaths {
 	// Human label for the dialog row.
 	label: string;
-	// The super-review skill DIRECTORY, or undefined when the target has no skill
-	// location of its own (Codex reads the skill from `.agents`).
-	skill?: ArtifactLocation;
+	// The directory that HOLDS the skill directories (a skill installs to
+	// `<skillsBase>/<skill-name>`), or undefined when the target has no skill
+	// location of its own (Codex reads skills from `.agents`).
+	skillsBase?: ArtifactLocation;
 	// The tour-author subagent FILE, or undefined when the target has no subagent
 	// location of its own.
 	subagent?: ArtifactLocation;
@@ -75,10 +101,7 @@ export const HARNESS_AI_PATHS: Record<TargetKind, TargetPaths> = {
 	// The shared convention, read by Cursor, Codex, opencode, and Copilot.
 	standard: {
 		label: '.agents',
-		skill: {
-			project: `.agents/skills/${SKILL_DIR_NAME}`,
-			global: `.agents/skills/${SKILL_DIR_NAME}`
-		},
+		skillsBase: { project: '.agents/skills', global: '.agents/skills' },
 		subagent: { project: `.agents/agents/${AGENT_MD}`, global: `.agents/agents/${AGENT_MD}` },
 		subagentFormat: 'markdown',
 		detectDir: null
@@ -86,10 +109,7 @@ export const HARNESS_AI_PATHS: Record<TargetKind, TargetPaths> = {
 	// Claude Code does not read `.agents/` — it needs its own directories.
 	'claude-code': {
 		label: 'Claude Code',
-		skill: {
-			project: `.claude/skills/${SKILL_DIR_NAME}`,
-			global: `.claude/skills/${SKILL_DIR_NAME}`
-		},
+		skillsBase: { project: '.claude/skills', global: '.claude/skills' },
 		subagent: { project: `.claude/agents/${AGENT_MD}`, global: `.claude/agents/${AGENT_MD}` },
 		subagentFormat: 'markdown',
 		detectDir: '.claude'

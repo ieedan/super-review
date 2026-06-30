@@ -6,17 +6,16 @@ directories:
 files:
   - out
   - package.json
-# Ship the super-review skill + tour-author subagent's real files so "Configure
-# AI files" can copy them straight out of the app instead of writing inlined
-# copies embedded in code. They land at <resources>/skills/super-review and
-# <resources>/agents/super-review-tour-author.md, unpacked from the asar so
-# they're real files on disk (see bundledSkillDir / bundledSubagentFile in
-# super-review-skill.ts).
+# Ship the bundled skills' real files so "Configure AI files" can copy them
+# straight out of the app instead of writing inlined copies embedded in code.
+# They land at <resources>/skills/<name>, unpacked from the asar so they're real
+# files on disk (see bundledSkillDir in super-review-skill.ts). Keep the skill
+# list in sync with BUNDLED_SKILLS.
 extraResources:
-  - from: ../../.agents/skills/super-review
-    to: skills/super-review
-  - from: ../../.agents/agents/super-review-tour-author.md
-    to: agents/super-review-tour-author.md
+  - from: ../../.agents/skills/document-session
+    to: skills/document-session
+  - from: ../../.agents/skills/resolve-comments
+    to: skills/resolve-comments
 extraMetadata:
   main: out/main/index.js
 asar: true

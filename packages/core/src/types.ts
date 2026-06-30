@@ -333,6 +333,26 @@ export interface CreateChangesetInput {
 // session card; "other" falls back to a generic icon + `harnessLabel`.
 export type HarnessKind = 'claude-code' | 'cursor' | 'codex' | 'opencode' | 'copilot' | 'other';
 
+// Human display labels for each harness. The matching logos live in the UI's
+// HarnessLogo component; this map is the browser-safe source of truth for the
+// names (used by the CLI's PR attribution footers and the renderer alike).
+const HARNESS_LABELS: Record<HarnessKind, string> = {
+	'claude-code': 'Claude Code',
+	cursor: 'Cursor',
+	codex: 'Codex',
+	opencode: 'OpenCode',
+	copilot: 'GitHub Copilot',
+	other: 'Agent'
+};
+
+// The display label for a harness. `other` has no fixed name, so it falls back
+// to a caller-supplied label (e.g. a session's freeform `harnessLabel`), then to
+// the generic "Agent".
+export function harnessLabel(harness: HarnessKind, fallback?: string): string {
+	if (harness === 'other') return fallback?.trim() || HARNESS_LABELS.other;
+	return HARNESS_LABELS[harness];
+}
+
 // A single changed file frozen into a session: the diff metadata plus the
 // captured patch and file contents, so the session renders without touching
 // git. Contents are "" for added/deleted/binary/truncated sides, matching the
@@ -1641,7 +1661,10 @@ export interface TargetAiStatus {
 	// Whether the harness appears installed (its home config dir exists). Always
 	// true for the `standard` target (the shared base).
 	harnessDetected: boolean;
-	skill?: { project: AiArtifactStatus; global: AiArtifactStatus | null };
+	// One entry per bundled skill the target can carry (each its own directory,
+	// versioned independently), or undefined when the target has no skill location
+	// of its own. `name` is the skill's directory name (its install identity).
+	skills?: Array<{ name: string; project: AiArtifactStatus; global: AiArtifactStatus | null }>;
 	subagent?: { project: AiArtifactStatus; global: AiArtifactStatus | null };
 }
 
@@ -1658,6 +1681,9 @@ export interface AiConfigInstallItem {
 	target: TargetKind;
 	artifact: AiArtifact;
 	scope: AiScope;
+	// Which bundled skill to write, by directory name. Required when
+	// `artifact === 'skill'`; ignored for the subagent.
+	skill?: string;
 }
 export interface AiConfigApplyRequest {
 	items: AiConfigInstallItem[];
@@ -2007,6 +2033,17 @@ export interface PreloadAPI {
 		// branch) when the change is byte-for-byte the same. Only `oid:`-form
 		// signatures match; stat fallbacks never carry across contexts.
 		getInheritedSeen(
+			repoId: string,
+			contextKey: string,
+			fileDiffSigs: Record<string, string>
+		): Promise<string[]>;
+		// Given the fresh diff signatures of the files shown in `contextKey`, return
+		// the paths whose mark should be *kept* even though their diff changed,
+		// because a chain of reviewed diffs (this context's prior reviewed state plus
+		// other contexts') still spans the new diff. Rolls their stored signature
+		// forward. Called before the unmark-on-change pass so it can override it for
+		// files the reviewer has, in effect, already seen end to end.
+		getRetainedSeen(
 			repoId: string,
 			contextKey: string,
 			fileDiffSigs: Record<string, string>

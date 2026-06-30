@@ -60,7 +60,6 @@ import type {
 	Session,
 	SessionSummary,
 	AiConfigStatus,
-	AiConfigApplyRequest,
 	AiConfigApplyResult,
 	AiConfigRemoveResult,
 	TabsContextMenuResult,
@@ -363,6 +362,10 @@ const api: PreloadAPI = {
 			>,
 		getInheritedSeen: (repoId, contextKey, fileDiffSigs) =>
 			ipcRenderer.invoke('state:getInheritedSeen', repoId, contextKey, fileDiffSigs) as Promise<
+				string[]
+			>,
+		getRetainedSeen: (repoId, contextKey, fileDiffSigs) =>
+			ipcRenderer.invoke('state:getRetainedSeen', repoId, contextKey, fileDiffSigs) as Promise<
 				string[]
 			>,
 		setFileSeen: (repoId, contextKey, filePath, seen, sig) =>
