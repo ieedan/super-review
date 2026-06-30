@@ -83,31 +83,27 @@ This needs a GitHub token: the Super Review app's sign-in, or `GH_TOKEN` /
 thread, address it in code and resolve the thread on GitHub (reply + resolve via
 the GitHub API/MCP); the CLI does not do this.
 
-## Verify the skill (smoke harness)
+## Dry-running without real comments
 
-There is no CLI command to *create* a comment (only the desktop app writes them),
-so [smoke.mjs](smoke.mjs) seeds a couple of comments into the app database for a
-throwaway repo, then drives the full list -> reply -> resolve loop and asserts
-the queue drains. It cleans up after itself.
+Only the desktop app creates comments, so a repo a reviewer has not touched has
+none to practice on. To exercise the loop yourself, seed a row straight into the
+app database (`~/.super-review/comments.db`), keyed by the repo's absolute path
+and the branch head (`branch:<base>..<head>`, or `workingTree`):
 
 ```bash
-node --experimental-sqlite .agents/skills/resolve-comments/smoke.mjs
+node --experimental-sqlite -e '
+const {DatabaseSync}=require("node:sqlite"),path=require("path"),os=require("os"),{randomUUID}=require("crypto");
+const repo=process.cwd();
+const db=new DatabaseSync(path.join(os.homedir(),".super-review","comments.db"));
+db.exec("CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY,repo TEXT,context_key TEXT,path TEXT,side TEXT,start_line INTEGER,end_line INTEGER,body TEXT,author TEXT,created_at INTEGER,updated_at INTEGER,in_reply_to TEXT,resolved_at INTEGER,resolved_by TEXT,resolved_session_id TEXT)");
+const now=Date.now();
+db.prepare("INSERT INTO comments (id,repo,context_key,path,side,start_line,end_line,body,author,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+  .run(randomUUID(),repo,"workingTree","README.md","RIGHT",1,1,"Example open comment.",JSON.stringify({kind:"human",name:"Reviewer"}),now,now);
+'
+npx super-review comment list --unresolved   # the seeded comment appears
 ```
 
-Expected tail:
-
-```text
-PASS  list --unresolved shows both seeded comments
-PASS  reply posts to the thread
-PASS  resolve id1
-PASS  resolve id2
-PASS  queue drained  (no unresolved comments on branch "feature")
-
-SMOKE OK
-```
-
-Point it at a local build instead of the published CLI with
-`SR_CLI="node packages/cli/dist/bin.mjs"` (build first: see below).
+`--experimental-sqlite` is needed on Node 22/23; it is built in on Node 24+.
 
 ## Build a local CLI (only if testing unpublished changes)
 
@@ -139,9 +135,9 @@ node packages/cli/dist/bin.mjs comment --help
   the 'origin' remote`. On a normal machine with a `github.com` origin it works.
 - **Resolution is thread-level.** `--unresolved` drops a whole thread once its
   root is resolved; replies never carry their own resolved state.
-- **Seeding for tests writes the DB directly.** No CLI creates comments, so
-  `smoke.mjs` inserts into `~/.super-review/comments.db` via `node:sqlite`
-  (needs the `--experimental-sqlite` flag on Node 22/23; built in on Node 24+).
+- **No CLI creates comments.** Only the desktop app writes them. To try the loop
+  without a real reviewer, seed `~/.super-review/comments.db` directly (see
+  "Dry-running without real comments").
 
 ## Troubleshooting
 
