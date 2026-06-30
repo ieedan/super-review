@@ -1,5 +1,13 @@
 # super-review
 
+## 0.0.7
+
+### Patch Changes
+
+- [`67c9d99`](https://github.com/ieedan/super-review/commit/67c9d9942b6f261f149d46aafe7386814cb8bcbc) Thanks [@ieedan](https://github.com/ieedan)! - feat: resolve pr comments from the CLI
+
+- [`53c6121`](https://github.com/ieedan/super-review/commit/53c61218937215256487b77fe8c7790ddf7b6915) Thanks [@ieedan](https://github.com/ieedan)! - fix: ensure unresolved and outdated comments are handled correctly by the CLI
+
 ## 0.0.6
 
 ### Patch Changes

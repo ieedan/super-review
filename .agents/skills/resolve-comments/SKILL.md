@@ -6,6 +6,7 @@ metadata:
 ---
 
 Follow and complete the following steps:
+
 - [ ] [#1](#1-find-the-comments)
 - [ ] [#2](#2-address-the-comments)
 - [ ] [#3](#3-resolve-the-comments)
@@ -30,7 +31,7 @@ Use the tools available to you to find any UNRESOLVED review comments on the PR 
 
 # 2. Address the comments
 
-Read and ensure each comment is still valid and not outdated/resolved. Comments that require more information should receive a reply see [#3](#3-resolve-the-comments). 
+Read and ensure each comment is still valid and not outdated/resolved. Comments that require more information should receive a reply see [#3](#3-resolve-the-comments).
 
 Once you've validated the comments, turn them into a task list. Group related comments together so independent issues can be resolved concurrently.
 
@@ -44,7 +45,7 @@ Once your task list is complete you can move on to #3
 
 # 3. Resolve the comments
 
-Once you're ready you can reply to comments. 
+Once you're ready you can reply to comments.
 
 If you are working with local comments use the resolve command in the CLI (otherwise skip to [3a](#3a-resolving-pr-comments)):
 
