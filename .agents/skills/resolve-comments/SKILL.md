@@ -30,9 +30,11 @@ Use the tools available to you to find any UNRESOLVED review comments on the PR 
 
 # 2. Address the comments
 
-Read and ensure each comment is still valid and not outdated/resolved. Comments that require more information should receive a reply see [#3](#3-resolve-the-comments)
+Read and ensure each comment is still valid and not outdated/resolved. Comments that require more information should receive a reply see [#3](#3-resolve-the-comments). 
 
-Once each comment has been validated you should develop a task list. Group related comments in the task list to promote the ability to resolve different issues concurrently.
+Once you've validated the comments, turn them into a task list:
+- Group related comments together so independent issues can be resolved concurrently.
+- When a comment flags an issue in one spot, look for the same pattern across the other changed files and add those fixes to the list too.
 
 > [!TIP]
 > If there are multiple comment groups and you have the ability to you can spin up subagents to resolve multiple comments at the same time each subagent updating the task list.
@@ -53,4 +55,6 @@ npx super-review comment resolve <id> --harness <your harness>
 
 ## 3a. Resolving PR comments
 
-If you are working with comments on a PR use the tools available to you to resolve them and reply to them when necessary. Most of the time resolving a PR comment is enough (obvious bugs, simple changes in behavior, larger refactors where a reply isn't enough) but there are also situations where you should reply (tradeoffs that should be noted, asking for more information)
+If you are working with comments on a PR use the tools available to you to resolve them and reply to them when necessary. 
+
+Most of the time resolving a PR comment is enough (obvious bugs, simple changes in behavior, larger refactors where a reply isn't enough) but there are also situations where you should reply (tradeoffs that should be noted, asking for more information).
