@@ -36,7 +36,7 @@
 				<Dialog.Title class="text-sm font-semibold">PR merged</Dialog.Title>
 				<Dialog.Description class="mt-1 text-xs">
 					The PR for <span class="font-mono">{prompt?.branch}</span> has merged. Would you like to
-					switch back to <span class="font-mono">{prompt?.defaultBranch}</span>?
+					switch back to <span class="font-mono">{prompt?.targetBranch}</span>?
 				</Dialog.Description>
 			</div>
 		</Dialog.Header>
@@ -51,7 +51,7 @@
 		<Dialog.Footer>
 			<Button variant="secondary" size="sm" onclick={doNothing}>Do nothing</Button>
 			<Button variant="default" size="sm" onclick={switchBack}>
-				Switch to {prompt?.defaultBranch}
+				Switch to {prompt?.targetBranch}
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
