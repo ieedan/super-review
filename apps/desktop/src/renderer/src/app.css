@@ -198,3 +198,15 @@ diffs-container {
 	background-color: rgba(249, 115, 22, 0.6);
 	color: inherit;
 }
+
+/* Settings search highlight bands. Separate names from the diff find ones above
+   so the two Custom Highlight controllers never clobber each other's registered
+   Highlight objects; the colors are intentionally the same. */
+::highlight(sr-settings-match) {
+	background-color: rgba(250, 204, 21, 0.35);
+	color: inherit;
+}
+::highlight(sr-settings-current) {
+	background-color: rgba(249, 115, 22, 0.6);
+	color: inherit;
+}

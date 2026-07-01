@@ -47,13 +47,21 @@ Once your task list is complete you can move on to #3
 
 Once you're ready you can reply to comments.
 
-If you are working with local comments use the resolve command in the CLI (otherwise skip to [3a](#3a-resolving-pr-comments)):
+If you are working with local comments use the CLI directly (otherwise skip to [3a](#3a-resolving-pr-comments)):
 
 ```sh
+# reply to a local comment thread - use this whenever the comment needs an
+# explanation (a tradeoff, "this doesn't apply because...", asking for more
+# info, what you changed and why). `resolve` below has no way to attach a
+# note for local comments, so a reply is the only way to leave one.
+npx super-review comment reply <id> "<your reply>" --harness <your harness>
+
+# mark a local comment resolved once it's addressed (or once you've replied
+# explaining why no change was needed)
 npx super-review comment resolve <id> --harness <your harness>
 ```
 
-> Make sure to pass your harness to the --harness flag the options are (claude-code, cursor, codex, opencode, copilot, other) this will help users understand who resolved this comment
+> Make sure to pass your harness to the --harness flag the options are (claude-code, cursor, codex, opencode, copilot, other) this will help users understand who acted. Reply before resolving anything that needs explaining - unlike the PR path below, local `resolve` has no `-m`/note option, so a resolve with no prior reply leaves no record of why.
 
 ## 3a. Resolving PR comments
 

@@ -85,8 +85,9 @@
 	}
 
 	function openConfigure(): void {
-		// Close settings first so the wizard isn't stacked behind this dialog.
-		actions.closeSettingsDialog();
+		// The wizard raises itself onto a higher layer (see ConfigureAiDialog), so it
+		// stacks above Settings instead of us having to close Settings first. Its
+		// applyAiConfig refreshes app.aiConfigStatus, so this panel updates live.
 		actions.openAiConfigDialog();
 	}
 
@@ -145,7 +146,7 @@
 		<div>
 			<h3 class="text-base font-semibold">Agent files</h3>
 			<p class="mt-1 text-xs text-muted-foreground">
-				The super-review skills installed for your coding agents, and where each one lives on disk.
+				Skills and subagents installed for your coding agents.
 			</p>
 		</div>
 		<Button variant="outline" size="sm" class="shrink-0" onclick={openConfigure}>
@@ -173,10 +174,10 @@
 						{#each groups as group (group.key)}
 							<div>
 								<h5 class="mb-1.5 text-xs font-medium text-muted-foreground">{group.label}</h5>
-								<div class="space-y-1.5">
+								<div class="overflow-hidden rounded-xl border border-border bg-card/30">
 									{#each group.rows as row (`${row.target}:${row.artifact}:${row.skill ?? ''}`)}
 										<div
-											class="flex items-center gap-2.5 rounded-md border border-border px-3 py-2"
+											class="flex items-center gap-2.5 border-b border-border/60 px-3 py-2.5 last:border-b-0"
 										>
 											{#if row.target === 'standard'}
 												<AgentsConventionIcon size={18} />

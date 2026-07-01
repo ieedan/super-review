@@ -34,6 +34,21 @@ export function parseDiffSig(sig: string | undefined): { base: string; dst: stri
 	return { base: body.slice(0, i), dst: body.slice(i + 2) };
 }
 
+// Whether two blob OIDs name the same content, tolerating git's variable-length
+// abbreviation. `git diff --raw`/patch output shortens OIDs to the shortest
+// unique prefix, and that length grows as the repo gains objects — so the same
+// blob can serialize as `2b7a412b` when a file is marked seen and `2b7a412b8f…`
+// after the next commit. One being a (non-empty) prefix of the other means the
+// same blob: a real content change yields a wholly different hash, never a
+// prefix. Empty matches empty (the missing base side of an added file). This is
+// the safety net that keeps an unchanged file marked seen across that drift, and
+// across the upgrade from abbreviated to full OIDs for already-stored marks.
+export function oidsMatch(a: string, b: string): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	return a.length <= b.length ? b.startsWith(a) : a.startsWith(b);
+}
+
 // Whether the current diff `target` (base..dst) for `path` is fully covered by a
 // continuous chain of diffs already marked seen. Every stored `<base>..<dst>` for
 // the path becomes a directed edge base→dst; we then ask whether target.base

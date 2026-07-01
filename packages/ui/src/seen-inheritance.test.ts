@@ -3,6 +3,7 @@ import {
 	computeInheritedSeen,
 	computeRetainedSeen,
 	diffChainCovers,
+	oidsMatch,
 	parseDiffSig
 } from '@super-review/core/seen-inheritance';
 
@@ -26,6 +27,36 @@ describe('parseDiffSig', () => {
 		expect(parseDiffSig('M:1:0:t')).toBeNull();
 		expect(parseDiffSig(undefined)).toBeNull();
 		expect(parseDiffSig('')).toBeNull();
+	});
+});
+
+describe('oidsMatch', () => {
+	const FULL = '2b7a412b8fa0fb7e985b0793321bd4e698f2b6cd';
+
+	it('matches identical OIDs', () => {
+		expect(oidsMatch(FULL, FULL)).toBe(true);
+	});
+
+	it('matches an abbreviated OID against the full one (the abbreviation-drift case)', () => {
+		// git serializes the same blob as `2b7a412b` one session and a longer prefix
+		// the next as the repo gains objects; both must read as unchanged.
+		expect(oidsMatch('2b7a412b', FULL)).toBe(true);
+		expect(oidsMatch(FULL, '2b7a412b')).toBe(true);
+		expect(oidsMatch('2b7a412b', '2b7a412b8f')).toBe(true);
+	});
+
+	it('treats a genuinely different blob (no shared prefix) as changed', () => {
+		expect(oidsMatch('2b7a412b', 'deadbeef')).toBe(false);
+		expect(oidsMatch(FULL, 'deadbeefcafe0000000000000000000000000000')).toBe(false);
+	});
+
+	it('matches empty against empty (the missing base side of an added file)', () => {
+		expect(oidsMatch('', '')).toBe(true);
+	});
+
+	it('never matches empty against a real OID', () => {
+		expect(oidsMatch('', FULL)).toBe(false);
+		expect(oidsMatch(FULL, '')).toBe(false);
 	});
 });
 

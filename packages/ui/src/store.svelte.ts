@@ -62,6 +62,7 @@ import {
 	WINDOW_BOUNDS
 } from '@super-review/core/types';
 import { diffContextKey, reviewContextKey } from '@super-review/core/diff-context';
+import { oidsMatch } from '@super-review/core/seen-inheritance';
 import { aggregateStats, emptyStats } from '@super-review/core/usage-stats';
 import {
 	buildDiscardPatch,
@@ -85,6 +86,7 @@ import {
 export type SettingsTab =
 	| 'accounts'
 	| 'appearance'
+	| 'diff'
 	| 'behavior'
 	| 'app'
 	| 'editor'
@@ -343,9 +345,6 @@ interface AppState {
 	accent: Accent;
 	codeFont: string;
 	uiFont: string;
-	// Font families installed on the user's machine, queried lazily on launch.
-	// Empty when the Local Font Access API is unavailable or denied.
-	systemFonts: string[];
 	prefs: UserPrefs | null;
 	githubAccounts: GithubAccount[];
 	activeGithubAccount: GithubAccount | null;
@@ -848,7 +847,6 @@ const initial: AppState = {
 	accent: 'super',
 	codeFont: 'system',
 	uiFont: 'system',
-	systemFonts: [],
 	prefs: null,
 	githubAccounts: [],
 	activeGithubAccount: null,
@@ -1033,6 +1031,24 @@ function seenSigContent(sig: string): string {
 // and wrongly clear every seen mark, so only compare like with like.
 function sigsComparable(a: string, b: string): boolean {
 	return a.startsWith('oid:') === b.startsWith('oid:');
+}
+
+// Whether a seen file's content actually changed since it was marked, given its
+// stored signature `prev` and the freshly-computed `cur`. Returns false (no real
+// change, keep the mark) in two important non-change cases:
+//   1. A scheme flip (oid <-> stat) — a transient git failure dropping OIDs, not
+//      an edit; comparing across schemes would clear every mark at once.
+//   2. An OID whose abbreviation length drifted — git shortens blob OIDs to the
+//      shortest unique prefix, and that length grows as the repo gains objects,
+//      so the same blob serializes differently over time. `oidsMatch` treats one
+//      as a prefix of the other as unchanged (a real edit yields an entirely
+//      different hash). This also bridges the upgrade from abbreviated to full
+//      OIDs for marks stored by older builds.
+// Stat-fallback signatures (no `oid:` prefix) must match exactly.
+function seenContentChanged(prev: string, cur: string): boolean {
+	if (!sigsComparable(prev, cur)) return false;
+	if (prev.startsWith('oid:')) return !oidsMatch(seenSigContent(prev), seenSigContent(cur));
+	return seenSigContent(prev) !== seenSigContent(cur);
 }
 
 // Auto-mark files whose exact diff was already reviewed under another context, so
@@ -1358,29 +1374,26 @@ export function codeFontCss(font: string | null | undefined): string {
 	return `"${font}", ${CODE_FONT_STACK}`;
 }
 
+// Curated, bundled font options shown in Settings. Each `value` is the exact CSS
+// family name registered by the Fontsource imports in the desktop renderer entry
+// (main.ts); 'system' falls back to the platform stack. Picking from this short
+// list is instant, unlike enumerating every installed font.
+export const UI_FONTS: { value: string; label: string }[] = [
+	{ value: 'system', label: 'System default' },
+	{ value: 'Geist Sans', label: 'Geist' },
+	{ value: 'Inter', label: 'Inter' }
+];
+export const CODE_FONTS: { value: string; label: string }[] = [
+	{ value: 'system', label: 'System default' },
+	{ value: 'JetBrains Mono', label: 'JetBrains Mono' },
+	{ value: 'Geist Mono', label: 'Geist Mono' },
+	{ value: 'IBM Plex Mono', label: 'IBM Plex Mono' }
+];
+
 function applyFonts(): void {
 	const root = document.documentElement;
 	root.style.setProperty('--ui-font', uiFontCss(app.uiFont));
 	root.style.setProperty('--code-font', codeFontCss(app.codeFont));
-}
-
-// Enumerate installed font families via the Local Font Access API. Resolves to
-// nothing when the API is missing (older runtime) or the permission is denied;
-// the picker then just offers the system default.
-async function loadSystemFonts(): Promise<void> {
-	const query = (
-		window as unknown as {
-			queryLocalFonts?: () => Promise<Array<{ family: string }>>;
-		}
-	).queryLocalFonts;
-	if (typeof query !== 'function') return;
-	try {
-		const fonts = await query();
-		const families = [...new Set(fonts.map((f) => f.family))].sort((a, b) => a.localeCompare(b));
-		app.systemFonts = families;
-	} catch {
-		// Unsupported or permission denied — leave the list empty.
-	}
 }
 
 // Human-readable names for each editor, shown in menus ("Open in <editor>").
@@ -2707,11 +2720,7 @@ async function refreshFiles(): Promise<void> {
 				if (retained?.has(file.path)) continue;
 				const prevSig = seenSigs[file.path];
 				const curSig = fileSeenSig(file);
-				if (
-					prevSig &&
-					sigsComparable(prevSig, curSig) &&
-					seenSigContent(prevSig) !== seenSigContent(curSig)
-				) {
+				if (prevSig && seenContentChanged(prevSig, curSig)) {
 					seenSet.delete(file.path);
 					void window.api.state.setFileSeen(repoId, reviewKey, file.path, false);
 				}
@@ -3102,7 +3111,6 @@ export const actions = {
 		app.codeFont = app.prefs.codeFont;
 		app.uiFont = app.prefs.uiFont;
 		applyFonts();
-		void loadSystemFonts();
 		await refreshGithubAccounts();
 		// Probe the stored tokens in the background so one revoked while the app
 		// was closed surfaces the sign-in prompt right away, not whenever a feature
@@ -6111,11 +6119,12 @@ export const actions = {
 				break;
 			case 'discardSelected': {
 				// Snapshot the targets before discarding — discardFile mutates
-				// changedFiles as it goes.
+				// changedFiles as it goes. Run the per-file git IPC concurrently;
+				// each call's state update (after its await) reads the live
+				// changedFiles, so the cheap mutations serialize on the event loop
+				// without racing while the slow git work overlaps.
 				const targets = app.changedFiles.filter((f) => app.selectedFiles.has(f.path));
-				for (const f of targets) {
-					await actions.discardFile(f.path, f.oldPath);
-				}
+				await Promise.all(targets.map((f) => actions.discardFile(f.path, f.oldPath)));
 				actions.clearSelectedFiles();
 				break;
 			}
@@ -6126,10 +6135,12 @@ export const actions = {
 				actions.setFilesIncludedForCommit(selectedPaths, false);
 				break;
 			case 'markSelectedSeen':
-				for (const p of selectedPaths) await actions.toggleSeen(p, true);
+				// toggleSeen mutates seenFiles synchronously before its await, so the
+				// set lands in order while the setFileSeen IPC calls run concurrently.
+				await Promise.all(selectedPaths.map((p) => actions.toggleSeen(p, true)));
 				break;
 			case 'markSelectedUnseen':
-				for (const p of selectedPaths) await actions.toggleSeen(p, false);
+				await Promise.all(selectedPaths.map((p) => actions.toggleSeen(p, false)));
 				break;
 			case 'copyPath':
 				await actions.copyToClipboard(actions.resolveRepoPath(file.path) ?? file.path);

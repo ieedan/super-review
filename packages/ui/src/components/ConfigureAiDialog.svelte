@@ -197,7 +197,10 @@
 <Dialog.Root {open} {onOpenChange}>
 	<!-- Fixed height (capped to the viewport) so stepping through the wizard, whose
 	     steps have different natural heights, never resizes the dialog. -->
-	<Dialog.Content class="flex h-[28rem] max-h-[85vh] flex-col gap-4 sm:max-w-3xl">
+	<Dialog.Content
+		class="z-[60] flex h-[28rem] max-h-[85vh] flex-col gap-4 sm:max-w-3xl"
+		overlayClass="z-[60]"
+	>
 		<Dialog.Header>
 			<Dialog.Title class="text-base">Configure AI files</Dialog.Title>
 		</Dialog.Header>
