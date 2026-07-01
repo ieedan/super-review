@@ -20,18 +20,23 @@
 
 	let host = $state<HTMLElement | null>(null);
 
-	const OLD_CONTENTS = `function greet(name) {
-  return 'Hello, ' + name;
+	const OLD_CONTENTS = `export function total(items) {
+  let sum = 0;
+  for (const item of items) {
+    sum += item.price;
+  }
+  return sum;
 }
 `;
 
-	const NEW_CONTENTS = `function greet(name) {
-  return \`Hello, \${name}!\`;
+	const NEW_CONTENTS = `export function total(items, taxRate = 0) {
+  const subtotal = items.reduce((sum, item) => sum + item.price, 0);
+  return subtotal * (1 + taxRate);
 }
 `;
 
-	const oldFile = { name: 'greet.js', contents: OLD_CONTENTS };
-	const newFile = { name: 'greet.js', contents: NEW_CONTENTS };
+	const oldFile = { name: 'cart.ts', contents: OLD_CONTENTS };
+	const newFile = { name: 'cart.ts', contents: NEW_CONTENTS };
 
 	// Rebuild the preview whenever the style, theme, or app light/dark mode
 	// changes. Unlike the live diffs, the preview renders WITHOUT the shared
@@ -117,7 +122,9 @@
 	}
 	.diff-style-preview :global(pre) {
 		margin: 0;
-		font-size: 10px;
-		line-height: 14px;
+		/* Default to the compact size; the previewable settings tabs override these
+		   vars to render the shared preview larger. */
+		font-size: var(--diff-preview-font-size, 10px);
+		line-height: var(--diff-preview-line-height, 14px);
 	}
 </style>

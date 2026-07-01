@@ -4,25 +4,23 @@
 	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 	import Bot from '@lucide/svelte/icons/bot';
 	import Check from '@lucide/svelte/icons/check';
-	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Code2 from '@lucide/svelte/icons/code-2';
+	import Diff from '@lucide/svelte/icons/diff';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import Palette from '@lucide/svelte/icons/palette';
 	import Plus from '@lucide/svelte/icons/plus';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import User from '@lucide/svelte/icons/user';
 	import X from '@lucide/svelte/icons/x';
 	import SettingsShell from './SettingsShell.svelte';
 	import * as Avatar from './ui/avatar';
-	import * as DropdownMenu from './ui/dropdown-menu';
-	import { Button, buttonVariants } from './ui/button';
-	import { Checkbox } from './ui/checkbox';
+	import { Button } from './ui/button';
 	import { Switch } from './ui/switch';
 	import { Input } from './ui/input';
-	import * as Table from './ui/table';
 	import CursorIcon from './icons/CursorIcon.svelte';
 	import VSCodeIcon from './icons/VSCodeIcon.svelte';
 	import XcodeIcon from './icons/XcodeIcon.svelte';
@@ -32,14 +30,13 @@
 	import WarpIcon from './icons/WarpIcon.svelte';
 	import ITermIcon from './icons/ITermIcon.svelte';
 	import TerminalAppIcon from './icons/TerminalAppIcon.svelte';
-	import ChangesetLogo from './ChangesetLogo.svelte';
 	import PowerShellIcon from './icons/PowerShellIcon.svelte';
 	import ZshIcon from './icons/ZshIcon.svelte';
+	import ChangesetLogo from './ChangesetLogo.svelte';
 	import DiffStylePreview from './DiffStylePreview.svelte';
-	import FileListPreview from './FileListPreview.svelte';
-	import FontPicker from './FontPicker.svelte';
-	import SettingOptionCard from './SettingOptionCard.svelte';
-	import ThemePreview from './ThemePreview.svelte';
+	import FileIcon from './FileIcon.svelte';
+	import SettingSelect from './SettingSelect.svelte';
+	import AppChromePreview from './AppChromePreview.svelte';
 	import UsageStatsPanel from './UsageStatsPanel.svelte';
 	import AgentsSettingsPanel from './AgentsSettingsPanel.svelte';
 	import {
@@ -48,7 +45,8 @@
 		codeFontCss,
 		effectiveEditor,
 		effectiveTerminal,
-		uiFontCss,
+		UI_FONTS,
+		CODE_FONTS,
 		type SettingsTab
 	} from '@super-review/ui/store.svelte';
 	import HotkeyInput from './HotkeyInput.svelte';
@@ -69,7 +67,7 @@
 	} from '@super-review/core/types';
 	import { cn } from '@super-review/ui/utils';
 	import { ACCENTS } from '@super-review/ui/accents';
-	import { DIFF_THEMES, diffThemePair, resolveDiffThemePreset } from '@super-review/ui/diff-themes';
+	import { DIFF_THEMES, diffThemePair } from '@super-review/ui/diff-themes';
 	import { resolveIconSrc } from '@super-review/ui/file-icons';
 	import type {
 		Accent,
@@ -87,6 +85,7 @@
 	const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
 		{ id: 'accounts', label: 'Accounts', icon: User },
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
+		{ id: 'diff', label: 'Diff', icon: Diff },
 		{ id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
 		{ id: 'app', label: 'App', icon: AppWindow },
 		{ id: 'editor', label: 'Integrations', icon: Code2 },
@@ -94,6 +93,372 @@
 		{ id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
 		{ id: 'stats', label: 'Stats', icon: BarChart3 }
 	];
+
+	// One declarative list is the structural source of truth for every settings
+	// section: it drives the rendered tab content (the loops in the content snippet)
+	// AND the search jump-list (matched against title/description/keywords). `id` is
+	// the section element's id, used for scroll-to (goToSetting) and to dispatch the
+	// section's body markup (see the sectionBody snippet). `kind: 'row'` is a simple
+	// setting rendered as a uniform card row (title + blurb on the left, one basic
+	// control — switch / select / input — on the right, dispatched by
+	// `compactControl`); everything else is a `block` with bespoke markup in
+	// `sectionBody` (tables, lists, panels). `title` is the visible heading; sections
+	// that render their own heading or none set `label` instead. `description` is the
+	// row's blurb. `keywords` are extra search-only synonyms not in the visible text.
+	// `hasReset` opts a section into the header "Reset" action.
+	type SettingsSection = {
+		tab: SettingsTab;
+		id: string;
+		kind?: 'row' | 'block';
+		// Consecutive `row` sections form one card; a differing `group` starts a new
+		// card, so related rows (e.g. merged-branch handling) read as their own unit.
+		group?: string;
+		title?: string;
+		label?: string;
+		description?: string;
+		keywords: string;
+		hasReset?: boolean;
+	};
+
+	const SECTIONS: SettingsSection[] = [
+		{
+			tab: 'accounts',
+			id: 'settings-accounts-github',
+			title: 'GitHub.com',
+			keywords: 'account sign in login github default avatar pull request token'
+		},
+		// Appearance — app chrome, sharing one chrome preview at the bottom.
+		{
+			tab: 'appearance',
+			id: 'settings-theme',
+			kind: 'row',
+			title: 'Theme',
+			description: 'Light or dark appearance.',
+			keywords: 'light dark mode color appearance'
+		},
+		{
+			tab: 'appearance',
+			id: 'settings-accent',
+			kind: 'row',
+			title: 'Accent',
+			description: 'Color for buttons, links, and focus rings.',
+			keywords: 'color accent highlight link button focus ring'
+		},
+		{
+			tab: 'appearance',
+			id: 'settings-ui-font',
+			kind: 'row',
+			title: 'UI font',
+			description: 'Font for the sidebar and app chrome.',
+			keywords: 'font typeface ui sidebar chrome text'
+		},
+		{
+			tab: 'appearance',
+			id: 'settings-file-icons',
+			kind: 'row',
+			title: 'File icons',
+			description: 'Language icons next to file names.',
+			keywords: 'file icons language sidebar'
+		},
+		{
+			tab: 'appearance',
+			id: 'settings-animations',
+			kind: 'row',
+			title: 'Animations',
+			description: 'How much motion the UI uses.',
+			keywords: 'animation motion transitions reduce'
+		},
+		// Diff — how diffs and code render, sharing one live diff preview.
+		{
+			tab: 'diff',
+			id: 'settings-diff-view',
+			kind: 'row',
+			title: 'Diff view',
+			description: 'How changes are displayed.',
+			keywords: 'diff split unified view changes'
+		},
+		{
+			tab: 'diff',
+			id: 'settings-diff-layout',
+			kind: 'row',
+			title: 'Diff layout',
+			description: 'One scroll, or one file at a time.',
+			keywords: 'diff layout scroll single file list github desktop'
+		},
+		{
+			tab: 'diff',
+			id: 'settings-diff-theme',
+			kind: 'row',
+			title: 'Diff theme',
+			description: 'Syntax theme for diff code blocks.',
+			keywords: 'diff theme syntax highlighting colors'
+		},
+		{
+			tab: 'diff',
+			id: 'settings-code-font',
+			kind: 'row',
+			title: 'Code font',
+			description: 'Font for diffs and code.',
+			keywords: 'font typeface code monospace diff'
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-arrow-nav',
+			kind: 'row',
+			title: 'Arrow-key navigation',
+			description: 'Whether arrowing onto a file in the sidebar opens its diff.',
+			keywords: 'arrow key navigation keyboard file open sidebar enter list'
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-reviewing',
+			kind: 'row',
+			title: 'Unmark seen files when they change',
+			description: 'Clear a file’s seen mark when it changes.',
+			keywords: 'review seen unseen mark files change'
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-commits',
+			kind: 'row',
+			title: 'Sign my commits',
+			description: 'Sign commits so they show as Verified.',
+			keywords: 'commit sign signing ssh key verified'
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-recent-repos',
+			kind: 'row',
+			title: 'Recent repositories',
+			description: 'How many repositories the picker lists under Recent.',
+			keywords: 'recent repositories repos picker count history'
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-large-diffs',
+			kind: 'row',
+			title: 'Large diffs',
+			description: 'Diffs with more changed lines than this are hidden behind a Load diff button.',
+			keywords: 'large diff lines load limit performance loc'
+		},
+		// Merged-branch handling — its own card via the shared `group`.
+		{
+			tab: 'behavior',
+			id: 'settings-merged-branches',
+			kind: 'row',
+			group: 'merged',
+			title: 'When a PR is merged',
+			description: 'When a PR merges, switch back to the branch it merged into?',
+			keywords: 'merged branch pull request switch remove delete prompt base target into'
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-auto-remove-merged',
+			kind: 'row',
+			group: 'merged',
+			title: 'Auto-remove merged branches',
+			description: 'Delete merged branches locally after switching away.',
+			keywords: 'merged branch remove delete local automatically'
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-hidden-files',
+			title: 'Hidden files',
+			keywords: 'hidden files glob pattern lock build ignore',
+			hasReset: true
+		},
+		{
+			tab: 'behavior',
+			id: 'settings-custom-file-icons',
+			title: 'Custom file icons',
+			keywords: 'custom file icon glob pattern image'
+		},
+		{
+			tab: 'app',
+			id: 'settings-window-size',
+			kind: 'row',
+			title: 'Window size',
+			description: 'The size the window opens at. Applies next launch.',
+			keywords: 'window size width height pixels maximize'
+		},
+		{
+			tab: 'app',
+			id: 'settings-start-maximized',
+			kind: 'row',
+			title: 'Start maximized',
+			description: 'Open maximized to fill the screen.',
+			keywords: 'window maximize fullscreen start launch'
+		},
+		{
+			tab: 'editor',
+			id: 'settings-external-editor',
+			title: 'External editor',
+			keywords: 'editor external vscode cursor zed xcode visual studio'
+		},
+		{
+			tab: 'editor',
+			id: 'settings-terminal',
+			title: 'Terminal',
+			keywords: 'terminal iterm warp ghostty powershell command prompt'
+		},
+		{
+			tab: 'editor',
+			id: 'settings-changesets',
+			kind: 'row',
+			title: 'Changesets',
+			description: 'Commit autofill for repos using Changesets.',
+			keywords: 'changesets integration changelog version additional'
+		},
+		{
+			tab: 'agents',
+			id: 'settings-agents',
+			label: 'Agents',
+			keywords: 'agents ai skill subagent claude configuration install harness convention'
+		},
+		{
+			tab: 'hotkeys',
+			id: 'settings-hotkeys',
+			title: 'Keyboard shortcuts',
+			keywords:
+				'hotkey keyboard shortcut binding keys ' +
+				HOTKEY_ACTIONS.map((a) => HOTKEY_LABELS[a].label).join(' '),
+			hasReset: true
+		},
+		{
+			tab: 'stats',
+			id: 'settings-stats',
+			label: 'Usage statistics',
+			keywords: 'stats statistics usage activity metrics'
+		}
+	];
+
+	function sectionsForTab(tab: SettingsTab): SettingsSection[] {
+		return SECTIONS.filter((s) => s.tab === tab);
+	}
+
+	// Lay a tab out in declared order, grouping each run of consecutive `row`
+	// sections into one card and leaving `block` sections standalone. This keeps the
+	// uniform card-of-rows look while still allowing a tab to mix in a richer block
+	// (a table, a list) between cards.
+	type TabSegment =
+		| { type: 'card'; group?: string; sections: SettingsSection[] }
+		| { type: 'block'; section: SettingsSection };
+	function segmentsForTab(tab: SettingsTab): TabSegment[] {
+		const segments: TabSegment[] = [];
+		for (const s of sectionsForTab(tab)) {
+			if (s.kind === 'row') {
+				const last = segments[segments.length - 1];
+				// Extend the current card only when this row shares its group, so a
+				// differing `group` splits the run into a separate card.
+				if (last?.type === 'card' && last.group === s.group) last.sections.push(s);
+				else segments.push({ type: 'card', group: s.group, sections: [s] });
+			} else {
+				segments.push({ type: 'block', section: s });
+			}
+		}
+		return segments;
+	}
+
+	// The Appearance and Diff tabs render their controls then one shared live
+	// preview at the bottom; this maps a tab to which preview it shows.
+	const TAB_PREVIEW: Partial<Record<SettingsTab, 'chrome' | 'diff'>> = {
+		appearance: 'chrome',
+		diff: 'diff'
+	};
+
+	// ── Search (Cursor-style jump list) ──
+	// Typing filters the sections to a flat list of matches shown in the sidebar;
+	// picking one jumps to its tab, scrolls it into view, and flashes it. No
+	// in-content highlighting, no match stepping.
+	const TAB_BY_ID = new Map(TABS.map((t) => [t.id, t]));
+
+	let searchQuery = $state('');
+	const trimmedQuery = $derived(searchQuery.trim());
+	const searching = $derived(trimmedQuery.length > 0);
+	// The result the arrow keys / Enter act on. Reset to the top whenever the query
+	// changes so it always starts on the first (best) match.
+	let highlightedIndex = $state(0);
+	$effect(() => {
+		void trimmedQuery;
+		highlightedIndex = 0;
+	});
+
+	type SearchHit = { section: SettingsSection; tabLabel: string };
+	const searchResults = $derived.by<SearchHit[]>(() => {
+		if (!searching) return [];
+		const terms = trimmedQuery.toLowerCase().split(/\s+/).filter(Boolean);
+		const hits: SearchHit[] = [];
+		for (const s of SECTIONS) {
+			const tabLabel = TAB_BY_ID.get(s.tab)?.label ?? '';
+			const name = s.title ?? s.label ?? '';
+			const haystack = `${name} ${s.description ?? ''} ${s.keywords} ${tabLabel}`.toLowerCase();
+			if (terms.every((t) => haystack.includes(t))) hits.push({ section: s, tabLabel });
+		}
+		return hits;
+	});
+
+	// Jump to a setting from a search result: clear the query, switch to its tab,
+	// then scroll it into view and flash its background so the eye lands on it.
+	function goToSetting(section: SettingsSection): void {
+		searchQuery = '';
+		activeTab = section.tab;
+		void tick().then(async () => {
+			await tick();
+			const el = document.getElementById(section.id);
+			if (!el) return;
+			el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			flashElement(el);
+		});
+	}
+
+	// One-shot orange background flash via the Web Animations API. Unlike a CSS
+	// class, a WAAPI animation runs on the document timeline — so it finishes on
+	// schedule even if the tab is hidden mid-flash, never replays when the section is
+	// re-shown, and (fill: none) leaves no lingering background once it ends. Linear
+	// easing fades evenly across the whole duration instead of front-loading it.
+	function flashElement(el: HTMLElement): void {
+		// Cancel any in-flight flash so re-picking the same row restarts cleanly.
+		for (const a of el.getAnimations?.() ?? []) {
+			if (a.id === 'settings-flash') a.cancel();
+		}
+		const anim = el.animate(
+			[
+				{ backgroundColor: 'rgba(249, 115, 22, 0.3)' },
+				{ backgroundColor: 'rgba(249, 115, 22, 0)' }
+			],
+			{ duration: 3000, easing: 'linear' }
+		);
+		anim.id = 'settings-flash';
+	}
+
+	// Drive the results list from the search box: arrows move the highlight, Enter
+	// opens the highlighted result, Escape clears the query (instead of closing the
+	// dialog). The highlighted item scrolls into view so it stays visible.
+	function handleSearchKey(e: KeyboardEvent): void {
+		const n = searchResults.length;
+		if (searching && n > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+			e.preventDefault();
+			highlightedIndex =
+				e.key === 'ArrowDown' ? (highlightedIndex + 1) % n : (highlightedIndex - 1 + n) % n;
+			void tick().then(() => {
+				document
+					.querySelector(`[data-search-result="${highlightedIndex}"]`)
+					?.scrollIntoView({ block: 'nearest' });
+			});
+			return;
+		}
+		if (searching && e.key === 'Enter') {
+			e.preventDefault();
+			const hit = searchResults[highlightedIndex];
+			if (hit) goToSetting(hit.section);
+			return;
+		}
+		if (e.key === 'Escape' && searchQuery) {
+			e.preventDefault();
+			e.stopPropagation();
+			searchQuery = '';
+		}
+	}
 
 	const EDITOR_LABELS: Record<EditorKind, string> = {
 		cursor: 'Cursor',
@@ -160,7 +525,6 @@
 	// The diff theme the previews on this tab render with — tracks the in-progress
 	// selection so the split/unified and code-font previews reflect it too.
 	const draftDiffThemePair = $derived(diffThemePair(draftDiffTheme));
-	const draftDiffThemeLabel = $derived(resolveDiffThemePreset(draftDiffTheme).label);
 
 	$effect(() => {
 		if (!dialogOpen) return;
@@ -186,6 +550,7 @@
 
 	$effect(() => {
 		if (dialogOpen) {
+			searchQuery = '';
 			draftViewMode = app.viewMode;
 			draftDiffLayout = app.diffLayout;
 			draftShowFileIcons = app.showFileIcons;
@@ -452,770 +817,627 @@
 	{/if}
 {/snippet}
 
-<SettingsShell bind:open={dialogOpen} title="Settings" tabs={TABS} bind:activeTab onClose={cancel}>
-	{#snippet content(_tab)}
-		{#if activeTab === 'accounts'}
-			<section class="space-y-5">
-				<div>
-					<h3 class="text-base font-semibold">GitHub.com</h3>
-					{#if app.githubAccounts.length === 0}
-						<p class="mt-1 text-xs text-muted-foreground">
-							Sign in to review pull requests and post comments.
-						</p>
-					{:else}
-						<p class="mt-1 text-xs text-muted-foreground">
-							The default account is used by any project that hasn't picked its own. Choose a
-							project's account from the switcher in the top bar or next to the commit box.
-						</p>
-					{/if}
-					{#if app.githubAccounts.length === 0}
-						<Button size="sm" class="mt-3" onclick={startAddAccount}>
-							<Plus class="size-3.5" /> Sign in to GitHub
-						</Button>
-					{:else}
-						<ul class="mt-3 space-y-2">
-							{#each app.githubAccounts as acct (acct.id)}
-								{@const isDefault = acct.id === app.activeGithubAccount?.id}
-								<li
-									class="flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2"
-								>
-									<Avatar.Root class="size-8">
-										{#if acct.avatarUrl}
-											<Avatar.Image src={acct.avatarUrl} alt={acct.login} />
-										{/if}
-										<Avatar.Fallback class="text-[10px]">
-											{acct.login.slice(0, 2).toUpperCase()}
-										</Avatar.Fallback>
-									</Avatar.Root>
-									<div class="min-w-0 flex-1">
-										<div class="truncate text-sm font-medium">
-											{acct.name ?? acct.login}
-										</div>
-										<div class="truncate text-xs text-muted-foreground">
-											@{acct.login}
-										</div>
-									</div>
-									{#if isDefault}
-										<span
-											class="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success"
-										>
-											<Check class="size-3" /> Default
-										</span>
-									{:else}
-										<Button variant="ghost" size="sm" onclick={() => setDefaultAccount(acct.id)}>
-											Set as default
-										</Button>
-									{/if}
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										title={`Sign out ${acct.login}`}
-										onclick={() => removeAccount(acct.id)}
-									>
-										<LogOut class="size-3.5" />
-									</Button>
-								</li>
-							{/each}
-						</ul>
-						<Button variant="outline" size="sm" class="mt-3" onclick={startAddAccount}>
-							<Plus class="size-3.5" /> Add another account
-						</Button>
-					{/if}
-				</div>
-			</section>
-		{:else if activeTab === 'appearance'}
-			<section class="space-y-6">
-				<div>
-					<h3 class="text-base font-semibold">Theme</h3>
-					<p class="mt-1 text-xs text-muted-foreground">Choose a light or dark appearance.</p>
+<!-- Optional header action for a section, dispatched by id. Only sections with
+	`hasReset` render one. -->
+{#snippet sectionReset(id: string)}
+	{#if id === 'settings-hidden-files'}
+		{#if !arraysEqual([...draftHiddenDiffPatterns].sort(), [...DEFAULT_HIDDEN_DIFF_PATTERNS].sort())}
+			<Button variant="ghost" size="sm" onclick={resetPatterns}>
+				<RotateCcw class="size-3.5" /> Reset to defaults
+			</Button>
+		{/if}
+	{:else if id === 'settings-hotkeys'}
+		{#if !hotkeysAreDefault}
+			<Button variant="ghost" size="sm" onclick={resetHotkeys}>
+				<RotateCcw class="size-3.5" /> Reset to defaults
+			</Button>
+		{/if}
+	{/if}
+{/snippet}
 
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ value: 'light' as const, label: 'Light' }, { value: 'dark' as const, label: 'Dark' }] as opt (opt.value)}
-							{@const active = draftTheme === opt.value}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								onclick={() => (draftTheme = opt.value)}
-							>
-								<div class="w-full p-2">
-									<ThemePreview theme={opt.value} />
-								</div>
-							</SettingOptionCard>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Accent</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Color for primary buttons, highlights, links, and focus rings.
-					</p>
-
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each ACCENTS as opt (opt.id)}
-							{@const active = draftAccent === opt.id}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								onclick={() => (draftAccent = opt.id)}
-							>
-								<div class="flex w-full items-center justify-center p-3">
-									<span
-										class="inline-flex h-7 items-center rounded-md px-4 text-xs font-semibold"
-										style="background: {opt.primary}; color: {opt.fg};"
-									>
-										Publish
-									</span>
-								</div>
-							</SettingOptionCard>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">UI font</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Font used for the sidebar, lists, and app chrome.
-					</p>
-
-					<div class="mt-3">
-						<FontPicker value={draftUiFont} onChange={(f) => (draftUiFont = f)} />
-					</div>
+<!-- The body markup for a section, dispatched by id. The wrapper, heading, and
+	header action are rendered by the loop in the content snippet; everything
+	below the heading lives here. Each branch corresponds to one SECTIONS entry. -->
+{#snippet sectionBody(id: string)}
+	{#if id === 'settings-accounts-github'}
+		{#if app.githubAccounts.length === 0}
+			<p class="mt-1 text-xs text-muted-foreground">
+				Sign in to review pull requests and post comments.
+			</p>
+		{:else}
+			<p class="mt-1 text-xs text-muted-foreground">
+				The default account is used by projects that haven't picked their own.
+			</p>
+		{/if}
+		{#if app.githubAccounts.length === 0}
+			<Button size="sm" class="mt-3" onclick={startAddAccount}>
+				<Plus class="size-3.5" /> Sign in to GitHub
+			</Button>
+		{:else}
+			<div class="mt-3 overflow-hidden rounded-xl border border-border bg-card/30">
+				{#each app.githubAccounts as acct (acct.id)}
+					{@const isDefault = acct.id === app.activeGithubAccount?.id}
 					<div
-						class="mt-3 overflow-hidden rounded-lg border border-border bg-background py-1"
-						style="font-family: {uiFontCss(draftUiFont)}"
+						class="flex items-center gap-3 border-b border-border/60 px-3 py-2.5 last:border-b-0"
 					>
-						<FileListPreview layout="tree" showIcons={draftShowFileIcons} />
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Code font</h3>
-					<p class="mt-1 text-xs text-muted-foreground">Font used for diffs and code.</p>
-
-					<div class="mt-3">
-						<FontPicker value={draftCodeFont} mono onChange={(f) => (draftCodeFont = f)} />
-					</div>
-					<div
-						class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5"
-						style="--code-font: {codeFontCss(draftCodeFont)}"
-					>
-						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Diff view</h3>
-					<p class="mt-1 text-xs text-muted-foreground">Choose how changes are displayed.</p>
-
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ mode: 'split' as ViewMode, label: 'Split' }, { mode: 'unified' as ViewMode, label: 'Unified' }] as opt (opt.mode)}
-							{@const active = draftViewMode === opt.mode}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								onclick={() => (draftViewMode = opt.mode)}
-							>
-								<div class="w-full bg-background p-1.5">
-									<DiffStylePreview mode={opt.mode} theme={draftDiffThemePair} />
-								</div>
-							</SettingOptionCard>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Diff theme</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Syntax highlighting theme for diff code blocks. Each theme has a light and dark variant
-						that follows your appearance.
-					</p>
-
-					<div class="mt-3">
-						<DropdownMenu.Root>
-							<DropdownMenu.Trigger
-								class={cn(
-									buttonVariants({ variant: 'outline', size: 'sm' }),
-									'w-full justify-between font-normal'
-								)}
-							>
-								<span class="truncate">{draftDiffThemeLabel}</span>
-								<ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
-							</DropdownMenu.Trigger>
-							<DropdownMenu.Content align="start" class="max-h-[260px]">
-								{#each DIFF_THEMES as opt (opt.id)}
-									<DropdownMenu.Item class="gap-2" onSelect={() => (draftDiffTheme = opt.id)}>
-										<Check
-											class={cn(
-												'size-3.5',
-												draftDiffTheme === opt.id ? 'opacity-100' : 'opacity-0'
-											)}
-										/>
-										<span class="flex-1 truncate">{opt.label}</span>
-									</DropdownMenu.Item>
-								{/each}
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
-					</div>
-
-					<div class="mt-3 overflow-hidden rounded-lg border border-border bg-background p-1.5">
-						<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Diff layout</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Choose whether all changed files render in one scrollable list or one file's diff shows
-						at a time, switching as you pick files in the sidebar.
-					</p>
-
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ value: 'scroll' as DiffLayout, label: 'Scrollable', hint: 'All file diffs stack in one continuous scroll.' }, { value: 'single' as DiffLayout, label: 'One at a time', hint: 'Shows the selected file only, like GitHub Desktop.' }] as opt (opt.value)}
-							{@const active = draftDiffLayout === opt.value}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								hint={opt.hint}
-								onclick={() => (draftDiffLayout = opt.value)}
-							/>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">File icons</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Show language-specific icons next to file names in the sidebar.
-					</p>
-
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ value: true, label: 'Shown' }, { value: false, label: 'Hidden' }] as opt (opt.label)}
-							{@const active = draftShowFileIcons === opt.value}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								onclick={() => (draftShowFileIcons = opt.value)}
-							>
-								<div class="w-full bg-background py-1">
-									<FileListPreview layout="tree" showIcons={opt.value} />
-								</div>
-							</SettingOptionCard>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Animations</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						How much motion the UI uses. "Accents only" keeps hover/focus transitions and small
-						flourishes but opens menus and dialogs instantly; "All" animates those overlays too.
-					</p>
-
-					<div class="mt-4 grid grid-cols-3 gap-3">
-						{#each [{ value: 'none', label: 'None', hint: 'No motion anywhere; everything appears instantly.' }, { value: 'accents', label: 'Accents only', hint: 'Hover/focus transitions and flourishes; menus open instantly.' }, { value: 'all', label: 'All', hint: 'Everything, including menus, dialogs, and tooltips.' }] as const as opt (opt.value)}
-							{@const active = draftAnimations === opt.value}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								hint={opt.hint}
-								onclick={() => (draftAnimations = opt.value)}
-							/>
-						{/each}
-					</div>
-				</div>
-			</section>
-		{:else if activeTab === 'behavior'}
-			<section class="space-y-6">
-				<div>
-					<h3 class="text-base font-semibold">Arrow-key navigation</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Choose what happens when you move the keyboard cursor onto a file with the arrow keys in
-						the sidebar.
-					</p>
-
-					<div class="mt-4 grid grid-cols-2 gap-3">
-						{#each [{ value: true, label: 'Open on arrow', hint: 'Arrowing onto a file opens its diff immediately.' }, { value: false, label: 'Open on enter', hint: 'Arrows move the cursor only; Enter opens the file.' }] as opt (opt.label)}
-							{@const active = draftOpenFileOnArrowNav === opt.value}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								hint={opt.hint}
-								onclick={() => (draftOpenFileOnArrowNav = opt.value)}
-							/>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Merged branches</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						What to do when a checked-out branch's PR is merged.
-					</p>
-
-					<div class="mt-4 grid grid-cols-3 gap-3">
-						{#each [{ value: 'prompt', label: 'Ask each time', hint: 'Show a dialog when a PR merges.' }, { value: 'switch', label: 'Switch back', hint: 'Switch to the default branch automatically.' }, { value: 'nothing', label: 'Do nothing', hint: 'Stay on the branch; never ask.' }] as opt (opt.value)}
-							{@const active = draftPrMergedBehavior === opt.value}
-							<SettingOptionCard
-								selected={active}
-								label={opt.label}
-								hint={opt.hint}
-								onclick={() => (draftPrMergedBehavior = opt.value as PrMergedBehavior)}
-							/>
-						{/each}
-					</div>
-
-					<div class="mt-3">
-						<div class="flex items-start gap-2.5">
-							<Checkbox
-								id="auto-remove-merged"
-								bind:checked={draftAutoRemoveMergedBranch}
-								class="mt-0.5"
-							/>
-							<label for="auto-remove-merged" class="grid cursor-pointer gap-0.5 leading-snug">
-								<span class="text-sm font-medium">Automatically remove merged branches locally</span
-								>
-								<span class="text-xs text-muted-foreground">
-									After switching back, delete the merged branch from your machine without asking.
-									The remote is never touched.
-								</span>
-							</label>
-						</div>
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Reviewing</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						How the review view tracks which files you've already looked at.
-					</p>
-
-					<div class="mt-3">
-						<div class="flex items-start gap-2.5">
-							<Checkbox
-								id="unmark-seen-on-change"
-								bind:checked={draftUnmarkSeenOnChange}
-								class="mt-0.5"
-							/>
-							<label for="unmark-seen-on-change" class="grid cursor-pointer gap-0.5 leading-snug">
-								<span class="text-sm font-medium">Unmark seen files when they change</span>
-								<span class="text-xs text-muted-foreground">
-									When a file you marked as seen picks up new changes, fresh commits pushed to the
-									branch, or further edits, clear its seen mark so it resurfaces for review.
-								</span>
-							</label>
-						</div>
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Commits</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						How commits you make in Super Review are signed.
-					</p>
-
-					<div class="mt-3">
-						<div class="flex items-start gap-2.5">
-							<Checkbox id="sign-commits" bind:checked={draftSignCommits} class="mt-0.5" />
-							<label for="sign-commits" class="grid cursor-pointer gap-0.5 leading-snug">
-								<span class="text-sm font-medium">Sign my commits</span>
-								<span class="text-xs text-muted-foreground">
-									Super Review creates an SSH signing key for your GitHub account and registers it
-									so your commits show as "Verified". No setup needed. Turn off to commit unsigned.
-								</span>
-							</label>
-						</div>
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Recent repositories</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						How many recently opened repositories the repository picker lists in its "Recent"
-						section. Set to 0 to hide the section.
-					</p>
-
-					<div class="mt-4 flex items-center gap-2">
-						<Input type="number" min="0" step="1" bind:value={draftRecentRepoCount} class="w-32" />
-						<span class="text-xs text-muted-foreground">repositories</span>
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Large diffs</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Diffs with more changed lines than this are hidden behind a "Load diff" button by
-						default. Set to 0 to disable the size limit.
-					</p>
-
-					<div class="mt-4 flex items-center gap-2">
-						<Input type="number" min="0" step="100" bind:value={draftMaxDiffLines} class="w-32" />
-						<span class="text-xs text-muted-foreground">changed lines</span>
-					</div>
-				</div>
-
-				<div id="settings-hidden-files" class="scroll-mt-4">
-					<div class="flex items-center justify-between gap-2">
-						<h3 class="text-base font-semibold">Hidden files</h3>
-						{#if !arraysEqual([...draftHiddenDiffPatterns].sort(), [...DEFAULT_HIDDEN_DIFF_PATTERNS].sort())}
-							<Button variant="ghost" size="sm" onclick={resetPatterns}>
-								<RotateCcw class="size-3.5" /> Reset to defaults
-							</Button>
-						{/if}
-					</div>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Files matching these glob patterns have their diffs hidden behind a "Load diff" button
-						by default, such as lock files and build outputs. A pattern with no slash matches the
-						file name anywhere (e.g. <code>*.lock</code>); one with a slash matches the full path
-						(e.g.
-						<code>dist/**</code>).
-					</p>
-
-					<div class="mt-3 flex gap-2">
-						<Input
-							placeholder="e.g. *.min.js or dist/**"
-							bind:value={newPattern}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') {
-									e.preventDefault();
-									addPattern();
-								}
-							}}
-							class="flex-1"
-						/>
-						<Button variant="outline" onclick={addPattern}>
-							<Plus class="size-3.5" /> Add
-						</Button>
-					</div>
-
-					{#if draftHiddenDiffPatterns.length === 0}
-						<p class="mt-3 text-xs text-muted-foreground">
-							No patterns. Every file's diff renders inline.
-						</p>
-					{:else}
-						<div
-							class="mt-3 overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:max-h-[250px]"
-						>
-							<Table.Root>
-								<Table.Header>
-									<Table.Row>
-										<Table.Head class="sticky top-0 z-10 bg-background">Pattern</Table.Head>
-										<Table.Head class="sticky top-0 z-10 w-12 bg-background"></Table.Head>
-									</Table.Row>
-								</Table.Header>
-								<Table.Body>
-									{#each draftHiddenDiffPatterns as pattern (pattern)}
-										<Table.Row>
-											<Table.Cell class="font-mono text-xs">{pattern}</Table.Cell>
-											<Table.Cell class="py-1 text-right">
-												<button
-													type="button"
-													class="ml-auto inline-grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-													title={`Remove ${pattern}`}
-													onclick={() => removePattern(pattern)}
-												>
-													<X class="size-3.5" />
-												</button>
-											</Table.Cell>
-										</Table.Row>
-									{/each}
-								</Table.Body>
-							</Table.Root>
-						</div>
-					{/if}
-				</div>
-
-				<div id="settings-custom-file-icons" class="scroll-mt-4">
-					<h3 class="text-base font-semibold">Custom file icons</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Give files matching a glob pattern your own icon. Patterns work like hidden files:
-						<code>*.proto</code> matches the name anywhere, <code>infra/**</code> matches a path.
-						The icon can be an <code>https://</code> URL or a local image path.
-					</p>
-
-					<div class="mt-3 flex gap-2">
-						<Input placeholder="Pattern, e.g. *.proto" bind:value={newIconPattern} class="flex-1" />
-						<Input
-							placeholder="https://… or /path/to/icon.svg"
-							bind:value={newIconSource}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') {
-									e.preventDefault();
-									addCustomIcon();
-								}
-							}}
-							class="flex-1"
-						/>
-						<Button
-							variant="outline"
-							size="icon"
-							onclick={pickIconFile}
-							title="Choose a local image"
-						>
-							<FolderOpen class="size-3.5" />
-						</Button>
-						<Button variant="outline" onclick={addCustomIcon}>
-							<Plus class="size-3.5" /> Add
-						</Button>
-					</div>
-
-					{#if draftCustomFileIcons.length === 0}
-						<p class="mt-3 text-xs text-muted-foreground">
-							No custom icons. Files use their built-in language icons.
-						</p>
-					{:else}
-						<div
-							class="mt-3 overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:max-h-[250px]"
-						>
-							<Table.Root>
-								<Table.Header>
-									<Table.Row>
-										<Table.Head class="sticky top-0 z-10 w-10 bg-background"></Table.Head>
-										<Table.Head class="sticky top-0 z-10 bg-background">Pattern</Table.Head>
-										<Table.Head class="sticky top-0 z-10 bg-background">Icon</Table.Head>
-										<Table.Head class="sticky top-0 z-10 w-12 bg-background"></Table.Head>
-									</Table.Row>
-								</Table.Header>
-								<Table.Body>
-									{#each draftCustomFileIcons as icon (icon.pattern)}
-										<Table.Row>
-											<Table.Cell class="py-1">
-												{#await resolveIconSrc(icon.source) then src}
-													{#if src}
-														<img {src} alt="" class="size-4 object-contain" />
-													{:else}
-														<span class="text-muted-foreground" title="Couldn't load this icon"
-															>—</span
-														>
-													{/if}
-												{/await}
-											</Table.Cell>
-											<Table.Cell class="font-mono text-xs">{icon.pattern}</Table.Cell>
-											<Table.Cell
-												class="max-w-[200px] truncate font-mono text-xs text-muted-foreground"
-											>
-												{icon.source}
-											</Table.Cell>
-											<Table.Cell class="py-1 text-right">
-												<button
-													type="button"
-													class="ml-auto inline-grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-													title={`Remove ${icon.pattern}`}
-													onclick={() => removeCustomIcon(icon.pattern)}
-												>
-													<X class="size-3.5" />
-												</button>
-											</Table.Cell>
-										</Table.Row>
-									{/each}
-								</Table.Body>
-							</Table.Root>
-						</div>
-					{/if}
-				</div>
-			</section>
-		{:else if activeTab === 'app'}
-			<section class="space-y-6">
-				<div>
-					<h3 class="text-base font-semibold">Window size</h3>
-					<p class="mt-1 text-xs text-muted-foreground">
-						The size the window opens at, in pixels. Takes effect the next time the app launches.
-						Values below the minimum ({WINDOW_BOUNDS.minWidth}×{WINDOW_BOUNDS.minHeight}) are raised
-						to it.
-					</p>
-
-					<div class="mt-4 flex items-center gap-3">
-						<div class="flex items-center gap-2">
-							<Input
-								id="window-width"
-								type="number"
-								min={WINDOW_BOUNDS.minWidth}
-								step="10"
-								bind:value={draftWindowWidth}
-								disabled={draftStartMaximized}
-								class="w-28"
-							/>
-							<label for="window-width" class="text-xs text-muted-foreground">width</label>
-						</div>
-						<span class="text-muted-foreground">×</span>
-						<div class="flex items-center gap-2">
-							<Input
-								id="window-height"
-								type="number"
-								min={WINDOW_BOUNDS.minHeight}
-								step="10"
-								bind:value={draftWindowHeight}
-								disabled={draftStartMaximized}
-								class="w-28"
-							/>
-							<label for="window-height" class="text-xs text-muted-foreground">height</label>
-						</div>
-					</div>
-					{#if draftStartMaximized}
-						<p class="mt-2 text-xs text-muted-foreground">
-							Used as the restored size when you un-maximize the window.
-						</p>
-					{/if}
-				</div>
-
-				<div class="flex items-start gap-2.5">
-					<Checkbox id="start-maximized" bind:checked={draftStartMaximized} class="mt-0.5" />
-					<label for="start-maximized" class="grid cursor-pointer gap-0.5 leading-snug">
-						<span class="text-sm font-medium">Start maximized</span>
-						<span class="text-xs text-muted-foreground">
-							Open the window maximized to fill the screen. Takes effect on the next launch.
-						</span>
-					</label>
-				</div>
-			</section>
-		{:else if activeTab === 'editor'}
-			<section class="space-y-6">
-				<div>
-					<h3 class="text-base font-semibold">External editor</h3>
-					<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in editor" button.</p>
-
-					<div class="mt-3 space-y-1.5">
-						{#each sortedEditors as ed (ed)}
-							{@const installed = app.editors[ed]}
-							{@const selected = draftEditor === ed}
-							<button
-								type="button"
-								disabled={!installed}
-								class={cn(
-									'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
-									!installed
-										? 'cursor-not-allowed border-border opacity-50'
-										: selected
-											? 'border-primary bg-primary/5'
-											: 'border-border hover:bg-muted/40'
-								)}
-								onclick={() => installed && (draftEditor = ed)}
-							>
-								{@render editorIcon(ed)}
-								<span class="flex-1 text-sm">{EDITOR_LABELS[ed]}</span>
-								{#if !installed}
-									<span class="text-xs text-muted-foreground">Not installed</span>
-								{:else if selected}
-									<Check class="size-4 text-primary" />
-								{/if}
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Terminal</h3>
-					<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in terminal" button.</p>
-
-					<div class="mt-3 space-y-1.5">
-						{#each sortedTerminals as t (t)}
-							{@const installed = app.terminals[t]}
-							{@const selected = draftTerminal === t}
-							<button
-								type="button"
-								disabled={!installed}
-								class={cn(
-									'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors',
-									!installed
-										? 'cursor-not-allowed border-border opacity-50'
-										: selected
-											? 'border-primary bg-primary/5'
-											: 'border-border hover:bg-muted/40'
-								)}
-								onclick={() => installed && (draftTerminal = t)}
-							>
-								{@render terminalIcon(t)}
-								<span class="flex-1 text-sm">{TERMINAL_LABELS[t]}</span>
-								{#if !installed}
-									<span class="text-xs text-muted-foreground">Not installed</span>
-								{:else if selected}
-									<Check class="size-4 text-primary" />
-								{/if}
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<div>
-					<h3 class="text-base font-semibold">Additional integrations</h3>
-					<p class="mt-1 text-xs text-muted-foreground">Optional features for specific repos.</p>
-
-					<div class="mt-3 flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3">
-						<div
-							class="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-card"
-						>
-							<ChangesetLogo class="h-5 w-auto" />
-						</div>
+						<Avatar.Root class="size-8">
+							{#if acct.avatarUrl}
+								<Avatar.Image src={acct.avatarUrl} alt={acct.login} />
+							{/if}
+							<Avatar.Fallback class="text-[10px]">
+								{acct.login.slice(0, 2).toUpperCase()}
+							</Avatar.Fallback>
+						</Avatar.Root>
 						<div class="min-w-0 flex-1">
-							<div class="text-sm font-medium">Changesets</div>
-							<p class="text-xs text-muted-foreground">
-								Prompts, commit message autofill, and a button to create one. For repos that use <a
-									href="https://github.com/changesets/changesets"
-									target="_blank"
-									rel="noopener noreferrer"
-									class="underline underline-offset-2 hover:text-foreground">changesets</a
-								>.
-							</p>
+							<div class="truncate text-sm font-medium">
+								{acct.name ?? acct.login}
+							</div>
+							<div class="truncate text-xs text-muted-foreground">
+								@{acct.login}
+							</div>
 						</div>
-						<Switch
-							bind:checked={draftChangesetsEnabled}
-							aria-label="Enable changesets integration"
-						/>
-					</div>
-				</div>
-			</section>
-		{:else if activeTab === 'hotkeys'}
-			<section class="space-y-6">
-				<div>
-					<div class="flex items-center justify-between gap-2">
-						<h3 class="text-base font-semibold">Keyboard shortcuts</h3>
-						{#if !hotkeysAreDefault}
-							<Button variant="ghost" size="sm" onclick={resetHotkeys}>
-								<RotateCcw class="size-3.5" /> Reset to defaults
+						{#if isDefault}
+							<span
+								class="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success"
+							>
+								<Check class="size-3" /> Default
+							</span>
+						{:else}
+							<Button variant="ghost" size="sm" onclick={() => setDefaultAccount(acct.id)}>
+								Set as default
 							</Button>
 						{/if}
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							title={`Sign out ${acct.login}`}
+							onclick={() => removeAccount(acct.id)}
+						>
+							<LogOut class="size-3.5" />
+						</Button>
 					</div>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Click a shortcut, then press the key combination you'd like to use. Press <kbd
-							class="font-mono">Esc</kbd
-						> to cancel.
-					</p>
+				{/each}
+			</div>
+			<Button variant="outline" size="sm" class="mt-3" onclick={startAddAccount}>
+				<Plus class="size-3.5" /> Add another account
+			</Button>
+		{/if}
+	{:else if id === 'settings-hidden-files'}
+		<p class="mt-1 text-xs text-muted-foreground">
+			Glob patterns whose diffs are hidden behind a "Load diff" button.
+		</p>
 
-					<ul class="mt-4 space-y-2">
-						{#each HOTKEY_ACTIONS as action (action)}
-							{@const conflictWith = hotkeyConflict(action)}
-							<li
-								class="flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2"
+		<div class="mt-3 overflow-hidden rounded-xl border border-border bg-card/30">
+			<div class="flex gap-2 p-2.5">
+				<Input
+					placeholder="e.g. *.min.js or dist/**"
+					bind:value={newPattern}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							addPattern();
+						}
+					}}
+					class="h-8 flex-1"
+				/>
+				<Button variant="outline" onclick={addPattern}>
+					<Plus class="size-3.5" /> Add
+				</Button>
+			</div>
+			{#if draftHiddenDiffPatterns.length === 0}
+				<p class="border-t border-border/60 px-3 py-3 text-xs text-muted-foreground">
+					No patterns. Every file's diff renders inline.
+				</p>
+			{:else}
+				<div class="max-h-[220px] overflow-y-auto border-t border-border/60">
+					{#each draftHiddenDiffPatterns as pattern (pattern)}
+						<div
+							class="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-2 last:border-b-0"
+						>
+							<span class="truncate font-mono text-xs">{pattern}</span>
+							<button
+								type="button"
+								class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+								title={`Remove ${pattern}`}
+								onclick={() => removePattern(pattern)}
 							>
-								<div class="min-w-0 flex-1">
-									<div class="text-sm font-medium">
-										{HOTKEY_LABELS[action].label}
-									</div>
-									<div class="text-xs text-muted-foreground">
-										{#if conflictWith}
-											<span class="text-destructive">
-												Conflicts with “{HOTKEY_LABELS[conflictWith].label}”.
-											</span>
-										{:else}
-											{HOTKEY_LABELS[action].description}
-										{/if}
-									</div>
-								</div>
-								<HotkeyInput
-									value={draftHotkeys[action]}
-									conflict={conflictWith !== null}
-									onChange={(hk) => setHotkey(action, hk)}
-								/>
-							</li>
-						{/each}
-					</ul>
+								<X class="size-3.5" />
+							</button>
+						</div>
+					{/each}
 				</div>
-			</section>
-		{:else if activeTab === 'agents'}
+			{/if}
+		</div>
+	{:else if id === 'settings-custom-file-icons'}
+		<p class="mt-1 text-xs text-muted-foreground">
+			Give files matching a glob pattern your own icon.
+		</p>
+
+		<div class="mt-3 overflow-hidden rounded-xl border border-border bg-card/30">
+			<div class="flex gap-2 p-2.5">
+				<Input placeholder="Pattern, e.g. *.proto" bind:value={newIconPattern} class="h-8 flex-1" />
+				<Input
+					placeholder="https://… or /path/to/icon.svg"
+					bind:value={newIconSource}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							addCustomIcon();
+						}
+					}}
+					class="h-8 flex-1"
+				/>
+				<Button variant="outline" size="icon" onclick={pickIconFile} title="Choose a local image">
+					<FolderOpen class="size-3.5" />
+				</Button>
+				<Button variant="outline" onclick={addCustomIcon}>
+					<Plus class="size-3.5" /> Add
+				</Button>
+			</div>
+			{#if draftCustomFileIcons.length === 0}
+				<p class="border-t border-border/60 px-3 py-3 text-xs text-muted-foreground">
+					No custom icons. Files use their built-in language icons.
+				</p>
+			{:else}
+				<div class="max-h-[220px] overflow-y-auto border-t border-border/60">
+					{#each draftCustomFileIcons as icon (icon.pattern)}
+						<div
+							class="flex items-center gap-3 border-b border-border/60 px-3 py-2 last:border-b-0"
+						>
+							<span class="grid size-5 shrink-0 place-items-center">
+								{#await resolveIconSrc(icon.source) then src}
+									{#if src}
+										<img {src} alt="" class="size-4 object-contain" />
+									{:else}
+										<span class="text-muted-foreground" title="Couldn't load this icon">—</span>
+									{/if}
+								{/await}
+							</span>
+							<span class="shrink-0 font-mono text-xs">{icon.pattern}</span>
+							<span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+								{icon.source}
+							</span>
+							<button
+								type="button"
+								class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+								title={`Remove ${icon.pattern}`}
+								onclick={() => removeCustomIcon(icon.pattern)}
+							>
+								<X class="size-3.5" />
+							</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	{:else if id === 'settings-external-editor'}
+		<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in editor" button.</p>
+
+		<div class="mt-3 overflow-hidden rounded-xl border border-border bg-card/30">
+			{#each sortedEditors as ed (ed)}
+				{@const installed = app.editors[ed]}
+				{@const selected = draftEditor === ed}
+				<button
+					type="button"
+					disabled={!installed}
+					class={cn(
+						'flex w-full items-center gap-3 border-b border-border/60 px-3 py-2.5 text-left transition-colors last:border-b-0',
+						!installed
+							? 'cursor-not-allowed opacity-50'
+							: selected
+								? 'bg-primary/5'
+								: 'hover:bg-muted/40'
+					)}
+					onclick={() => installed && (draftEditor = ed)}
+				>
+					{@render editorIcon(ed)}
+					<span class="flex-1 text-sm">{EDITOR_LABELS[ed]}</span>
+					{#if !installed}
+						<span class="text-xs text-muted-foreground">Not installed</span>
+					{:else if selected}
+						<Check class="size-4 text-primary" />
+					{/if}
+				</button>
+			{/each}
+		</div>
+	{:else if id === 'settings-terminal'}
+		<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in terminal" button.</p>
+
+		<div class="mt-3 overflow-hidden rounded-xl border border-border bg-card/30">
+			{#each sortedTerminals as t (t)}
+				{@const installed = app.terminals[t]}
+				{@const selected = draftTerminal === t}
+				<button
+					type="button"
+					disabled={!installed}
+					class={cn(
+						'flex w-full items-center gap-3 border-b border-border/60 px-3 py-2.5 text-left transition-colors last:border-b-0',
+						!installed
+							? 'cursor-not-allowed opacity-50'
+							: selected
+								? 'bg-primary/5'
+								: 'hover:bg-muted/40'
+					)}
+					onclick={() => installed && (draftTerminal = t)}
+				>
+					{@render terminalIcon(t)}
+					<span class="flex-1 text-sm">{TERMINAL_LABELS[t]}</span>
+					{#if !installed}
+						<span class="text-xs text-muted-foreground">Not installed</span>
+					{:else if selected}
+						<Check class="size-4 text-primary" />
+					{/if}
+				</button>
+			{/each}
+		</div>
+	{:else if id === 'settings-hotkeys'}
+		<p class="mt-1 text-xs text-muted-foreground">
+			Click a shortcut, then press the keys you want. <kbd class="font-mono">Esc</kbd> cancels.
+		</p>
+
+		<div class="mt-3 overflow-hidden rounded-xl border border-border bg-card/30">
+			{#each HOTKEY_ACTIONS as action (action)}
+				{@const conflictWith = hotkeyConflict(action)}
+				<div class="flex items-center gap-3 border-b border-border/60 px-3 py-2.5 last:border-b-0">
+					<div class="min-w-0 flex-1">
+						<div class="text-sm font-medium">
+							{HOTKEY_LABELS[action].label}
+						</div>
+						<div class="text-xs text-muted-foreground">
+							{#if conflictWith}
+								<span class="text-destructive">
+									Conflicts with “{HOTKEY_LABELS[conflictWith].label}”.
+								</span>
+							{:else}
+								{HOTKEY_LABELS[action].description}
+							{/if}
+						</div>
+					</div>
+					<HotkeyInput
+						value={draftHotkeys[action]}
+						conflict={conflictWith !== null}
+						onChange={(hk) => setHotkey(action, hk)}
+					/>
+				</div>
+			{/each}
+		</div>
+	{:else if id === 'settings-agents'}
+		<!-- Gated on the active tab so the panel only mounts (and runs its onMount
+			IPC) when the user opens Agents, even though every tab's text stays in the
+			DOM for search. -->
+		{#if activeTab === 'agents'}
 			<AgentsSettingsPanel />
-		{:else if activeTab === 'stats'}
+		{/if}
+	{:else if id === 'settings-stats'}
+		{#if activeTab === 'stats'}
 			<UsageStatsPanel />
 		{/if}
+	{/if}
+{/snippet}
+
+<!-- One settings section: its `id` (so search can scroll/flash it), heading +
+	optional reset, and the dispatched body. -->
+{#snippet sectionWrapper(s: SettingsSection)}
+	<div id={s.id} class="scroll-mt-4 rounded-lg">
+		{#if s.title}
+			<div class="flex items-center justify-between gap-2">
+				<h3 class="text-base font-semibold">{s.title}</h3>
+				{#if s.hasReset}
+					{@render sectionReset(s.id)}
+				{/if}
+			</div>
+		{/if}
+		{@render sectionBody(s.id)}
+	</div>
+{/snippet}
+
+<!-- The single basic control for a `row` section, dispatched by id: a switch,
+	select, or input so every settings tab reads as one consistent list. -->
+{#snippet compactControl(id: string)}
+	{#if id === 'settings-theme'}
+		<SettingSelect
+			ariaLabel="Theme"
+			value={draftTheme}
+			options={[
+				{ value: 'light', label: 'Light' },
+				{ value: 'dark', label: 'Dark' }
+			]}
+			onChange={(v) => (draftTheme = v as 'light' | 'dark')}
+		/>
+	{:else if id === 'settings-accent'}
+		<SettingSelect
+			ariaLabel="Accent"
+			value={draftAccent}
+			options={ACCENTS.map((a) => ({ value: a.id, label: a.label, swatch: a.primary }))}
+			onChange={(v) => (draftAccent = v as Accent)}
+		/>
+	{:else if id === 'settings-ui-font'}
+		<SettingSelect
+			ariaLabel="UI font"
+			value={draftUiFont}
+			options={UI_FONTS}
+			onChange={(f) => (draftUiFont = f)}
+		/>
+	{:else if id === 'settings-file-icons'}
+		<Switch bind:checked={draftShowFileIcons} aria-label="Show file icons" />
+	{:else if id === 'settings-animations'}
+		<SettingSelect
+			ariaLabel="Animations"
+			value={draftAnimations}
+			options={[
+				{ value: 'none', label: 'None' },
+				{ value: 'accents', label: 'Accents only' },
+				{ value: 'all', label: 'All' }
+			]}
+			onChange={(v) => (draftAnimations = v as AnimationMode)}
+		/>
+	{:else if id === 'settings-diff-view'}
+		<SettingSelect
+			ariaLabel="Diff view"
+			value={draftViewMode}
+			options={[
+				{ value: 'split', label: 'Split' },
+				{ value: 'unified', label: 'Unified' }
+			]}
+			onChange={(v) => (draftViewMode = v as ViewMode)}
+		/>
+	{:else if id === 'settings-diff-layout'}
+		<SettingSelect
+			ariaLabel="Diff layout"
+			value={draftDiffLayout}
+			options={[
+				{ value: 'scroll', label: 'Scrollable' },
+				{ value: 'single', label: 'One at a time' }
+			]}
+			onChange={(v) => (draftDiffLayout = v as DiffLayout)}
+		/>
+	{:else if id === 'settings-diff-theme'}
+		<SettingSelect
+			ariaLabel="Diff theme"
+			value={draftDiffTheme}
+			options={DIFF_THEMES.map((t) => ({ value: t.id, label: t.label }))}
+			onChange={(v) => (draftDiffTheme = v)}
+		/>
+	{:else if id === 'settings-code-font'}
+		<SettingSelect
+			ariaLabel="Code font"
+			value={draftCodeFont}
+			options={CODE_FONTS}
+			onChange={(f) => (draftCodeFont = f)}
+		/>
+	{:else if id === 'settings-arrow-nav'}
+		<SettingSelect
+			ariaLabel="Arrow-key navigation"
+			value={draftOpenFileOnArrowNav ? 'arrow' : 'enter'}
+			options={[
+				{ value: 'arrow', label: 'Open on arrow' },
+				{ value: 'enter', label: 'Open on enter' }
+			]}
+			onChange={(v) => (draftOpenFileOnArrowNav = v === 'arrow')}
+		/>
+	{:else if id === 'settings-merged-branches'}
+		<SettingSelect
+			ariaLabel="When a PR is merged"
+			value={draftPrMergedBehavior}
+			options={[
+				{ value: 'prompt', label: 'Ask before switching' },
+				{ value: 'switch', label: 'Switch automatically' },
+				{ value: 'nothing', label: 'Never ask' }
+			]}
+			onChange={(v) => (draftPrMergedBehavior = v as PrMergedBehavior)}
+		/>
+	{:else if id === 'settings-auto-remove-merged'}
+		<Switch bind:checked={draftAutoRemoveMergedBranch} aria-label="Auto-remove merged branches" />
+	{:else if id === 'settings-reviewing'}
+		<Switch
+			bind:checked={draftUnmarkSeenOnChange}
+			aria-label="Unmark seen files when they change"
+		/>
+	{:else if id === 'settings-commits'}
+		<Switch bind:checked={draftSignCommits} aria-label="Sign my commits" />
+	{:else if id === 'settings-recent-repos'}
+		<Input type="number" min="0" step="1" bind:value={draftRecentRepoCount} class="h-8 w-24" />
+	{:else if id === 'settings-large-diffs'}
+		<Input type="number" min="0" step="100" bind:value={draftMaxDiffLines} class="h-8 w-24" />
+	{:else if id === 'settings-window-size'}
+		<div class="flex items-center gap-2">
+			<Input
+				type="number"
+				min={WINDOW_BOUNDS.minWidth}
+				step="10"
+				bind:value={draftWindowWidth}
+				disabled={draftStartMaximized}
+				class="h-8 w-20"
+				aria-label="Window width"
+			/>
+			<span class="text-muted-foreground">×</span>
+			<Input
+				type="number"
+				min={WINDOW_BOUNDS.minHeight}
+				step="10"
+				bind:value={draftWindowHeight}
+				disabled={draftStartMaximized}
+				class="h-8 w-20"
+				aria-label="Window height"
+			/>
+		</div>
+	{:else if id === 'settings-start-maximized'}
+		<Switch bind:checked={draftStartMaximized} aria-label="Start maximized" />
+	{:else if id === 'settings-changesets'}
+		<Switch bind:checked={draftChangesetsEnabled} aria-label="Enable Changesets" />
+	{/if}
+{/snippet}
+
+<!-- One uniform settings row inside a card: title + blurb on the left, one basic
+	control on the right. `id` lets search scroll to and flash it. -->
+{#snippet settingRow(s: SettingsSection)}
+	{@const centered = s.id === 'settings-changesets'}
+	<div
+		id={s.id}
+		class={cn(
+			'flex scroll-mt-4 justify-between gap-6 border-b border-border/60 px-4 py-3.5 last:border-b-0',
+			centered ? 'items-center' : 'items-start'
+		)}
+	>
+		<div class={cn('flex min-w-0 gap-3', centered ? 'items-center' : 'items-start')}>
+			{#if s.id === 'settings-changesets'}
+				<div
+					class="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-card"
+				>
+					<ChangesetLogo class="h-4 w-auto" />
+				</div>
+			{/if}
+			<div class="min-w-0">
+				<h3 class="text-sm font-medium">{s.title ?? s.label}</h3>
+				{#if s.description}
+					<p class="mt-0.5 text-xs text-muted-foreground">{s.description}</p>
+				{/if}
+			</div>
+		</div>
+		<div class={cn('shrink-0', centered ? '' : 'pt-0.5')}>{@render compactControl(s.id)}</div>
+	</div>
+{/snippet}
+
+<!-- The single shared live preview for the Appearance or Diff tab: one diff preview
+	reflecting view mode + diff theme + code font, or one chrome preview reflecting
+	theme + accent + UI font + file icons. Rendered large so it's the focus of the
+	tab now that the controls are compact. -->
+{#snippet tabPreview(kind: 'chrome' | 'diff')}
+	<div class="mt-5">
+		<div class="mb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+			Preview
+		</div>
+		{#if kind === 'diff'}
+			<!-- Framed like a real diff card in the app: a file header (icon + path +
+				Diff/Raw toggle) above the live diff. -->
+			<div
+				class="overflow-hidden rounded-lg border border-border bg-background"
+				style="--code-font: {codeFontCss(
+					draftCodeFont
+				)}; --diff-preview-font-size: 13px; --diff-preview-line-height: 19px;"
+			>
+				<div class="flex items-center gap-2 border-b border-border bg-card/40 px-3 py-2">
+					<FileIcon path="cart.ts" class="size-4 shrink-0" />
+					<span class="font-mono text-xs text-muted-foreground">src/cart.ts</span>
+					<div class="ml-auto flex items-center gap-1 text-[10px] font-medium">
+						<span class="rounded bg-muted px-1.5 py-0.5 text-foreground">Diff</span>
+						<span class="px-1.5 py-0.5 text-muted-foreground">Raw</span>
+					</div>
+				</div>
+				<div class="p-3">
+					<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
+				</div>
+			</div>
+		{:else}
+			<div class="overflow-hidden rounded-lg border border-border bg-background p-3">
+				<AppChromePreview
+					theme={draftTheme}
+					accent={draftAccent}
+					uiFont={draftUiFont}
+					showIcons={draftShowFileIcons}
+				/>
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
+<!-- A whole tab: each run of `row` sections becomes one card; `block` sections
+	render standalone in declared order. Previewable tabs append the shared preview. -->
+{#snippet tabContent(tab: SettingsTab)}
+	{@const previewKind = TAB_PREVIEW[tab]}
+	<div class="space-y-6">
+		{#each segmentsForTab(tab) as seg, i (i)}
+			{#if seg.type === 'card'}
+				<div class="overflow-hidden rounded-xl border border-border bg-card/30">
+					{#each seg.sections as s (s.id)}
+						{@render settingRow(s)}
+					{/each}
+				</div>
+			{:else}
+				{@render sectionWrapper(seg.section)}
+			{/if}
+		{/each}
+		{#if previewKind && activeTab === tab}
+			{@render tabPreview(previewKind)}
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet searchBox()}
+	<div class="space-y-1">
+		<div class="relative">
+			<Search
+				class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+			/>
+			<Input
+				bind:value={searchQuery}
+				placeholder="Search settings"
+				aria-label="Search settings"
+				class="h-8 pr-7 pl-7"
+				onkeydown={handleSearchKey}
+			/>
+			{#if searchQuery}
+				<button
+					type="button"
+					title="Clear search"
+					class="absolute top-1/2 right-1.5 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+					onclick={() => (searchQuery = '')}
+				>
+					<X class="size-3.5" />
+				</button>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
+<!-- While searching, this replaces the tab rail: a flat list of matching settings
+	(name + tab). Picking one jumps to it and flashes it. -->
+{#snippet searchNav()}
+	{#if searchResults.length === 0}
+		<p class="px-2 py-3 text-xs text-muted-foreground">No settings match “{trimmedQuery}”.</p>
+	{:else}
+		<div class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+			{#each searchResults as hit, i (hit.section.id)}
+				{@const active = i === highlightedIndex}
+				<button
+					type="button"
+					data-search-result={i}
+					class={cn(
+						'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm',
+						active ? 'bg-muted text-foreground' : 'text-muted-foreground'
+					)}
+					onmousemove={() => (highlightedIndex = i)}
+					onclick={() => goToSetting(hit.section)}
+				>
+					<span class="min-w-0 flex-1 truncate">{hit.section.title ?? hit.section.label}</span>
+					<span class="shrink-0 text-[10px] text-muted-foreground">{hit.tabLabel}</span>
+				</button>
+			{/each}
+		</div>
+	{/if}
+{/snippet}
+
+<SettingsShell
+	bind:open={dialogOpen}
+	title="Settings"
+	tabs={TABS}
+	bind:activeTab
+	onClose={cancel}
+	search={searchBox}
+	navReplacement={searching ? searchNav : undefined}
+	size="lg"
+>
+	{#snippet content(_tab)}
+		<!-- Every tab's sections stay mounted (only the active one is shown) so the
+			search jump-list can scroll to any section; heavy previews/panels are gated on
+			the active tab so they don't mount up front. -->
+		<div>
+			{#each TABS as tab (tab.id)}
+				<div hidden={activeTab !== tab.id}>
+					{@render tabContent(tab.id)}
+				</div>
+			{/each}
+		</div>
 	{/snippet}
 
 	{#snippet footer()}

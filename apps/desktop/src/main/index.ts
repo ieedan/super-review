@@ -132,16 +132,16 @@ function createWindow(): void {
 	}
 }
 
-// The Appearance settings enumerate installed fonts via the renderer's Local
-// Font Access API (window.queryLocalFonts), gated behind 'local-fonts'. The
-// dev-only in-app inspector (sv-agentation) copies annotations to the clipboard
-// via navigator.clipboard.writeText, gated behind 'clipboard-sanitized-write'.
-// Grant those; deny everything else this trusted local app never asks for.
+// The dev-only in-app inspector (sv-agentation) copies annotations to the
+// clipboard via navigator.clipboard.writeText, gated behind
+// 'clipboard-sanitized-write'. Grant that; deny everything else this trusted
+// local app never asks for. (Fonts are now bundled via Fontsource, so the Local
+// Font Access API / 'local-fonts' permission is no longer needed.)
 function setupPermissions(): void {
 	const ses = session.defaultSession;
 	// These aren't all in Electron's typed permission union yet, though they're
 	// valid runtime values — compare as strings.
-	const allowed = new Set(['local-fonts', 'clipboard-sanitized-write']);
+	const allowed = new Set(['clipboard-sanitized-write']);
 	ses.setPermissionRequestHandler((_wc, permission, callback) => {
 		callback(allowed.has(permission as string));
 	});

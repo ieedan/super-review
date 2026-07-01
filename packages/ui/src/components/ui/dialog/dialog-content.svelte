@@ -17,16 +17,21 @@
 		portalProps,
 		children,
 		showCloseButton = true,
+		overlayClass,
 		...restProps
 	}: WithoutChildrenOrChild<DialogPrimitive.ContentProps> & {
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DialogPortal>>;
 		children: Snippet;
 		showCloseButton?: boolean;
+		// Extra classes for the backdrop overlay. Used to raise a dialog that opens
+		// on top of another dialog onto a higher layer (e.g. sign-in over Settings),
+		// since same-z sibling dialogs otherwise stack by DOM order.
+		overlayClass?: string;
 	} = $props();
 </script>
 
 <DialogPortal {...portalProps}>
-	<Dialog.Overlay />
+	<Dialog.Overlay class={overlayClass} />
 	<DialogPrimitive.Content
 		bind:ref
 		data-slot="dialog-content"

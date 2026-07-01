@@ -15,7 +15,9 @@
 		if (!o) actions.closeGithubSignIn();
 	}}
 >
-	<Dialog.Content class="w-[420px]">
+	<!-- Raised onto a higher layer than the base dialogs (z-50) so it stacks above
+		the Settings dialog when opened from its "Add another account" button. -->
+	<Dialog.Content class="z-[60] w-[420px]" overlayClass="z-[60]">
 		<Dialog.Header>
 			<Dialog.Title>Sign in to GitHub</Dialog.Title>
 		</Dialog.Header>

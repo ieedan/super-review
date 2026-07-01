@@ -1065,7 +1065,9 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 		const numstatRaw = await git.raw(['diff', '--numstat', `${ref}^1`, ref]).catch(() => '');
 		const numstatMap = parseNumstat(numstatRaw);
 		const oidMap = parseRawOids(
-			await git.raw(['diff', '--raw', '--find-renames', `${ref}^1`, ref]).catch(() => '')
+			await git
+				.raw(['diff', '--raw', '--no-abbrev', '--find-renames', `${ref}^1`, ref])
+				.catch(() => '')
 		);
 		for (const line of nameStatus.split('\n').filter(Boolean)) {
 			const parts = line.split('\t');
@@ -1107,7 +1109,7 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				.catch(() => '');
 			const untrackedMap = parseNumstat(untrackedNumstat);
 			const untrackedOids = parseRawOids(
-				await git.raw(['diff', '--raw', EMPTY_TREE, `${ref}^3`]).catch(() => '')
+				await git.raw(['diff', '--raw', '--no-abbrev', EMPTY_TREE, `${ref}^3`]).catch(() => '')
 			);
 			for (const [p, ns] of untrackedMap) {
 				stashFiles.push({
@@ -1141,7 +1143,7 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 		const [status, numstatRaw, patchRaw] = await Promise.all([
 			git.status(),
 			git.raw(['diff', '--numstat', 'HEAD']).catch(() => ''),
-			git.raw(['diff', '--find-renames', 'HEAD']).catch(() => '')
+			git.raw(['diff', '--full-index', '--find-renames', 'HEAD']).catch(() => '')
 		]);
 		const numstatMap = parseNumstat(numstatRaw);
 		const oidMap = parsePatchOids(patchRaw);
@@ -1232,7 +1234,9 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 		const [raw, numstatRaw, rawOidsRaw] = await Promise.all([
 			git.raw(['diff', '--name-status', '--find-renames', `${refs.base}...${refs.head}`]),
 			git.raw(['diff', '--numstat', `${refs.base}...${refs.head}`]),
-			git.raw(['diff', '--raw', '--find-renames', `${refs.base}...${refs.head}`]).catch(() => '')
+			git
+				.raw(['diff', '--raw', '--no-abbrev', '--find-renames', `${refs.base}...${refs.head}`])
+				.catch(() => '')
 		]);
 		const numstatMap = parseNumstat(numstatRaw);
 		const oidMap = parseRawOids(rawOidsRaw);
@@ -1304,6 +1308,12 @@ function realOid(sha: string | undefined): string | undefined {
 // differs — even an edit that keeps the same +/- counts. An all-zero dst sha
 // means git didn't hash that side (a worktree blob under --raw); skip it so the
 // caller falls back to the stat signature.
+//
+// The callers MUST pass `--no-abbrev`: git abbreviates these OIDs to the
+// shortest unique prefix by default, and that length grows as the repo gains
+// objects (e.g. after a commit). Since the OID is persisted as a seen-file
+// signature, an abbreviation that lengthens between sessions would read as "the
+// file changed" and silently clear every seen mark. Full OIDs are stable.
 function parseRawOids(raw: string): Map<string, DiffOids> {
 	const map = new Map<string, DiffOids>();
 	for (const line of raw.split('\n').filter(Boolean)) {
@@ -1325,6 +1335,11 @@ function parseRawOids(raw: string): Map<string, DiffOids> {
 // only batched way to get a content signature for the working tree. Pure renames
 // (100% similar) have no index line and are simply absent, so the caller falls
 // back to the stat signature for them.
+//
+// The caller MUST pass `--full-index`: the `index` line abbreviates both OIDs by
+// default, to a length that grows with the repo's object count. Persisting an
+// abbreviated OID as a seen signature means a later session reading a longer
+// abbreviation sees a "change" and clears the mark — see parseRawOids.
 function parsePatchOids(patch: string): Map<string, DiffOids> {
 	const map = new Map<string, DiffOids>();
 	let currentPath: string | undefined;
