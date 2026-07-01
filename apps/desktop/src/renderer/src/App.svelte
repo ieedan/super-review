@@ -369,6 +369,14 @@
 			if (action === 'sendFeedback') actions.openFeedbackDialog();
 		});
 
+		// Self-updater progress → the "update ready" notice above the commit box.
+		// Also fetch the current status once, in case the download finished before
+		// this window mounted and we missed the live event.
+		const offUpdateStatus = window.api.events.onUpdateStatus((status) => {
+			actions.setUpdateStatus(status);
+		});
+		void window.api.update.getStatus().then((status) => actions.setUpdateStatus(status));
+
 		// Center the traffic lights once now; the resize binding handles every
 		// subsequent zoom change.
 		syncWindowControls();
@@ -399,6 +407,7 @@
 			offCommentsChanged();
 			offGithubAuthChanged();
 			offHelpMenuAction();
+			offUpdateStatus();
 			stopPoll();
 			window.clearInterval(tickId);
 			window.clearInterval(checksId);

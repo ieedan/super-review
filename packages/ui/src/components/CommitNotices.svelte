@@ -9,6 +9,8 @@
 	// They render through Stack, which arranges them like a Sonner stack (hover to
 	// expand, dismiss one by one with a smooth exit).
 	import OfflineIcon from '@iconify/svelte/dist/OfflineIcon.svelte';
+	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import { actions, app } from '@super-review/ui/store.svelte';
 	import { SUPER_REVIEW_ICON } from '@super-review/ui/file-icons';
 	import { Button } from './ui/button';
@@ -47,13 +49,24 @@
 		app.aiConfigStatus?.anyUpdateAvailable === true && !app.aiConfigUpdateDismissed
 	);
 
-	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' };
+	// App self-update: show while the new version downloads ("Installing update…")
+	// and once it's staged ("Update ready" + a restart button). Other states (idle,
+	// checking, error) show nothing.
+	const showUpdate = $derived(
+		(app.updateStatus.state === 'downloading' || app.updateStatus.state === 'downloaded') &&
+			!app.updateNoticeDismissed
+	);
+
+	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' | 'update' };
 
 	// Front-first (index 0 is the fully-visible front card; later ones peek behind
 	// it). "Add a changeset?" leads, then the AI-config nudge, and the unnecessary-
 	// changeset warning sits at the back of the pile.
 	const notices = $derived.by(() => {
 		const list: Notice[] = [];
+		// The app self-update leads the stack: it's the most consequential prompt and
+		// short-lived (only while an update is downloading or ready).
+		if (showUpdate) list.push({ id: 'update' });
 		if (showAdd) list.push({ id: 'add' });
 		if (showConfigure) list.push({ id: 'ai-config' });
 		if (showConfigUpdate) list.push({ id: 'ai-config-update' });
@@ -66,6 +79,7 @@
 	function dismissNotice(n: Notice): void {
 		if (n.id === 'warning') actions.dismissChangesetWarning();
 		else if (n.id === 'add') actions.dismissChangesetPrompt();
+		else if (n.id === 'update') actions.dismissUpdateNotice();
 		else if (n.id === 'ai-config-update') actions.dismissAiConfigUpdate();
 		else actions.dismissAiConfigNotice();
 	}
@@ -75,7 +89,43 @@
 	<div class="mx-2 mt-2 mb-2">
 		<Stack items={notices} onDismiss={dismissNotice} gap={8}>
 			{#snippet card(n, { dismiss })}
-				{#if n.id === 'warning'}
+				{#if n.id === 'update'}
+					<NoticeCard
+						onDismiss={dismiss}
+						dismissTitle="Dismiss"
+						tooltip={app.updateStatus.state === 'downloaded'
+							? 'A new version is downloaded. Restart to install it.'
+							: 'A new version is downloading in the background.'}
+					>
+						{#snippet logo()}
+							{#if app.updateStatus.state === 'downloaded'}
+								<Sparkles class="size-4 shrink-0 text-primary" />
+							{:else}
+								<LoaderCircle class="size-4 shrink-0 animate-spin text-muted-foreground" />
+							{/if}
+						{/snippet}
+						{#if app.updateStatus.state === 'downloaded'}
+							Update ready{app.updateStatus.version ? ` (v${app.updateStatus.version})` : ''}
+						{:else if app.updateStatus.state === 'downloading' && app.updateStatus.percent > 0}
+							Installing update… {app.updateStatus.percent}%
+						{:else}
+							Installing update…
+						{/if}
+						{#snippet action()}
+							{#if app.updateStatus.state === 'downloaded'}
+								<Button
+									type="button"
+									size="xs"
+									variant="outline"
+									class="h-6 text-[11px]"
+									onclick={() => actions.restartToUpdate()}
+								>
+									Restart to update
+								</Button>
+							{/if}
+						{/snippet}
+					</NoticeCard>
+				{:else if n.id === 'warning'}
 					<NoticeCard
 						variant="warning"
 						onDismiss={dismiss}

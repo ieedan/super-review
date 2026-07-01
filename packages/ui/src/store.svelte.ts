@@ -50,6 +50,7 @@ import type {
 	SidebarTabVisibility,
 	SidebarControlVisibility,
 	TerminalKind,
+	UpdateStatus,
 	UserPrefs,
 	ViewMode
 } from '@super-review/core/types';
@@ -231,6 +232,14 @@ interface AppState {
 	// Whether the user dismissed the "Update AI files?" notice. Same in-memory,
 	// reset-per-repo-switch lifetime as aiConfigNoticeDismissed.
 	aiConfigUpdateDismissed: boolean;
+	// Self-update lifecycle, pushed from the main process (electron-updater). Drives
+	// the "update ready" notice above the commit box. `idle` in dev and unsigned
+	// builds, which never download an update.
+	updateStatus: UpdateStatus;
+	// Whether the user dismissed the "update ready" notice this session. Unlike the
+	// per-repo AI-config flags this is app-global (an update isn't repo-scoped), so
+	// it isn't reset on repo switch.
+	updateNoticeDismissed: boolean;
 	// Whether the "Configure AI files" dialog is open.
 	aiConfigDialogOpen: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
@@ -799,6 +808,8 @@ const initial: AppState = {
 	aiConfigStatus: null,
 	aiConfigNoticeDismissed: false,
 	aiConfigUpdateDismissed: false,
+	updateStatus: { state: 'idle' },
+	updateNoticeDismissed: false,
 	aiConfigDialogOpen: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
@@ -3012,6 +3023,28 @@ export const actions = {
 	},
 	dismissAiConfigUpdate(): void {
 		app.aiConfigUpdateDismissed = true;
+	},
+	// The main process pushed a new self-update status (or we fetched the current
+	// one on startup). Un-dismiss the notice when the updater reaches a genuinely
+	// new stage, so a user who dismissed "Installing update…" still gets the
+	// "Update ready" prompt (and a later update re-prompts after an earlier one was
+	// dismissed). Repeated download-progress ticks don't re-show a dismissed notice.
+	setUpdateStatus(status: UpdateStatus): void {
+		const prev = app.updateStatus.state;
+		if (
+			(status.state === 'downloading' && prev !== 'downloading') ||
+			(status.state === 'downloaded' && prev !== 'downloaded')
+		) {
+			app.updateNoticeDismissed = false;
+		}
+		app.updateStatus = status;
+	},
+	dismissUpdateNotice(): void {
+		app.updateNoticeDismissed = true;
+	},
+	// Quit and install the downloaded update. The app exits immediately.
+	restartToUpdate(): void {
+		window.api.update.quitAndInstall();
 	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;

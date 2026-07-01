@@ -1699,6 +1699,24 @@ export interface AiConfigRemoveResult {
 	error?: string;
 }
 
+// Lifecycle of a self-update, pushed from the main process (electron-updater) to
+// the renderer so it can show the "update ready" notice above the commit box.
+// Only `downloading` and `downloaded` surface UI today; the rest let the notice
+// clear itself and aid debugging.
+//  - idle:        no update in flight (also the value in dev / unsigned builds)
+//  - checking:    querying the GitHub feed for a newer release
+//  - available:   a newer version exists and the background download has started
+//  - downloading: download in progress (`percent` is 0..100)
+//  - downloaded:  the new version is staged; restarting installs it
+//  - error:       the check or download failed (kept for logging, not shown)
+export type UpdateStatus =
+	| { state: 'idle' }
+	| { state: 'checking' }
+	| { state: 'available'; version: string }
+	| { state: 'downloading'; version: string; percent: number }
+	| { state: 'downloaded'; version: string }
+	| { state: 'error'; message: string };
+
 export interface PreloadAPI {
 	platform: AppPlatform;
 	repos: {
@@ -2208,6 +2226,15 @@ export interface PreloadAPI {
 		// workflow can pick it up. App version + OS are appended in the main process.
 		submit(input: FeedbackInput): Promise<FeedbackResult>;
 	};
+	update: {
+		// The current self-update state, so a renderer that mounts *after* the
+		// download already finished still sees the "update ready" notice (it can't
+		// rely on having caught the live `onUpdateStatus` event).
+		getStatus(): Promise<UpdateStatus>;
+		// Quit and install the downloaded update now. Fire-and-forget: the app exits
+		// immediately, so there's nothing to await.
+		quitAndInstall(): void;
+	};
 	shell: {
 		openExternal(url: string): Promise<void>;
 		// Reveal a file in the OS file manager (Finder / Explorer), selecting it.
@@ -2290,6 +2317,9 @@ export interface PreloadAPI {
 		// Payload is the full current list of failing accounts (empty = all good).
 		// Returns an unsubscribe fn.
 		onGithubAuthChanged(handler: (errors: GithubAuthError[]) => void): () => void;
+		// The self-updater advanced (checking → downloading → downloaded, or errored).
+		// Payload is the new status. Returns an unsubscribe fn.
+		onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
 	};
 }
 

@@ -65,6 +65,7 @@ import type {
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
 	TerminalKind,
+	UpdateStatus,
 	UserPrefs
 } from '@shared/types.js';
 
@@ -487,6 +488,10 @@ const api: PreloadAPI = {
 		submit: (input: FeedbackInput) =>
 			ipcRenderer.invoke('feedback:submit', input) as Promise<FeedbackResult>
 	},
+	update: {
+		getStatus: () => ipcRenderer.invoke('update:getStatus') as Promise<UpdateStatus>,
+		quitAndInstall: () => ipcRenderer.send('update:quitAndInstall')
+	},
 	shell: {
 		openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,
 		showItemInFolder: (fullPath) =>
@@ -594,6 +599,11 @@ const api: PreloadAPI = {
 				handler(errors);
 			ipcRenderer.on('github:auth-changed', listener);
 			return () => ipcRenderer.off('github:auth-changed', listener);
+		},
+		onUpdateStatus(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status);
+			ipcRenderer.on('update:status', listener);
+			return () => ipcRenderer.off('update:status', listener);
 		}
 	}
 };
