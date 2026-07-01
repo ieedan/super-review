@@ -6,11 +6,14 @@ allowBuilds:
   electron: true
   esbuild: true
 
-# Shared version for sv-agentation across all apps. To test a local checkout,
-# redirect it with a pnpm.overrides "link:" entry in the root package.json
-# (catalogs don't support the link: protocol yet).
+# Shared versions across the workspace. `svelte` is catalogued so every package
+# resolves the exact same copy: two different 5.x patch resolutions produce two
+# unrelated `Snippet` types and break `svelte-check`. To test a local checkout of
+# sv-agentation, redirect it with a pnpm.overrides "link:" entry in the root
+# package.json (catalogs don't support the link: protocol yet).
 catalog:
   sv-agentation: ^0.3.1
+  svelte: ^5.56.3
 
 # pnpm 10 blocks dependency build scripts unless they're listed here. `electron`
 # downloads its binary in a postinstall, and `esbuild` fetches its native binary
