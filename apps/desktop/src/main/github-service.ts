@@ -725,6 +725,33 @@ export async function listOrganizations(accountId?: string | null): Promise<Gith
 	return res.data.map((org) => ({ login: org.login, avatarUrl: org.avatar_url ?? undefined }));
 }
 
+// Look up a repository by name under a specific owner. Used by the create-repo
+// form to reject a name that already exists on the chosen owner's remote before
+// we scaffold anything locally. `owner` is an org login, or the authenticated
+// account's own login when omitted (the namespace a new repo would land in when
+// published). Returns null when the name is free (404); other failures (network,
+// auth, rate limit) propagate so callers can decide whether to fail open.
+export async function findRemoteRepo(
+	name: string,
+	accountId?: string | null,
+	owner?: string
+): Promise<{ owner: string; name: string; htmlUrl: string } | null> {
+	const account = resolveAccount(accountId);
+	const o = octokit(account);
+	const ns = owner || account.login;
+	try {
+		const res = await o.repos.get({ owner: ns, repo: name });
+		return {
+			owner: res.data.owner?.login ?? ns,
+			name: res.data.name,
+			htmlUrl: res.data.html_url
+		};
+	} catch (err) {
+		if ((err as { status?: number }).status === 404) return null;
+		throw err;
+	}
+}
+
 // Create a new repository on GitHub — under an organization when `org` is set,
 // otherwise the authenticated user's personal account. `auto_init: false` keeps
 // the remote empty so we can push the existing local history into it.

@@ -11,6 +11,7 @@ import type {
 	CreateChangesetInput,
 	CloneResult,
 	CreateRepoDefaults,
+	RemoteRepoRef,
 	CommitAuthorIdentity,
 	CommitDraft,
 	CommitInfo,
@@ -80,6 +81,13 @@ const api: PreloadAPI = {
 		isGitRepo: (path) => ipcRenderer.invoke('repos:isGitRepo', path) as Promise<boolean>,
 		getCreateDefaults: () =>
 			ipcRenderer.invoke('repos:getCreateDefaults') as Promise<CreateRepoDefaults>,
+		checkRemoteRepo: (name, accountId, owner) =>
+			ipcRenderer.invoke(
+				'repos:checkRemoteRepo',
+				name,
+				accountId,
+				owner
+			) as Promise<RemoteRepoRef | null>,
 		createRepo: (options) =>
 			ipcRenderer.invoke('repos:createRepo', options) as Promise<RepoInfo | null>,
 		publish: (repoId, options) =>
@@ -200,6 +208,8 @@ const api: PreloadAPI = {
 		listAccounts: () => ipcRenderer.invoke('github:listAccounts') as Promise<GithubAccount[]>,
 		listOrganizations: (repoId) =>
 			ipcRenderer.invoke('github:listOrganizations', repoId) as Promise<GithubOrg[]>,
+		listAccountOrganizations: (accountId) =>
+			ipcRenderer.invoke('github:listAccountOrganizations', accountId) as Promise<GithubOrg[]>,
 		getActiveAccount: () =>
 			ipcRenderer.invoke('github:getActiveAccount') as Promise<GithubAccount | null>,
 		setActiveAccount: (id) =>

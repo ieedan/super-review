@@ -16,6 +16,7 @@ import type {
 	CloneResult,
 	CreateRepoDefaults,
 	CreateRepoOptions,
+	RemoteRepoRef,
 	CommitDraft,
 	CommitAuthorIdentity,
 	CommitFileSelection,
@@ -501,18 +502,60 @@ export function registerIpc(): void {
 		return { defaultPath, gitignores, licenses };
 	});
 
+	// Best-effort remote name-collision check for the create-repo form. Returns
+	// the existing repo's ref when `name` is already taken under `owner` (an org,
+	// or the account's own login), else null. Swallows non-existence errors
+	// (network, expired token, rate limit) so a flaky check never blocks typing
+	// (the create handler re-checks on submit).
+	ipcMain.handle(
+		'repos:checkRemoteRepo',
+		async (_e, name: string, accountId: string, owner?: string): Promise<RemoteRepoRef | null> => {
+			try {
+				return await gh.findRemoteRepo(name, accountId, owner);
+			} catch {
+				return null;
+			}
+		}
+	);
+
 	ipcMain.handle(
 		'repos:createRepo',
 		async (e, options: CreateRepoOptions): Promise<RepoInfo | null> => {
+			// Don't scaffold a local repo whose name already exists on the chosen
+			// owner's remote (it couldn't be published there later). Fail open on
+			// check errors (network/auth, or nobody signed in): only a confirmed hit
+			// blocks creation. accountId null falls back to the app default account.
+			const existing = await gh
+				.findRemoteRepo(options.name, options.accountId, options.owner)
+				.catch(() => null);
+			if (existing) {
+				throw new Error(
+					`A repository named "${existing.name}" already exists on ${existing.owner}. Pick a different name, account, or organization.`
+				);
+			}
 			const result = await createRepo(options);
 			if (!result.ok || !result.path) {
 				throw new Error(result.error ?? 'Failed to create repository.');
 			}
-			const info = preservePinnedAccount(await buildRepoInfo(result.path));
+			// Pin the new repo to the chosen account so it authenticates as that
+			// account going forward. A null accountId means "use the app default",
+			// so we leave it unpinned.
+			let info = preservePinnedAccount(await buildRepoInfo(result.path));
+			if (options.accountId) info = { ...info, githubAccountId: options.accountId };
 			upsertRepo(info);
 			setPrefs({ activeRepoId: info.id });
 			broadcastToOthers(e.sender.id, 'repos:active-changed', info);
 			return info;
+		}
+	);
+
+	// Orgs a specific account can publish under, by account id. The create-repo
+	// form has no repo yet, so it resolves the owner picker straight from the
+	// selected account.
+	ipcMain.handle(
+		'github:listAccountOrganizations',
+		async (_e, accountId: string): Promise<GithubOrg[]> => {
+			return gh.listOrganizations(accountId).catch(() => []);
 		}
 	);
 

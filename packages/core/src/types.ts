@@ -1239,6 +1239,29 @@ export interface CreateRepoOptions {
 	gitignore?: string | null;
 	/** License template label (see repos.getCreateDefaults), or null for none. */
 	license?: string | null;
+	/**
+	 * GitHub account the new repo is pinned to (also the identity used for the
+	 * remote name-collision check). Null/undefined means "use the app default
+	 * account" (no pin), and also skips the check when no account is signed in.
+	 */
+	accountId?: string | null;
+	/**
+	 * Namespace the remote name-collision check runs against: an organization
+	 * login, or undefined for the account's personal namespace. Only affects the
+	 * check, not where the local repo is created.
+	 */
+	owner?: string;
+}
+
+// A repository that already exists on a GitHub account, surfaced when the
+// create-repo form's name would collide with a remote under the chosen owner.
+export interface RemoteRepoRef {
+	/** Owner login (the org, or the checked account's login). */
+	owner: string;
+	/** Repository name on GitHub. */
+	name: string;
+	/** Link to the existing repo on github.com. */
+	htmlUrl: string;
 }
 
 // Defaults the create-repo form loads up front: a suggested parent directory
@@ -1718,6 +1741,12 @@ export interface PreloadAPI {
 		isGitRepo(path: string): Promise<boolean>;
 		// Suggested parent directory + template labels for the create-repo form.
 		getCreateDefaults(): Promise<CreateRepoDefaults>;
+		// Whether a repo named `name` already exists under `owner` (an org login, or
+		// the account's own login when omitted), authenticating as `accountId`.
+		// Drives the create-repo form's "this already exists" hint so we don't
+		// scaffold a local repo that can't be published. Returns the existing repo's
+		// ref, or null if it's free (or the check couldn't run).
+		checkRemoteRepo(name: string, accountId: string, owner?: string): Promise<RemoteRepoRef | null>;
 		// Scaffold a new repository (folder, git init, README/.gitignore/LICENSE).
 		// Returns the registered repo, or null if the picker/flow was cancelled.
 		createRepo(options: CreateRepoOptions): Promise<RepoInfo | null>;
@@ -1847,6 +1876,9 @@ export interface PreloadAPI {
 		listAccounts(): Promise<GithubAccount[]>;
 		// Orgs the repo's account can create repos under (for the publish dialog).
 		listOrganizations(repoId?: string): Promise<GithubOrg[]>;
+		// Orgs a specific account can create repos under, by account id (for the
+		// create-repo form's owner picker, which has no repo yet).
+		listAccountOrganizations(accountId: string): Promise<GithubOrg[]>;
 		getActiveAccount(): Promise<GithubAccount | null>;
 		setActiveAccount(id: string): Promise<GithubAccount | null>;
 		removeAccount(id: string): Promise<void>;
