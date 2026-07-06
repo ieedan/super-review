@@ -1,5 +1,14 @@
 # @super-review/docs
 
+## 0.0.4
+
+### Patch Changes
+
+- [#140](https://github.com/ieedan/super-review/pull/140) [`b98b67f`](https://github.com/ieedan/super-review/commit/b98b67f049b0a76d676f29a4674f7a04394d356e) Thanks [@ieedan](https://github.com/ieedan)! - fix: use cataloged version of Svelte
+- Updated dependencies [[`48e3bea`](https://github.com/ieedan/super-review/commit/48e3bea188dcb3ee73ae44e9939bfca0d33f0f39), [`a24f7c2`](https://github.com/ieedan/super-review/commit/a24f7c29d6cb4ee77310cfde3f9a6340c39a8165), [`a14fee2`](https://github.com/ieedan/super-review/commit/a14fee27e526c3800cafc98aaa0d80edad8fca53), [`b98b67f`](https://github.com/ieedan/super-review/commit/b98b67f049b0a76d676f29a4674f7a04394d356e)]:
+  - @super-review/core@0.1.11
+  - @super-review/ui@0.0.5
+
 ## 0.0.3
 
 ### Patch Changes

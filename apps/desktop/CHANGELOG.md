@@ -1,5 +1,22 @@
 # @super-review/desktop
 
+## 0.1.18
+
+### Patch Changes
+
+- [`48e3bea`](https://github.com/ieedan/super-review/commit/48e3bea188dcb3ee73ae44e9939bfca0d33f0f39) Thanks [@ieedan](https://github.com/ieedan)! - fix: recover managed-stash restore from untracked-file collisions
+
+- [`a24f7c2`](https://github.com/ieedan/super-review/commit/a24f7c29d6cb4ee77310cfde3f9a6340c39a8165) Thanks [@ieedan](https://github.com/ieedan)! - fix: if a file is marked seen on unstaged and on the branch tab then when it gets pushed the file will stay seen
+
+- [`a14fee2`](https://github.com/ieedan/super-review/commit/a14fee27e526c3800cafc98aaa0d80edad8fca53) Thanks [@ieedan](https://github.com/ieedan)! - fix: prevent users from creating repos that already exist on remote
+
+- [`a24f7c2`](https://github.com/ieedan/super-review/commit/a24f7c29d6cb4ee77310cfde3f9a6340c39a8165) Thanks [@ieedan](https://github.com/ieedan)! - refactor: get rid of generic super-review skill and author subagent in favor of more focused skills
+
+- [#140](https://github.com/ieedan/super-review/pull/140) [`b98b67f`](https://github.com/ieedan/super-review/commit/b98b67f049b0a76d676f29a4674f7a04394d356e) Thanks [@ieedan](https://github.com/ieedan)! - feat: improve settings dialog
+- Updated dependencies [[`48e3bea`](https://github.com/ieedan/super-review/commit/48e3bea188dcb3ee73ae44e9939bfca0d33f0f39), [`a24f7c2`](https://github.com/ieedan/super-review/commit/a24f7c29d6cb4ee77310cfde3f9a6340c39a8165), [`a14fee2`](https://github.com/ieedan/super-review/commit/a14fee27e526c3800cafc98aaa0d80edad8fca53), [`b98b67f`](https://github.com/ieedan/super-review/commit/b98b67f049b0a76d676f29a4674f7a04394d356e)]:
+  - @super-review/core@0.1.11
+  - @super-review/ui@0.0.5
+
 ## 0.1.17
 
 ### Patch Changes
