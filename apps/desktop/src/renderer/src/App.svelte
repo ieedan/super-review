@@ -14,6 +14,7 @@
 	import MergedSwitchDialog from '@super-review/ui/components/MergedSwitchDialog.svelte';
 	import MergedRemoveDialog from '@super-review/ui/components/MergedRemoveDialog.svelte';
 	import StashPromptDialog from '@super-review/ui/components/StashPromptDialog.svelte';
+	import StashCollisionDialog from '@super-review/ui/components/StashCollisionDialog.svelte';
 	import SwitchBranchDialog from '@super-review/ui/components/SwitchBranchDialog.svelte';
 	import ChangesetDialog from '@super-review/ui/components/ChangesetDialog.svelte';
 	import ChangesetReviewDialog from '@super-review/ui/components/ChangesetReviewDialog.svelte';
@@ -547,6 +548,7 @@
 <MergedSwitchDialog />
 <MergedRemoveDialog />
 <StashPromptDialog />
+<StashCollisionDialog />
 <SwitchBranchDialog />
 <ChangesetDialog />
 <ChangesetReviewDialog />

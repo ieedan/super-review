@@ -462,6 +462,12 @@ interface AppState {
 	// Drives StashPromptDialog ("Stash Changes and Continue"). `files` is the
 	// blocked file list git reported. Cleared on confirm/dismiss.
 	stashPrompt: { files: string[] } | null;
+	// Set when restoring the managed stash is blocked because some of its untracked
+	// files already exist in the working tree (usually committed after the stash was
+	// taken). Drives StashCollisionDialog, whose "Restore the rest" choice keeps the
+	// existing files and restores everything else. `ref` is the stash SHA, `files`
+	// the clashing paths. Cleared on resolve/dismiss and on repo switch.
+	stashCollision: { ref: string; files: string[] } | null;
 	// Set when the user switches to (or has just created) a branch with a dirty
 	// working tree, asking what to do with the in-progress work: leave it stashed
 	// on the current branch, or bring it over to `target`. Drives
@@ -905,6 +911,7 @@ const initial: AppState = {
 	mergedSwitchPrompt: null,
 	mergedRemovePrompt: null,
 	stashPrompt: null,
+	stashCollision: null,
 	switchBranchPrompt: null,
 	stash: null,
 	stashView: null,
@@ -4294,6 +4301,14 @@ export const actions = {
 					app.push.stage = 'conflicts';
 					return;
 				}
+				// Untracked files the stash saved already exist on `target`; surface the
+				// keep-my-files recovery. The stash stays parked (marked for the source
+				// branch), so re-point app.stash at it for the dialog to act on.
+				if (result.blockedFiles && result.blockedFiles.length > 0) {
+					app.stash = { ref, fileCount };
+					app.stashCollision = { ref, files: result.blockedFiles };
+					return;
+				}
 				throw new Error(result.error ?? 'Could not bring your changes over.');
 			}
 			// Clean pop: the entry is gone and the work now lives in target's tree.
@@ -5694,6 +5709,13 @@ export const actions = {
 					app.push.stage = 'conflicts';
 					return;
 				}
+				// Untracked files the stash saved already exist in the working tree, so
+				// it can't apply. The stash is left fully intact; offer the "keep my
+				// files, restore the rest" recovery rather than dead-ending on an error.
+				if (result.blockedFiles && result.blockedFiles.length > 0) {
+					app.stashCollision = { ref, files: result.blockedFiles };
+					return;
+				}
 				throw new Error(result.error ?? 'Could not restore stashed changes.');
 			}
 			// Clean pop: the entry is gone, leave the stash view back to the working
@@ -5730,6 +5752,58 @@ export const actions = {
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
+	},
+
+	// Resolve a restore blocked by the untracked-collision (app.stashCollision):
+	// keep the existing working-tree copies of the clashing files and restore
+	// everything else the stash holds, then drop it. A tracked-change conflict
+	// routes into the shared stash-restore conflict dialog, exactly like
+	// restoreStash (continueMerge/abortMerge finish it).
+	async resolveStashCollisionKeepingLocal(): Promise<void> {
+		if (!app.activeRepo || !app.stashCollision || app.push.inProgress) return;
+		const repoId = app.activeRepo.id;
+		const ref = app.stashCollision.ref;
+		app.stashCollision = null;
+		app.push = {
+			inProgress: true,
+			stage: 'pulling',
+			intent: 'stash-restore',
+			op: 'stash-restore',
+			error: null
+		};
+		app.push.stashRef = ref;
+		clearConflicts();
+		try {
+			const result = await window.api.git.restoreManagedStashKeepingLocal(repoId, ref);
+			if (!result.ok) {
+				if (result.conflicts.length > 0) {
+					setConflicts(result.conflicts);
+					app.push.stage = 'conflicts';
+					return;
+				}
+				throw new Error(result.error ?? 'Could not restore stashed changes.');
+			}
+			app.stash = null;
+			app.stashView = null;
+			app.push.stashRef = null;
+			app.diffContext = contextForTab(app.contextTab);
+			app.push.stage = 'done';
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+		} catch (err) {
+			app.push.error = err instanceof Error ? err.message : String(err);
+			setError(app.push.error);
+		} finally {
+			if (app.push.stage !== 'conflicts') {
+				app.push.inProgress = false;
+			}
+		}
+	},
+
+	// Dismiss the collision dialog without acting. The stash stays parked, so the
+	// user can Discard it or resolve it manually later.
+	dismissStashCollision(): void {
+		app.stashCollision = null;
 	},
 
 	// GitHub Desktop's "Update from <default>": fetch origin, then merge the

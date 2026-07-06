@@ -2355,40 +2355,164 @@ export async function findManagedStash(
 	return { ref: shas[0], fileCount };
 }
 
-// Pop the managed stash identified by `sha`. A clean pop drops the entry
-// automatically (git's default). A conflicted pop leaves unmerged paths and
-// keeps the stash entry — we surface the conflicts exactly like pull() so the
-// shared conflict dialog drives resolution (see finishStashPop / abortStashPop
-// for the dedicated, MERGE_HEAD-free wrap-up). The SHA is re-resolved to its
-// live `stash@{n}` selector first, since `stash pop` rejects a raw SHA.
+// Whether `p` exists on disk (file or directory). Mirrors the check git itself
+// makes before restoring a stash's untracked files.
+async function pathExists(p: string): Promise<boolean> {
+	try {
+		await fs.access(p);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// The untracked files a managed stash carries — captured with
+// `--include-untracked`, they live in the stash commit's standalone `^3` tree.
+// Empty when the stash saved no untracked files (no `^3` parent). Paths are
+// repo-relative.
+async function stashUntrackedFiles(git: SimpleGit, sha: string): Promise<string[]> {
+	if (!(await revExists(git, `${sha}^3`))) return [];
+	const raw = await git.raw(['diff', '--name-only', EMPTY_TREE, `${sha}^3`]).catch(() => '');
+	return raw
+		.split('\n')
+		.map((s) => s.trim())
+		.filter(Boolean);
+}
+
+// Of the stash's untracked files, the ones that already exist in the working
+// tree. `git stash pop`/`apply` aborts wholesale the moment one of them is
+// present ("already exists, no checkout") — commonly because the file was
+// committed after the stash was taken — applying nothing yet leaving the entry
+// stuck. We detect the clash up front rather than let the restore die halfway.
+async function collidingStashUntracked(
+	repoPath: string,
+	git: SimpleGit,
+	sha: string
+): Promise<string[]> {
+	const untracked = await stashUntrackedFiles(git, sha);
+	const colliding: string[] = [];
+	for (const rel of untracked) {
+		if (await pathExists(path.join(repoPath, rel))) colliding.push(rel);
+	}
+	return colliding;
+}
+
+// Restore the managed stash identified by `sha`. We apply (never `pop`) so a
+// clean restore is dropped explicitly below while ANY failure leaves the entry
+// in place — the stashed work is never lost to a botched restore.
+//
+// Two failure shapes are handled distinctly:
+//   - Untracked collision: files the stash saved already exist in the working
+//     tree. `git stash apply` would abort applying nothing, so we detect it up
+//     front and hand back the clashing paths in `blockedFiles` (a real, non-fatal
+//     signal the renderer can act on), stash untouched. `restoreManagedStashKeepingLocal`
+//     is the paired recovery.
+//   - Tracked conflict: a conflicted apply exits non-zero, but simple-git
+//     RESOLVES rather than throws, so we inspect the index for unmerged paths
+//     regardless of how the call returned. The entry stays put for
+//     finishStashPop / abortStashPop to wrap up.
+// The SHA is re-resolved to its live `stash@{n}` selector before drop, since
+// `stash drop` rejects a raw SHA.
 export async function restoreManagedStash(repoPath: string, sha: string): Promise<PullPushResult> {
 	const git = simpleGit(repoPath);
 	const ref = await resolveStashRef(git, sha);
 	if (!ref) {
 		return { ok: false, conflicts: [], error: 'The stashed changes are no longer available.' };
 	}
-	// A conflicted `git stash pop` exits non-zero, but simple-git RESOLVES it
-	// rather than throwing (unlike `git pull`, which rejects) — so we can't lean on
-	// the catch to spot conflicts, or a conflicted pop looks like a clean one and
-	// the dialog never opens. Inspect the index for unmerged paths after the pop
-	// regardless of how it returned. A real conflict leaves the stash entry in
-	// place (git keeps it) for finishStashPop / abortStashPop to wrap up.
-	let popError: unknown = null;
-	try {
-		await git.raw(['stash', 'pop', ref]);
-	} catch (err) {
-		popError = err;
-	}
-	const conflicts = await listUnmergedPaths(git);
-	if (conflicts.length > 0) return { ok: false, conflicts };
-	if (popError) {
+	const blockedFiles = await collidingStashUntracked(repoPath, git, sha);
+	if (blockedFiles.length > 0) {
 		return {
 			ok: false,
 			conflicts: [],
-			error: popError instanceof Error ? popError.message : String(popError)
+			blockedFiles,
+			error: 'Some files this stash saved already exist in your working tree.'
 		};
 	}
+	let applyError: unknown = null;
+	try {
+		await git.raw(['stash', 'apply', ref]);
+	} catch (err) {
+		applyError = err;
+	}
+	const conflicts = await listUnmergedPaths(git);
+	if (conflicts.length > 0) return { ok: false, conflicts };
+	if (applyError) {
+		return {
+			ok: false,
+			conflicts: [],
+			error: applyError instanceof Error ? applyError.message : String(applyError)
+		};
+	}
+	await dropStashBySha(git, sha);
 	return { ok: true, conflicts: [] };
+}
+
+// Recover from the untracked-collision case (see restoreManagedStash's
+// `blockedFiles`): restore everything the stash holds EXCEPT the untracked files
+// that already exist — those keep their current working-tree version. We restore
+// the stash's non-colliding untracked files from its `^3` tree and apply the
+// tracked half as a patch (`git stash apply` can't be used: it would also try to
+// restore the colliding untracked files and abort). A tracked-change conflict
+// surfaces like any other stash-restore conflict, so finishStashPop /
+// abortStashPop finish it; on a clean result the entry is dropped.
+export async function restoreManagedStashKeepingLocal(
+	repoPath: string,
+	sha: string
+): Promise<PullPushResult> {
+	const git = simpleGit(repoPath);
+	const ref = await resolveStashRef(git, sha);
+	if (!ref) {
+		return { ok: false, conflicts: [], error: 'The stashed changes are no longer available.' };
+	}
+
+	// Restore only the untracked files that DON'T already exist, straight from the
+	// `^3` tree. checkout writes + stages them; the reset unstages so they land as
+	// plain untracked files (stash-pop parity), leaving existing files untouched.
+	const untracked = await stashUntrackedFiles(git, sha);
+	const toRestore: string[] = [];
+	for (const rel of untracked) {
+		if (!(await pathExists(path.join(repoPath, rel)))) toRestore.push(rel);
+	}
+	if (toRestore.length > 0) {
+		await git.raw(['checkout', `${sha}^3`, '--', ...toRestore]);
+		await git.raw(['reset', '--quiet', '--', ...toRestore]).catch(() => {});
+	}
+
+	// Apply the tracked half (`sha^1 → sha`) as a patch. `--3way` reproduces a
+	// stash pop's conflict-marker behavior when a hunk overlaps local work.
+	const patch = await git.raw(['diff', `${sha}^1`, sha]).catch(() => '');
+	let applyError: unknown = null;
+	if (patch.trim().length > 0) {
+		const patchFile = path.join(os.tmpdir(), `super-review-stash-${sha}.patch`);
+		await fs.writeFile(patchFile, patch);
+		try {
+			await git.raw(['apply', '--3way', patchFile]);
+		} catch (err) {
+			applyError = err;
+		} finally {
+			await fs.rm(patchFile, { force: true }).catch(() => {});
+		}
+	}
+
+	const conflicts = await listUnmergedPaths(git);
+	if (conflicts.length > 0) return { ok: false, conflicts };
+	if (applyError) {
+		return {
+			ok: false,
+			conflicts: [],
+			error: applyError instanceof Error ? applyError.message : String(applyError)
+		};
+	}
+	await dropStashBySha(git, sha);
+	return { ok: true, conflicts: [] };
+}
+
+// Drop the stash entry for `sha`, re-resolving its live `stash@{n}` selector
+// first (a raw SHA is rejected by `stash drop`). No-op if the entry is already
+// gone.
+async function dropStashBySha(git: SimpleGit, sha: string): Promise<void> {
+	const live = await resolveStashRef(git, sha);
+	if (live) await git.raw(['stash', 'drop', live]).catch(() => {});
 }
 
 // Drop the managed stash by SHA without applying it (GitHub Desktop's "Discard

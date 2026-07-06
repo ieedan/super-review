@@ -99,6 +99,7 @@ import {
 	discardManagedStash,
 	findManagedStash,
 	restoreManagedStash,
+	restoreManagedStashKeepingLocal,
 	finishStashPop,
 	abortStashPop,
 	discardLines,
@@ -909,6 +910,12 @@ export function registerIpc(): void {
 		'git:restoreManagedStash',
 		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
 			restoreManagedStash(repoOrThrow(repoId).path, ref)
+	);
+
+	ipcMain.handle(
+		'git:restoreManagedStashKeepingLocal',
+		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
+			restoreManagedStashKeepingLocal(repoOrThrow(repoId).path, ref)
 	);
 
 	ipcMain.handle(

@@ -1811,9 +1811,16 @@ export interface PreloadAPI {
 		// created only when a pull is blocked by uncommitted local changes.
 		createManagedStash(repoId: string): Promise<{ ok: boolean; error?: string }>;
 		findManagedStash(repoId: string): Promise<ManagedStash | null>;
-		// Pop the managed stash by SHA. A clean pop drops the entry; a conflicted
-		// pop surfaces unmerged paths the same way pull does (no MERGE_HEAD).
+		// Restore the managed stash by SHA. A clean restore drops the entry; a
+		// conflicted one surfaces unmerged paths the same way pull does (no
+		// MERGE_HEAD). When the stash's untracked files already exist in the working
+		// tree it can't apply — those clashing paths come back in `blockedFiles`
+		// with the stash left intact (recover via restoreManagedStashKeepingLocal).
 		restoreManagedStash(repoId: string, ref: string): Promise<PullPushResult>;
+		// Recover from that untracked-collision case: restore the stash's tracked
+		// changes and its non-colliding untracked files, keeping the existing
+		// working-tree copies of the clashing files, then drop the entry.
+		restoreManagedStashKeepingLocal(repoId: string, ref: string): Promise<PullPushResult>;
 		discardManagedStash(repoId: string, ref: string): Promise<void>;
 		// Finish/abort a conflicted stash pop — dedicated paths that must not make a
 		// merge commit and that drop (or preserve) the marker stash correctly.

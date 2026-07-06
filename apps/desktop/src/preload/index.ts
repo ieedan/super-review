@@ -153,6 +153,12 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:findManagedStash', repoId) as Promise<ManagedStash | null>,
 		restoreManagedStash: (repoId, ref) =>
 			ipcRenderer.invoke('git:restoreManagedStash', repoId, ref) as Promise<PullPushResult>,
+		restoreManagedStashKeepingLocal: (repoId, ref) =>
+			ipcRenderer.invoke(
+				'git:restoreManagedStashKeepingLocal',
+				repoId,
+				ref
+			) as Promise<PullPushResult>,
 		discardManagedStash: (repoId, ref) =>
 			ipcRenderer.invoke('git:discardManagedStash', repoId, ref) as Promise<void>,
 		finishStashPop: (repoId, ref) =>
