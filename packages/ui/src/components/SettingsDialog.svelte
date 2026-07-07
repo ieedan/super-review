@@ -43,6 +43,7 @@
 		actions,
 		app,
 		codeFontCss,
+		codeFontFeatures,
 		effectiveEditor,
 		effectiveTerminal,
 		UI_FONTS,
@@ -1312,7 +1313,7 @@
 				Diff/Raw toggle) above the live diff. -->
 			<div
 				class="overflow-hidden rounded-lg border border-border bg-background"
-				style="--code-font: {codeFontCss(
+				style="--code-font: {codeFontCss(draftCodeFont)}; --code-font-features: {codeFontFeatures(
 					draftCodeFont
 				)}; --diff-preview-font-size: 13px; --diff-preview-line-height: 19px;"
 			>

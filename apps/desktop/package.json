@@ -20,7 +20,6 @@
 		"typecheck": "pnpm typecheck:node && pnpm typecheck:web"
 	},
 	"dependencies": {
-		"@fontsource/geist-mono": "^5.2.8",
 		"@fontsource/geist-sans": "^5.2.5",
 		"@fontsource/ibm-plex-mono": "^5.2.7",
 		"@fontsource/inter": "^5.2.8",

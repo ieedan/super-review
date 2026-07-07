@@ -172,29 +172,53 @@ async function listWorkspacePackages(
 	config: ChangesetConfig
 ): Promise<WorkspacePackage[]> {
 	const globs = await workspaceGlobs(repoPath);
+	const ignore = new Set(config.ignore);
+
+	// Single-package repo (no pnpm-workspace.yaml / no package.json#workspaces):
+	// changesets versions the root package itself, and it isn't reachable through
+	// any workspace glob. In a real monorepo the root package is deliberately not
+	// released, so only fall back to it when there are no workspaces at all.
+	if (globs.length === 0) {
+		const root = await readWorkspacePackage(repoPath, '', config, ignore);
+		return root ? [root] : [];
+	}
+
 	const seen = new Set<string>();
 	const packages: WorkspacePackage[] = [];
-	const ignore = new Set(config.ignore);
 	for (const glob of globs) {
 		if (glob.startsWith('!')) continue; // negations only ever exclude; rare, skip
 		for (const dir of await resolveGlobDirs(repoPath, glob)) {
 			if (seen.has(dir)) continue;
 			seen.add(dir);
-			let pkg: { name?: unknown; private?: unknown };
-			try {
-				pkg = (await readJson(path.join(repoPath, dir, 'package.json'))) as typeof pkg;
-			} catch {
-				continue; // not a package dir
-			}
-			if (typeof pkg.name !== 'string' || !pkg.name) continue;
-			const isPrivate = pkg.private === true;
-			if (ignore.has(pkg.name)) continue;
-			if (isPrivate && !config.versionsPrivate) continue;
-			packages.push({ name: pkg.name, dir, private: isPrivate });
+			const pkg = await readWorkspacePackage(repoPath, dir, config, ignore);
+			if (pkg) packages.push(pkg);
 		}
 	}
 	packages.sort((a, b) => a.name.localeCompare(b.name));
 	return packages;
+}
+
+// Read a package.json at `dir` (repo-relative posix; `''` is the repo root) and
+// turn it into a releasable WorkspacePackage, or null when it isn't one: no
+// readable package.json, unnamed, ignored, or a private package the config
+// doesn't version.
+async function readWorkspacePackage(
+	repoPath: string,
+	dir: string,
+	config: ChangesetConfig,
+	ignore: Set<string>
+): Promise<WorkspacePackage | null> {
+	let pkg: { name?: unknown; private?: unknown };
+	try {
+		pkg = (await readJson(path.join(repoPath, dir, 'package.json'))) as typeof pkg;
+	} catch {
+		return null; // not a package dir
+	}
+	if (typeof pkg.name !== 'string' || !pkg.name) return null;
+	const isPrivate = pkg.private === true;
+	if (ignore.has(pkg.name)) return null;
+	if (isPrivate && !config.versionsPrivate) return null;
+	return { name: pkg.name, dir, private: isPrivate };
 }
 
 // --- branch change detection ----------------------------------------------

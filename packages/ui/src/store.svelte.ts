@@ -1381,6 +1381,18 @@ export function codeFontCss(font: string | null | undefined): string {
 	return `"${font}", ${CODE_FONT_STACK}`;
 }
 
+// `font-feature-settings` to apply wherever the code font renders (the diff, raw
+// view, markdown code). Coding ligatures are per-font: most fonts expose them
+// via `calt`/`liga`, which are on by default, so `normal` already ligates
+// (e.g. JetBrains Mono). Geist Mono is the exception — its official build gates
+// the `==`/`!=`/`=>` ligatures behind the `ss11` stylistic set instead, so we
+// opt that family in explicitly. Returning `normal` for everything else keeps
+// each font's own defaults untouched.
+export function codeFontFeatures(font: string | null | undefined): string {
+	if (font === 'Geist Mono') return "'ss11' 1";
+	return 'normal';
+}
+
 // Curated, bundled font options shown in Settings. Each `value` is the exact CSS
 // family name registered by the Fontsource imports in the desktop renderer entry
 // (main.ts); 'system' falls back to the platform stack. Picking from this short
@@ -1401,6 +1413,10 @@ function applyFonts(): void {
 	const root = document.documentElement;
 	root.style.setProperty('--ui-font', uiFontCss(app.uiFont));
 	root.style.setProperty('--code-font', codeFontCss(app.codeFont));
+	// Drives `font-feature-settings` for every code surface (the diff container
+	// maps this onto Pierre's `--diffs-font-features`). Lets us enable Geist
+	// Mono's `ss11` ligatures without touching other fonts.
+	root.style.setProperty('--code-font-features', codeFontFeatures(app.codeFont));
 }
 
 // Human-readable names for each editor, shown in menus ("Open in <editor>").
@@ -6193,12 +6209,17 @@ export const actions = {
 				break;
 			case 'discardSelected': {
 				// Snapshot the targets before discarding — discardFile mutates
-				// changedFiles as it goes. Run the per-file git IPC concurrently;
-				// each call's state update (after its await) reads the live
-				// changedFiles, so the cheap mutations serialize on the event loop
-				// without racing while the slow git work overlaps.
+				// changedFiles as it goes. Discard them one at a time: each call runs
+				// `git reset` + `git checkout HEAD`, both of which take the repo's
+				// `.git/index.lock`. Firing them concurrently races for that lock and
+				// fails with "Unable to create index.lock: File exists". (The main
+				// process now also serializes git writes per repo, but keeping this
+				// loop sequential avoids piling up a queue of blocked writes and keeps
+				// the per-file state updates ordered.)
 				const targets = app.changedFiles.filter((f) => app.selectedFiles.has(f.path));
-				await Promise.all(targets.map((f) => actions.discardFile(f.path, f.oldPath)));
+				for (const f of targets) {
+					await actions.discardFile(f.path, f.oldPath);
+				}
 				actions.clearSelectedFiles();
 				break;
 			}

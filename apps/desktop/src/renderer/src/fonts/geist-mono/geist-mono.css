@@ -1,0 +1,20 @@
+/*
+ * Geist Mono, self-hosted from the official Vercel build (v1.700, SIL OFL 1.1;
+ * see LICENSE.txt). We vendor this instead of using `@fontsource/geist-mono`
+ * because that package's build has broken coding-ligature metrics: its `==`,
+ * `!=`, `=>` glyphs overlap the preceding character (they eat the leading
+ * space). The official build renders correctly. Geist Mono gates its coding
+ * ligatures behind the `ss11` stylistic set rather than `liga`/`calt`, so they
+ * are opt-in per-font; the renderer enables `ss11` only for this family (see
+ * `codeFontFeatures` in the ui store and `--code-font-features` in app.css).
+ *
+ * One variable file (weight axis 100-900) covers every weight the code font
+ * uses. Family name matches the "Geist Mono" value in the Settings font list.
+ */
+@font-face {
+	font-family: 'Geist Mono';
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	src: url('./GeistMono-Variable.woff2') format('woff2');
+}

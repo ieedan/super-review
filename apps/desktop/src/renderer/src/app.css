@@ -184,6 +184,12 @@ diffs-container {
 	font-family: var(--code-font);
 	font-size: 12px;
 	line-height: 1.5;
+	/* @pierre/diffs applies `font-feature-settings: var(--diffs-font-features)`
+	   on its shadow :host, so route our per-font code features (set on :root by
+	   the ui store's applyFonts) through it. This is what turns on Geist Mono's
+	   `ss11` coding ligatures in the diff; `normal` for other fonts leaves their
+	   default `calt`/`liga` ligatures on. */
+	--diffs-font-features: var(--code-font-features, normal);
 }
 
 /* Find-in-changes highlight bands (CSS Custom Highlight API). The "all"

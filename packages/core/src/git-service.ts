@@ -1,8 +1,9 @@
-import { simpleGit, type SimpleGit } from 'simple-git';
+import { simpleGit, type SimpleGit, type SimpleGitOptions } from 'simple-git';
 import { createHash } from 'node:crypto';
 import { promises as fs, type Dirent } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import os from 'node:os';
 import path from 'node:path';
 import type {
@@ -112,15 +113,173 @@ function authConfig(remoteUrl: string | null | undefined): string[] {
 	return [`http.${origin}/.extraHeader=Authorization: Basic ${basic}`];
 }
 
+// Every simple-git instance in this module is created through here so they all
+// share one crucial setting: GIT_OPTIONAL_LOCKS=0. That tells git to skip the
+// *optional* index lock it would otherwise take to refresh the stat cache as a
+// side effect of read-only commands (status, diff, log). Those background reads
+// fire constantly (file-list refreshes, push-status polling) and, left on, they
+// race the real writes for `.git/index.lock` and produce spurious "Unable to
+// create index.lock: File exists" failures. The flag only suppresses *optional*
+// locks: genuine index writes (commit, reset, checkout, add) still take the lock
+// they need, so correctness is unaffected. `.env()` replaces the child env
+// wholesale, so we spread process.env; callers that set their own env for a
+// scratch index (commitPartial) override this, which is fine since those are
+// writes that legitimately hold the lock anyway.
+//
+// GIT_EDITOR / GIT_SEQUENCE_EDITOR are stripped: simple-git refuses to spawn
+// with a custom env carrying editor vars (its allowUnsafeEditor guard), and none
+// of our commands open an editor. This mirrors commitPartial's own env handling.
+function openGit(repoPath: string | null, options?: Partial<SimpleGitOptions>): SimpleGit {
+	const git = repoPath ? simpleGit(repoPath, options) : options ? simpleGit(options) : simpleGit();
+	const env: Record<string, string> = { ...process.env, GIT_OPTIONAL_LOCKS: '0' } as Record<
+		string,
+		string
+	>;
+	delete env.GIT_EDITOR;
+	delete env.GIT_SEQUENCE_EDITOR;
+	return git.env(env);
+}
+
 // A simple-git instance for `repoPath` with credentials wired in for
 // `remoteUrl` when a provider supplies them; a plain instance otherwise. Pass a
 // null `repoPath` for repo-less operations like clone.
 function authedGit(repoPath: string | null, remoteUrl: string | null | undefined): SimpleGit {
 	const config = authConfig(remoteUrl);
 	const options = config.length ? { config } : undefined;
-	if (repoPath) return simpleGit(repoPath, options);
-	return options ? simpleGit(options) : simpleGit();
+	return openGit(repoPath, options);
 }
+
+// ── Per-repo write serialization ─────────────────────────────────────────────
+// Git guards the index with `.git/index.lock`: it is created for the duration of
+// any index-touching command and removed on exit. Two index writes that overlap
+// race for that lock — the loser aborts with "Unable to create index.lock: File
+// exists" — and a write interrupted mid-flight (a crash, the app quitting, a
+// killed helper) leaves the lock behind so every later command fails until it is
+// removed by hand. The desktop app dispatches git operations from independent
+// IPC calls, so nothing stops two writes from overlapping. We serialize every
+// index/ref-mutating operation per repo through a promise chain. Reads are
+// deliberately exempt (see openGit): with optional locks off they never take
+// index.lock, so they run concurrently and cannot collide with a write.
+const writeChains = new Map<string, Promise<unknown>>();
+
+// Which repo write-locks the current async call stack already holds. A wrapped
+// operation that calls another wrapped operation on the same repo (e.g.
+// updateFromUpstream -> mergeIntoCurrent) would deadlock on a plain mutex; the
+// ALS store lets the nested call see it already owns the lock and run inline.
+const heldWriteLocks = new AsyncLocalStorage<Set<string>>();
+
+// A lingering index.lock is only ever removed if it is at least this old. Our
+// own writes are serialized and brief, so any lock still present here belongs to
+// an external process or a crash; the age gate avoids yanking a lock a live
+// external command is actively (and briefly) holding.
+const INDEX_LOCK_STALE_MS = 10_000;
+
+// Serialize `fn` against all other writes to `repoPath`. Reentrant per repo so
+// composed operations don't deadlock. On an index.lock collision it attempts a
+// one-shot stale-lock recovery and retries.
+export async function withRepoWriteLock<T>(repoPath: string, fn: () => Promise<T>): Promise<T> {
+	const key = path.resolve(repoPath);
+	const held = heldWriteLocks.getStore();
+	if (held?.has(key)) return fn(); // already inside this repo's lock — run inline
+
+	const prev = writeChains.get(key) ?? Promise.resolve();
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	// The next waiter chains off our gate; a prior task's rejection is not ours to
+	// inherit, so swallow it either way.
+	writeChains.set(
+		key,
+		prev.then(
+			() => gate,
+			() => gate
+		)
+	);
+	await prev.catch(() => {}); // wait our turn
+
+	const nextHeld = new Set(held);
+	nextHeld.add(key);
+	try {
+		return await heldWriteLocks.run(nextHeld, () => runWriteWithLockRecovery(key, fn));
+	} finally {
+		release();
+	}
+}
+
+function isIndexLockCollision(err: unknown): boolean {
+	const msg = err instanceof Error ? err.message : String(err);
+	return msg.includes('index.lock') && /file exists|already exists|unable to create/i.test(msg);
+}
+
+async function runWriteWithLockRecovery<T>(repoPath: string, fn: () => Promise<T>): Promise<T> {
+	try {
+		return await fn();
+	} catch (err) {
+		if (!isIndexLockCollision(err)) throw err;
+		// Our writes are serialized, so a lock still present here is not ours — it
+		// belongs to a crashed process or an external git run. Remove it only if it
+		// is clearly stale, then retry once. A collision on a *young* lock means a
+		// live external command holds it, so we surface the error rather than risk
+		// corrupting that operation's index.
+		const cleared = await removeStaleIndexLock(repoPath);
+		if (!cleared) throw err;
+		return await fn();
+	}
+}
+
+// Remove `.git/index.lock` if it exists and is older than INDEX_LOCK_STALE_MS.
+// Returns whether a lock was actually removed.
+async function removeStaleIndexLock(repoPath: string): Promise<boolean> {
+	try {
+		const gitDir = (await openGit(repoPath).raw(['rev-parse', '--absolute-git-dir'])).trim();
+		const lockPath = path.join(gitDir, 'index.lock');
+		const stat = await fs.stat(lockPath).catch(() => null);
+		if (!stat) return false;
+		if (Date.now() - stat.mtimeMs < INDEX_LOCK_STALE_MS) return false; // maybe live
+		await fs.rm(lockPath, { force: true });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// Wrap a `(repoPath, ...args)` operation so every call serializes on that repo's
+// write lock. Used to turn the bare index/ref-mutating implementations below
+// into their exported, lock-guarded forms without threading the lock through
+// each body.
+function lockWrite<A extends unknown[], R>(
+	fn: (repoPath: string, ...args: A) => Promise<R>
+): (repoPath: string, ...args: A) => Promise<R> {
+	return (repoPath, ...args) => withRepoWriteLock(repoPath, () => fn(repoPath, ...args));
+}
+
+// The exported, write-serialized forms of the index/ref-mutating operations. Each
+// wraps its bare `*Impl` in the per-repo write lock so no two can touch the same
+// repo's index at once. The `*Impl` bodies are hoisted (function declarations),
+// so referencing them here before their textual definition is fine. Reentrancy
+// (see withRepoWriteLock) keeps a wrapped op that calls another wrapped op on the
+// same repo — e.g. updateFromUpstream -> mergeIntoCurrent — from deadlocking.
+export const checkout = lockWrite(checkoutImpl);
+export const createBranch = lockWrite(createBranchImpl);
+export const deleteBranch = lockWrite(deleteBranchImpl);
+export const pull = lockWrite(pullImpl);
+export const mergeIntoCurrent = lockWrite(mergeIntoCurrentImpl);
+export const updateFromUpstream = lockWrite(updateFromUpstreamImpl);
+export const push = lockWrite(pushImpl);
+export const stageFile = lockWrite(stageFileImpl);
+export const discardChanges = lockWrite(discardChangesImpl);
+export const discardLines = lockWrite(discardLinesImpl);
+export const continueMerge = lockWrite(continueMergeImpl);
+export const abortMerge = lockWrite(abortMergeImpl);
+export const createManagedStash = lockWrite(createManagedStashImpl);
+export const restoreManagedStash = lockWrite(restoreManagedStashImpl);
+export const restoreManagedStashKeepingLocal = lockWrite(restoreManagedStashKeepingLocalImpl);
+export const discardManagedStash = lockWrite(discardManagedStashImpl);
+export const finishStashPop = lockWrite(finishStashPopImpl);
+export const abortStashPop = lockWrite(abortStashPopImpl);
+export const commit = lockWrite(commitImpl);
+export const undoLastCommit = lockWrite(undoLastCommitImpl);
+export const checkoutPR = lockWrite(checkoutPRImpl);
+export const pinPRBaseRef = lockWrite(pinPRBaseRefImpl);
 
 // The push (or fetch) URL of `origin`, or null when there's no origin remote.
 async function originRemoteUrl(git: SimpleGit): Promise<string | null> {
@@ -145,7 +304,7 @@ export function repoIdFromPath(p: string): string {
 
 export async function isGitRepo(dirPath: string): Promise<boolean> {
 	try {
-		const git = simpleGit(dirPath);
+		const git = openGit(dirPath);
 		return await git.checkIsRepo();
 	} catch {
 		return false;
@@ -673,7 +832,7 @@ export async function resolveGithubRepo(
 	repoPath: string,
 	remote = 'origin'
 ): Promise<{ owner: string; repo: string } | null> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const remotes = await git.getRemotes(true).catch(() => []);
 	const named = remotes.find((r) => r.name === remote) ?? remotes.find((r) => r.name === 'origin');
 	const url = named?.refs.fetch ?? named?.refs.push;
@@ -682,7 +841,7 @@ export async function resolveGithubRepo(
 }
 
 export async function buildRepoInfo(repoPath: string): Promise<RepoInfo> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const id = repoIdFromPath(repoPath);
 	const name = path.basename(repoPath);
 	let remoteUrl: string | undefined;
@@ -743,7 +902,7 @@ async function readRepoDescription(repoPath: string): Promise<string | undefined
 }
 
 export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	// One `for-each-ref` call gives us the name, ref kind, and committer epoch
 	// for every branch — much cheaper than `branch -vv` + per-branch date probes
 	// and lets the picker show GitHub Desktop-style relative timestamps.
@@ -793,7 +952,7 @@ export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
 // excluded: git refuses to delete it. Each candidate carries how many stashes
 // were created on it so the UI can warn before deleting parked work.
 export async function listLocalOnlyBranches(repoPath: string): Promise<LocalOnlyBranch[]> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const [currentRaw, raw, stashRaw] = await Promise.all([
 		git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
 		git.raw([
@@ -844,7 +1003,7 @@ export async function listLocalOnlyBranches(repoPath: string): Promise<LocalOnly
 }
 
 export async function getCurrentBranch(repoPath: string): Promise<string | null> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		const status = await git.status();
 		return status.current ?? null;
@@ -853,14 +1012,14 @@ export async function getCurrentBranch(repoPath: string): Promise<string | null>
 	}
 }
 
-export async function checkout(repoPath: string, branch: string): Promise<void> {
-	const git = simpleGit(repoPath);
+async function checkoutImpl(repoPath: string, branch: string): Promise<void> {
+	const git = openGit(repoPath);
 	await git.checkout(branch);
 }
 
 export async function isWorkingTreeDirty(repoPath: string): Promise<boolean> {
 	try {
-		const status = await simpleGit(repoPath).status();
+		const status = await openGit(repoPath).status();
 		return !status.isClean();
 	} catch {
 		return false;
@@ -881,14 +1040,14 @@ export interface DeleteBranchResult {
 // `checkout` is true we use `checkout -b` so the working tree follows along
 // (GitHub Desktop's "Bring my changes" path); otherwise the branch is created
 // without switching, leaving uncommitted changes on the current branch.
-export async function createBranch(
+async function createBranchImpl(
 	repoPath: string,
 	name: string,
 	opts: { base?: string; checkout: boolean }
 ): Promise<CreateBranchResult> {
 	const trimmed = name.trim();
 	if (!trimmed) return { ok: false, error: 'Branch name is required.' };
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		if (opts.checkout) {
 			const args = ['checkout', '-b', trimmed];
@@ -913,14 +1072,14 @@ export async function createBranch(
 // is set and the branch has a tracking ref, also delete it on the remote.
 // `upstream` is the short tracking ref (e.g. "origin/feat"); we split off the
 // remote name (which can't contain a slash) to get the remote-side ref.
-export async function deleteBranch(
+async function deleteBranchImpl(
 	repoPath: string,
 	name: string,
 	opts: { deleteRemote: boolean; upstream?: string }
 ): Promise<DeleteBranchResult> {
 	const trimmed = name.trim();
 	if (!trimmed) return { ok: false, error: 'Branch name is required.' };
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		await git.raw(['branch', '-D', trimmed]);
 		if (opts.deleteRemote && opts.upstream) {
@@ -1018,7 +1177,7 @@ async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 // from (the local `pr/<n>/head` snapshot), so the comment's line/side match what
 // the user is looking at rather than a possibly-newer live head.
 export async function resolveRef(repoPath: string, ref: string): Promise<string | null> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		const out = await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
 		const sha = out.trim();
@@ -1048,7 +1207,7 @@ async function preferRemoteBase(git: SimpleGit, base: string): Promise<string> {
 }
 
 export async function listChangedFiles(repoPath: string, ctx: DiffContext): Promise<ChangedFile[]> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 
 	// Stash diffs fan out across the stash commit's parents, so they don't go
 	// through refsForContext's base/head model. Tracked changes come from
@@ -1523,7 +1682,7 @@ function synthesizeAddedFilePatch(filePath: string, contents: string): string {
 // the working-tree untracked path. Resolved against the stash commit's SHA, so
 // it's immune to index shifts.
 async function getStashDiff(repoPath: string, filePath: string, ref: string): Promise<DiffData> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const hasUntracked = await revExists(git, `${ref}^3`);
 	const isUntracked =
 		hasUntracked &&
@@ -1615,7 +1774,7 @@ export async function getDiff(
 	filePath: string,
 	ctx: DiffContext
 ): Promise<DiffData> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	if (ctx.kind === 'stash') return getStashDiff(repoPath, filePath, ctx.ref);
 	const refs = await refsForContext(git, ctx);
 
@@ -1767,7 +1926,7 @@ export async function detectDefaultBranch(git: SimpleGit): Promise<string | unde
 
 // Path-based wrapper for callers (the IPC layer) that only hold a repo path.
 export async function getDefaultBranch(repoPath: string): Promise<string | undefined> {
-	return detectDefaultBranch(simpleGit(repoPath));
+	return detectDefaultBranch(openGit(repoPath));
 }
 
 async function countAheadOfDefault(
@@ -1834,7 +1993,7 @@ async function countBehindDefault(
 }
 
 export async function getPushStatus(repoPath: string, defaultBranch?: string): Promise<PushStatus> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	let branch: string | null;
 	try {
 		branch = (await git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim() || null;
@@ -1951,8 +2110,8 @@ function parseOverwriteBlocked(message: string): string[] | null {
 		.filter(Boolean);
 }
 
-export async function pull(repoPath: string): Promise<PullPushResult> {
-	const remoteUrl = await originRemoteUrl(simpleGit(repoPath));
+async function pullImpl(repoPath: string): Promise<PullPushResult> {
+	const remoteUrl = await originRemoteUrl(openGit(repoPath));
 	const git = authedGit(repoPath, remoteUrl);
 	try {
 		await git.raw(['pull', '--no-rebase', '--no-edit']);
@@ -2008,8 +2167,8 @@ async function dropAutostashBackup(git: SimpleGit): Promise<void> {
 // committed or aborted, while a fast-forward re-applies it right away.
 // Conflicts (from the merge itself, or from re-applying the stash) surface the
 // same way pull() does, so the existing conflict dialog drives the resolution.
-export async function mergeIntoCurrent(repoPath: string, ref: string): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+async function mergeIntoCurrentImpl(repoPath: string, ref: string): Promise<PullPushResult> {
+	const git = openGit(repoPath);
 	try {
 		await git.raw(['merge', '--no-edit', '--autostash', ref]);
 	} catch (err) {
@@ -2044,13 +2203,13 @@ async function ensureUpstreamRemote(git: SimpleGit, url: string): Promise<void> 
 // Point the `upstream` remote at `url` (creating or repointing it). Used when
 // switching an existing fork to "contribute to the parent".
 export async function addUpstreamRemote(repoPath: string, url: string): Promise<void> {
-	await ensureUpstreamRemote(simpleGit(repoPath), url);
+	await ensureUpstreamRemote(openGit(repoPath), url);
 }
 
 // Drop the `upstream` remote if present — when a fork is switched to "for my own
 // purposes" it no longer tracks a parent. No-op when there's no upstream remote.
 export async function removeUpstreamRemote(repoPath: string): Promise<void> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const remotes = await git.getRemotes().catch(() => []);
 	if (remotes.some((r) => r.name === 'upstream')) {
 		await git.removeRemote('upstream');
@@ -2060,7 +2219,7 @@ export async function removeUpstreamRemote(repoPath: string): Promise<void> {
 // GitHub Desktop's "Update from upstream/<branch>": for a fork, fetch the parent
 // repo's <branch> and merge it into the current branch. Reuses mergeIntoCurrent
 // so any conflicts flow through the same dialog as updateFromDefault.
-export async function updateFromUpstream(
+async function updateFromUpstreamImpl(
 	repoPath: string,
 	upstreamUrl: string,
 	branch: string
@@ -2079,12 +2238,12 @@ export async function updateFromUpstream(
 	return mergeIntoCurrent(repoPath, `upstream/${branch}`);
 }
 
-export async function push(repoPath: string): Promise<PullPushResult> {
+async function pushImpl(repoPath: string): Promise<PullPushResult> {
 	try {
 		const status = await getPushStatus(repoPath);
 		if (!status.branch) throw new Error('Not on a branch (detached HEAD).');
 		if (!status.hasRemote) throw new Error("No 'origin' remote configured.");
-		const remoteUrl = await originRemoteUrl(simpleGit(repoPath));
+		const remoteUrl = await originRemoteUrl(openGit(repoPath));
 		const git = authedGit(repoPath, remoteUrl);
 		const args = ['push'];
 		if (!status.hasUpstream) args.push('--set-upstream', 'origin', status.branch);
@@ -2100,7 +2259,7 @@ export async function push(repoPath: string): Promise<PullPushResult> {
 }
 
 export async function getConflicts(repoPath: string): Promise<string[]> {
-	return listUnmergedPaths(simpleGit(repoPath));
+	return listUnmergedPaths(openGit(repoPath));
 }
 
 // Re-scan the given conflict files for leftover conflict markers. Any file that
@@ -2110,7 +2269,7 @@ export async function getConflicts(repoPath: string): Promise<string[]> {
 // the UI can show an alert vs. a check per file). We key off `<<<<<<<`/`>>>>>>>`
 // rather than `=======` since a row of equals is legitimate Markdown.
 export async function recheckConflicts(repoPath: string, files: string[]): Promise<string[]> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const hasMarkers = (content: string): boolean => /^<{7}|^>{7}/m.test(content);
 	for (const f of files) {
 		const content = await fs.readFile(path.join(repoPath, f), 'utf8').catch(() => '');
@@ -2122,8 +2281,8 @@ export async function recheckConflicts(repoPath: string, files: string[]): Promi
 	return listUnmergedPaths(git);
 }
 
-export async function stageFile(repoPath: string, filePath: string): Promise<void> {
-	await simpleGit(repoPath).add([filePath]);
+async function stageFileImpl(repoPath: string, filePath: string): Promise<void> {
+	await openGit(repoPath).add([filePath]);
 }
 
 // Whether `relPath` exists in the current HEAD commit. False for new/untracked
@@ -2149,13 +2308,13 @@ async function pathExistsInHead(git: SimpleGit, relPath: string): Promise<boolea
 // `trash` is dependency-injected rather than reaching for `electron` directly,
 // so this module stays Electron-free and importable from the plain-node CLI
 // (which captures sessions but never discards files).
-export async function discardChanges(
+async function discardChangesImpl(
 	repoPath: string,
 	filePath: string,
 	oldPath?: string,
 	trash?: (absPath: string) => Promise<void>
 ): Promise<void> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const restoreOrTrash = async (relPath: string): Promise<void> => {
 		const inHead = await pathExistsInHead(git, relPath);
 		// Unstage first so the worktree restore (or trash) isn't left partial.
@@ -2183,8 +2342,8 @@ export async function discardChanges(
 // only — never `--cached` or `--index` — so the user's real index is left as
 // untouched as partial staging leaves it. Discards stay recoverable: the removed
 // lines remain in HEAD's version of the file.
-export async function discardLines(repoPath: string, patch: string): Promise<void> {
-	const git = simpleGit(repoPath);
+async function discardLinesImpl(repoPath: string, patch: string): Promise<void> {
+	const git = openGit(repoPath);
 	const gitDir = (await git.raw(['rev-parse', '--absolute-git-dir'])).trim();
 	const patchPath = path.join(gitDir, `super-review-discard-${process.pid}-${Date.now()}.patch`);
 	const text = patch.endsWith('\n') ? patch : `${patch}\n`;
@@ -2205,8 +2364,8 @@ export async function discardLines(repoPath: string, patch: string): Promise<voi
 // progress, the conflicts came from re-applying autostashed changes after a
 // fast-forward: nothing to commit — the resolved work stays uncommitted and we
 // just clear the backup stash git kept.
-export async function continueMerge(repoPath: string): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+async function continueMergeImpl(repoPath: string): Promise<PullPushResult> {
+	const git = openGit(repoPath);
 	let remaining = await listUnmergedPaths(git);
 	if (remaining.length > 0) return { ok: false, conflicts: remaining };
 	if (!(await hasMergeHead(git))) {
@@ -2228,8 +2387,8 @@ export async function continueMerge(repoPath: string): Promise<PullPushResult> {
 	return { ok: true, conflicts: [] };
 }
 
-export async function abortMerge(repoPath: string): Promise<void> {
-	const git = simpleGit(repoPath);
+async function abortMergeImpl(repoPath: string): Promise<void> {
+	const git = openGit(repoPath);
 	if (await hasMergeHead(git)) {
 		// `merge --abort` also restores any `--autostash` work automatically.
 		await git.raw(['merge', '--abort']).catch(() => {});
@@ -2265,11 +2424,11 @@ function managedStashMarker(branch: string): string {
 // Create the managed stash for `branch`, capturing untracked files too (they
 // land in the stash commit's `^3` tree). "No local changes to save" is a no-op —
 // there was simply nothing to stash, so the caller proceeds to the pull.
-export async function createManagedStash(
+async function createManagedStashImpl(
 	repoPath: string,
 	branch: string
 ): Promise<{ ok: boolean; error?: string }> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		await git.raw(['stash', 'push', '--include-untracked', '-m', managedStashMarker(branch)]);
 		return { ok: true };
@@ -2336,7 +2495,7 @@ export async function findManagedStash(
 	repoPath: string,
 	branch: string
 ): Promise<ManagedStash | null> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const marker = managedStashMarker(branch);
 	const raw = await git.raw(['stash', 'list', '--format=%H %gs']).catch(() => '');
 	const shas: string[] = [];
@@ -2413,8 +2572,8 @@ async function collidingStashUntracked(
 //     finishStashPop / abortStashPop to wrap up.
 // The SHA is re-resolved to its live `stash@{n}` selector before drop, since
 // `stash drop` rejects a raw SHA.
-export async function restoreManagedStash(repoPath: string, sha: string): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+async function restoreManagedStashImpl(repoPath: string, sha: string): Promise<PullPushResult> {
+	const git = openGit(repoPath);
 	const ref = await resolveStashRef(git, sha);
 	if (!ref) {
 		return { ok: false, conflicts: [], error: 'The stashed changes are no longer available.' };
@@ -2455,11 +2614,11 @@ export async function restoreManagedStash(repoPath: string, sha: string): Promis
 // restore the colliding untracked files and abort). A tracked-change conflict
 // surfaces like any other stash-restore conflict, so finishStashPop /
 // abortStashPop finish it; on a clean result the entry is dropped.
-export async function restoreManagedStashKeepingLocal(
+async function restoreManagedStashKeepingLocalImpl(
 	repoPath: string,
 	sha: string
 ): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const ref = await resolveStashRef(git, sha);
 	if (!ref) {
 		return { ok: false, conflicts: [], error: 'The stashed changes are no longer available.' };
@@ -2517,8 +2676,8 @@ async function dropStashBySha(git: SimpleGit, sha: string): Promise<void> {
 
 // Drop the managed stash by SHA without applying it (GitHub Desktop's "Discard
 // Stashed Changes"). Re-resolves the SHA to its live selector first.
-export async function discardManagedStash(repoPath: string, sha: string): Promise<void> {
-	const git = simpleGit(repoPath);
+async function discardManagedStashImpl(repoPath: string, sha: string): Promise<void> {
+	const git = openGit(repoPath);
 	const ref = await resolveStashRef(git, sha);
 	if (ref) await git.raw(['stash', 'drop', ref]);
 }
@@ -2529,8 +2688,8 @@ export async function discardManagedStash(repoPath: string, sha: string): Promis
 // not reuse `continueMerge`. We also can't lean on `dropAutostashBackup` — it
 // keys off the "autostash" label, not our `!!super-review` marker — so we drop
 // the entry explicitly by SHA. If conflicts remain, surface them again.
-export async function finishStashPop(repoPath: string, sha: string): Promise<PullPushResult> {
-	const git = simpleGit(repoPath);
+async function finishStashPopImpl(repoPath: string, sha: string): Promise<PullPushResult> {
+	const git = openGit(repoPath);
 	const remaining = await listUnmergedPaths(git);
 	if (remaining.length > 0) return { ok: false, conflicts: remaining };
 	// The conflicted pop left the entry in place; resolve its live selector and
@@ -2545,8 +2704,8 @@ export async function finishStashPop(repoPath: string, sha: string): Promise<Pul
 // reuse `abortMerge` — `git merge --abort` is invalid with no merge in progress.
 // A conflicted `stash pop` leaves the entry in place, so a plain hard reset is
 // enough to recover the pre-restore state.
-export async function abortStashPop(repoPath: string): Promise<void> {
-	const git = simpleGit(repoPath);
+async function abortStashPopImpl(repoPath: string): Promise<void> {
+	const git = openGit(repoPath);
 	await git.raw(['checkout', '--', '.']).catch(() => {});
 	await git.raw(['reset', '--hard', 'HEAD']).catch(() => {});
 }
@@ -2632,14 +2791,14 @@ async function runSignedOrFallback<T>(
 // the kept subset) for line/hunk staging. When nothing is partial we take the
 // original fast path (`git add` + a pathspec-pinned `git commit`); otherwise we
 // build the commit through a scratch index so only the selected lines land.
-export async function commit(
+async function commitImpl(
 	repoPath: string,
 	message: string,
 	files: CommitFileSelection[],
 	identity?: GitIdentity | null,
 	signing?: CommitSigning | null
 ): Promise<CommitResult> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		const trimmed = message.trim();
 		if (!trimmed) throw new Error('Commit message is required.');
@@ -2727,7 +2886,7 @@ async function commitPartial(
 	identity?: GitIdentity | null,
 	signing?: CommitSigning | null
 ): Promise<void> {
-	const baseGit = simpleGit(repoPath);
+	const baseGit = openGit(repoPath);
 	const gitDir = (await baseGit.raw(['rev-parse', '--absolute-git-dir'])).trim();
 	const headExists = await revExists(baseGit, 'HEAD');
 	const unique = `${process.pid}-${Date.now()}`;
@@ -2743,7 +2902,7 @@ async function commitPartial(
 	delete baseEnv.GIT_EDITOR;
 	delete baseEnv.GIT_SEQUENCE_EDITOR;
 	const indexEnv: Record<string, string> = { ...baseEnv, GIT_INDEX_FILE: tmpIndex };
-	const idxGit = simpleGit(repoPath).env(indexEnv);
+	const idxGit = openGit(repoPath).env(indexEnv);
 
 	try {
 		// Seed the scratch index from HEAD (empty for an unborn branch).
@@ -2779,7 +2938,7 @@ async function commitPartial(
 		const parentArgs = headExists ? ['-p', 'HEAD'] : [];
 		const newSha = (
 			await runSignedOrFallback(signing, (cfg, sign) =>
-				simpleGit(repoPath)
+				openGit(repoPath)
 					.env(commitEnv)
 					.raw([...cfg, 'commit-tree', ...sign, tree, '-m', message, ...parentArgs])
 			)
@@ -2817,7 +2976,7 @@ export interface LastCommit {
 // Returns the tip commit of HEAD plus whether it is safe to undo. `null` when
 // the branch has no commits yet.
 export async function getLastCommit(repoPath: string): Promise<LastCommit | null> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		const raw = (await git.raw(['log', '-1', '--pretty=format:%H%x1f%s%x1f%cr'])).trim();
 		if (!raw) return null;
@@ -2849,7 +3008,7 @@ export async function listCommits(
 	head = 'HEAD',
 	limit = 2000
 ): Promise<CommitInfo[]> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		const raw = await git.raw([
 			'log',
@@ -2883,7 +3042,7 @@ export async function listCommits(
 // last diverged from `a`. Returns null when the refs share no history or either
 // can't be resolved. Backs the History tab's "branched from <base>" divider.
 export async function mergeBase(repoPath: string, a: string, b: string): Promise<string | null> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	try {
 		const sha = (await git.raw(['merge-base', a, b])).trim();
 		return sha || null;
@@ -2896,8 +3055,8 @@ export async function mergeBase(repoPath: string, a: string, b: string): Promise
 // same way GitHub Desktop's "Undo" affordance works (git reset --soft HEAD~1).
 // When the tip is the repo's only commit, drop the HEAD ref instead so the
 // index is preserved.
-export async function undoLastCommit(repoPath: string): Promise<CommitResult> {
-	const git = simpleGit(repoPath);
+async function undoLastCommitImpl(repoPath: string): Promise<CommitResult> {
+	const git = openGit(repoPath);
 	try {
 		const count = Number((await git.raw(['rev-list', '--count', 'HEAD'])).trim()) || 0;
 		if (count <= 0) throw new Error('No commit to undo.');
@@ -2986,7 +3145,7 @@ export async function createRepo(opts: CreateRepoOptions): Promise<CloneResult> 
 			await fs.mkdir(target, { recursive: true });
 		}
 
-		const git = simpleGit(target);
+		const git = openGit(target);
 		await git.init();
 
 		const description = opts.description?.trim() ?? '';
@@ -3062,7 +3221,7 @@ export async function ensureInitialCommit(
 	identity?: GitIdentity | null,
 	signing?: CommitSigning | null
 ): Promise<boolean> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	if (await headExists(git)) return false;
 	await git.raw(['add', '-A']);
 	// Strip the editor vars: simple-git rejects commands when GIT_EDITOR /
@@ -3078,7 +3237,7 @@ export async function ensureInitialCommit(
 		env.GIT_COMMITTER_EMAIL = identity.email;
 	}
 	await runSignedOrFallback(signing, (cfg, sign) =>
-		simpleGit(repoPath)
+		openGit(repoPath)
 			.env(env)
 			.raw([...cfg, 'commit', ...sign, '--allow-empty', '-m', message])
 	);
@@ -3125,7 +3284,7 @@ export async function convertToForkRemotes(
 	forkUrl: string,
 	upstreamUrl?: string | null
 ): Promise<void> {
-	const git = simpleGit(repoPath);
+	const git = openGit(repoPath);
 	const remotes = await git.getRemotes().catch(() => []);
 	if (remotes.some((r) => r.name === 'origin')) {
 		await git.raw(['remote', 'set-url', 'origin', forkUrl]);
@@ -3137,7 +3296,7 @@ export async function convertToForkRemotes(
 
 export async function fetchOrigin(repoPath: string): Promise<{ ok: boolean; error?: string }> {
 	try {
-		const remoteUrl = await originRemoteUrl(simpleGit(repoPath));
+		const remoteUrl = await originRemoteUrl(openGit(repoPath));
 		const git = authedGit(repoPath, remoteUrl);
 		await git.fetch(['origin', '--prune']);
 		return { ok: true };
@@ -3157,7 +3316,7 @@ export async function fetchPRRef(
 	// origin, so the caller passes the parent's URL.
 	remote = 'origin'
 ): Promise<{ headRef: string; baseRef: string }> {
-	const base = simpleGit(repoPath);
+	const base = openGit(repoPath);
 	const remoteUrl = await resolveRemoteUrl(base, remote);
 	const git = authedGit(repoPath, remoteUrl);
 	// Force (`+`) so a rebased/force-pushed PR updates the pinned snapshot instead
@@ -3205,8 +3364,8 @@ export interface CheckoutPROptions {
 //
 // When the head repo is unknown (deleted fork), we fall back to fetching a
 // read-only `pull/<n>/head` snapshot with no tracking.
-export async function checkoutPR(repoPath: string, opts: CheckoutPROptions): Promise<void> {
-	const git = simpleGit(repoPath);
+async function checkoutPRImpl(repoPath: string, opts: CheckoutPROptions): Promise<void> {
+	const git = openGit(repoPath);
 	const { prNumber, headRef, headRepoUrl, headRepoOwner } = opts;
 
 	if (!headRepoUrl || !headRepoOwner) {
@@ -3275,7 +3434,7 @@ async function ensureRemoteForUrl(
 	return name;
 }
 
-export async function pinPRBaseRef(
+async function pinPRBaseRefImpl(
 	repoPath: string,
 	prNumber: number,
 	baseBranch: string,
@@ -3283,7 +3442,7 @@ export async function pinPRBaseRef(
 	// repo's URL for an upstream PR on a fork. See fetchPRRef.
 	remote = 'origin'
 ): Promise<void> {
-	const base = simpleGit(repoPath);
+	const base = openGit(repoPath);
 	const remoteUrl = await resolveRemoteUrl(base, remote);
 	const git = authedGit(repoPath, remoteUrl);
 	// Fetch the base branch's current tip straight into the pinned ref. Writing

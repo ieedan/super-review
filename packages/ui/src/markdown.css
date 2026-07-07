@@ -181,6 +181,7 @@
 
 .markdown-body code {
 	font-family: var(--code-font);
+	font-feature-settings: var(--code-font-features, normal);
 	font-size: 85%;
 	padding: 0.2em 0.4em;
 	border-radius: 6px;
@@ -188,6 +189,7 @@
 }
 .markdown-body pre {
 	font-family: var(--code-font);
+	font-feature-settings: var(--code-font-features, normal);
 	font-size: 85%;
 	padding: 16px;
 	overflow: auto;
