@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.1.13
+
+### Patch Changes
+
+- [`7d1e33b`](https://github.com/ieedan/super-review/commit/7d1e33bae80c837d5e00f9ee2c3629ca52153d33) Thanks [@ieedan](https://github.com/ieedan)! - feat: GitHub #references and @mentions in the markdown composer
+
 ## 0.1.12
 
 ### Patch Changes
