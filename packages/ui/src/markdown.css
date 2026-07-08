@@ -167,14 +167,20 @@
 .markdown-body li > p {
 	margin-bottom: 0;
 }
-.markdown-body ul.contains-task-list,
-.markdown-body li.task-list-item {
+/* GFM task lists. `marked` renders each checkbox item as `<li><input
+   type="checkbox">...` but (unlike GitHub) tags neither the `<ul>` with
+   `contains-task-list` nor the `<li>` with `task-list-item`, so match the
+   shape directly: a list item holding a checkbox, and the list that owns one.
+   Without this the `list-style-type: disc` above leaves a stray bullet next to
+   every checkbox. */
+.markdown-body ul:has(> li > input[type='checkbox']),
+.markdown-body li:has(> input[type='checkbox']) {
 	list-style-type: none;
 }
-.markdown-body li.task-list-item {
+.markdown-body li:has(> input[type='checkbox']) {
 	padding-left: 0;
 }
-.markdown-body .task-list-item input[type='checkbox'] {
+.markdown-body li > input[type='checkbox'] {
 	margin: 0 0.4em 0.25em -1.4em;
 	vertical-align: middle;
 }
