@@ -1,5 +1,14 @@
 # @super-review/desktop
 
+## 0.1.21
+
+### Patch Changes
+
+- [`7224d20`](https://github.com/ieedan/super-review/commit/7224d2083ddadf65b81f22f74d7affb07fff80c8) Thanks [@ieedan](https://github.com/ieedan)! - fix: discard multiple files in one batched git operation
+- Updated dependencies [[`7224d20`](https://github.com/ieedan/super-review/commit/7224d2083ddadf65b81f22f74d7affb07fff80c8)]:
+  - @super-review/core@0.1.14
+  - @super-review/ui@0.0.8
+
 ## 0.1.20
 
 ### Patch Changes
