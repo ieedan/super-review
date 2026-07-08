@@ -36,9 +36,11 @@ import type {
 	GithubAccount,
 	GithubAuthError,
 	GithubOrg,
+	IssueReference,
 	LastCommit,
 	LocalOnlyBranch,
 	ManagedStash,
+	MentionableUser,
 	NewReviewCommentInput,
 	NpmPackageResult,
 	ReleaseNotesResult,
@@ -1150,6 +1152,34 @@ export function registerIpc(): void {
 				);
 			}
 			return gh.listPullRequests(owner, name, repo.githubAccountId, page);
+		}
+	);
+
+	// The GitHub repo that mentions/references should resolve against: the
+	// upstream parent for a fork contributing to it, otherwise the repo's own
+	// remote — matching the renderer's `githubHostRepo` and where PR comments are
+	// posted. Throws when the repo has no GitHub remote at all.
+	const hostRepoOrThrow = (repoId: string): { owner: string; name: string; account?: string } => {
+		const repo = repoOrThrow(repoId);
+		const owner = repo.upstreamOwner ?? repo.githubOwner;
+		const name = repo.upstreamRepo ?? repo.githubRepo;
+		if (!owner || !name) throw new Error('This repository does not have a GitHub remote.');
+		return { owner, name, account: repo.githubAccountId };
+	};
+
+	ipcMain.handle(
+		'github:listMentionableUsers',
+		async (_e, repoId: string): Promise<MentionableUser[]> => {
+			const { owner, name, account } = hostRepoOrThrow(repoId);
+			return gh.listMentionableUsers(owner, name, account);
+		}
+	);
+
+	ipcMain.handle(
+		'github:listIssueReferences',
+		async (_e, repoId: string, query?: string): Promise<IssueReference[]> => {
+			const { owner, name, account } = hostRepoOrThrow(repoId);
+			return gh.listIssueReferences(owner, name, account, query);
 		}
 	);
 

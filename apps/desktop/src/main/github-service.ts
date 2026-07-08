@@ -13,6 +13,8 @@ import type {
 	GithubAccount,
 	GithubAuthError,
 	GithubOrg,
+	IssueReference,
+	MentionableUser,
 	NewReviewCommentInput,
 	PRConversationItem,
 	PRConversationReference,
@@ -917,6 +919,75 @@ export async function listPullRequests(
 		page
 	});
 	return res.data.map(toPRSummary);
+}
+
+// Users the composer can @-mention. `issues.listAssignees` returns the repo's
+// assignable users (collaborators plus org members GitHub allows assigning) and,
+// unlike `repos.listCollaborators`, works with plain read access — the closest
+// public approximation of GitHub's mention suggestion list. One page (100) is
+// plenty for the client-side prefix filter the typeahead does.
+export async function listMentionableUsers(
+	owner: string,
+	repo: string,
+	accountId?: string | null
+): Promise<MentionableUser[]> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.issues.listAssignees({ owner, repo, per_page: 100 });
+	return res.data.map((u) => ({ login: u.login, avatarUrl: u.avatar_url }));
+}
+
+// Shape one `issues.listForRepo` / `issues.get` payload into our IssueReference.
+// The endpoint returns both issues and PRs (a PR is an issue with a
+// `pull_request` object); we read that object for the PR-only draft/merged bits.
+function toIssueReference(d: {
+	number: number;
+	title: string;
+	state: string;
+	draft?: boolean;
+	pull_request?: { merged_at?: string | null } | null;
+}): IssueReference {
+	const isPR = d.pull_request != null;
+	return {
+		number: d.number,
+		title: d.title,
+		state: d.state === 'closed' ? 'closed' : 'open',
+		isPullRequest: isPR,
+		draft: isPR ? (d.draft ?? false) : undefined,
+		merged: isPR ? d.pull_request?.merged_at != null : undefined
+	};
+}
+
+// Recent issues + PRs for the composer's #-reference typeahead, most-recently-
+// updated first (matching how the PR list orders). `issues.listForRepo` already
+// includes PRs, so one call covers both. When `query` is a bare number that
+// isn't in that recent page (an older issue/PR), we resolve it directly and
+// prepend it so any number stays referenceable without opening GitHub.
+export async function listIssueReferences(
+	owner: string,
+	repo: string,
+	accountId?: string | null,
+	query?: string
+): Promise<IssueReference[]> {
+	const o = octokit(resolveAccount(accountId));
+	const res = await o.issues.listForRepo({
+		owner,
+		repo,
+		state: 'all',
+		sort: 'updated',
+		direction: 'desc',
+		per_page: 50
+	});
+	const items = res.data.map(toIssueReference);
+	const num = query && /^\d+$/.test(query.trim()) ? Number(query.trim()) : null;
+	if (num != null && Number.isSafeInteger(num) && !items.some((i) => i.number === num)) {
+		try {
+			const one = await o.issues.get({ owner, repo, issue_number: num });
+			items.unshift(toIssueReference(one.data));
+		} catch {
+			// No such issue/PR (or no access) — leave the list as-is.
+		}
+	}
+	return items;
 }
 
 // When `owner/repo` is a fork, return its parent ("upstream") repo's

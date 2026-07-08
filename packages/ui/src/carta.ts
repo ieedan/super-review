@@ -21,12 +21,15 @@
 //   - emoji: `:emoji:` autocomplete picker
 // We deliberately omit plugin-slash (the `/` menu) and plugin-attachment (needs an
 // upload endpoint this desktop app doesn't have).
-import { Carta } from 'carta-md';
+import { Carta, type Plugin } from 'carta-md';
 import { code } from '@cartamd/plugin-code';
 import { emoji } from '@cartamd/plugin-emoji';
 import DOMPurify from 'dompurify';
+import { fade, scale } from 'svelte/transition';
 import { getSharedHighlighter } from '@pierre/diffs';
 import { diffThemePair } from './diff-themes';
+import { getMarkdownRepoContext } from './markdown';
+import GithubSuggest from './components/GithubSuggest.svelte';
 
 // Force links rendered in the preview to open in a new context and never let a
 // `javascript:` URL slip through — same hardening applied in markdown.ts. The hook
@@ -89,6 +92,135 @@ function sharedCartaHighlighter(diffThemeId: string): () => Promise<CartaHighlig
 	};
 }
 
+// Minimal mdast shape we touch. Carta renders the preview through a remark
+// (unified) processor, NOT the `marked` pipeline in markdown.ts, so the
+// autolinking there doesn't reach the composer's Preview tab — this remark
+// transformer mirrors it on the mdast so preview matches the posted comment.
+interface MdNode {
+	type: string;
+	value?: string;
+	url?: string;
+	alt?: string;
+	// mdast-util-to-hast reads `data.hProperties` to set attributes/classes on the
+	// emitted element (used to class + size the inline mention avatar).
+	data?: { hProperties?: Record<string, unknown> };
+	children?: MdNode[];
+}
+
+// Split one text node's value into text + link nodes for `#123` / `@user`,
+// gated on the active repo context (null off GitHub). Boundary via lookbehind:
+// the trigger must follow the start or a non-word, non-entity char, so `C#5`,
+// `#fff`, `&#39;` and `foo@bar.com` are left as plain text. Returns null when
+// there's nothing to link, so the caller keeps the original node.
+function splitGithubRefs(value: string): MdNode[] | null {
+	const ctx = getMarkdownRepoContext();
+	if (!ctx) return null;
+	const re = /(?<![\w`&])#(\d+)\b|(?<![\w`&/])@([a-z\d](?:-?[a-z\d]){0,38})/gi;
+	const nodes: MdNode[] = [];
+	let last = 0;
+	let match: RegExpExecArray | null;
+	let found = false;
+	while ((match = re.exec(value)) !== null) {
+		const [full, num, login] = match;
+		if (match.index > last) nodes.push({ type: 'text', value: value.slice(last, match.index) });
+		if (num != null) {
+			nodes.push(linkNode(`#${num}`, `https://github.com/${ctx.owner}/${ctx.repo}/issues/${num}`));
+		} else {
+			nodes.push(mentionNode(login));
+		}
+		last = match.index + full.length;
+		found = true;
+	}
+	if (!found) return null;
+	if (last < value.length) nodes.push({ type: 'text', value: value.slice(last) });
+	return nodes;
+}
+
+function linkNode(text: string, url: string): MdNode {
+	return { type: 'link', url, children: [{ type: 'text', value: text }] };
+}
+
+// A mention link with the user's avatar inline before the handle. The avatar is
+// GitHub's deterministic `github.com/<login>.png`, so no lookup is needed.
+function mentionNode(login: string): MdNode {
+	return {
+		type: 'link',
+		url: `https://github.com/${login}`,
+		children: [
+			{
+				type: 'image',
+				url: `https://github.com/${login}.png?size=40`,
+				alt: '',
+				data: { hProperties: { className: ['gh-mention-avatar'], width: 20, height: 20 } }
+			},
+			{ type: 'text', value: `@${login}` }
+		]
+	};
+}
+
+// Walk the mdast, replacing refs inside text nodes. Skips code / inlineCode /
+// existing links so references inside them stay literal (as GitHub does).
+function autolinkGithubRefs(node: MdNode): void {
+	if (!Array.isArray(node.children)) return;
+	const out: MdNode[] = [];
+	let changed = false;
+	for (const child of node.children) {
+		if (child.type === 'text' && typeof child.value === 'string') {
+			const parts = splitGithubRefs(child.value);
+			if (parts) {
+				out.push(...parts);
+				changed = true;
+				continue;
+			}
+			out.push(child);
+		} else {
+			if (child.type !== 'inlineCode' && child.type !== 'code' && child.type !== 'link') {
+				autolinkGithubRefs(child);
+			}
+			out.push(child);
+		}
+	}
+	if (changed) node.children = out;
+}
+
+// GitHub @mention / #reference typeahead, wired as two `input` components (one
+// per trigger) the way plugin-emoji registers its picker. The GithubSuggest
+// component pulls its data (assignable users, recent issues/PRs) from the active
+// repo via the preload bridge, so nothing repo-specific is baked in here — the
+// same shared Carta instance serves whichever repo is active. The remark
+// transformer autolinks the same refs in the Preview tab.
+const githubSuggestPlugin: Plugin = {
+	transformers: [
+		{
+			execution: 'sync',
+			type: 'remark',
+			transform({ processor }) {
+				processor.use(() => (tree: MdNode) => autolinkGithubRefs(tree));
+			}
+		}
+	],
+	components: [
+		{
+			component: GithubSuggest,
+			parent: 'input',
+			props: {
+				kind: 'mention',
+				inTransition: (node: Element) => scale(node, { duration: 100, start: 0.98 }),
+				outTransition: (node: Element) => fade(node, { duration: 80 })
+			}
+		},
+		{
+			component: GithubSuggest,
+			parent: 'input',
+			props: {
+				kind: 'issue',
+				inTransition: (node: Element) => scale(node, { duration: 100, start: 0.98 }),
+				outTransition: (node: Element) => fade(node, { duration: 80 })
+			}
+		}
+	]
+};
+
 // One Carta instance per diff-theme preset id, memoized so switching themes back
 // and forth reuses instances and the common case allocates just one.
 const cartaByTheme = new Map<string, Carta>();
@@ -109,7 +241,7 @@ export function getCarta(diffThemeId: string): Carta {
 		// `lazy` loads each fenced block's language on demand; `fallbackLanguage`
 		// keeps an unknown language from throwing (which would reject the render). No
 		// `theme` — the code plugin inherits it from our highlighter's `themeHash`.
-		extensions: [code({ lazy: true, fallbackLanguage: 'text' }), emoji()]
+		extensions: [code({ lazy: true, fallbackLanguage: 'text' }), emoji(), githubSuggestPlugin]
 	});
 	// Replace carta-md's WASM highlighter with our CSP-safe shared one. This is an
 	// instance-property override shadowing the prototype method carta invokes via

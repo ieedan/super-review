@@ -1577,6 +1577,27 @@ export interface GithubAccount {
 	addedAt: number;
 }
 
+// A GitHub user the review composer can @-mention. Sourced from the repo's
+// assignable users (collaborators + org members GitHub lets you assign), which
+// is the read-access approximation of GitHub's own mention suggestion list.
+export interface MentionableUser {
+	login: string;
+	avatarUrl: string;
+}
+
+// An issue or pull request the review composer can #-reference. `isPullRequest`
+// distinguishes the two (GitHub numbers them in one shared sequence), and
+// `state`/`draft`/`merged` drive the status icon in the typeahead — the same
+// distinctions the PR list makes.
+export interface IssueReference {
+	number: number;
+	title: string;
+	state: 'open' | 'closed';
+	isPullRequest: boolean;
+	draft?: boolean;
+	merged?: boolean;
+}
+
 export type DeviceFlowStatus =
 	| { state: 'pending' }
 	| { state: 'success'; account: GithubAccount }
@@ -1894,6 +1915,14 @@ export interface PreloadAPI {
 		pollDeviceFlow(): Promise<DeviceFlowStatus>;
 		cancelDeviceFlow(): Promise<void>;
 		listPRs(repoId: string, page?: number, source?: PRSource): Promise<PRSummary[]>;
+		// Users the composer can @-mention for this repo (its assignable users on
+		// the host repo — upstream for a fork, else its own remote). The renderer
+		// filters the returned list client-side as the user types.
+		listMentionableUsers(repoId: string): Promise<MentionableUser[]>;
+		// Recent issues + PRs the composer can #-reference, most-recently-updated
+		// first. When `query` is a bare number not already in the recent page, the
+		// exact issue/PR is resolved and prepended so any number can be referenced.
+		listIssueReferences(repoId: string, query?: string): Promise<IssueReference[]>;
 		// Resolve commit authors to their GitHub accounts the way GitHub's commit
 		// list does — by asking the API which account each commit's email maps to,
 		// something the email alone can't always tell us. `candidates` pairs each

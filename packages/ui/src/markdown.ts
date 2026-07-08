@@ -18,7 +18,7 @@
 // The HTML is sanitized with DOMPurify before it reaches `{@html}` — repo
 // contents are untrusted (often agent-written), and this runs in the Electron
 // renderer where an injected script would be dangerous.
-import { marked, type RendererThis, type Tokens } from 'marked';
+import { marked, type RendererThis, type Tokens, type TokenizerAndRendererExtension } from 'marked';
 import DOMPurify from 'dompurify';
 import { emojify } from 'node-emoji';
 import { getSharedHighlighter } from '@pierre/diffs';
@@ -89,6 +89,27 @@ export function setMarkdownCodeThemes(themes: { light: ShikiTheme; dark: ShikiTh
 	activeMarkdownThemes = themes;
 }
 
+// The GitHub repo (host owner/name) the active review targets. Set by the store
+// on repo switch (see setMarkdownRepoContext). While null — a repo with no
+// GitHub remote — `#123` / `@user` are left as literal text, since there'd be
+// nowhere for a reference to resolve; matching GitHub, which only autolinks them
+// inside a repo context.
+let repoContext: { owner: string; repo: string } | null = null;
+
+/**
+ * Point `#issue` / `@mention` autolinking at a repo, or clear it (`null`) so
+ * references render as plain text. Mirrors GitHub: `#123` links to that issue/PR
+ * in this repo, `@user` links to that GitHub profile.
+ */
+export function setMarkdownRepoContext(ctx: { owner: string; repo: string } | null): void {
+	repoContext = ctx;
+}
+
+/** The repo `#issue` / `@mention` autolinking currently targets, or null. */
+export function getMarkdownRepoContext(): { owner: string; repo: string } | null {
+	return repoContext;
+}
+
 function escapeHtml(s: string): string {
 	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -148,6 +169,74 @@ marked.use({
 		}
 	}
 });
+
+// GitHub autolinks `#123` (issue/PR) and `@user` (profile) inside comment
+// bodies. We mirror that with two inline `marked` extensions. Being real inline
+// tokenizers, they never fire inside code spans / fenced blocks (marked hands
+// those to the code tokenizers first), and both are gated on `repoContext` so a
+// non-GitHub repo leaves the raw text untouched. Each captures the repo/login at
+// tokenize time, so a mid-parse context change can't desync the rendered href.
+//
+// The `start` regexes enforce a left boundary the anchored `tokenizer` regex
+// can't see on its own: `#`/`@` must follow the string start or a non-word,
+// non-entity character. That keeps `C#`, `#fff`, `&#39;`, and `foo@bar.com`
+// from being mistaken for a reference or mention.
+const issueRefExtension: TokenizerAndRendererExtension = {
+	name: 'issueRef',
+	level: 'inline',
+	start(src) {
+		if (!repoContext) return undefined;
+		const m = /(^|[^\w`&])#\d/.exec(src);
+		return m ? m.index + m[1].length : undefined;
+	},
+	tokenizer(src) {
+		if (!repoContext) return undefined;
+		const m = /^#(\d+)\b/.exec(src);
+		if (!m) return undefined;
+		return {
+			type: 'issueRef',
+			raw: m[0],
+			num: m[1],
+			owner: repoContext.owner,
+			repo: repoContext.repo
+		};
+	},
+	renderer(token) {
+		const t = token as Tokens.Generic & { num: string; owner: string; repo: string };
+		// `/issues/N` resolves to the PR page too — GitHub redirects it — so one
+		// URL shape covers both issues and pull requests.
+		return `<a href="https://github.com/${t.owner}/${t.repo}/issues/${t.num}">#${t.num}</a>`;
+	}
+};
+
+const mentionExtension: TokenizerAndRendererExtension = {
+	name: 'mention',
+	level: 'inline',
+	start(src) {
+		if (!repoContext) return undefined;
+		const m = /(^|[^\w`&/])@[a-z\d]/i.exec(src);
+		return m ? m.index + m[1].length : undefined;
+	},
+	tokenizer(src) {
+		if (!repoContext) return undefined;
+		// GitHub usernames: 1-39 chars, alphanumeric or single interior hyphens.
+		const m = /^@([a-z\d](?:-?[a-z\d]){0,38})/i.exec(src);
+		if (!m) return undefined;
+		return { type: 'mention', raw: m[0], login: m[1] };
+	},
+	renderer(token) {
+		const t = token as Tokens.Generic & { login: string };
+		// Every GitHub user's avatar is served at `github.com/<login>.png`, so we can
+		// show it inline without an API lookup (CSP allows https: images).
+		const avatar = `https://github.com/${t.login}.png?size=40`;
+		return (
+			`<a href="https://github.com/${t.login}" class="gh-mention">` +
+			`<img class="gh-mention-avatar" src="${avatar}" alt="" width="20" height="20" />@${t.login}</a>`
+		);
+	}
+};
+
+marked.use({ extensions: [issueRefExtension, mentionExtension] });
 
 // GitHub renders leading YAML frontmatter — a `---` fenced block at the very
 // top of the file — as a borderless key/value table above the document body,

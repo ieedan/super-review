@@ -35,9 +35,11 @@ import type {
 	GithubAccount,
 	GithubAuthError,
 	GithubOrg,
+	IssueReference,
 	LastCommit,
 	LocalComment,
 	LocalCommentAuthor,
+	MentionableUser,
 	LocalOnlyBranch,
 	NewLocalCommentInput,
 	ManagedStash,
@@ -228,6 +230,10 @@ const api: PreloadAPI = {
 		cancelDeviceFlow: () => ipcRenderer.invoke('github:cancelDeviceFlow') as Promise<void>,
 		listPRs: (repoId, page, source) =>
 			ipcRenderer.invoke('github:listPRs', repoId, page, source) as Promise<PRSummary[]>,
+		listMentionableUsers: (repoId) =>
+			ipcRenderer.invoke('github:listMentionableUsers', repoId) as Promise<MentionableUser[]>,
+		listIssueReferences: (repoId, query) =>
+			ipcRenderer.invoke('github:listIssueReferences', repoId, query) as Promise<IssueReference[]>,
 		resolveCommitAuthors: (repoId, candidates) =>
 			ipcRenderer.invoke('github:resolveCommitAuthors', repoId, candidates) as Promise<
 				Record<string, CommitAuthorIdentity>

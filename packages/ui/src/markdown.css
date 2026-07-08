@@ -288,3 +288,19 @@
 .markdown-body del {
 	text-decoration: line-through;
 }
+
+/* Inline @mention avatar (see markdown.ts / carta.ts autolinking). `em`-sized so
+   it tracks the surrounding text; overrides the width/height attributes. */
+.markdown-body .gh-mention-avatar {
+	display: inline-block;
+	width: 1.1em;
+	height: 1.1em;
+	margin: 0 0.15em -0.2em 0;
+	border-radius: 999px;
+	vertical-align: baseline;
+}
+
+.markdown-body a.gh-mention {
+	font-weight: 600;
+	text-decoration: none;
+}

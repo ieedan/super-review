@@ -966,7 +966,7 @@ function defaultPRSource(repo: RepoInfo | null): PRSource {
 // The GitHub repo that "View on GitHub" / "Create Issue" should target: the
 // upstream parent for a fork contributing to it, otherwise the repo's own remote.
 // null when there's no GitHub remote.
-function githubHostRepo(): { owner: string; repo: string } | null {
+export function githubHostRepo(): { owner: string; repo: string } | null {
 	const repo = app.activeRepo;
 	if (repo?.upstreamOwner && repo.upstreamRepo) {
 		return { owner: repo.upstreamOwner, repo: repo.upstreamRepo };

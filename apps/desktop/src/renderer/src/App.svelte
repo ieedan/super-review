@@ -39,6 +39,8 @@
 	import { initDiffHighlighter } from '@super-review/ui/diff-highlighter';
 	import { initDiffWorkerPool } from '@super-review/ui/diff-worker-pool';
 	import { setAnimations } from '@super-review/ui/hooks/use-animations.svelte';
+	import { setMarkdownRepoContext } from '@super-review/ui/markdown';
+	import { githubHostRepo } from '@super-review/ui/store.svelte';
 	import { HOTKEY_ACTIONS, matchesHotkey, type HotkeyAction } from '@shared/hotkeys';
 	import { isEditableTarget } from '@super-review/ui/utils';
 	import { Agentation, type AnnotationProps } from 'sv-agentation';
@@ -56,6 +58,12 @@
 	// shadcn-svelte primitives can opt in/out of their motion classes via
 	// useAnimations(). Reactive to the setting; defaults to 'accents'.
 	setAnimations(() => app.animations);
+
+	// Point `#issue` / `@mention` autolinking (renderMarkdown) at the active
+	// repo's GitHub host — the upstream parent for a fork, else its own remote —
+	// so rendered comment bodies link references the way GitHub does. Reactive to
+	// the repo switch (and to upstream resolution, which updates activeRepo).
+	$effect(() => setMarkdownRepoContext(githubHostRepo()));
 
 	const ORIGIN_POLL_MS = 2 * 60 * 1000;
 	const TICK_MS = 30 * 1000;

@@ -254,6 +254,99 @@ html.dark .carta-theme__github .carta-input .shiki {
 	text-overflow: ellipsis;
 }
 
+/* Plugin: GitHub @mention / #reference typeahead popup (GithubSuggest.svelte).
+   Teleported to <body> by carta.bindToCaret, so these must be global, themed
+   rules — component-scoped styles wouldn't reach the portaled element. */
+.carta-theme__github.carta-gh-suggest {
+	width: 22rem;
+	max-height: 15rem;
+	overflow-y: auto;
+	border: 1px solid var(--color-border);
+	border-radius: 0.375rem;
+	font-family: inherit;
+	background-color: var(--color-popover);
+	color: var(--color-popover-foreground);
+	padding: 0.25rem;
+	scroll-padding: 6px;
+	box-shadow:
+		0 4px 6px -1px rgb(0 0 0 / 0.1),
+		0 2px 4px -2px rgb(0 0 0 / 0.1);
+	z-index: 50;
+}
+
+.carta-theme__github.carta-gh-suggest button {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	width: 100%;
+	padding: 0.375rem 0.5rem;
+	border: 0;
+	border-radius: 0.25rem;
+	background: none;
+	color: inherit;
+	text-align: left;
+	font-size: 0.85rem;
+	line-height: 1.2;
+	cursor: pointer;
+}
+
+.carta-theme__github.carta-gh-suggest button.carta-active,
+.carta-theme__github.carta-gh-suggest button:hover {
+	background: var(--color-accent);
+}
+
+.carta-theme__github.carta-gh-suggest .carta-gh-avatar {
+	width: 1.25rem;
+	height: 1.25rem;
+	border-radius: 999px;
+	flex-shrink: 0;
+	background: var(--color-muted);
+}
+
+.carta-theme__github.carta-gh-suggest .carta-gh-icon {
+	width: 1rem;
+	height: 1rem;
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.carta-theme__github.carta-gh-suggest .carta-gh-open {
+	color: var(--color-success, #1a7f37);
+}
+.carta-theme__github.carta-gh-suggest .carta-gh-closed {
+	color: var(--color-destructive, #cf222e);
+}
+.carta-theme__github.carta-gh-suggest .carta-gh-merged {
+	color: #8250df;
+}
+
+.carta-theme__github.carta-gh-suggest .carta-gh-primary {
+	flex-shrink: 0;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.carta-theme__github.carta-gh-suggest .carta-gh-secondary {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: var(--color-muted-foreground);
+}
+
+/* Inline @mention avatar in the Preview tab. Mirrors the markdown.css rule so
+   the composer preview is styled even when no posted comment (which imports
+   markdown.css) is on the page. */
+.carta-theme__github .gh-mention-avatar {
+	display: inline-block;
+	width: 1.1em;
+	height: 1.1em;
+	margin: 0 0.15em -0.2em 0;
+	border-radius: 999px;
+	vertical-align: baseline;
+}
+
 /* Dark mode: flip Shiki's dual-theme code colors to the dark variant. The
    preview is highlighted with the user's configured diff theme as a light/dark
    pair (see carta.ts), so Shiki emits each token's light color inline plus a

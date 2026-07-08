@@ -17,3 +17,7 @@ apps/docs/build
 
 # Storybook (packages/storybook) build output
 storybook-static
+
+# Vitest browser-mode failure artifacts
+__screenshots__
+.vitest-attachments
