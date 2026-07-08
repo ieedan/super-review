@@ -1,5 +1,15 @@
 # @super-review/ui
 
+## 0.0.6
+
+### Patch Changes
+
+- [`03fcc5c`](https://github.com/ieedan/super-review/commit/03fcc5c691671164789202aac2f95a58ce216c85) Thanks [@ieedan](https://github.com/ieedan)! - fix: render checkboxes in markdown correctly
+
+- [`d87527a`](https://github.com/ieedan/super-review/commit/d87527ae68ca38979f4b06f1419df2a0396c2479) Thanks [@ieedan](https://github.com/ieedan)! - fix: geist mono ligatures & more
+- Updated dependencies [[`d87527a`](https://github.com/ieedan/super-review/commit/d87527ae68ca38979f4b06f1419df2a0396c2479)]:
+  - @super-review/core@0.1.12
+
 ## 0.0.5
 
 ### Patch Changes

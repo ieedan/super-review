@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.1.12
+
+### Patch Changes
+
+- [`d87527a`](https://github.com/ieedan/super-review/commit/d87527ae68ca38979f4b06f1419df2a0396c2479) Thanks [@ieedan](https://github.com/ieedan)! - fix: geist mono ligatures & more
+
 ## 0.1.11
 
 ### Patch Changes
