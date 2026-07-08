@@ -16,6 +16,7 @@ import type {
 	CreateRepoOptions,
 	DiffContext,
 	DiffData,
+	DiscardTarget,
 	FileStatus,
 	GitIdentity,
 	LocalOnlyBranch,
@@ -267,6 +268,7 @@ export const updateFromUpstream = lockWrite(updateFromUpstreamImpl);
 export const push = lockWrite(pushImpl);
 export const stageFile = lockWrite(stageFileImpl);
 export const discardChanges = lockWrite(discardChangesImpl);
+export const discardFiles = lockWrite(discardFilesImpl);
 export const discardLines = lockWrite(discardLinesImpl);
 export const continueMerge = lockWrite(continueMergeImpl);
 export const abortMerge = lockWrite(abortMergeImpl);
@@ -2314,24 +2316,63 @@ async function discardChangesImpl(
 	oldPath?: string,
 	trash?: (absPath: string) => Promise<void>
 ): Promise<void> {
+	await discardFilesImpl(repoPath, [{ path: filePath, oldPath }], trash);
+}
+
+// Cap how many paths we hand a single git invocation so a large "discard all"
+// can't overflow the OS command-line argument limit (ARG_MAX). Well below any
+// real limit; just splits the batch into a handful of commands at worst.
+const DISCARD_PATH_BATCH = 500;
+
+// Bulk sibling of discardChanges: revert/trash a whole set of files in a couple
+// of batched git commands under one index lock, instead of a reset+checkout per
+// file. Tracked files are reset to HEAD; new/untracked files go to `trash` (or
+// are removed when no callback is given). Each file's `oldPath` (its pre-rename
+// path) is restored too. See discardChangesImpl's doc comment for the rationale.
+async function discardFilesImpl(
+	repoPath: string,
+	files: DiscardTarget[],
+	trash?: (absPath: string) => Promise<void>
+): Promise<void> {
 	const git = openGit(repoPath);
-	const restoreOrTrash = async (relPath: string): Promise<void> => {
-		const inHead = await pathExistsInHead(git, relPath);
-		// Unstage first so the worktree restore (or trash) isn't left partial.
-		await git.raw(['reset', '-q', 'HEAD', '--', relPath]).catch(() => {});
-		if (inHead) {
-			await git.raw(['checkout', 'HEAD', '--', relPath]);
+	// Expand renames and dedupe (multi-select can overlap on a shared oldPath).
+	const paths = new Set<string>();
+	for (const f of files) {
+		paths.add(f.path);
+		if (f.oldPath && f.oldPath !== f.path) paths.add(f.oldPath);
+	}
+	if (paths.size === 0) return;
+	const all = [...paths];
+
+	// Partition HEAD-tracked (revert) from new/untracked (trash) up front. `reset`
+	// never rewrites HEAD, so this membership stays valid across the whole batch.
+	const inHead = await Promise.all(all.map((p) => pathExistsInHead(git, p)));
+	const tracked = all.filter((_, i) => inHead[i]);
+	const untracked = all.filter((_, i) => !inHead[i]);
+
+	// Unstage everything first so a worktree restore (or trash) is never partial.
+	for (const batch of chunkPaths(all)) {
+		await git.raw(['reset', '-q', 'HEAD', '--', ...batch]).catch(() => {});
+	}
+	for (const batch of chunkPaths(tracked)) {
+		await git.raw(['checkout', 'HEAD', '--', ...batch]);
+	}
+	for (const rel of untracked) {
+		const absPath = path.join(repoPath, rel);
+		if (trash) {
+			await trash(absPath).catch(() => {});
 		} else {
-			const absPath = path.join(repoPath, relPath);
-			if (trash) {
-				await trash(absPath).catch(() => {});
-			} else {
-				await fs.rm(absPath, { force: true }).catch(() => {});
-			}
+			await fs.rm(absPath, { force: true }).catch(() => {});
 		}
-	};
-	await restoreOrTrash(filePath);
-	if (oldPath && oldPath !== filePath) await restoreOrTrash(oldPath);
+	}
+}
+
+function chunkPaths(paths: string[]): string[][] {
+	const out: string[][] = [];
+	for (let i = 0; i < paths.length; i += DISCARD_PATH_BATCH) {
+		out.push(paths.slice(i, i + DISCARD_PATH_BATCH));
+	}
+	return out;
 }
 
 // Discard a subset of a file's working-tree changes (a hunk or a single line)

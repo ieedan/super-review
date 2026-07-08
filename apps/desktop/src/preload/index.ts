@@ -141,6 +141,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:stageFile', repoId, filePath) as Promise<void>,
 		discardChanges: (repoId, filePath, oldPath) =>
 			ipcRenderer.invoke('git:discardChanges', repoId, filePath, oldPath) as Promise<void>,
+		discardFiles: (repoId, files) =>
+			ipcRenderer.invoke('git:discardFiles', repoId, files) as Promise<void>,
 		discardLines: (repoId, filePath, patch) =>
 			ipcRenderer.invoke('git:discardLines', repoId, filePath, patch) as Promise<void>,
 		continueMerge: (repoId) =>

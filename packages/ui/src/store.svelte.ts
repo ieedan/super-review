@@ -2934,6 +2934,66 @@ function clampWindowDimension(value: number, min: number, fallback: number): num
 	return Math.max(min, Math.floor(n));
 }
 
+// Surgically remove one or more discarded files from the live state without
+// re-fetching the whole list (which swaps in fresh ChangedFile objects and makes
+// every diff section re-render — a visible flash). Shared by single-file discard
+// and bulk discard so both update the sidebar, selection, counts, and caches in
+// exactly the same way. The git work has already happened; this is state-only.
+function dropDiscardedFilesFromState(repoId: string, paths: string[]): void {
+	if (paths.length === 0) return;
+	const drop = new Set(paths);
+
+	// If the open file is being discarded, move the selection to the nearest
+	// surviving neighbor (next, else previous) so the diff view lands somewhere
+	// sensible instead of going blank.
+	if (app.selectedFile && drop.has(app.selectedFile)) {
+		const selIdx = app.changedFiles.findIndex((f) => f.path === app.selectedFile);
+		let next: string | null = null;
+		for (let i = selIdx + 1; i < app.changedFiles.length && next === null; i++) {
+			if (!drop.has(app.changedFiles[i].path)) next = app.changedFiles[i].path;
+		}
+		for (let i = selIdx - 1; i >= 0 && next === null; i--) {
+			if (!drop.has(app.changedFiles[i].path)) next = app.changedFiles[i].path;
+		}
+		app.selectedFile = next;
+	}
+
+	const remaining = app.changedFiles.filter((f) => !drop.has(f.path));
+	app.changedFiles = remaining;
+	// SvelteSet — delete in place (a no-op when the path isn't present).
+	for (const p of paths) {
+		app.seenFiles.delete(p);
+		app.collapsedFiles.delete(p);
+	}
+
+	// Discard only happens in the working-tree context, where the file list IS
+	// the unstaged set — keep the tab badge and dirty flag in step.
+	const ctx = $state.snapshot(app.diffContext) as DiffContext;
+	if (ctx.kind === 'workingTree') {
+		app.unstagedFileCount = remaining.length;
+		setRepoDirty(repoId, remaining.length > 0);
+	}
+
+	// Drop the stale cached diffs and prune the per-context files cache so a tab
+	// switch (which hydrates from cache) can't resurrect a discarded file.
+	for (const p of paths) diffCache.delete(diffCacheKeyFor(repoId, ctx, p));
+	const cached = filesCache.get(filesCacheKey(repoId, ctx));
+	if (cached) {
+		cached.changedFiles = cached.changedFiles.filter((f) => !drop.has(f.path));
+		for (const p of paths) {
+			cached.seenFiles.delete(p);
+			cached.collapsedFiles.delete(p);
+		}
+		if (cached.selectedFile && drop.has(cached.selectedFile)) {
+			cached.selectedFile = app.selectedFile;
+		}
+	}
+
+	// Push status can shift (e.g. discarding leaves the tree clean); refresh it
+	// in the background since it only feeds the header, not the diff/sidebar.
+	void refreshPushStatus();
+}
+
 export const actions = {
 	openChangesetDialog(): void {
 		app.changesetDialogOpen = true;
@@ -6208,18 +6268,12 @@ export const actions = {
 				await actions.discardFile(file.path, file.oldPath);
 				break;
 			case 'discardSelected': {
-				// Snapshot the targets before discarding — discardFile mutates
-				// changedFiles as it goes. Discard them one at a time: each call runs
-				// `git reset` + `git checkout HEAD`, both of which take the repo's
-				// `.git/index.lock`. Firing them concurrently races for that lock and
-				// fails with "Unable to create index.lock: File exists". (The main
-				// process now also serializes git writes per repo, but keeping this
-				// loop sequential avoids piling up a queue of blocked writes and keeps
-				// the per-file state updates ordered.)
+				// Discard the whole selection in one batched git operation (a couple
+				// of commands under a single index lock) rather than one reset+checkout
+				// per file — the old per-file loop made the files disappear one at a
+				// time and contended for `.git/index.lock`.
 				const targets = app.changedFiles.filter((f) => app.selectedFiles.has(f.path));
-				for (const f of targets) {
-					await actions.discardFile(f.path, f.oldPath);
-				}
+				await actions.discardFiles(targets);
 				actions.clearSelectedFiles();
 				break;
 			}
@@ -6302,13 +6356,9 @@ export const actions = {
 	},
 
 	// Discard a file's changes via the file-list context menu. Tracked files are
-	// reverted to HEAD; new/untracked files are moved to the trash.
-	//
-	// Rather than re-fetching the whole file list (which swaps in fresh
-	// ChangedFile objects and makes every diff section re-render — a visible
-	// flash), we surgically drop just the discarded file: its sidebar row and
-	// its diff section. Every other file keeps its identity, so nothing else
-	// re-renders.
+	// reverted to HEAD; new/untracked files are moved to the trash. The live state
+	// is updated surgically (see dropDiscardedFilesFromState) so only the discarded
+	// file's row and diff section drop out; everything else keeps its identity.
 	async discardFile(filePath: string, oldPath?: string): Promise<void> {
 		if (!app.activeRepo) return;
 		const repoId = app.activeRepo.id;
@@ -6319,46 +6369,30 @@ export const actions = {
 			return;
 		}
 
-		const idx = app.changedFiles.findIndex((f) => f.path === filePath);
-		if (idx === -1) return; // already gone — nothing to update
-		const remaining = app.changedFiles.filter((f) => f.path !== filePath);
+		if (app.changedFiles.findIndex((f) => f.path === filePath) === -1) return; // already gone
+		dropDiscardedFilesFromState(repoId, [filePath]);
+	},
 
-		// If the discarded file was the open one, move the selection to a neighbor
-		// (next, else previous) so the diff view lands somewhere sensible.
-		if (app.selectedFile === filePath) {
-			const next = remaining[idx] ?? remaining[idx - 1] ?? null;
-			app.selectedFile = next?.path ?? null;
+	// Discard several files at once (multi-select bulk discard). One batched IPC
+	// call reverts/trashes the whole set under a single index lock, then the state
+	// drops them all in one pass — so the sidebar rows disappear together instead
+	// of one at a time.
+	async discardFiles(targets: ChangedFile[]): Promise<void> {
+		if (!app.activeRepo || targets.length === 0) return;
+		const repoId = app.activeRepo.id;
+		try {
+			await window.api.git.discardFiles(
+				repoId,
+				targets.map((f) => ({ path: f.path, oldPath: f.oldPath }))
+			);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return;
 		}
-
-		app.changedFiles = remaining;
-		// SvelteSet — delete in place (a no-op when the path isn't present).
-		app.seenFiles.delete(filePath);
-		app.collapsedFiles.delete(filePath);
-
-		// Discard only happens in the working-tree context, where the file list IS
-		// the unstaged set — keep the tab badge in step.
-		const ctx = $state.snapshot(app.diffContext) as DiffContext;
-		if (ctx.kind === 'workingTree') {
-			app.unstagedFileCount = remaining.length;
-			setRepoDirty(repoId, remaining.length > 0);
-		}
-
-		// Drop the stale cached diff and prune the per-context files cache so a tab
-		// switch (which hydrates from cache) can't resurrect the discarded file.
-		diffCache.delete(diffCacheKeyFor(repoId, ctx, filePath));
-		const cached = filesCache.get(filesCacheKey(repoId, ctx));
-		if (cached) {
-			cached.changedFiles = cached.changedFiles.filter((f) => f.path !== filePath);
-			cached.seenFiles.delete(filePath);
-			cached.collapsedFiles.delete(filePath);
-			if (cached.selectedFile === filePath) {
-				cached.selectedFile = app.selectedFile;
-			}
-		}
-
-		// Push status can shift (e.g. discarding leaves the tree clean); refresh it
-		// in the background since it only feeds the header, not the diff/sidebar.
-		void refreshPushStatus();
+		dropDiscardedFilesFromState(
+			repoId,
+			targets.map((f) => f.path)
+		);
 	},
 
 	// Discard every uncommitted working-tree change (GitHub Desktop's "Discard
@@ -6374,9 +6408,10 @@ export const actions = {
 			const targets = await window.api.git.listChangedFiles(repoId, {
 				kind: 'workingTree'
 			});
-			for (const f of targets) {
-				await window.api.git.discardChanges(repoId, f.path, f.oldPath);
-			}
+			await window.api.git.discardFiles(
+				repoId,
+				targets.map((f) => ({ path: f.path, oldPath: f.oldPath }))
+			);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			return false;

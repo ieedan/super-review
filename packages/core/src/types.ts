@@ -1185,6 +1185,13 @@ export interface CommitFileSelection {
 	patch?: string;
 }
 
+// One file to discard. `oldPath` is the pre-rename path, so discarding a rename
+// also restores the original. Shared by the single- and bulk-discard APIs.
+export interface DiscardTarget {
+	path: string;
+	oldPath?: string;
+}
+
 export interface LastCommit {
 	hash: string;
 	subject: string;
@@ -1822,6 +1829,10 @@ export interface PreloadAPI {
 		// Discard a file's working-tree + staged changes. `oldPath` is the
 		// pre-rename path, so discarding a rename also restores the original.
 		discardChanges(repoId: string, filePath: string, oldPath?: string): Promise<void>;
+		// Discard a whole set of files' working-tree + staged changes in one batched
+		// operation (a couple of git commands under a single index lock) rather than
+		// one call per file. Same semantics as discardChanges per file.
+		discardFiles(repoId: string, files: DiscardTarget[]): Promise<void>;
 		// Discard a subset of a file's working-tree changes (a hunk or one line).
 		// `patch` is a working-tree-based unified diff (see buildDiscardPatch) that
 		// removes the discarded additions and restores the discarded deletions.

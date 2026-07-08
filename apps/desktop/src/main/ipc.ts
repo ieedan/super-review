@@ -24,6 +24,7 @@ import type {
 	CommitResult,
 	DeviceFlowStart,
 	DeviceFlowStatus,
+	DiscardTarget,
 	FeedbackInput,
 	FeedbackResult,
 	DiffContext,
@@ -98,6 +99,7 @@ import {
 	createRepo,
 	deleteBranch,
 	discardChanges,
+	discardFiles,
 	discardManagedStash,
 	findManagedStash,
 	restoreManagedStash,
@@ -866,6 +868,15 @@ export function registerIpc(): void {
 			// app supplies `shell.trashItem` to keep discards of new/untracked files
 			// recoverable (move to trash) rather than hard-deleting them.
 			discardChanges(repoOrThrow(repoId).path, filePath, oldPath, (p) =>
+				import('electron').then(({ shell }) => shell.trashItem(p))
+			)
+	);
+
+	ipcMain.handle(
+		'git:discardFiles',
+		async (_e, repoId: string, files: DiscardTarget[]): Promise<void> =>
+			// Same OS-trash injection as git:discardChanges, applied across the batch.
+			discardFiles(repoOrThrow(repoId).path, files, (p) =>
 				import('electron').then(({ shell }) => shell.trashItem(p))
 			)
 	);
