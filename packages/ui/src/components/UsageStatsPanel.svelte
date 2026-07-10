@@ -195,21 +195,23 @@
 	// the Overview it breaks down every metric with activity that day, so the
 	// heatmap is legible without a per-metric label.
 	type TipRow = { label: string; value: string };
-	function dayTooltip(date: Date): { when: string; rows: TipRow[] } {
+	function dayTooltip(date: Date): { when: string; rows: TipRow[]; before: boolean } {
 		const key = dayKey(date);
 		const when = date.toLocaleDateString(undefined, {
 			month: 'short',
 			day: 'numeric',
 			year: 'numeric'
 		});
+		const before = isBeforeStart(date);
+		if (before) return { when, rows: [], before };
 		if (!isOverview) {
 			const n = source.daily[view as StatMetric]?.[key] ?? 0;
-			return { when, rows: [{ label: meta?.label ?? '', value: fmt(n) }] };
+			return { when, rows: [{ label: meta?.label ?? '', value: fmt(n) }], before };
 		}
 		const rows = METRICS.map((m) => ({ m, n: source.daily[m.key]?.[key] ?? 0 }))
 			.filter((x) => x.n > 0)
 			.map((x) => ({ label: x.m.label, value: fmt(x.n) }));
-		return { when, rows };
+		return { when, rows, before };
 	}
 
 	// A single shared tooltip that follows the hovered cell (one element, not one
@@ -221,6 +223,7 @@
 		y: number;
 		when: string;
 		rows: TipRow[];
+		before: boolean;
 		align: 'left' | 'center' | 'right';
 	} | null>(null);
 	function showTip(e: PointerEvent, date: Date): void {
@@ -232,9 +235,20 @@
 		tip = { x, y: e.clientY - r.top, ...dayTooltip(date), align };
 	}
 
+	// The first day this repo recorded anything. Days before it can't hold
+	// activity, so they're drawn fainter than an ordinary empty day: without this
+	// a young repo's whole grid reads as one long quiet stretch, with no hint of
+	// where the record actually begins. Day keys are `YYYY-MM-DD`, so they compare
+	// as strings. Null when the repo has no activity at all (nothing to dim).
+	const firstUsedDay = $derived(
+		source.firstUsedAt !== null ? dayKey(new Date(source.firstUsedAt)) : null
+	);
+	const isBeforeStart = (date: Date) => firstUsedDay !== null && dayKey(date) < firstUsedDay;
+
 	// Shade relative to the busiest day so both small counts (PRs) and large ones
 	// (lines) read well, rather than fixed thresholds tuned for commits.
-	function cellFill(count: number): string {
+	function cellFill(count: number, date: Date): string {
+		if (isBeforeStart(date)) return 'color-mix(in oklab, var(--color-muted) 40%, transparent)';
 		if (count <= 0 || bestDay <= 0) return 'var(--color-muted)';
 		const r = count / bestDay;
 		if (r <= 0.25) return 'color-mix(in oklab, var(--color-primary) 25%, var(--color-muted))';
@@ -380,7 +394,7 @@
 											width={Math.max(0, cellSize[0] - 2)}
 											height={Math.max(0, cellSize[1] - 2)}
 											rx="2"
-											style="fill: {cellFill(cell.data?.count ?? 0)}"
+											style="fill: {cellFill(cell.data?.count ?? 0, cell.data.date)}"
 											onpointermove={(e) => showTip(e, cell.data.date)}
 										></rect>
 									{/each}
@@ -412,7 +426,9 @@
 							{/each}
 						</div>
 					{:else}
-						<div class="mt-1 text-muted-foreground">No activity</div>
+						<div class="mt-1 text-muted-foreground">
+							{tip.before ? 'Before this repo was tracked' : 'No activity'}
+						</div>
 					{/if}
 				</div>
 			{/if}

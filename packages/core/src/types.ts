@@ -787,11 +787,23 @@ export type FileContextMenuAction =
 	| 'excludeSelected'
 	| 'markSelectedSeen'
 	| 'markSelectedUnseen'
+	// Any of the add-to-.gitignore items (file / folder / extension / selection).
+	// They differ only in which patterns they append, so they share one action and
+	// the result carries the chosen patterns.
+	| 'ignore'
 	| 'copyPath'
 	| 'copyRelativePath'
 	| 'reveal'
 	| 'openInEditor'
 	| 'openDefault';
+
+// What the file context menu resolves to. `null` (from the IPC) means dismissed.
+// Every action but `ignore` is fully described by its name; `ignore` also carries
+// the exact .gitignore patterns the chosen item appends, since one action backs
+// several items (this file, an ancestor folder, an extension, the selection).
+export type FileContextMenuResult =
+	| { action: Exclude<FileContextMenuAction, 'ignore'> }
+	| { action: 'ignore'; patterns: string[] };
 
 // Action the staging gutter's native discard menu can return. `null` (from the
 // IPC) means the menu was dismissed; `discard` confirms the discard. The renderer
@@ -1108,6 +1120,23 @@ export interface FileContextMenuParams {
 	// Whether to offer commit Include/Exclude items — only in the Unstaged tab,
 	// where the file list drives which changes go into the next commit.
 	canInclude: boolean;
+	// Ready-made .gitignore patterns for the add-to-.gitignore items. The renderer
+	// builds and escapes them (and drops .gitignore itself, which is never worth
+	// ignoring); the main process only turns them into labelled menu items. An
+	// empty array / null hides the corresponding item.
+	//
+	// The escaped repo-relative path of the right-clicked file ("Ignore File").
+	ignoreFile: string | null;
+	// Its ancestor directories, deepest first ("/apps/desktop/src", "/apps/desktop",
+	// ...), shown as the "Ignore Folder" submenu.
+	ignoreFolders: string[];
+	// Distinct extensions across the targeted files, each with its leading dot
+	// (".ts"), capped like GitHub Desktop at five. Each becomes an "Ignore All .ts
+	// Files" item appending `*.ts`.
+	ignoreExtensions: string[];
+	// The escaped paths of every ignorable file in a multi-selection, backing the
+	// "Ignore N Selected Files" item.
+	ignoreSelected: string[];
 }
 
 // Which editors/terminals make sense to offer per OS. The Settings UI only
@@ -1837,6 +1866,10 @@ export interface PreloadAPI {
 		// `patch` is a working-tree-based unified diff (see buildDiscardPatch) that
 		// removes the discarded additions and restores the discarded deletions.
 		discardLines(repoId: string, filePath: string, patch: string): Promise<void>;
+		// Append one or more patterns to the repo-root .gitignore (creating it if
+		// missing), skipping any already present. `patterns` are ready-made
+		// gitignore lines: an escaped repo-relative file path, or `*.ext`.
+		addToGitignore(repoId: string, patterns: string[]): Promise<void>;
 		continueMerge(repoId: string): Promise<PullPushResult>;
 		abortMerge(repoId: string): Promise<void>;
 		// Stash management (GitHub-Desktop parity): one managed stash per branch,
@@ -2297,7 +2330,7 @@ export interface PreloadAPI {
 	menu: {
 		// Pop up a native OS context menu for a file row. Resolves to the chosen
 		// action, or null when the menu is dismissed without a selection.
-		showFileContextMenu(params: FileContextMenuParams): Promise<FileContextMenuAction | null>;
+		showFileContextMenu(params: FileContextMenuParams): Promise<FileContextMenuResult | null>;
 		// Pop up a native OS context menu for a changed diff line. Resolves to the
 		// chosen action, or null when the menu is dismissed without a selection.
 		showDiffLineContextMenu(

@@ -2939,6 +2939,61 @@ function clampWindowDimension(value: number, min: number, fallback: number): num
 // every diff section re-render — a visible flash). Shared by single-file discard
 // and bulk discard so both update the sidebar, selection, counts, and caches in
 // exactly the same way. The git work has already happened; this is state-only.
+// The name of the file git reads ignore rules from — never worth ignoring, so
+// it's excluded from every add-to-.gitignore item (as GitHub Desktop does).
+const GITIGNORE_FILE_NAME = '.gitignore';
+
+function baseName(filePath: string): string {
+	return filePath.split('/').pop() ?? filePath;
+}
+
+// Whether any of these paths is a .gitignore (git honours one in any directory,
+// not just the repo root). Changing one rewrites which paths git ignores, so a
+// surgical state update can't stay correct: files the old rules hid may appear,
+// and files the new rules hide may vanish. Callers refresh the whole list.
+function touchesGitignore(paths: (string | undefined)[]): boolean {
+	return paths.some((p) => p !== undefined && baseName(p) === GITIGNORE_FILE_NAME);
+}
+
+// The extension of a repo-relative path *including* the leading dot (e.g. ".md"),
+// or null when the file has none or is a dotfile like `.gitignore`. Drives the
+// "Ignore All .md Files" menu item and its `*.md` pattern.
+function fileExtension(filePath: string): string | null {
+	const base = baseName(filePath);
+	const dot = base.lastIndexOf('.');
+	// dot === 0 is a dotfile (no extension); dot === -1 is no dot at all.
+	if (dot <= 0 || dot === base.length - 1) return null;
+	return base.slice(dot);
+}
+
+// The ancestor directories of a repo-relative path, deepest first and anchored to
+// the repo root ("/a/b", "/a"), each usable as a .gitignore pattern that ignores
+// the whole folder. Empty for a file at the repo root.
+function ancestorFolderPatterns(filePath: string): string[] {
+	const segments = filePath.split('/').slice(0, -1);
+	return segments.map(
+		(_, i) =>
+			`/${segments
+				.slice(0, segments.length - i)
+				.map(escapeGitignoreSegment)
+				.join('/')}`
+	);
+}
+
+// Escape the glob metacharacters (`\ * ? [ ]`) in one path segment so a name that
+// happens to contain them matches literally rather than as a pattern.
+function escapeGitignoreSegment(segment: string): string {
+	return segment.replace(/[\\*?[\]]/g, '\\$&');
+}
+
+// Turn a repo-relative file path into a literal .gitignore pattern that matches
+// exactly that file. Segments are escaped, and a leading `#` or `!` (comment /
+// negation) is escaped too so the line isn't reinterpreted.
+function fileToGitignorePattern(filePath: string): string {
+	const escaped = filePath.split('/').map(escapeGitignoreSegment).join('/');
+	return escaped.startsWith('#') || escaped.startsWith('!') ? `\\${escaped}` : escaped;
+}
+
 function dropDiscardedFilesFromState(repoId: string, paths: string[]): void {
 	if (paths.length === 0) return;
 	const drop = new Set(paths);
@@ -6255,15 +6310,35 @@ export const actions = {
 		// so the count alone decides single vs. bulk.
 		const selectedPaths = [...app.selectedFiles];
 		const isBulk = selectedPaths.length > 1 && app.selectedFiles.has(file.path);
-		const action = await window.api.menu.showFileContextMenu({
+		// Add-to-.gitignore items apply to the working tree only, and never to
+		// .gitignore itself. Extensions are gathered across the whole target set
+		// (the selection in bulk, else the one file) and capped at five, matching
+		// GitHub Desktop.
+		const isWorkingTree = app.diffContext.kind === 'workingTree';
+		const targets = isBulk ? app.changedFiles.filter((f) => app.selectedFiles.has(f.path)) : [file];
+		const ignorable = isWorkingTree
+			? targets.filter((f) => baseName(f.path) !== GITIGNORE_FILE_NAME)
+			: [];
+		const ignoreExtensions = ignorable
+			.map((f) => fileExtension(f.path))
+			.filter((e, i, all): e is string => e !== null && all.indexOf(e) === i)
+			.slice(0, 5);
+		const canIgnoreThisFile = ignorable.some((f) => f.path === file.path);
+
+		const result = await window.api.menu.showFileContextMenu({
 			filePath: file.path,
-			canDiscard: app.diffContext.kind === 'workingTree',
+			canDiscard: isWorkingTree,
 			canInclude: app.contextTab === 'unstaged',
+			ignoreFile: !isBulk && canIgnoreThisFile ? fileToGitignorePattern(file.path) : null,
+			ignoreFolders: !isBulk && canIgnoreThisFile ? ancestorFolderPatterns(file.path) : [],
+			ignoreExtensions,
+			ignoreSelected: isBulk ? ignorable.map((f) => fileToGitignorePattern(f.path)) : [],
 			selectedCount: isBulk ? selectedPaths.length : 1,
 			editorLabel: editor ? EDITOR_LABELS[editor] : null,
 			revealLabel
 		});
-		switch (action) {
+		if (!result) return;
+		switch (result.action) {
 			case 'discard':
 				await actions.discardFile(file.path, file.oldPath);
 				break;
@@ -6282,6 +6357,12 @@ export const actions = {
 				break;
 			case 'excludeSelected':
 				actions.setFilesIncludedForCommit(selectedPaths, false);
+				break;
+			case 'ignore':
+				// The chosen item carries its own patterns (this file, a folder, an
+				// extension, or the whole selection).
+				await actions.addToGitignore(result.patterns);
+				if (isBulk) actions.clearSelectedFiles();
 				break;
 			case 'markSelectedSeen':
 				// toggleSeen mutates seenFiles synchronously before its await, so the
@@ -6358,7 +6439,8 @@ export const actions = {
 	// Discard a file's changes via the file-list context menu. Tracked files are
 	// reverted to HEAD; new/untracked files are moved to the trash. The live state
 	// is updated surgically (see dropDiscardedFilesFromState) so only the discarded
-	// file's row and diff section drop out; everything else keeps its identity.
+	// file's row and diff section drop out; everything else keeps its identity —
+	// except for a .gitignore, whose new rules can add or remove other rows.
 	async discardFile(filePath: string, oldPath?: string): Promise<void> {
 		if (!app.activeRepo) return;
 		const repoId = app.activeRepo.id;
@@ -6369,14 +6451,21 @@ export const actions = {
 			return;
 		}
 
-		if (app.changedFiles.findIndex((f) => f.path === filePath) === -1) return; // already gone
-		dropDiscardedFilesFromState(repoId, [filePath]);
+		// Drop the row immediately (skipped when it's already gone), then reconcile
+		// the rest of the list if the ignore rules just changed underneath it.
+		if (app.changedFiles.some((f) => f.path === filePath)) {
+			dropDiscardedFilesFromState(repoId, [filePath]);
+		}
+		if (touchesGitignore([filePath, oldPath])) {
+			await Promise.all([refreshFiles(), refreshPushStatus()]);
+		}
 	},
 
 	// Discard several files at once (multi-select bulk discard). One batched IPC
 	// call reverts/trashes the whole set under a single index lock, then the state
 	// drops them all in one pass — so the sidebar rows disappear together instead
-	// of one at a time.
+	// of one at a time. A .gitignore in the batch also forces a full refresh, since
+	// its restored rules can add or remove rows beyond the discarded set.
 	async discardFiles(targets: ChangedFile[]): Promise<void> {
 		if (!app.activeRepo || targets.length === 0) return;
 		const repoId = app.activeRepo.id;
@@ -6393,6 +6482,25 @@ export const actions = {
 			repoId,
 			targets.map((f) => f.path)
 		);
+		if (touchesGitignore(targets.flatMap((f) => [f.path, f.oldPath]))) {
+			await Promise.all([refreshFiles(), refreshPushStatus()]);
+		}
+	},
+
+	// Append patterns to the repo's .gitignore (GitHub Desktop's "Ignore file" /
+	// "Ignore all .ext files"). Newly-ignored untracked files drop out of the
+	// list and .gitignore shows up as its own change, so refresh the whole list
+	// afterward rather than surgically.
+	async addToGitignore(patterns: string[]): Promise<void> {
+		if (!app.activeRepo || patterns.length === 0) return;
+		const repoId = app.activeRepo.id;
+		try {
+			await window.api.git.addToGitignore(repoId, patterns);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			return;
+		}
+		await Promise.all([refreshFiles(), refreshPushStatus()]);
 	},
 
 	// Discard every uncommitted working-tree change (GitHub Desktop's "Discard

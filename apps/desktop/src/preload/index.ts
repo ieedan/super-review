@@ -27,7 +27,7 @@ import type {
 	EditorKind,
 	FeedbackInput,
 	FeedbackResult,
-	FileContextMenuAction,
+	FileContextMenuResult,
 	HeaderContextMenuResult,
 	EmptyViewContextMenuResult,
 	FileHeaderContextMenuResult,
@@ -145,6 +145,8 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke('git:discardFiles', repoId, files) as Promise<void>,
 		discardLines: (repoId, filePath, patch) =>
 			ipcRenderer.invoke('git:discardLines', repoId, filePath, patch) as Promise<void>,
+		addToGitignore: (repoId, patterns) =>
+			ipcRenderer.invoke('git:addToGitignore', repoId, patterns) as Promise<void>,
 		continueMerge: (repoId) =>
 			ipcRenderer.invoke('git:continueMerge', repoId) as Promise<PullPushResult>,
 		abortMerge: (repoId) => ipcRenderer.invoke('git:abortMerge', repoId) as Promise<void>,
@@ -526,7 +528,7 @@ const api: PreloadAPI = {
 			ipcRenderer.invoke(
 				'menu:showFileContextMenu',
 				params
-			) as Promise<FileContextMenuAction | null>,
+			) as Promise<FileContextMenuResult | null>,
 		showDiffLineContextMenu: (params) =>
 			ipcRenderer.invoke(
 				'menu:showDiffLineContextMenu',

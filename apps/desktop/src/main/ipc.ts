@@ -33,6 +33,7 @@ import type {
 	DiffLineContextMenuParams,
 	EditorKind,
 	FileContextMenuAction,
+	FileContextMenuResult,
 	FileContextMenuParams,
 	GithubAccount,
 	GithubAuthError,
@@ -107,6 +108,7 @@ import {
 	finishStashPop,
 	abortStashPop,
 	discardLines,
+	addToGitignore,
 	ensureInitialCommit,
 	fetchOrigin,
 	fetchPRRef,
@@ -885,6 +887,12 @@ export function registerIpc(): void {
 		'git:discardLines',
 		async (_e, repoId: string, _filePath: string, patch: string): Promise<void> =>
 			discardLines(repoOrThrow(repoId).path, patch)
+	);
+
+	ipcMain.handle(
+		'git:addToGitignore',
+		async (_e, repoId: string, patterns: string[]): Promise<void> =>
+			addToGitignore(repoOrThrow(repoId).path, patterns)
 	);
 
 	ipcMain.handle(
@@ -1748,15 +1756,32 @@ export function registerIpc(): void {
 	// destructive discard — gate it behind a native confirmation dialog.
 	ipcMain.handle(
 		'menu:showFileContextMenu',
-		async (e, params: FileContextMenuParams): Promise<FileContextMenuAction | null> => {
+		async (e, params: FileContextMenuParams): Promise<FileContextMenuResult | null> => {
 			const win = BrowserWindow.fromWebContents(e.sender);
-			let chosen: FileContextMenuAction | null = null;
-			const item = (label: string, action: FileContextMenuAction): MenuItemConstructorOptions => ({
+			let chosen: FileContextMenuResult | null = null;
+			const item = (
+				label: string,
+				action: Exclude<FileContextMenuAction, 'ignore'>
+			): MenuItemConstructorOptions => ({
 				label,
 				click: () => {
-					chosen = action;
+					chosen = { action };
 				}
 			});
+			// An add-to-.gitignore item: the renderer already built the patterns, so
+			// the click just hands them back.
+			const ignoreItem = (label: string, patterns: string[]): MenuItemConstructorOptions => ({
+				label,
+				click: () => {
+					chosen = { action: 'ignore', patterns };
+				}
+			});
+			// The "Ignore All .ts Files" items, shared by the single- and multi-file
+			// branches (the renderer gathers the extensions across the whole target set).
+			const extensionItems = (): MenuItemConstructorOptions[] =>
+				params.ignoreExtensions.map((ext) =>
+					ignoreItem(`Ignore All ${ext} Files (Add to .gitignore)`, [`*${ext}`])
+				);
 
 			const template: MenuItemConstructorOptions[] = [];
 			if (params.selectedCount > 1) {
@@ -1779,6 +1804,19 @@ export function registerIpc(): void {
 						item(`Exclude ${n} Selected Files`, 'excludeSelected')
 					]);
 				}
+				// Ignore the selection, plus one item per extension it spans.
+				const ignoreGroup: MenuItemConstructorOptions[] = [];
+				if (params.ignoreSelected.length > 0) {
+					const m = params.ignoreSelected.length;
+					ignoreGroup.push(
+						ignoreItem(
+							`Ignore ${m} Selected ${m === 1 ? 'File' : 'Files'} (Add to .gitignore)`,
+							params.ignoreSelected
+						)
+					);
+				}
+				ignoreGroup.push(...extensionItems());
+				if (ignoreGroup.length > 0) groups.push(ignoreGroup);
 				groups.forEach((group, i) => {
 					if (i > 0) template.push({ type: 'separator' });
 					template.push(...group);
@@ -1787,6 +1825,22 @@ export function registerIpc(): void {
 				if (params.canDiscard) {
 					template.push(item('Discard Changes', 'discard'));
 					template.push({ type: 'separator' });
+				}
+				// Add-to-.gitignore items: this file, one of its ancestor folders
+				// (submenu, deepest first), and each extension it spans.
+				const ignoreGroup: MenuItemConstructorOptions[] = [];
+				if (params.ignoreFile) {
+					ignoreGroup.push(ignoreItem('Ignore File (Add to .gitignore)', [params.ignoreFile]));
+				}
+				if (params.ignoreFolders.length > 0) {
+					ignoreGroup.push({
+						label: 'Ignore Folder (Add to .gitignore)',
+						submenu: params.ignoreFolders.map((folder) => ignoreItem(folder, [folder]))
+					});
+				}
+				ignoreGroup.push(...extensionItems());
+				if (ignoreGroup.length > 0) {
+					template.push(...ignoreGroup, { type: 'separator' });
 				}
 				template.push(item('Copy File Path', 'copyPath'));
 				template.push(item('Copy Relative File Path', 'copyRelativePath'));
@@ -1799,7 +1853,7 @@ export function registerIpc(): void {
 			}
 
 			const menu = Menu.buildFromTemplate(template);
-			return await new Promise<FileContextMenuAction | null>((resolve) => {
+			return await new Promise<FileContextMenuResult | null>((resolve) => {
 				menu.popup({
 					window: win ?? undefined,
 					callback: () => resolve(chosen)

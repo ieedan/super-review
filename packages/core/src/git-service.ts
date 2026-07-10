@@ -270,6 +270,7 @@ export const stageFile = lockWrite(stageFileImpl);
 export const discardChanges = lockWrite(discardChangesImpl);
 export const discardFiles = lockWrite(discardFilesImpl);
 export const discardLines = lockWrite(discardLinesImpl);
+export const addToGitignore = lockWrite(addToGitignoreImpl);
 export const continueMerge = lockWrite(continueMergeImpl);
 export const abortMerge = lockWrite(abortMergeImpl);
 export const createManagedStash = lockWrite(createManagedStashImpl);
@@ -2284,7 +2285,16 @@ export async function recheckConflicts(repoPath: string, files: string[]): Promi
 }
 
 async function stageFileImpl(repoPath: string, filePath: string): Promise<void> {
-	await openGit(repoPath).add([filePath]);
+	const git = openGit(repoPath);
+	try {
+		await git.add([filePath]);
+	} catch (err) {
+		if (!isBeyondSymlink(err)) throw err;
+		// An ancestor became a symlink in the working tree, so `git add` refuses the
+		// pathspec. The stageable change is the deletion of the tracked HEAD
+		// version; stage it index-only. No-ops if the path isn't tracked in HEAD.
+		await git.raw(['rm', '--cached', '--', filePath]).catch(() => {});
+	}
 }
 
 // Whether `relPath` exists in the current HEAD commit. False for new/untracked
@@ -2396,6 +2406,30 @@ async function discardLinesImpl(repoPath: string, patch: string): Promise<void> 
 	} finally {
 		await fs.rm(patchPath, { force: true }).catch(() => {});
 	}
+}
+
+// Append one or more patterns to the repo-root .gitignore (creating it when it
+// doesn't exist yet), mirroring GitHub Desktop's "Ignore file" / "Ignore all
+// .ext files" actions. The caller passes ready-made patterns (an escaped
+// repo-relative file path, or `*.ext`); we only de-dup against lines already in
+// the file and append the rest, keeping exactly one trailing newline so the
+// block never runs onto a prior line. No index is touched, but this still runs
+// under the repo write lock so two concurrent appends can't clobber each other.
+async function addToGitignoreImpl(repoPath: string, patterns: string[]): Promise<void> {
+	if (patterns.length === 0) return;
+	const gitignorePath = path.join(repoPath, '.gitignore');
+	const existing = await fs.readFile(gitignorePath, 'utf8').catch(() => '');
+	const present = new Set(
+		existing
+			.split('\n')
+			.map((l) => l.trim())
+			.filter(Boolean)
+	);
+	const toAdd = patterns.filter((p) => !present.has(p.trim()));
+	if (toAdd.length === 0) return;
+	// Separate the appended block from any prior content with a single newline.
+	const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+	await fs.appendFile(gitignorePath, `${prefix}${toAdd.join('\n')}\n`, 'utf8');
 }
 
 // Try to wrap up an in-progress merge once the user has resolved conflicts. If
@@ -2759,6 +2793,16 @@ function isPathspecMismatch(err: unknown): boolean {
 	return /did not match any file/.test(msg);
 }
 
+// git refuses a pathspec whose leading path component is a symlink in the
+// working tree ("pathspec '<p>' is beyond a symbolic link"). This happens when a
+// tracked directory has been replaced by a symlink: the files it used to hold
+// read as deletions, but `git add -- <path>` won't touch them. Index-only
+// commands (`git rm --cached`, scratch-index writes) sidestep the check.
+function isBeyondSymlink(err: unknown): boolean {
+	const msg = err instanceof Error ? err.message : String(err);
+	return /beyond a symbolic link/.test(msg);
+}
+
 // ─── Commit signing ─────────────────────────────────────────────────────────
 // SSH commit signing needs git >= 2.34 (the `gpg.format=ssh` backend) and an
 // ssh-keygen that supports `-Y sign` (OpenSSH >= 8.0). We detect this once and
@@ -2861,9 +2905,22 @@ async function commitImpl(
 			// commit. The deletion is already staged in that case, so skipping it is
 			// correct; the `git commit -- <paths>` below still records it.
 			for (const p of paths) {
-				await git.raw(['add', '-A', '--', p]).catch((err) => {
+				try {
+					await git.raw(['add', '-A', '--', p]);
+				} catch (err) {
+					// A path whose ancestor directory is now a symlink in the working
+					// tree (a tracked directory replaced by a symlink) can't be staged
+					// with a pathspec'd `git add`, and pinning `git commit -- <path>` to
+					// it makes git re-read the symlink target instead of recording the
+					// deletion. Hand the whole commit to the scratch-index path, which
+					// stages such deletions with `git rm --cached` and commits the tree
+					// without a pathspec. See commitPartial's whole-file branch.
+					if (isBeyondSymlink(err)) {
+						await commitPartial(repoPath, trimmed, files, identity, signing);
+						return { ok: true, ...(await headCommitStats(git)) };
+					}
 					if (!isPathspecMismatch(err)) throw err;
-				});
+				}
 			}
 			// `-c` sets config for this invocation only, overriding both author and
 			// committer without touching the repo's git config.
@@ -2964,7 +3021,20 @@ async function commitPartial(
 			} else {
 				const paths = [f.path];
 				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
-				await idxGit.raw(['add', '-A', '--', ...paths]);
+				try {
+					await idxGit.raw(['add', '-A', '--', ...paths]);
+				} catch (err) {
+					if (!isBeyondSymlink(err)) throw err;
+					// An ancestor of one of these paths is a symlink in the working
+					// tree, so `git add` refuses the pathspec. The change git surfaces
+					// for such a path is the deletion of its tracked HEAD version; stage
+					// that deletion in the scratch index directly with `git rm --cached`,
+					// which is index-only and so ignores the working-tree symlink. A
+					// path that isn't tracked in HEAD (nothing to delete) just no-ops.
+					for (const p of paths) {
+						await idxGit.raw(['rm', '--cached', '--', p]).catch(() => {});
+					}
+				}
 			}
 		}
 
