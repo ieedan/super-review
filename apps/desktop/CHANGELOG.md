@@ -1,5 +1,16 @@
 # @super-review/desktop
 
+## 0.1.22
+
+### Patch Changes
+
+- [`e02765f`](https://github.com/ieedan/super-review/commit/e02765fc46f30dfe12f885dfab4777176d4259ed) Thanks [@ieedan](https://github.com/ieedan)! - fix: change command menu so it doesn't conflict with the push hotkey
+
+- [`9dbfef1`](https://github.com/ieedan/super-review/commit/9dbfef114bd4652de3312dc010cc025eaac7fd18) Thanks [@ieedan](https://github.com/ieedan)! - feat: gitignore files from the sidebar
+- Updated dependencies [[`e02765f`](https://github.com/ieedan/super-review/commit/e02765fc46f30dfe12f885dfab4777176d4259ed), [`9dbfef1`](https://github.com/ieedan/super-review/commit/9dbfef114bd4652de3312dc010cc025eaac7fd18)]:
+  - @super-review/core@0.1.15
+  - @super-review/ui@0.0.9
+
 ## 0.1.21
 
 ### Patch Changes
