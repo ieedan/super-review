@@ -70,7 +70,9 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 };
 
 export const DEFAULT_HOTKEYS: Hotkeys = {
-	searchFilesPalette: { key: 'p', mod: true },
+	// Not mod+P: the native Repository menu owns that for Push, and Electron
+	// dispatches menu accelerators before the renderer ever sees the keydown.
+	searchFilesPalette: { key: 'k', mod: true },
 	searchFilesSidebar: { key: '/' },
 	openRepoPicker: { key: 'r', shift: true },
 	openBranchPicker: { key: 'b', shift: true },
@@ -129,6 +131,94 @@ export function hotkeysEqual(a: Hotkey, b: Hotkey): boolean {
 		Boolean(a.shift) === Boolean(b.shift) &&
 		Boolean(a.alt) === Boolean(b.alt)
 	);
+}
+
+// A key combination already owned by the desktop app's native menus. Electron
+// dispatches menu accelerators before the keystroke reaches the renderer, so a
+// configurable hotkey bound to one of these silently never fires. `accelerator`
+// is the Electron accelerator string and is the single source of truth: the menu
+// builds its items from these entries, and the settings UI refuses to bind onto
+// them.
+export interface MenuAccelerator {
+	// The menu item that owns the combination, for the conflict message.
+	label: string;
+	accelerator: string;
+}
+
+// Accelerators declared by our own submenus (see apps/desktop/src/main/menu.ts).
+export const MENU_ACCELERATORS = {
+	push: { label: 'Push', accelerator: 'CmdOrCtrl+P' },
+	pull: { label: 'Pull', accelerator: 'Shift+CmdOrCtrl+P' },
+	fetch: { label: 'Fetch', accelerator: 'Shift+CmdOrCtrl+T' },
+	removeRepo: { label: 'Remove repository', accelerator: 'CmdOrCtrl+Backspace' },
+	viewOnGithub: { label: 'View on GitHub', accelerator: 'Shift+CmdOrCtrl+G' },
+	openInTerminal: { label: 'Open in terminal', accelerator: 'Control+`' },
+	showInFinder: { label: 'Reveal in file manager', accelerator: 'Shift+CmdOrCtrl+F' },
+	openInEditor: { label: 'Open in editor', accelerator: 'Shift+CmdOrCtrl+A' },
+	createIssue: { label: 'Create issue on GitHub', accelerator: 'CmdOrCtrl+I' },
+	newBranch: { label: 'New branch', accelerator: 'Shift+CmdOrCtrl+N' },
+	updateFromDefault: { label: 'Update from default branch', accelerator: 'Shift+CmdOrCtrl+U' },
+	deleteBranch: { label: 'Delete branch', accelerator: 'Shift+CmdOrCtrl+D' },
+	discardAll: { label: 'Discard all changes', accelerator: 'Shift+CmdOrCtrl+Backspace' },
+	previewPR: { label: 'Preview pull request', accelerator: 'Alt+CmdOrCtrl+P' },
+	sendFeedback: { label: 'Send feedback', accelerator: 'Shift+CmdOrCtrl+/' }
+} as const satisfies Record<string, MenuAccelerator>;
+
+// Accelerators we inherit from Electron's built-in role submenus (file, edit,
+// view, window). Not exhaustive across platforms, but it covers the combinations
+// a user is likely to reach for.
+const ROLE_ACCELERATORS: MenuAccelerator[] = [
+	{ label: 'Close window', accelerator: 'CmdOrCtrl+W' },
+	{ label: 'Minimize', accelerator: 'CmdOrCtrl+M' },
+	{ label: 'Undo', accelerator: 'CmdOrCtrl+Z' },
+	{ label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z' },
+	{ label: 'Cut', accelerator: 'CmdOrCtrl+X' },
+	{ label: 'Copy', accelerator: 'CmdOrCtrl+C' },
+	{ label: 'Paste', accelerator: 'CmdOrCtrl+V' },
+	{ label: 'Select all', accelerator: 'CmdOrCtrl+A' },
+	{ label: 'Reload', accelerator: 'CmdOrCtrl+R' },
+	{ label: 'Force reload', accelerator: 'Shift+CmdOrCtrl+R' },
+	{ label: 'Toggle developer tools', accelerator: 'Alt+CmdOrCtrl+I' },
+	{ label: 'Actual size', accelerator: 'CmdOrCtrl+0' }
+];
+
+const RESERVED_ACCELERATORS: MenuAccelerator[] = [
+	...Object.values(MENU_ACCELERATORS),
+	...ROLE_ACCELERATORS
+];
+
+// Parse an Electron accelerator into our Hotkey shape so it can be compared with
+// a configurable binding. Returns null for accelerators using modifiers a Hotkey
+// can't express. A literal `Control` maps onto `mod`, which is deliberately
+// over-broad on macOS (⌃ and ⌘ are distinct there) — reserving slightly more
+// than we must is the safe direction.
+function parseAccelerator(accelerator: string): Hotkey | null {
+	const parts = accelerator.split('+');
+	const key = parts.pop();
+	if (!key) return null;
+	const hk: Hotkey = { key: normalizeHotkeyKey(key) };
+	for (const part of parts) {
+		if (part === 'CmdOrCtrl' || part === 'Cmd' || part === 'Command' || part === 'Control') {
+			hk.mod = true;
+		} else if (part === 'Shift') {
+			hk.shift = true;
+		} else if (part === 'Alt' || part === 'Option') {
+			hk.alt = true;
+		} else {
+			return null;
+		}
+	}
+	return hk;
+}
+
+// The menu item that already owns this combination, if any. A binding that
+// collides with one can never fire, so callers treat it as a hard conflict.
+export function reservedHotkeyLabel(hk: Hotkey): string | null {
+	for (const reserved of RESERVED_ACCELERATORS) {
+		const parsed = parseAccelerator(reserved.accelerator);
+		if (parsed && hotkeysEqual(parsed, hk)) return reserved.label;
+	}
+	return null;
 }
 
 // Human-readable label for a single key, used when rendering a binding.

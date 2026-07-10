@@ -21,7 +21,7 @@ export interface PRBranchLink {
 	source: PRSource;
 }
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
-import { DEFAULT_HOTKEYS } from '@shared/hotkeys.js';
+import { DEFAULT_HOTKEYS, HOTKEY_ACTIONS, reservedHotkeyLabel } from '@shared/hotkeys.js';
 import {
 	addToDay,
 	dayKey,
@@ -392,6 +392,16 @@ export function getPrefs(): UserPrefs {
 	// Merge per-action so bindings added in later releases get their defaults
 	// even when an older prefs file already has a (partial) hotkeys object.
 	merged.hotkeys = { ...defaults.prefs.hotkeys, ...merged.hotkeys };
+	// Drop bindings the native menu already owns — they can never fire, since
+	// Electron dispatches the accelerator before the renderer sees the keydown.
+	// setPrefs persists the whole hotkeys object, so every prefs file written by
+	// a build that defaulted searchFilesPalette to mod+P (Repository → Push) has
+	// that dead binding baked in. Fall back to the current default.
+	for (const action of HOTKEY_ACTIONS) {
+		if (reservedHotkeyLabel(merged.hotkeys[action])) {
+			merged.hotkeys[action] = defaults.prefs.hotkeys[action];
+		}
+	}
 	// Same per-key merge for header item visibility, so controls added later
 	// default to visible even when an older prefs file has a partial object.
 	merged.headerItems = { ...defaults.prefs.headerItems, ...merged.headerItems };

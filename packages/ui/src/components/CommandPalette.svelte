@@ -74,7 +74,7 @@
 	bind:open={app.commandMenuOpen}
 	title="Search files"
 	description="Fuzzy search changed files by name"
-	contentClass="sm:max-w-2xl"
+	contentClass="top-[12vh] translate-y-0 sm:max-w-2xl"
 >
 	<Command.Input bind:value={search} placeholder="Search files…" />
 	<Command.List bind:ref={listEl}>

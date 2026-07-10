@@ -6,6 +6,7 @@ import type {
 	RepositoryMenuAction,
 	RepositoryMenuState
 } from '../shared/types.js';
+import { MENU_ACCELERATORS as A } from '../shared/hotkeys.js';
 
 // The most recent Branch-menu state the renderer pushed. Drives which items are
 // enabled and their dynamic labels. Defaults to "no repo" so the menu is built
@@ -57,7 +58,7 @@ function buildHelpSubmenu(): MenuItemConstructorOptions[] {
 	return [
 		{
 			label: 'Send Feedback…',
-			accelerator: 'Shift+CmdOrCtrl+/',
+			accelerator: A.sendFeedback.accelerator,
 			click: () => sendHelpAction('sendFeedback')
 		}
 	];
@@ -81,22 +82,34 @@ function buildRepositorySubmenu(): MenuItemConstructorOptions[] {
 	});
 
 	return [
-		item('Push', 'push', s.hasRepo && s.hasRemote, 'CmdOrCtrl+P'),
-		item('Pull', 'pull', s.hasRepo && s.hasRemote, 'Shift+CmdOrCtrl+P'),
-		item('Fetch', 'fetch', s.hasRepo && s.hasRemote, 'Shift+CmdOrCtrl+T'),
+		item('Push', 'push', s.hasRepo && s.hasRemote, A.push.accelerator),
+		item('Pull', 'pull', s.hasRepo && s.hasRemote, A.pull.accelerator),
+		item('Fetch', 'fetch', s.hasRepo && s.hasRemote, A.fetch.accelerator),
 		{ type: 'separator' },
-		item('Remove…', 'remove', s.hasRepo, 'CmdOrCtrl+Backspace'),
+		item('Remove…', 'remove', s.hasRepo, A.removeRepo.accelerator),
 		{ type: 'separator' },
-		item('View on GitHub', 'viewOnGithub', s.hasRepo && s.hasGithub, 'Shift+CmdOrCtrl+G'),
+		item('View on GitHub', 'viewOnGithub', s.hasRepo && s.hasGithub, A.viewOnGithub.accelerator),
 		...(s.terminalLabel
-			? [item(`Open in ${s.terminalLabel}`, 'openInTerminal', s.hasRepo, 'Control+`')]
+			? [
+					item(
+						`Open in ${s.terminalLabel}`,
+						'openInTerminal',
+						s.hasRepo,
+						A.openInTerminal.accelerator
+					)
+				]
 			: []),
-		item(s.revealLabel, 'showInFinder', s.hasRepo, 'Shift+CmdOrCtrl+F'),
+		item(s.revealLabel, 'showInFinder', s.hasRepo, A.showInFinder.accelerator),
 		...(s.editorLabel
-			? [item(`Open in ${s.editorLabel}`, 'openInEditor', s.hasRepo, 'Shift+CmdOrCtrl+A')]
+			? [item(`Open in ${s.editorLabel}`, 'openInEditor', s.hasRepo, A.openInEditor.accelerator)]
 			: []),
 		{ type: 'separator' },
-		item('Create Issue on GitHub', 'createIssue', s.hasRepo && s.hasGithub, 'CmdOrCtrl+I'),
+		item(
+			'Create Issue on GitHub',
+			'createIssue',
+			s.hasRepo && s.hasGithub,
+			A.createIssue.accelerator
+		),
 		{ type: 'separator' },
 		item('Clean Up Local Branches…', 'cleanupBranches', s.hasRepo),
 		item('Repository Settings…', 'settings', s.hasRepo)
@@ -118,13 +131,13 @@ function buildBranchSubmenu(): MenuItemConstructorOptions[] {
 	});
 
 	return [
-		branchAction('New Branch…', 'newBranch', s.hasRepo, 'Shift+CmdOrCtrl+N'),
+		branchAction('New Branch…', 'newBranch', s.hasRepo, A.newBranch.accelerator),
 		{ type: 'separator' },
 		branchAction(
 			`Update from ${s.defaultBranch}`,
 			'updateFromDefault',
 			s.hasRepo && !s.onDefaultBranch,
-			'Shift+CmdOrCtrl+U'
+			A.updateFromDefault.accelerator
 		),
 		// Only forks have an upstream — hide the item entirely otherwise so the
 		// menu matches the repo, like GitHub Desktop.
@@ -135,21 +148,21 @@ function buildBranchSubmenu(): MenuItemConstructorOptions[] {
 			'Delete Branch…',
 			'deleteBranch',
 			s.hasRepo && !s.onDefaultBranch,
-			'Shift+CmdOrCtrl+D'
+			A.deleteBranch.accelerator
 		),
 		{ type: 'separator' },
 		branchAction(
 			'Discard All Changes…',
 			'discardAll',
 			s.hasRepo && s.hasChanges,
-			'Shift+CmdOrCtrl+Backspace'
+			A.discardAll.accelerator
 		),
 		{ type: 'separator' },
 		branchAction(
 			'Preview Pull Request',
 			'previewPR',
 			s.hasRepo && !s.onDefaultBranch,
-			'Alt+CmdOrCtrl+P'
+			A.previewPR.accelerator
 		),
 		branchAction(
 			s.branchPRNumber ? `View Pull Request #${s.branchPRNumber}` : 'Create Pull Request',

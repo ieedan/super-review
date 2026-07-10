@@ -57,6 +57,7 @@
 		HOTKEY_ACTIONS,
 		HOTKEY_LABELS,
 		hotkeysEqual,
+		reservedHotkeyLabel,
 		type Hotkey,
 		type HotkeyAction,
 		type Hotkeys
@@ -591,16 +592,17 @@
 		draftHotkeys = { ...DEFAULT_HOTKEYS };
 	}
 
-	// The other action a binding collides with, if any — drives the conflict
-	// highlight so two actions can't silently share the same combination.
-	function hotkeyConflict(action: HotkeyAction): HotkeyAction | null {
+	// What a binding collides with, if anything — drives the conflict highlight so
+	// two actions can't silently share a combination, and so a binding can't land
+	// on one the native menu already owns (which would never fire).
+	function hotkeyConflict(action: HotkeyAction): string | null {
 		const hk = draftHotkeys[action];
 		for (const other of HOTKEY_ACTIONS) {
 			if (other !== action && hotkeysEqual(draftHotkeys[other], hk)) {
-				return other;
+				return HOTKEY_LABELS[other].label;
 			}
 		}
-		return null;
+		return reservedHotkeyLabel(hk);
 	}
 
 	const hasHotkeyConflict = $derived(HOTKEY_ACTIONS.some((a) => hotkeyConflict(a) !== null));
@@ -1087,7 +1089,7 @@
 						<div class="text-xs text-muted-foreground">
 							{#if conflictWith}
 								<span class="text-destructive">
-									Conflicts with “{HOTKEY_LABELS[conflictWith].label}”.
+									Conflicts with “{conflictWith}”.
 								</span>
 							{:else}
 								{HOTKEY_LABELS[action].description}
