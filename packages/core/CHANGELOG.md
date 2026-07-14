@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.2.1
+
+### Patch Changes
+
+- [`df72e3b`](https://github.com/ieedan/super-review/commit/df72e3b214325b79e0323668e7351369e604730e) Thanks [@ieedan](https://github.com/ieedan)! - fix: don't re-render everything when discarding lines
+
 ## 0.2.0
 
 ### Minor Changes

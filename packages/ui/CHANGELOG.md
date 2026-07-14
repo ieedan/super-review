@@ -1,5 +1,13 @@
 # @super-review/ui
 
+## 0.1.1
+
+### Patch Changes
+
+- [`df72e3b`](https://github.com/ieedan/super-review/commit/df72e3b214325b79e0323668e7351369e604730e) Thanks [@ieedan](https://github.com/ieedan)! - fix: don't re-render everything when discarding lines
+- Updated dependencies [[`df72e3b`](https://github.com/ieedan/super-review/commit/df72e3b214325b79e0323668e7351369e604730e)]:
+  - @super-review/core@0.2.1
+
 ## 0.1.0
 
 ### Minor Changes
