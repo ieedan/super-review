@@ -2,7 +2,7 @@
 	"name": "@super-review/docs",
 	"description": "Marketing site and download page for Super Review",
 	"private": true,
-	"version": "0.0.8",
+	"version": "0.0.9",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
