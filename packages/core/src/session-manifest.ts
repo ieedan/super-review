@@ -13,3 +13,14 @@ export function sessionIdFromManifestPath(path: string): string | null {
 	const match = MANIFEST_RE.exec(path);
 	return match ? match[1] : null;
 }
+
+// Branch task lists live at `.super-review/tasks/<slug>.json`. Like session
+// manifests their raw JSON diff is deferred by default (`.super-review/tasks/*`)
+// and the diff view renders a checklist card instead, so the diff machinery needs
+// to recognise the path.
+const TASK_MANIFEST_RE = /(?:^|\/)\.super-review\/tasks\/([^/]+)\.json$/i;
+
+// True when the path is a branch task list manifest.
+export function isTaskManifestPath(path: string): boolean {
+	return TASK_MANIFEST_RE.test(path);
+}

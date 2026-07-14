@@ -48,7 +48,10 @@
 		setCachedDiff
 	} from '@super-review/ui/store.svelte';
 	import { diffDeferReason } from '@super-review/core/diff-defer';
-	import { sessionIdFromManifestPath } from '@super-review/core/session-manifest';
+	import {
+		sessionIdFromManifestPath,
+		isTaskManifestPath
+	} from '@super-review/core/session-manifest';
 	import { getDiffWorkerPool } from '@super-review/ui/diff-worker-pool';
 	import { scheduleRender } from '@super-review/ui/render-scheduler';
 	import { diffContextKey } from '@super-review/core/diff-context';
@@ -74,6 +77,7 @@
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
 	import SessionDiffCard from './SessionDiffCard.svelte';
+	import TaskDiffCard from './TaskDiffCard.svelte';
 	import { calloutsForFile } from '@super-review/ui/session-tour';
 	import { localCommentOutdated } from '@super-review/ui/comment-outdated';
 	import type {
@@ -179,6 +183,10 @@
 	const sessionManifestId = $derived(
 		file.status === 'deleted' ? null : sessionIdFromManifestPath(file.path)
 	);
+	// A `.super-review/tasks/*.json` branch task list renders as a checklist card
+	// rather than raw JSON, mirroring the session manifest above. Skipped for a
+	// delete: the list is gone, so there is nothing to render.
+	const taskManifest = $derived(file.status !== 'deleted' && isTaskManifestPath(file.path));
 	// A pure rename (or copy) with no content change has nothing to diff — git
 	// reports zero additions/deletions. Mirror GitHub and show a one-liner
 	// instead of fetching/rendering an empty diff.
@@ -2334,6 +2342,8 @@
 					sessionId={sessionManifestId}
 					onViewRaw={() => (loadDiffOverride = true)}
 				/>
+			{:else if deferred && taskManifest}
+				<TaskDiffCard onViewRaw={() => (loadDiffOverride = true)} />
 			{:else if deferred}
 				<div class="flex flex-col items-center gap-2 p-6 text-center">
 					<p class="text-xs text-muted-foreground">

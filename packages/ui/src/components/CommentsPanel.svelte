@@ -13,6 +13,7 @@
 	import { Button } from './ui/button';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import ConversationPanel from './ConversationPanel.svelte';
+	import TasksPanel from './TasksPanel.svelte';
 	import {
 		actions,
 		app,
@@ -28,11 +29,12 @@
 	// lists local comments. The two share the same chrome but different rows.
 	const isPR = $derived(isPRCommentContext());
 
-	// The Conversation tab (the PR's top-level discussion) only exists in a PR
-	// context. Outside one, the sidebar is always the comments list, so the tab bar
-	// is hidden and the remembered tab is ignored.
-	const showTabs = $derived(isPR);
+	// The Tasks and Comments tabs always exist; the Conversation tab (the PR's
+	// top-level discussion) only exists in a PR context, so its trigger is hidden
+	// outside one and the effective tab falls back off it.
 	const activeTab = $derived(effectiveCommentsSidebarTab());
+	// Open (unchecked) tasks, for the Tasks tab badge.
+	const openTaskCount = $derived(app.tasks.filter((t) => !t.done).length);
 
 	// Mirror the left sidebar's collapse trigger: the panel toggles with the same
 	// hotkey wired up in App.svelte (defaults to ⌘L / Ctrl+L).
@@ -145,46 +147,53 @@
 	     left sidebar's primary header (same h-11, same Tabs/Button components) so
 	     the two panes' bottom borders line up across the diff. -->
 	<header class="flex h-11 shrink-0 items-center gap-2 border-b border-border px-2">
-		{#if showTabs}
-			<!-- Tab switcher: line comments vs the PR's top-level conversation. -->
-			<Tabs.Root
-				value={activeTab}
-				onValueChange={(v) => actions.setCommentsSidebarTab(v as 'comments' | 'conversation')}
-				class="min-w-0 flex-1 gap-0"
+		<!-- Tab switcher: line comments, the branch task list, and (in a PR) the PR's
+		     top-level conversation. -->
+		<Tabs.Root
+			value={activeTab}
+			onValueChange={(v) =>
+				actions.setCommentsSidebarTab(v as 'tasks' | 'comments' | 'conversation')}
+			class="min-w-0 flex-1 gap-0"
+		>
+			<Tabs.List
+				class="no-scrollbar w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
 			>
-				<Tabs.List
-					class="no-scrollbar w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-0 bg-transparent p-0"
+				<Tabs.Trigger
+					value="comments"
+					class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
 				>
-					<Tabs.Trigger
-						value="comments"
-						class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
-					>
-						Comments
-						{#if totalCount > 0}
-							<span
-								class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
-							>
-								{totalCount > 99 ? '99+' : totalCount}
-							</span>
-						{/if}
-					</Tabs.Trigger>
+					Comments
+					{#if totalCount > 0}
+						<span
+							class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
+						>
+							{totalCount > 99 ? '99+' : totalCount}
+						</span>
+					{/if}
+				</Tabs.Trigger>
+				<Tabs.Trigger
+					value="tasks"
+					class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
+				>
+					Tasks
+					{#if openTaskCount > 0}
+						<span
+							class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
+						>
+							{openTaskCount > 99 ? '99+' : openTaskCount}
+						</span>
+					{/if}
+				</Tabs.Trigger>
+				{#if isPR}
 					<Tabs.Trigger
 						value="conversation"
 						class="h-7 flex-none rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
 					>
 						Conversation
 					</Tabs.Trigger>
-				</Tabs.List>
-			</Tabs.Root>
-		{:else}
-			<span class="text-sm font-semibold">Comments</span>
-			{#if totalCount > 0}
-				<span class="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-					{totalCount}
-				</span>
-			{/if}
-			<div class="flex-1"></div>
-		{/if}
+				{/if}
+			</Tabs.List>
+		</Tabs.Root>
 		<!-- Copy-all lives inline left of the collapse trigger, and only on the
 		     comments tab — the conversation view has no list-level actions. -->
 		{#if activeTab === 'comments'}
@@ -203,22 +212,25 @@
 				{/if}
 			</Button>
 		{/if}
-		<!-- Fullscreen the panel over the diff. Always available: entering fullscreen
-		     collapses the left sidebar automatically (see setConversationFullscreen
-		     and the pane effect in App.svelte). -->
-		<Button
-			variant="ghost"
-			size="icon-sm"
-			class="shrink-0 text-muted-foreground"
-			title={app.conversationFullscreen ? 'Exit fullscreen' : 'Fullscreen conversation'}
-			onclick={() => actions.toggleConversationFullscreen()}
-		>
-			{#if app.conversationFullscreen}
-				<Minimize2 class="size-3.5" />
-			{:else}
-				<Maximize2 class="size-3.5" />
-			{/if}
-		</Button>
+		<!-- Fullscreen only makes sense for the PR Conversation, so it's scoped to that
+		     tab (the Comments and Tasks lists don't need to take over the whole window).
+		     Entering fullscreen collapses the left sidebar automatically (see
+		     setConversationFullscreen and the pane effect in App.svelte). -->
+		{#if activeTab === 'conversation'}
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				class="shrink-0 text-muted-foreground"
+				title={app.conversationFullscreen ? 'Exit fullscreen' : 'Fullscreen conversation'}
+				onclick={() => actions.toggleConversationFullscreen()}
+			>
+				{#if app.conversationFullscreen}
+					<Minimize2 class="size-3.5" />
+				{:else}
+					<Maximize2 class="size-3.5" />
+				{/if}
+			</Button>
+		{/if}
 		<Button
 			variant="ghost"
 			size="icon-sm"
@@ -230,7 +242,9 @@
 		</Button>
 	</header>
 
-	{#if activeTab === 'conversation'}
+	{#if activeTab === 'tasks'}
+		<TasksPanel />
+	{:else if activeTab === 'conversation'}
 		<ConversationPanel />
 	{:else}
 		<div class="min-h-0 flex-1 overflow-y-auto">

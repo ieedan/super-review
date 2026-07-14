@@ -11,6 +11,7 @@ const cli = program
 	.version(pkg.version)
 	.showHelpAfterError()
 	.addCommand(commands.session)
-	.addCommand(commands.comment);
+	.addCommand(commands.comment)
+	.addCommand(commands.task);
 
 export { cli };

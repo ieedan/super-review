@@ -737,6 +737,76 @@ export interface NewLocalCommentInput {
 	inReplyTo?: string;
 }
 
+// ─── Branch task lists ───────────────────────────────────────────────────────
+// A lightweight per-branch checklist for tracking work-in-progress before a PR
+// ("add a test", "rename this", "ask about X"). Stored in-repo under
+// `.super-review/tasks/<branchSlug>.json` and committed, so a list travels with
+// the branch like a session. Managed from the desktop Tasks tab and the
+// `super-review task` CLI.
+
+// Who created a task or checked it off. Reuses the local-comment attribution
+// shape so the UI can render the same harness logo / avatar: humans act in the
+// desktop app; agents (claude-code, cursor, …) act via the CLI and carry a
+// `harness` so the app shows their logo.
+export type TaskActor = LocalCommentAuthor;
+
+// A single task on a branch's list.
+export interface Task {
+	id: string;
+	// The task text (single line).
+	title: string;
+	// Optional longer notes / description (Markdown).
+	notes?: string;
+	// The parent task's id when this is a subtask; absent for a top-level task.
+	// Subtasks nest one level only (a subtask can't itself have children).
+	parentId?: string;
+	// On hold: the task is upcoming but not ready to be worked on yet. Purely a
+	// display state (dimmed in the UI); distinct from `done` and carries no
+	// attribution. Absent/false means active.
+	onHold?: boolean;
+	// Checked-off state.
+	done: boolean;
+	// Sort position within the list; new tasks append to the end. Subtasks sort
+	// among their siblings under the parent.
+	order: number;
+	createdAt: number;
+	updatedAt: number;
+	// Who added the task.
+	createdBy: TaskActor;
+	// Who checked it off, and when — set when `done` flips to true, cleared when it
+	// flips back to false. The UI shows this actor's logo/avatar beside a done task.
+	doneBy?: TaskActor;
+	doneAt?: number;
+}
+
+// The on-disk file for one branch's tasks. One file per branch.
+export interface TaskList {
+	// The branch these tasks belong to (the real name; the filename is a slug of it).
+	branch: string;
+	tasks: Task[];
+	updatedAt: number;
+}
+
+// The fields a caller supplies to create a task; the store fills in the id,
+// order, timestamps, and `createdBy`.
+export interface NewTaskInput {
+	title: string;
+	notes?: string;
+	// Set to make this a subtask of an existing task (its id).
+	parentId?: string;
+	actor: TaskActor;
+}
+
+// The fields a caller may patch on an existing task. The done state and its
+// attribution go through a dedicated setter; hold is a plain flag with no
+// attribution, so it rides along here.
+export interface TaskPatch {
+	title?: string;
+	notes?: string;
+	order?: number;
+	onHold?: boolean;
+}
+
 export type ViewMode = 'split' | 'unified';
 
 // How the diff view lays out a context's files. 'scroll' renders every file's
@@ -824,6 +894,20 @@ export type BranchContextMenuAction = 'copy' | 'delete' | 'view';
 // Actions a pull-request row's native context menu can return. `view` opens the
 // PR's diff read-only (no checkout). `null` (from the IPC) means dismissed.
 export type PRContextMenuAction = 'view' | 'copyUrl' | 'openOnGitHub';
+
+// What a task row's native context menu was opened on, so the menu can label the
+// check-off and hold items to match the current state and hide "Add Subtask" on
+// subtasks (which don't nest further).
+export interface TaskContextMenuParams {
+	done: boolean;
+	onHold: boolean;
+	canAddSubtask: boolean;
+}
+
+// Actions a task row's native context menu can return. `toggle` flips the done
+// state; `hold` flips the on-hold state; `addSubtask` starts a child task; `null`
+// (from the IPC) means dismissed.
+export type TaskContextMenuAction = 'toggle' | 'hold' | 'addSubtask' | 'edit' | 'delete';
 
 // Actions a repo row's native context menu can return. `null` (from the IPC)
 // means the menu was dismissed without a choice.
@@ -1539,9 +1623,10 @@ export interface UserPrefs {
 	// (true = collapsed); `commentsSidebarOpen` is the right comments panel.
 	sidebarCollapsed: boolean;
 	commentsSidebarOpen: boolean;
-	// Which tab the comments sidebar reopens on — the line/review Comments list or
-	// the PR Conversation feed. Persisted so the choice survives a restart.
-	commentsSidebarTab: 'comments' | 'conversation';
+	// Which tab the right sidebar reopens on — the branch task list, the line/review
+	// Comments list, or the PR Conversation feed. Persisted so the choice survives a
+	// restart.
+	commentsSidebarTab: 'tasks' | 'comments' | 'conversation';
 	// When true, the comments panel takes over the whole work area (the diff pane
 	// is collapsed to zero). Only reachable while the left sidebar is collapsed;
 	// reopening the left sidebar exits it. Persisted so it survives a restart.
@@ -2274,6 +2359,35 @@ export interface PreloadAPI {
 		watch(repoId: string | null): Promise<void>;
 		unwatch(): Promise<void>;
 	};
+	tasks: {
+		// A branch's task list. A `ref` (branch name or fetched PR head ref) reads
+		// the list committed on that ref — the branch/PR reviewed read-only —
+		// instead of the working tree. Null/omitted reads disk.
+		list(repoId: string, branch: string, ref?: string | null): Promise<Task[]>;
+		// Append a task (id/order/timestamps + `createdBy` assigned by the store).
+		add(repoId: string, branch: string, input: NewTaskInput): Promise<Task>;
+		// Edit a task's title/notes/order. Returns the updated task, or null if gone.
+		update(repoId: string, branch: string, id: string, patch: TaskPatch): Promise<Task | null>;
+		// Check a task off (or reopen it), recording who did it in `doneBy`/`doneAt`
+		// on check and clearing them on uncheck. Returns the updated task, or null.
+		setDone(
+			repoId: string,
+			branch: string,
+			id: string,
+			done: boolean,
+			actor: TaskActor
+		): Promise<Task | null>;
+		remove(repoId: string, branch: string, id: string): Promise<void>;
+		// Reorder the branch's tasks to match `ids`.
+		reorder(repoId: string, branch: string, ids: string[]): Promise<void>;
+		// Delete the branch's entire task list.
+		clear(repoId: string, branch: string): Promise<void>;
+		// Start/stop live updates for this window's active repo. The main process
+		// fs-watches the repo's .super-review/tasks dir and emits `onTasksChanged`;
+		// pass null (or call unwatch) to stop.
+		watch(repoId: string | null): Promise<void>;
+		unwatch(): Promise<void>;
+	};
 	aiConfig: {
 		// Detect which AI files (skill + tour-author subagent) are configured for
 		// the repo across every target and scope, so the Configure dialog can
@@ -2342,6 +2456,9 @@ export interface PreloadAPI {
 		// Pop up a native OS context menu for a pull-request row. Resolves to the
 		// chosen action, or null when the menu is dismissed without a selection.
 		showPRContextMenu(params: PRContextMenuParams): Promise<PRContextMenuAction | null>;
+		// Pop up a native OS context menu for a task row in the Tasks tab. Resolves
+		// to the chosen action, or null when the menu is dismissed.
+		showTaskContextMenu(params: TaskContextMenuParams): Promise<TaskContextMenuAction | null>;
 		// Pop up a native OS context menu for a repo row in the picker. Resolves to
 		// the chosen action, or null when the menu is dismissed without a selection.
 		showRepoContextMenu(params: RepoContextMenuParams): Promise<RepoContextMenuAction | null>;
@@ -2398,6 +2515,9 @@ export interface PreloadAPI {
 		// agent resolved one via the CLI). Payload is the repo id. Returns an
 		// unsubscribe fn.
 		onCommentsChanged(handler: (repoId: string) => void): () => void;
+		// A repo's branch tasks changed on disk (edited in another window, or by an
+		// agent via the CLI). Payload is the repo id. Returns an unsubscribe fn.
+		onTasksChanged(handler: (repoId: string) => void): () => void;
 		// An account's GitHub token started or stopped failing authentication.
 		// Payload is the full current list of failing accounts (empty = all good).
 		// Returns an unsubscribe fn.

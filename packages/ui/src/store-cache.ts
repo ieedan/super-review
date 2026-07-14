@@ -27,7 +27,7 @@ export const contextTabByRepo = new Map<string, ContextTab>();
 // another that has nothing to be fullscreen about. Absent → a clean default.
 export interface RepoViewLayout {
 	commentsSidebarOpen: boolean;
-	commentsSidebarTab: 'comments' | 'conversation';
+	commentsSidebarTab: 'tasks' | 'comments' | 'conversation';
 	conversationFullscreen: boolean;
 	sidebarCollapsed: boolean;
 }

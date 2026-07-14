@@ -11,7 +11,7 @@
 import { tick, untrack } from 'svelte';
 import { actions, app, diff, getCachedDiff, setCachedDiff } from '@super-review/ui/store.svelte';
 import { diffContextKey } from '@super-review/core/diff-context';
-import { sessionIdFromManifestPath } from '@super-review/core/session-manifest';
+import { sessionIdFromManifestPath, isTaskManifestPath } from '@super-review/core/session-manifest';
 import type { ChangedFile, DiffContext, DiffData } from '@super-review/core/types';
 import { sections, builtRanges, renderWaiters } from '@super-review/ui/diff-find-internal';
 import { FindIndex } from '@super-review/ui/diff-find-index';
@@ -852,6 +852,9 @@ async function preloadAllPatches(): Promise<void> {
 		// folds in exactly the cached files. Preloading them here would pull that
 		// JSON noise into the match index for sessions the user never opened.
 		if (sessionIdFromManifestPath(f.path)) continue;
+		// Same for `.super-review/tasks/*.json`: deferred to a checklist card, so its
+		// raw JSON shouldn't be preloaded into the find index.
+		if (isTaskManifestPath(f.path)) continue;
 		queue.push(f);
 	}
 	if (queue.length === 0) return;

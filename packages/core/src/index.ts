@@ -14,6 +14,7 @@ export * from './changesets.js';
 export * from './repo-templates.js';
 export * from './session-capture.js';
 export * from './session-store.js';
+export * from './task-store.js';
 export * from './comment-store.js';
 export * from './desktop-auth.js';
 

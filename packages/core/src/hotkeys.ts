@@ -20,6 +20,7 @@ export const HOTKEY_ACTIONS = [
 	'openRepoPicker',
 	'openBranchPicker',
 	'toggleSidebar',
+	'toggleTasksSidebar',
 	'toggleCommentsSidebar',
 	'openConversationSidebar',
 	'openSettings',
@@ -51,6 +52,10 @@ export const HOTKEY_LABELS: Record<HotkeyAction, { label: string; description: s
 		label: 'Toggle sidebar',
 		description: 'Collapse or expand the file-list sidebar.'
 	},
+	toggleTasksSidebar: {
+		label: 'Toggle tasks sidebar',
+		description: "Open or close the right sidebar on the branch's task list."
+	},
 	toggleCommentsSidebar: {
 		label: 'Toggle comments sidebar',
 		description: 'Open or close the comments sidebar.'
@@ -77,6 +82,7 @@ export const DEFAULT_HOTKEYS: Hotkeys = {
 	openRepoPicker: { key: 'r', shift: true },
 	openBranchPicker: { key: 'b', shift: true },
 	toggleSidebar: { key: 'b', mod: true },
+	toggleTasksSidebar: { key: 't', mod: true },
 	toggleCommentsSidebar: { key: 'l', mod: true },
 	openConversationSidebar: { key: 'l', mod: true, shift: true },
 	openSettings: { key: ',', mod: true },

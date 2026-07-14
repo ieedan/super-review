@@ -1,0 +1,101 @@
+{
+  "branch": "feat/branch-task-lists",
+  "tasks": [
+    {
+      "id": "fbf6e246-5f43-4c72-bf64-a547ad7cf14f",
+      "title": "I should be able to hit Cmd+Enter to submit when in the notes",
+      "done": true,
+      "order": 0,
+      "createdAt": 1784041161122,
+      "updatedAt": 1784042261053,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Claude Code",
+        "harness": "claude-code"
+      },
+      "doneAt": 1784042261053
+    },
+    {
+      "id": "857eb3c5-f6a9-4869-9d9e-eb232f4012b9",
+      "title": "Combine the inline delete and edit buttons under a more menu",
+      "done": true,
+      "order": 1,
+      "createdAt": 1784041383793,
+      "updatedAt": 1784042261346,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Claude Code",
+        "harness": "claude-code"
+      },
+      "doneAt": 1784042261346
+    },
+    {
+      "id": "5728e4ea-0b17-4e81-b451-4aaedf7df0ce",
+      "title": "we don't need the maximize button the comments and tasks tab",
+      "done": true,
+      "order": 2,
+      "createdAt": 1784041469217,
+      "updatedAt": 1784042261646,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Claude Code",
+        "harness": "claude-code"
+      },
+      "doneAt": 1784042261646
+    },
+    {
+      "id": "b6560ab4-eaed-4f2d-a590-e307a3ea6c41",
+      "title": "the task list json file should have a custom display like sessiions do in the diff view",
+      "done": true,
+      "order": 3,
+      "createdAt": 1784041594950,
+      "updatedAt": 1784042261943,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Claude Code",
+        "harness": "claude-code"
+      },
+      "doneAt": 1784042261943
+    },
+    {
+      "id": "0bce960c-ac73-45b9-b3ac-9cf25dff2b4a",
+      "title": "I should be able to press escape to cancel editing the task",
+      "done": true,
+      "order": 4,
+      "createdAt": 1784041647712,
+      "updatedAt": 1784042262237,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Claude Code",
+        "harness": "claude-code"
+      },
+      "doneAt": 1784042262237
+    }
+  ],
+  "updatedAt": 1784049134864
+}

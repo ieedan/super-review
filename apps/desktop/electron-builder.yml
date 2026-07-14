@@ -16,6 +16,8 @@ extraResources:
     to: skills/document-session
   - from: ../../.agents/skills/resolve-comments
     to: skills/resolve-comments
+  - from: ../../.agents/skills/loop-tasks
+    to: skills/loop-tasks
 extraMetadata:
   main: out/main/index.js
 asar: true
