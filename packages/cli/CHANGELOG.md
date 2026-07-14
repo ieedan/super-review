@@ -1,8 +1,8 @@
 # super-review
 
-## 0.1.0
+## 0.0.8
 
-### Minor Changes
+### Patch Changes
 
 - [#150](https://github.com/ieedan/super-review/pull/150) [`7c85bfb`](https://github.com/ieedan/super-review/commit/7c85bfb3ce5a97b93af1f041c9d28362e6fa961a) Thanks [@ieedan](https://github.com/ieedan)! - feat: branch task lists
 
