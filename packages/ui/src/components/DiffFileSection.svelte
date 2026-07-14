@@ -1666,16 +1666,24 @@
 	// re-fetch here is silent: the current diff stays on screen and is swapped
 	// only if disk came back different — so external edits land without flicker.
 	let appliedRevalidateToken = -1;
+	// The per-file reload token last applied here. Bumped (per path) when a
+	// single-file in-place edit (discarding a line/hunk) rewrites just this file, so
+	// this section silently re-fetches and swaps in place while every other section
+	// is left untouched. Folded into `revalidate` below, not `forced`.
+	let appliedFileReloadToken = -1;
 
 	// Fetch the diff the first time the section enters view (and stays expanded).
 	// Hydrates from the cross-tab diff cache when available so switching back
 	// to a context renders instantly, then refreshes in the background. The
 	// actual DOM render is kicked off by the render effect below.
 	$effect(() => {
-		// Read both tokens first so the effect re-runs when an op forces a reload
-		// or a focus/poll refresh asks open sections to re-validate against disk.
+		// Read the tokens first so the effect re-runs when an op forces a reload, a
+		// focus/poll refresh asks open sections to re-validate against disk, or a
+		// single-file in-place edit bumps just this path. SvelteMap tracks reads per
+		// key, so only the edited file's section re-runs on a per-file bump.
 		const reloadToken = app.diffReloadToken;
 		const revalidateToken = app.diffRevalidateToken;
+		const fileReloadToken = app.diffFileReloadTokens.get(file.path) ?? 0;
 		if (!inView || !expanded || !app.activeRepo) return;
 		// Don't fetch hidden diffs — wait until the user clicks "Load diff". When
 		// they do, `deferred` flips false and this effect re-runs to fetch.
@@ -1685,18 +1693,24 @@
 		const repo = app.activeRepo;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
 		const ctxKey = diffContextKey(ctx);
-		// A bumped reload token means this file was rewritten in place — re-fetch
-		// even though the context matches what's already loaded.
+		// A bumped reload token means this file was rewritten in place (merge, pull,
+		// etc.), so re-fetch even though the context matches what's already loaded.
 		const forced = reloadToken !== appliedReloadToken;
-		// A bumped revalidate token means files may have changed on disk outside
-		// the app; re-fetch in the background but keep the current diff on screen.
-		const revalidate = revalidateToken !== appliedRevalidateToken;
+		// A bumped revalidate token means files may have changed on disk outside the
+		// app; a bumped per-file token means a single-file in-place edit (discard
+		// line/hunk) rewrote just this file. Both re-fetch silently: the current diff
+		// stays on screen and is swapped only if the content actually changed, so the
+		// edited section updates without a dispose-to-blank flash (and the caller
+		// primes the cache, so a section not currently showing hydrates instantly).
+		const revalidate =
+			revalidateToken !== appliedRevalidateToken || fileReloadToken !== appliedFileReloadToken;
 		// Already up to date for this context with nothing asking us to refresh,
 		// or a (non-forced) fetch is already in flight.
 		if (diffData && loadedCtxKey === ctxKey && !forced && !revalidate) return;
 		if (loading && !forced) return;
 		appliedReloadToken = reloadToken;
 		appliedRevalidateToken = revalidateToken;
+		appliedFileReloadToken = fileReloadToken;
 
 		// True when the right diff for this context is already rendered. A pure
 		// revalidation leaves it in place and refreshes silently underneath.

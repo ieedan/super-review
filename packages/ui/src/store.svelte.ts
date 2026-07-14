@@ -618,6 +618,12 @@ interface AppState {
 	// background and swap only if the file changed on disk. That's how edits made
 	// outside the app (another editor, the CLI) get picked up without a flicker.
 	diffRevalidateToken: number;
+	// Per-file forced-reload signals, keyed by file path. Unlike the global
+	// diffReloadToken (which makes EVERY open section drop its DOM and re-fetch),
+	// bumping one path here forces only that file's section to re-fetch and
+	// re-render. Used by in-place single-file edits (discard line/hunk) so the
+	// rest of the diff view keeps its rendered DOM and the user's scroll position.
+	diffFileReloadTokens: SvelteMap<string, number>;
 	loading: {
 		files: boolean;
 		branches: boolean;
@@ -963,6 +969,7 @@ const initial: AppState = {
 	conflictUnresolved: [],
 	diffReloadToken: 0,
 	diffRevalidateToken: 0,
+	diffFileReloadTokens: new SvelteMap(),
 	loading: { files: false, branches: false, prs: false, repos: false },
 	errors: []
 };
@@ -1339,6 +1346,17 @@ function clearConflicts(): void {
 function bumpDiffReload(): void {
 	diffCache.clear();
 	app.diffReloadToken++;
+}
+
+// Ask just one file's open diff section to re-validate against disk. Unlike
+// bumpDiffReload (which clears the whole cache and bumps a global token every
+// section watches) this bumps only that path's per-file token, so every other
+// section keeps its rendered DOM and the reviewer's scroll position. The section
+// swaps its diff in place without a dispose-to-blank flash; priming the file's
+// cache entry beforehand also lets a section that isn't currently showing (e.g.
+// scrolled off) hydrate instantly when it next comes into view.
+function bumpFileDiffReload(filePath: string): void {
+	app.diffFileReloadTokens.set(filePath, (app.diffFileReloadTokens.get(filePath) ?? 0) + 1);
 }
 
 // Ask open diff sections to silently re-validate against disk. Unlike
@@ -3134,6 +3152,50 @@ function dropDiscardedFilesFromState(repoId: string, paths: string[]): void {
 	// Push status can shift (e.g. discarding leaves the tree clean); refresh it
 	// in the background since it only feeds the header, not the diff/sidebar.
 	void refreshPushStatus();
+}
+
+// Reconcile the live state after a single file was rewritten in place on disk
+// (discard line/hunk), given its freshly re-fetched diff. Avoids a full
+// refreshFiles: that swaps `app.changedFiles` for a new array, which rebuilds the
+// diff view's render plan and resets its mount window + scroll anchor (the "jump
+// on refresh"). If nothing changed remains the file has left the working tree, so
+// drop its row surgically. Otherwise update only that file's stat in place: the
+// array keeps its identity, so the render plan and scroll position stay put and
+// only the edited section (via its per-file reload token) re-renders.
+function reconcileInPlaceFileEdit(repoId: string, ctx: DiffContext, fresh: DiffData): void {
+	const path = fresh.file.path;
+
+	// An empty patch with no added/removed lines means the file is back at HEAD and
+	// no longer part of the diff (a mode-only or rename change still carries patch
+	// text, so this stays true only when the file is genuinely clean). Drop its row
+	// rather than leaving an empty section behind.
+	if (fresh.file.additions === 0 && fresh.file.deletions === 0 && fresh.patch.trim() === '') {
+		dropDiscardedFilesFromState(repoId, [path]);
+		return;
+	}
+
+	// Copy only the fields getDiff authoritatively recomputes. oldPath and the seen
+	// signatures are intentionally left alone: getDiff doesn't populate them, and
+	// the next focus/poll refresh reconciles the signature (which may then unmark a
+	// "seen" file whose content just changed) without us guessing here.
+	const applyStat = (f: ChangedFile): void => {
+		f.status = fresh.file.status;
+		f.additions = fresh.file.additions;
+		f.deletions = fresh.file.deletions;
+		f.isBinary = fresh.file.isBinary;
+	};
+
+	// Mutate the existing ChangedFile object in place so `app.changedFiles` keeps
+	// its array identity, which is what stops DiffView rebuilding its render plan.
+	const existing = app.changedFiles.find((f) => f.path === path);
+	if (existing) applyStat(existing);
+
+	// Keep the per-context files cache in step so a tab switch (which hydrates from
+	// it) shows the new stat rather than the pre-discard one.
+	const cachedFile = filesCache
+		.get(filesCacheKey(repoId, ctx))
+		?.changedFiles.find((f) => f.path === path);
+	if (cachedFile) applyStat(cachedFile);
 }
 
 export const actions = {
@@ -6648,10 +6710,25 @@ export const actions = {
 		// referenced them are stale — drop them.
 		for (const k of keys) app.stagingLineExclusions.delete(k);
 
-		// The file's content changed in place: force the open diff to re-fetch and
-		// refresh the list (the file drops out if that was its last change).
-		bumpDiffReload();
-		await Promise.all([refreshFiles(), refreshPushStatus()]);
+		// Only this one file changed on disk. Re-fetch just its diff and reconcile
+		// the live state surgically instead of reloading the whole view: prime the
+		// cache with the fresh diff, bump only this file's reload token (so its
+		// section re-renders straight from cache while every other section keeps its
+		// DOM and scroll position), then update its sidebar stat in place (or drop
+		// its row if that was the file's last change). If the re-read fails for some
+		// reason, fall back to the safe full reload.
+		const fresh = await window.api.git.getDiff(repoId, filePath, ctx).catch(() => undefined);
+		if (!fresh) {
+			bumpDiffReload();
+			await Promise.all([refreshFiles(), refreshPushStatus()]);
+			return;
+		}
+		setCachedDiff(repoId, ctx, filePath, fresh);
+		bumpFileDiffReload(filePath);
+		reconcileInPlaceFileEdit(repoId, ctx, fresh);
+		// Discarding uncommitted lines can't change ahead/behind, but keep the header
+		// honest in the background just as the old full-reload path did.
+		void refreshPushStatus();
 	},
 
 	// Discard a file's changes via the file-list context menu. Tracked files are

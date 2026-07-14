@@ -239,12 +239,33 @@ export function lineKeySides(
 // numbered by the new-file lines of the source diff. Kept additions stay as
 // context; non-discarded deletions are absent from the working tree and so don't
 // appear at all. Returns null when nothing is discarded.
+// Rewrite a parsed file header so it describes an in-place modification of the
+// working-tree file rather than a creation/deletion. buildDiscardPatch always
+// applies to the WORKING TREE, where the file already exists on disk, even when
+// the source diff reports it as newly added (its header carries `new file mode`
+// and `--- /dev/null`, synthesized for untracked files). Left as-is, git apply
+// treats the discard patch as a file creation and rejects it with "new file X
+// depends on old contents", because our hunks reference the existing content. So
+// drop the creation/deletion mode markers and point a `/dev/null` old side at the
+// file's real working-tree path (its new-file side). A normal modification header
+// passes through unchanged.
+function workingTreeModifyHeader(header: string[]): string[] {
+	// The file's working-tree path is the diff's new side (`+++ b/<path>`). Use it
+	// to give the old side a real target when the source marked the file as new.
+	const plusLine = header.find((l) => l.startsWith('+++ '));
+	const newTarget = plusLine ? plusLine.slice(4) : null; // e.g. "b/path"
+	const oldTarget = newTarget?.startsWith('b/') ? `a/${newTarget.slice(2)}` : null;
+	return header
+		.filter((l) => !l.startsWith('new file mode ') && !l.startsWith('deleted file mode '))
+		.map((l) => (l === '--- /dev/null' && oldTarget ? `--- ${oldTarget}` : l));
+}
+
 export function buildDiscardPatch(
 	parsed: ParsedFilePatch,
 	discardAdds: Set<number>,
 	discardDels: Set<number>
 ): string | null {
-	const out: string[] = [...parsed.header];
+	const out: string[] = [...workingTreeModifyHeader(parsed.header)];
 	let hadHunk = false;
 	// Running new-minus-old line difference of the hunks kept so far, so each
 	// emitted hunk's `+start` stays consistent after lines are removed/restored.
