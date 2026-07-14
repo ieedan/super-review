@@ -1,5 +1,14 @@
 # @super-review/desktop
 
+## 0.1.23
+
+### Patch Changes
+
+- [#150](https://github.com/ieedan/super-review/pull/150) [`7c85bfb`](https://github.com/ieedan/super-review/commit/7c85bfb3ce5a97b93af1f041c9d28362e6fa961a) Thanks [@ieedan](https://github.com/ieedan)! - feat: branch task lists
+- Updated dependencies [[`7c85bfb`](https://github.com/ieedan/super-review/commit/7c85bfb3ce5a97b93af1f041c9d28362e6fa961a), [`7c85bfb`](https://github.com/ieedan/super-review/commit/7c85bfb3ce5a97b93af1f041c9d28362e6fa961a)]:
+  - @super-review/core@0.2.0
+  - @super-review/ui@0.1.0
+
 ## 0.1.22
 
 ### Patch Changes
