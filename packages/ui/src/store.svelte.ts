@@ -44,6 +44,8 @@ import type {
 	StatMetric,
 	Session,
 	SessionSummary,
+	Task,
+	NewTaskInput,
 	EmptyViewItemVisibility,
 	HeaderItemVisibility,
 	FileHeaderItemVisibility,
@@ -494,10 +496,20 @@ interface AppState {
 	// The PR number `prConversation` was loaded for, so switching to a different PR
 	// (or away) knows the cached feed is stale. Null when nothing's loaded.
 	prConversationLoadedFor: number | null;
-	// Which tab the comments sidebar shows. 'conversation' only renders in a PR
-	// context; the panel falls back to 'comments' (local/review comments) otherwise.
-	// Ephemeral (per launch).
-	commentsSidebarTab: 'comments' | 'conversation';
+	// Which tab the right sidebar shows. 'tasks' is the branch task list; 'comments'
+	// is the local/review comment list; 'conversation' only renders in a PR context
+	// (the panel falls back to 'comments' otherwise). Ephemeral (per launch).
+	commentsSidebarTab: 'tasks' | 'comments' | 'conversation';
+	// The current branch's task list (or the read-only viewed branch/PR's, when
+	// reviewing one), ordered. Loaded when the Tasks tab is shown and kept live via
+	// the tasks watcher.
+	tasks: Task[];
+	// The branch key `tasks` was loaded for (`<branch>` or `<branch>@<ref>` for a
+	// read-only view), so a branch/view switch can tell whether the list is stale.
+	tasksBranchKey: string | null;
+	// True while the initial task list for a branch is being fetched (drives the
+	// panel's loading state; a background refresh doesn't set it).
+	tasksLoading: boolean;
 	// Mergeability for the focused PR (`activePR ?? branchPR`). Checks live in the
 	// shared `prChecks` store, not here, so the merge box and header button can't
 	// disagree. Fetched on demand when the Conversation panel is shown.
@@ -671,7 +683,10 @@ export function isPRCommentContext(): boolean {
 // hotkeys (openCommentsSidebar) must reason about this effective tab, not the
 // raw remembered one, or Ctrl+L thinks it's on the Conversation tab and needs a
 // second press to close.
-export function effectiveCommentsSidebarTab(): 'comments' | 'conversation' {
+export function effectiveCommentsSidebarTab(): 'tasks' | 'comments' | 'conversation' {
+	// The Tasks tab exists in every context, so it's shown as-is. Only Conversation
+	// is PR-only and collapses to Comments outside a PR view.
+	if (app.commentsSidebarTab === 'tasks') return 'tasks';
 	return isPRCommentContext() ? app.commentsSidebarTab : 'comments';
 }
 
@@ -922,6 +937,9 @@ const initial: AppState = {
 	loadingConversation: false,
 	prConversationLoadedFor: null,
 	commentsSidebarTab: 'comments',
+	tasks: [],
+	tasksBranchKey: null,
+	tasksLoading: false,
 	mergeBox: null,
 	loadingMergeBox: false,
 	mergeBoxBusy: null,
@@ -1608,6 +1626,30 @@ async function activateRepo(repo: RepoInfo): Promise<void> {
 	// the slow network PR lookup below.
 	await hydrateRememberedBranchBase();
 	await refreshBranchPR();
+	void syncWithOrigin();
+}
+
+// Bring the active repo in step with origin after landing on it (repo switch,
+// repo open) or on its default branch. Callers fire-and-forget: pull() and
+// fetchAndRefresh() drive their own progress and error UI, so a switch never
+// blocks on a network round-trip.
+//
+// The default branch is the one you return to expecting the latest, so it gets
+// fast-forwarded outright. Every other branch only fetches: merging into work
+// the user is in the middle of isn't ours to decide.
+async function syncWithOrigin(): Promise<void> {
+	const repo = app.activeRepo;
+	if (!repo || !app.pushStatus?.hasRemote) return;
+	const onDefault = app.currentBranch === (repo.defaultBranch ?? 'main');
+	// A dirty tree downgrades the pull to a fetch: pull() answers "local changes
+	// would be overwritten" with a stash prompt, and nobody asked for one by
+	// switching repos.
+	const dirty = await window.api.git.isDirty(repo.id).catch(() => true);
+	if (onDefault && app.pushStatus.hasUpstream && !dirty) {
+		await actions.pull();
+		return;
+	}
+	await actions.fetchAndRefresh();
 }
 
 async function refreshBranches(): Promise<void> {
@@ -2466,6 +2508,51 @@ async function pruneCommittedComments(repoId: string, committedPaths: string[]):
 	const orphanedIds = new Set(orphaned.map((c) => c.id));
 	app.localComments = app.localComments.filter((c) => !orphanedIds.has(c.id));
 	await Promise.all(orphaned.map((c) => window.api.comments.remove(repoId, c.id).catch(() => {})));
+}
+
+// ─── Branch tasks ─────────────────────────────────────────────────────────────
+
+// The branch whose task list the current view shows, and the git ref to read it
+// from (null = the working tree). Tasks are per-branch: the checked-out branch
+// reads from disk, while a read-only branch/PR view reads that branch's committed
+// list from its ref. `key` disambiguates the two in `tasksBranchKey`. Null when no
+// branch is resolvable (e.g. detached HEAD with nothing viewed).
+export function taskBranchTarget(): { branch: string; ref: string | null; key: string } | null {
+	if (app.viewPR) {
+		const ref = `pr/${app.viewPR.number}/head`;
+		return { branch: app.viewPR.headRef, ref, key: `${app.viewPR.headRef}@${ref}` };
+	}
+	if (app.viewBranch && app.viewBranch !== app.currentBranch) {
+		return {
+			branch: app.viewBranch,
+			ref: app.viewBranch,
+			key: `${app.viewBranch}@${app.viewBranch}`
+		};
+	}
+	if (app.currentBranch) return { branch: app.currentBranch, ref: null, key: app.currentBranch };
+	return null;
+}
+
+// Whether two task lists are field-equal, so a no-op watcher/refresh doesn't churn
+// the reactive array (which flashes the panel and rebuilds rows). Mirrors
+// `commentsEqual` / `sessionsEqual`.
+function tasksEqual(a: Task[], b: Task[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (
+			x.id !== y.id ||
+			x.title !== y.title ||
+			(x.notes ?? '') !== (y.notes ?? '') ||
+			x.done !== y.done ||
+			x.order !== y.order ||
+			x.updatedAt !== y.updatedAt
+		) {
+			return false;
+		}
+	}
+	return true;
 }
 
 // ── Copy-to-prompt formatting ──
@@ -3411,6 +3498,9 @@ export const actions = {
 			if (app.usageStatsByRepo) void actions.loadStats();
 			await Promise.all([refreshRepos(), restoreContextTab(contextTabByRepo.get(repo.id), true)]);
 			await refreshBranchPR();
+			// The repo you're switching to has been sitting idle, possibly for days —
+			// catch it up to origin rather than showing a stale view.
+			void syncWithOrigin();
 		}
 	},
 
@@ -4157,15 +4247,10 @@ export const actions = {
 			if (app.contextTab === 'branch' && landingOnDefault) {
 				await actions.setContextTab('unstaged');
 			}
-			// Switching onto the default branch auto-refreshes it from upstream, so
-			// `main` is never left stale after a switch (it's the branch you return to
-			// expecting the latest). Fire-and-forget: pull() drives its own progress and
-			// conflict UI (intent 'pull'), so we don't block the checkout on a network
-			// round-trip. Guarded on an upstream existing (refreshPushStatus just ran)
-			// so a local-only default branch doesn't error on a pull with no remote.
-			if (landingOnDefault && app.pushStatus?.hasUpstream) {
-				void actions.pull();
-			}
+			// Switching onto the default branch catches it up from upstream, so `main`
+			// is never left stale after a switch. refreshPushStatus just ran, so
+			// syncWithOrigin sees an accurate upstream/remote picture.
+			if (landingOnDefault) void syncWithOrigin();
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -5033,6 +5118,127 @@ export const actions = {
 		await loadLocalComments();
 	},
 
+	// ─── Branch tasks ──────────────────────────────────────────────────────────
+
+	// Load the current branch's task list (or the read-only viewed branch/PR's).
+	// Diffs before assigning so a watcher/poll refresh that finds nothing changed
+	// doesn't churn the reactive list. Called when the Tasks tab is shown, on a
+	// branch/view switch (via the panel), and on a `tasks:changed` event.
+	async loadTasks(): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		if (!repoId || !target) {
+			app.tasks = [];
+			app.tasksBranchKey = null;
+			app.tasksLoading = false;
+			return;
+		}
+		// Show the loading state only for the first fetch of a branch/view, not for a
+		// background refresh of the branch already displayed.
+		if (app.tasksBranchKey !== target.key) {
+			app.tasksBranchKey = target.key;
+			app.tasksLoading = true;
+		}
+		let tasks: Task[];
+		try {
+			tasks = await window.api.tasks.list(repoId, target.branch, target.ref);
+		} catch {
+			app.tasksLoading = false;
+			return; // keep the previous list on a transient failure
+		}
+		// Bail if the user switched repo or branch/view while we were fetching.
+		if (app.activeRepo?.id !== repoId) return;
+		const now = taskBranchTarget();
+		if (!now || now.key !== target.key) return;
+		if (!tasksEqual(tasks, app.tasks)) app.tasks = tasks;
+		app.tasksLoading = false;
+	},
+
+	// A repo's task list changed on disk (edited in another window or by an agent
+	// via the CLI). Reload if it's the active repo.
+	async onTasksChanged(repoId: string): Promise<void> {
+		if (app.activeRepo?.id !== repoId) return;
+		await actions.loadTasks();
+	},
+
+	// Add a task to the current branch's list, attributed to the signed-in user.
+	// Pass `parentId` to make it a subtask. No-op in a read-only view (tasks there
+	// belong to a branch we aren't on).
+	async addTask(title: string, notes?: string, parentId?: string): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		const text = title.trim();
+		if (!repoId || !target || !text || isReadOnlyView()) return;
+		const trimmedNotes = notes?.trim();
+		const input: NewTaskInput = {
+			title: text,
+			actor: localAuthor(),
+			...(trimmedNotes ? { notes: trimmedNotes } : {}),
+			...(parentId ? { parentId } : {})
+		};
+		await window.api.tasks.add(repoId, target.branch, input);
+		await actions.loadTasks();
+	},
+
+	// Edit a task's title and/or notes. Empty-string notes clear them.
+	async updateTask(id: string, patch: { title?: string; notes?: string }): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		if (!repoId || !target || isReadOnlyView()) return;
+		await window.api.tasks.update(repoId, target.branch, id, patch);
+		await actions.loadTasks();
+	},
+
+	// Check a task off (or reopen it), recording the signed-in user as the actor.
+	async toggleTask(id: string, done: boolean): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		if (!repoId || !target || isReadOnlyView()) return;
+		await window.api.tasks.setDone(repoId, target.branch, id, done, localAuthor());
+		await actions.loadTasks();
+	},
+
+	// Put a task on hold (or take it off), a plain display state with no attribution.
+	async setTaskHold(id: string, onHold: boolean): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		if (!repoId || !target || isReadOnlyView()) return;
+		await window.api.tasks.update(repoId, target.branch, id, { onHold });
+		await actions.loadTasks();
+	},
+
+	async removeTask(id: string): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		if (!repoId || !target || isReadOnlyView()) return;
+		await window.api.tasks.remove(repoId, target.branch, id);
+		await actions.loadTasks();
+	},
+
+	async clearTasks(): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		if (!repoId || !target || isReadOnlyView()) return;
+		await window.api.tasks.clear(repoId, target.branch);
+		await actions.loadTasks();
+	},
+
+	// Reorder the branch's tasks to match `ids` (a full flat list in the new display
+	// order: each top-level task followed by its subtasks). Optimistically reorders
+	// the in-memory list so a drag lands instantly, then persists and reconciles.
+	async reorderTasks(ids: string[]): Promise<void> {
+		const repoId = app.activeRepo?.id;
+		const target = taskBranchTarget();
+		if (!repoId || !target || isReadOnlyView()) return;
+		const rankOf = (id: string): number => {
+			const i = ids.indexOf(id);
+			return i === -1 ? Infinity : i;
+		};
+		app.tasks = [...app.tasks].sort((a, b) => rankOf(a.id) - rankOf(b.id));
+		await window.api.tasks.reorder(repoId, target.branch, ids);
+		await actions.loadTasks();
+	},
+
 	// Open an inline compose box for a new local comment at a line. No-op if one is
 	// already open there (matches the PR composer's single-open-per-line rule).
 	openLocalComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number): void {
@@ -5233,7 +5439,7 @@ export const actions = {
 	// Switch the sidebar's active tab, loading the Conversation feed on demand the
 	// first time it's shown for the current PR. Persisted so the tab the user left
 	// on reopens with the app.
-	setCommentsSidebarTab(tab: 'comments' | 'conversation'): void {
+	setCommentsSidebarTab(tab: 'tasks' | 'comments' | 'conversation'): void {
 		if (app.commentsSidebarTab !== tab) {
 			app.commentsSidebarTab = tab;
 			rememberViewLayout();
@@ -5242,6 +5448,7 @@ export const actions = {
 			});
 		}
 		if (tab === 'conversation') actions.ensurePRConversationLoaded();
+		if (tab === 'tasks') void actions.loadTasks();
 	},
 
 	// Open the sidebar straight to the Comments tab (default Cmd/Ctrl+L). Mirror
@@ -5255,6 +5462,17 @@ export const actions = {
 			return;
 		}
 		actions.setCommentsSidebarTab('comments');
+		if (!app.commentsSidebarOpen) actions.setCommentsSidebarOpen(true);
+	},
+
+	// Open the sidebar straight to the Tasks tab (default Cmd/Ctrl+T). Toggles closed
+	// when it's already open on that tab, mirroring the Comments hotkey's feel.
+	openTasksSidebar(): void {
+		if (app.commentsSidebarOpen && effectiveCommentsSidebarTab() === 'tasks') {
+			actions.setCommentsSidebarOpen(false);
+			return;
+		}
+		actions.setCommentsSidebarTab('tasks');
 		if (!app.commentsSidebarOpen) actions.setCommentsSidebarOpen(true);
 	},
 

@@ -55,6 +55,12 @@ export const BUNDLED_SKILLS: BundledSkill[] = [
 		label: 'Resolve comments skill',
 		description: 'Teaches agents to find and resolve open review comments with the CLI.',
 		files: ['SKILL.md']
+	},
+	{
+		name: 'loop-tasks',
+		label: 'Loop tasks skill',
+		description: "Teaches agents to work through the branch's task list until it's clear.",
+		files: ['SKILL.md']
 	}
 ];
 

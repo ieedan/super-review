@@ -78,6 +78,12 @@ import type {
 	AiConfigInstallItem,
 	AiConfigRemoveResult,
 	SessionSummary,
+	Task,
+	NewTaskInput,
+	TaskPatch,
+	TaskActor,
+	TaskContextMenuParams,
+	TaskContextMenuAction,
 	TerminalKind,
 	UserPrefs
 } from '@shared/types.js';
@@ -162,6 +168,17 @@ import {
 	watchCommentsDir
 } from '@super-review/core';
 import type { LocalComment, LocalCommentAuthor, NewLocalCommentInput } from '@super-review/core';
+import {
+	addTask,
+	clearTasks,
+	listTasks,
+	listTasksAtRef,
+	removeTask,
+	reorderTasks,
+	setTaskDone,
+	updateTask,
+	watchTasksDir
+} from '@super-review/core';
 import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-service.js';
 import { listTemplates } from '@super-review/core';
 import {
@@ -390,6 +407,53 @@ function clearCommentWatch(senderId: number): void {
 	if (prev) releaseCommentWatch(prev);
 	commentWatchByContents.delete(senderId);
 	commentWatchHooked.delete(senderId);
+}
+
+// ─── Tasks file watcher ─────────────────────────────────────────────────────
+// The same reference-counted, per-repo fs.watch machinery as the session and
+// comment watchers above, pointed at .super-review/tasks and broadcasting
+// `tasks:changed` so a CLI edit (or another window) refreshes the Tasks tab live.
+const taskWatchers = new Map<string, { close: () => void; refs: number }>();
+const taskWatchByContents = new Map<number, string>();
+const taskWatchHooked = new Set<number>();
+
+function releaseTaskWatch(repoPath: string): void {
+	const entry = taskWatchers.get(repoPath);
+	if (!entry) return;
+	entry.refs -= 1;
+	if (entry.refs <= 0) {
+		entry.close();
+		taskWatchers.delete(repoPath);
+	}
+}
+
+function setTaskWatch(sender: Electron.WebContents, repoId: string): void {
+	const repo = getRepo(repoId);
+	if (!repo) return;
+	const prev = taskWatchByContents.get(sender.id);
+	if (prev === repo.path) return; // Already watching this repo for this window.
+	if (prev) releaseTaskWatch(prev);
+	taskWatchByContents.set(sender.id, repo.path);
+
+	const entry = taskWatchers.get(repo.path);
+	if (entry) {
+		entry.refs += 1;
+	} else {
+		const close = watchTasksDir(repo.path, () => broadcast('tasks:changed', repoId));
+		taskWatchers.set(repo.path, { close, refs: 1 });
+	}
+
+	if (!taskWatchHooked.has(sender.id)) {
+		taskWatchHooked.add(sender.id);
+		sender.once('destroyed', () => clearTaskWatch(sender.id));
+	}
+}
+
+function clearTaskWatch(senderId: number): void {
+	const prev = taskWatchByContents.get(senderId);
+	if (prev) releaseTaskWatch(prev);
+	taskWatchByContents.delete(senderId);
+	taskWatchHooked.delete(senderId);
 }
 
 // Re-run buildRepoInfo off the critical path. If anything moved (favicon
@@ -1932,6 +1996,40 @@ export function registerIpc(): void {
 		}
 	);
 
+	// Task row context menu (in the Tasks tab). Edit/delete the task, plus a
+	// check-off toggle whose label reflects the current state. The renderer runs
+	// the chosen action so it can refresh afterward.
+	ipcMain.handle(
+		'menu:showTaskContextMenu',
+		async (e, params: TaskContextMenuParams): Promise<TaskContextMenuAction | null> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			let chosen: TaskContextMenuAction | null = null;
+			const item = (label: string, action: TaskContextMenuAction): MenuItemConstructorOptions => ({
+				label,
+				click: () => {
+					chosen = action;
+				}
+			});
+
+			const template: MenuItemConstructorOptions[] = [
+				item(params.done ? 'Mark as Not Done' : 'Mark as Done', 'toggle'),
+				item(params.onHold ? 'Remove Hold' : 'Put on Hold', 'hold')
+			];
+			// Subtasks nest one level only, so "Add Subtask" is offered on top-level
+			// tasks only.
+			if (params.canAddSubtask) template.push(item('Add Subtask…', 'addSubtask'));
+			template.push(item('Edit…', 'edit'), { type: 'separator' }, item('Delete', 'delete'));
+
+			const menu = Menu.buildFromTemplate(template);
+			return await new Promise<TaskContextMenuAction | null>((resolve) => {
+				menu.popup({
+					window: win ?? undefined,
+					callback: () => resolve(chosen)
+				});
+			});
+		}
+	);
+
 	// Pull-request row context menu (in the branch picker's PRs tab). Mirrors the
 	// branch menu: "View Read-Only" opens the PR's diff without checking out; the
 	// renderer handles copy/open with the PR it already holds.
@@ -2441,6 +2539,72 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('comments:unwatch', (e): void => clearCommentWatch(e.sender.id));
+
+	// ─── Branch tasks ────────────────────────────────────────────────────────
+	// A per-branch checklist committed under .super-review/tasks. Like sessions,
+	// a `ref` reads the list committed on that git ref (a branch/PR viewed
+	// read-only) rather than the working tree.
+	ipcMain.handle(
+		'tasks:list',
+		async (_e, repoId: string, branch: string, ref?: string | null): Promise<Task[]> => {
+			const repoPath = repoOrThrow(repoId).path;
+			return ref ? listTasksAtRef(repoPath, branch, ref) : listTasks(repoPath, branch);
+		}
+	);
+
+	ipcMain.handle(
+		'tasks:add',
+		async (_e, repoId: string, branch: string, input: NewTaskInput): Promise<Task> =>
+			addTask(repoOrThrow(repoId).path, branch, input)
+	);
+
+	ipcMain.handle(
+		'tasks:update',
+		async (
+			_e,
+			repoId: string,
+			branch: string,
+			id: string,
+			patch: TaskPatch
+		): Promise<Task | null> => updateTask(repoOrThrow(repoId).path, branch, id, patch)
+	);
+
+	ipcMain.handle(
+		'tasks:setDone',
+		async (
+			_e,
+			repoId: string,
+			branch: string,
+			id: string,
+			done: boolean,
+			actor: TaskActor
+		): Promise<Task | null> => setTaskDone(repoOrThrow(repoId).path, branch, id, done, actor)
+	);
+
+	ipcMain.handle(
+		'tasks:remove',
+		async (_e, repoId: string, branch: string, id: string): Promise<void> =>
+			removeTask(repoOrThrow(repoId).path, branch, id)
+	);
+
+	ipcMain.handle(
+		'tasks:reorder',
+		async (_e, repoId: string, branch: string, ids: string[]): Promise<void> =>
+			reorderTasks(repoOrThrow(repoId).path, branch, ids)
+	);
+
+	ipcMain.handle(
+		'tasks:clear',
+		async (_e, repoId: string, branch: string): Promise<void> =>
+			clearTasks(repoOrThrow(repoId).path, branch)
+	);
+
+	ipcMain.handle('tasks:watch', (e, repoId: string | null): void => {
+		if (repoId) setTaskWatch(e.sender, repoId);
+		else clearTaskWatch(e.sender.id);
+	});
+
+	ipcMain.handle('tasks:unwatch', (e): void => clearTaskWatch(e.sender.id));
 
 	// ─── AI file configuration ───────────────────────────────────────────────
 	// The super-review skill teaches an agent how/when to record a session and

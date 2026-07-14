@@ -35,7 +35,7 @@
 	import * as Sidebar from '@super-review/ui/components/ui/sidebar';
 	import * as Resizable from '@super-review/ui/components/ui/resizable';
 	import type { PaneAPI } from 'paneforge';
-	import { actions, setError, app } from '@super-review/ui/store.svelte';
+	import { actions, setError, app, taskBranchTarget } from '@super-review/ui/store.svelte';
 	import { initDiffHighlighter } from '@super-review/ui/diff-highlighter';
 	import { initDiffWorkerPool } from '@super-review/ui/diff-worker-pool';
 	import { setAnimations } from '@super-review/ui/hooks/use-animations.svelte';
@@ -146,6 +146,13 @@
 			e.preventDefault();
 			if (app.sidebarCollapsed) sidebarPane.expand();
 			else sidebarPane.collapse();
+		},
+		// Open the right sidebar straight to the Tasks tab (default Cmd/Ctrl+T).
+		// Toggles closed when already open on that tab, mirroring the Comments hotkey.
+		toggleTasksSidebar: (e) => {
+			if (!app.activeRepo) return;
+			e.preventDefault();
+			actions.openTasksSidebar();
 		},
 		// Open the comments sidebar straight to the Comments tab (default Cmd/Ctrl+L).
 		// Pulls you to Comments from the Conversation tab; toggles closed only when
@@ -332,6 +339,20 @@
 		void window.api.comments.watch(repoId);
 	});
 
+	// Same live-watch for the repo's branch tasks, so a task edited in another
+	// window (or checked off by an agent via the CLI) shows up without a refresh.
+	$effect(() => {
+		const repoId = app.activeRepo?.id ?? null;
+		void window.api.tasks.watch(repoId);
+	});
+
+	// Reload the task list whenever the branch/view it's scoped to changes, so the
+	// Tasks tab follows the checked-out branch (or a read-only branch/PR view).
+	$effect(() => {
+		void taskBranchTarget()?.key;
+		if (app.activeRepo) void actions.loadTasks();
+	});
+
 	onMount(() => {
 		void actions.init();
 
@@ -364,6 +385,12 @@
 		// disk — reload the active context's list.
 		const offCommentsChanged = window.api.events.onCommentsChanged((repoId) => {
 			void actions.onCommentsChanged(repoId);
+		});
+
+		// An agent's CLI (or another window) changed this repo's branch tasks on disk
+		// — reload the current branch's list if the Tasks tab is showing.
+		const offTasksChanged = window.api.events.onTasksChanged((repoId) => {
+			void actions.onTasksChanged(repoId);
 		});
 
 		// An account's GitHub token started or stopped failing authentication —
@@ -406,6 +433,7 @@
 			offTrashFailed();
 			offSessionsChanged();
 			offCommentsChanged();
+			offTasksChanged();
 			offGithubAuthChanged();
 			offHelpMenuAction();
 			stopPoll();

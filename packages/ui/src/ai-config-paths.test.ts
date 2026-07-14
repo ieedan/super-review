@@ -58,10 +58,11 @@ describe('HARNESS_AI_PATHS', () => {
 		expect(AGENTS_CONVENTION_HARNESSES).toEqual(['cursor', 'codex', 'opencode', 'copilot']);
 	});
 
-	it('bundles the document-session and resolve-comments skills, each with files', () => {
+	it('bundles the document-session, resolve-comments and loop-tasks skills, each with files', () => {
 		const names = BUNDLED_SKILLS.map((s) => s.name);
 		expect(names).toContain('document-session');
 		expect(names).toContain('resolve-comments');
+		expect(names).toContain('loop-tasks');
 		for (const skill of BUNDLED_SKILLS) {
 			expect(skill.files).toContain('SKILL.md');
 			expect(skill.files.length).toBeGreaterThan(0);

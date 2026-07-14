@@ -62,6 +62,11 @@ import type {
 	RepoUsageStats,
 	Session,
 	SessionSummary,
+	Task,
+	NewTaskInput,
+	TaskPatch,
+	TaskActor,
+	TaskContextMenuAction,
 	AiConfigStatus,
 	AiConfigApplyResult,
 	AiConfigRemoveResult,
@@ -483,6 +488,23 @@ const api: PreloadAPI = {
 		watch: (repoId) => ipcRenderer.invoke('comments:watch', repoId) as Promise<void>,
 		unwatch: () => ipcRenderer.invoke('comments:unwatch') as Promise<void>
 	},
+	tasks: {
+		list: (repoId, branch, ref) =>
+			ipcRenderer.invoke('tasks:list', repoId, branch, ref) as Promise<Task[]>,
+		add: (repoId, branch, input: NewTaskInput) =>
+			ipcRenderer.invoke('tasks:add', repoId, branch, input) as Promise<Task>,
+		update: (repoId, branch, id, patch: TaskPatch) =>
+			ipcRenderer.invoke('tasks:update', repoId, branch, id, patch) as Promise<Task | null>,
+		setDone: (repoId, branch, id, done, actor: TaskActor) =>
+			ipcRenderer.invoke('tasks:setDone', repoId, branch, id, done, actor) as Promise<Task | null>,
+		remove: (repoId, branch, id) =>
+			ipcRenderer.invoke('tasks:remove', repoId, branch, id) as Promise<void>,
+		reorder: (repoId, branch, ids) =>
+			ipcRenderer.invoke('tasks:reorder', repoId, branch, ids) as Promise<void>,
+		clear: (repoId, branch) => ipcRenderer.invoke('tasks:clear', repoId, branch) as Promise<void>,
+		watch: (repoId) => ipcRenderer.invoke('tasks:watch', repoId) as Promise<void>,
+		unwatch: () => ipcRenderer.invoke('tasks:unwatch') as Promise<void>
+	},
 	aiConfig: {
 		status: (repoId) => ipcRenderer.invoke('aiConfig:status', repoId) as Promise<AiConfigStatus>,
 		apply: (repoId, request) =>
@@ -541,6 +563,11 @@ const api: PreloadAPI = {
 			) as Promise<BranchContextMenuAction | null>,
 		showPRContextMenu: (params) =>
 			ipcRenderer.invoke('menu:showPRContextMenu', params) as Promise<PRContextMenuAction | null>,
+		showTaskContextMenu: (params) =>
+			ipcRenderer.invoke(
+				'menu:showTaskContextMenu',
+				params
+			) as Promise<TaskContextMenuAction | null>,
 		showRepoContextMenu: (params) =>
 			ipcRenderer.invoke(
 				'menu:showRepoContextMenu',
@@ -614,6 +641,11 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
 			ipcRenderer.on('comments:changed', listener);
 			return () => ipcRenderer.off('comments:changed', listener);
+		},
+		onTasksChanged(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, repoId: string) => handler(repoId);
+			ipcRenderer.on('tasks:changed', listener);
+			return () => ipcRenderer.off('tasks:changed', listener);
 		},
 		onGithubAuthChanged(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, errors: GithubAuthError[]) =>
