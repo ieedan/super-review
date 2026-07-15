@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.1.24
+
+### Patch Changes
+
+- Updated dependencies [[`df72e3b`](https://github.com/ieedan/super-review/commit/df72e3b214325b79e0323668e7351369e604730e)]:
+  - @super-review/core@0.2.1
+  - @super-review/ui@0.1.1
+
 ## 0.1.23
 
 ### Patch Changes
