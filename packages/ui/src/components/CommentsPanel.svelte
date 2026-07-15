@@ -79,6 +79,14 @@
 	});
 
 	const totalCount = $derived(isPR ? prThreads.length : localThreads.length);
+	// The Comments tab badge, like the Tasks badge, counts only what's still
+	// actionable: resolved (and, for PRs, outdated) threads drop out so the number
+	// reflects open comments rather than the full history.
+	const openCommentCount = $derived(
+		isPR
+			? prThreads.filter((t) => !t.root.isResolved && !t.root.isOutdated).length
+			: localThreads.filter((t) => t.root.resolvedAt == null).length
+	);
 	// Gates the "copy all" button. Mirrors exactly what copyAll* will emit: for
 	// PRs that's unresolved threads still anchored to a live line (outdated and
 	// file-level roots are skipped); locally it's every unresolved thread root.
@@ -163,11 +171,11 @@
 					class="h-7 flex-none gap-1.5 rounded-md border-0 px-3 py-1.5 text-xs shadow-none data-active:bg-muted data-active:text-foreground data-active:shadow-none dark:data-active:border-0 dark:data-active:bg-muted"
 				>
 					Comments
-					{#if totalCount > 0}
+					{#if openCommentCount > 0}
 						<span
 							class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-medium text-foreground tabular-nums"
 						>
-							{totalCount > 99 ? '99+' : totalCount}
+							{openCommentCount > 99 ? '99+' : openCommentCount}
 						</span>
 					{/if}
 				</Tabs.Trigger>
