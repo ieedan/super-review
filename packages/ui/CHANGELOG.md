@@ -1,5 +1,13 @@
 # @super-review/ui
 
+## 0.1.3
+
+### Patch Changes
+
+- [`3b8c411`](https://github.com/ieedan/super-review/commit/3b8c411e6d524a5ccaf3db517d1e8a1669906067) Thanks [@ieedan](https://github.com/ieedan)! - feat: diff view improvements
+- Updated dependencies [[`3b8c411`](https://github.com/ieedan/super-review/commit/3b8c411e6d524a5ccaf3db517d1e8a1669906067)]:
+  - @super-review/core@0.2.2
+
 ## 0.1.2
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.2.2
+
+### Patch Changes
+
+- [`3b8c411`](https://github.com/ieedan/super-review/commit/3b8c411e6d524a5ccaf3db517d1e8a1669906067) Thanks [@ieedan](https://github.com/ieedan)! - feat: diff view improvements
+
 ## 0.2.1
 
 ### Patch Changes
