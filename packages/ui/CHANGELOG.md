@@ -1,5 +1,11 @@
 # @super-review/ui
 
+## 0.1.2
+
+### Patch Changes
+
+- [`ce9423c`](https://github.com/ieedan/super-review/commit/ce9423c1213b1ee67e58b22ffa183f154ee0c852) Thanks [@ieedan](https://github.com/ieedan)! - consistency: don't show a number on the comments tab when all comments are resolved/outdated
+
 ## 0.1.1
 
 ### Patch Changes
