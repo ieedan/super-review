@@ -28,6 +28,7 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@ethercorps/sveltekit-og": "^4.3.0",
 		"@iconify/svelte": "^5.2.1",
 		"@lucide/svelte": "^1.17.0",
 		"@super-review/core": "workspace:*",
@@ -35,7 +36,6 @@
 		"@upstash/redis": "^1.38.0",
 		"bits-ui": "^2.18.1",
 		"formsnap": "^2.0.1",
-		"sv-agentation": "catalog:",
 		"sveltekit-superforms": "^2.30.1",
 		"zod": "^4.4.3"
 	}

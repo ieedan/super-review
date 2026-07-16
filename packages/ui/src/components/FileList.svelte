@@ -1009,8 +1009,8 @@
 			{#if app.changedFiles.length > 0 && (app.sidebarTabs.lineCounts || (app.sidebarTabs.reviewProgress && app.contextTab !== 'unstaged'))}
 				<div class="flex shrink-0 items-center gap-2 @max-[400px]:hidden">
 					{#if app.sidebarTabs.reviewProgress && app.contextTab !== 'unstaged'}
-						<span class="text-xs text-muted-foreground tabular-nums">
-							<span class="font-medium">{seenDisplay}/{app.changedFiles.length}</span>
+						<span class="text-[11px] text-muted-foreground tabular-nums">
+							{seenDisplay}/{app.changedFiles.length}
 						</span>
 					{/if}
 					{#if app.sidebarTabs.lineCounts}
