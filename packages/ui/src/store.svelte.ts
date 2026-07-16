@@ -1884,14 +1884,39 @@ async function refreshBranchPR(): Promise<void> {
 			`appDefault=${app.activeGithubAccount.login}`
 	);
 	const prev = app.branchPR?.number ?? null;
+	let lookupOk = false;
 	try {
 		app.branchPR = await window.api.github.findPRForBranch(app.activeRepo.id, app.currentBranch);
+		lookupOk = true;
 		console.log(
 			`[branchPR] result: ${app.branchPR ? `PR #${app.branchPR.number}` : 'none (will show Create PR)'}`
 		);
 	} catch (err) {
 		console.error('[branchPR] lookup threw:', err);
 		app.branchPR = null;
+	}
+	// The branch's PR is gone (merged or closed) but we still remember a
+	// `pr/<n>/base` pin for it: that pin is a frozen snapshot of the base tip
+	// from before the merge, so diffing (and computing the History fork point)
+	// against it goes stale the moment the real base branch moves. Drop it, in
+	// memory and on disk, so the view falls back to the live default branch.
+	// Only after a *successful* lookup: a failed one also leaves branchPR null,
+	// and clearing then would flip the diff context the remembered base exists
+	// to keep stable (e.g. an offline cold start).
+	let droppedStaleBase = false;
+	if (
+		lookupOk &&
+		!app.branchPR &&
+		app.rememberedBranchBase &&
+		/^pr\/\d+\/base$/.test(app.rememberedBranchBase)
+	) {
+		app.rememberedBranchBase = null;
+		void window.api.state.setBranchBase(app.activeRepo.id, app.currentBranch, null);
+		droppedStaleBase = true;
+		if (app.contextTab === 'branch' && !isReadOnlyView()) {
+			app.diffContext = contextForTab('branch');
+			await refreshFiles();
+		}
 	}
 	// Detect an unmerged → merged transition for this branch and, if so, offer to
 	// switch back to the default branch. Runs off the just-resolved `app.branchPR`.
@@ -1917,12 +1942,23 @@ async function refreshBranchPR(): Promise<void> {
 	// branch, recompute the context and reload so the diff switches to the correct
 	// base — otherwise the diff would keep surfacing files/lines GitHub doesn't
 	// consider part of the PR, and comments on them would fail to resolve.
+	let newlyPinned = false;
 	if (app.branchPR && !app.fetchedPRBases.has(app.branchPR.number)) {
-		const pinned = await ensurePRBasePinned(app.branchPR);
-		if (pinned && app.contextTab === 'branch' && !isReadOnlyView()) {
+		newlyPinned = await ensurePRBasePinned(app.branchPR);
+		if (newlyPinned && app.contextTab === 'branch' && !isReadOnlyView()) {
 			app.diffContext = contextForTab('branch');
 			await refreshFiles();
 		}
+	}
+	// The PR picture for the checked-out branch changed: the lookup landed a
+	// different PR than before (including none, after a merge), its base ref
+	// just got pinned, or a stale pin was dropped above. The History fork point
+	// was computed from the old picture, so recompute it while the commit list
+	// is on screen. Read-only views resolve their PR (and reload) through
+	// resolveViewBranchPR instead.
+	const prChanged = (app.branchPR?.number ?? null) !== prev || newlyPinned || droppedStaleBase;
+	if (prChanged && app.contextTab === 'history' && !app.activeCommit && !isReadOnlyView()) {
+		await actions.loadCommits();
 	}
 	// Drop any status for a PR we're no longer showing, then refresh.
 	if (app.prChecks && app.prChecks.number !== mergeBoxPR()?.number) {
@@ -1951,6 +1987,11 @@ async function resolveViewBranchPR(branch: string): Promise<void> {
 			if (app.viewBranch === branch && app.contextTab === 'branch') {
 				app.diffContext = contextForTab('branch');
 				await refreshFiles();
+			} else if (app.viewBranch === branch && app.contextTab === 'history' && !app.activeCommit) {
+				// The commit list loaded before this PR resolved, so its fork point
+				// (and "Branched from" label) targeted the local default branch.
+				// Recompute against the PR's just-pinned base.
+				await actions.loadCommits();
 			}
 		}
 	} catch {
@@ -2279,6 +2320,24 @@ function branchDiffBaseRef(): string {
 	// key don't flip when the lookup lands. Only for the checked-out branch; a
 	// read-only view drives its base off `uiPR()` above.
 	if (!isReadOnlyView() && app.rememberedBranchBase) return app.rememberedBranchBase;
+	return app.activeRepo?.defaultBranch ?? 'main';
+}
+
+// Human-readable label for the ref the History tab's "Branched from" divider
+// names. `pr/<n>/base` is an internal pin ref (a frozen snapshot of the PR's
+// base tip), never a name the user recognizes: resolve it to the PR's base
+// branch through whichever PR summary we know for that number. When none has
+// loaded yet (cold start, where the network PR lookup is still in flight) fall
+// back to the repo's default branch; refreshBranchPR reloads the commit list
+// once the lookup lands, correcting the rare PR based on a non-default branch.
+function forkBaseLabel(baseRef: string): string {
+	const pin = /^pr\/(\d+)\/base$/.exec(baseRef);
+	if (!pin) return baseRef;
+	const number = Number(pin[1]);
+	const known = [app.viewPR, app.viewBranchPR, app.branchPR, app.activePR, ...app.prs];
+	for (const pr of known) {
+		if (pr?.number === number && pr.baseRef) return pr.baseRef;
+	}
 	return app.activeRepo?.defaultBranch ?? 'main';
 }
 
@@ -3870,9 +3929,7 @@ export const actions = {
 			const sha = await window.api.git.mergeBase(repoId, baseRef, head);
 			if (!app.activeRepo || app.activeRepo.id !== repoId) return;
 			if (sha && commits[0]?.hash !== sha && commits.some((c) => c.hash === sha)) {
-				const pr = uiPR();
-				const baseLabel = pr && baseRef === `pr/${pr.number}/base` ? pr.baseRef : baseRef;
-				app.historyForkPoint = { sha, baseLabel };
+				app.historyForkPoint = { sha, baseLabel: forkBaseLabel(baseRef) };
 			}
 		}
 	},
@@ -5687,9 +5744,12 @@ export const actions = {
 		// On the Sessions tab, reload the manifests so an agent's CLI update lands
 		// (loadSessions re-opens the active session if one is showing).
 		if (app.contextTab === 'sessions') await actions.loadSessions();
-		// On the History tab, reload the commit list so a fresh commit shows up.
-		if (app.contextTab === 'history') await actions.loadCommits();
 		await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+		// On the History tab, reload the commit list so a fresh commit shows up.
+		// After refreshBranches, so a branch switched outside the app lists the
+		// new head (and fork point) instead of the stale one; before the network
+		// PR lookup, which reloads again itself only when the PR picture changed.
+		if (app.contextTab === 'history') await actions.loadCommits();
 		await refreshBranchPR();
 	},
 
@@ -5709,9 +5769,11 @@ export const actions = {
 			// Mirror refresh(): on the Sessions tab, reload the manifests so an
 			// agent's CLI update lands (loadSessions re-opens the active session).
 			if (app.contextTab === 'sessions') await actions.loadSessions();
-			// On the History tab, reload the commit list so a fresh commit shows up.
-			if (app.contextTab === 'history') await actions.loadCommits();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+			// Mirror refresh(): reload the commit list after refreshBranches so it
+			// follows the branch actually checked out, and after the fetch above so
+			// the fork point sees the freshly fetched base tip.
+			if (app.contextTab === 'history') await actions.loadCommits();
 			await refreshBranchPR();
 		} finally {
 			app.fetchingOrigin = false;

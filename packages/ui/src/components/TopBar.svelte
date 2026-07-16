@@ -61,8 +61,12 @@
 	style="-webkit-app-region: drag"
 	oncontextmenu={onHeaderContextMenu}
 >
-	<!-- Pad past the macOS traffic-light buttons (titleBarStyle: hiddenInset). -->
-	<div class="flex items-center gap-1 pl-20" style="-webkit-app-region: no-drag">
+	<!-- Pad past the macOS traffic-light buttons (titleBarStyle: hiddenInset);
+	     other platforms have nothing in that corner. -->
+	<div
+		class={['flex items-center gap-1', app.platform === 'darwin' && 'pl-20']}
+		style="-webkit-app-region: no-drag"
+	>
 		<!-- Changes (left file-list) sidebar toggle, pinned to the left side and
 		     distinguished by the panel-left icon. Hidable via the header menu. -->
 		{#if app.activeRepo && app.headerItems.changesToggle}
