@@ -32,7 +32,7 @@
 </script>
 
 <svelte:head>
-	<title>Super Review: a faster, saner way to review agent-written code</title>
+	<title>Super Review: code review for the agentic era</title>
 	<meta
 		name="description"
 		content="Super Review is a git client built for actually reviewing massive, agent-written PRs."
@@ -43,7 +43,7 @@
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content="Super Review" />
 	<meta property="og:url" content="https://superreview.dev/" />
-	<meta property="og:title" content="Super Review: review agent-written code" />
+	<meta property="og:title" content="Super Review: code review for the agentic era" />
 	<meta
 		property="og:description"
 		content="A git client built for actually reviewing massive, agent-written PRs."
@@ -53,12 +53,12 @@
 	<meta property="og:image:height" content="630" />
 	<meta
 		property="og:image:alt"
-		content="Super Review: a faster, saner way to review agent-written code"
+		content="Super Review: code review for the agentic era"
 	/>
 
 	<!-- Twitter / X -->
 	<meta name="twitter:card" content="summary_large_image" />
-	<meta name="twitter:title" content="Super Review: review agent-written code" />
+	<meta name="twitter:title" content="Super Review: code review for the agentic era" />
 	<meta
 		name="twitter:description"
 		content="A git client built for actually reviewing massive, agent-written PRs."

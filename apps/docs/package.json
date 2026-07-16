@@ -28,6 +28,7 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@ethercorps/sveltekit-og": "^4.3.0",
 		"@iconify/svelte": "^5.2.1",
 		"@lucide/svelte": "^1.17.0",
 		"@super-review/core": "workspace:*",

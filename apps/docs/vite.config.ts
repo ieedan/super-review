@@ -1,10 +1,11 @@
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { sveltekitOG } from '@ethercorps/sveltekit-og/plugin';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
-	plugins: [tailwindcss(), sveltekit()],
+	plugins: [tailwindcss(), sveltekit(), sveltekitOG()],
 	server: { port: 5173 },
 	// Never emit source maps in the production bundle — they'd expose the desktop
 	// app's component source (this site imports the real @super-review/ui code).
