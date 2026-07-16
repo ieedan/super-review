@@ -19,8 +19,8 @@
 
 	const layoutClass = $derived(
 		reverse
-			? 'flex flex-col items-center gap-8 lg:flex-row-reverse lg:gap-12'
-			: 'flex flex-col items-center gap-8 lg:flex-row lg:gap-12'
+			? 'flex flex-col items-center gap-8 lg:flex-row-reverse lg:items-start lg:gap-12'
+			: 'flex flex-col items-center gap-8 lg:flex-row lg:items-start lg:gap-12'
 	);
 	const textAlignClass = $derived(
 		reverse ? 'text-center lg:text-right' : 'text-center lg:text-left'

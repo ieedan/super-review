@@ -1,25 +1,63 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { Spring } from 'svelte/motion';
+
+	const SCROLL_DOWN = 40;
+	const SCROLL_UP = 8;
+
+	// 0 = home, 1 = compact pill. Light ease-in when compacting; instant when expanding.
+	const progress = new Spring(0, {
+		stiffness: 0.1,
+		damping: 0.58
+	});
+
+	function setCompact(next: boolean, reducedMotion: boolean) {
+		if (reducedMotion || !next) {
+			progress.set(next ? 1 : 0, { hard: true });
+		} else {
+			progress.set(1);
+		}
+	}
+
 	function focusWaitlist(): void {
 		const el = document.querySelector<HTMLInputElement>('#waitlist input');
 		el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 		el?.focus({ preventScroll: true });
 	}
+
+	onMount(() => {
+		const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+		let compact = window.scrollY > SCROLL_DOWN;
+
+		setCompact(compact, reduced.matches);
+
+		const onScroll = () => {
+			const y = window.scrollY;
+			const next = compact ? y > SCROLL_UP : y > SCROLL_DOWN;
+			if (next === compact) return;
+			compact = next;
+			setCompact(next, reduced.matches);
+		};
+
+		window.addEventListener('scroll', onScroll, { passive: true });
+		return () => window.removeEventListener('scroll', onScroll);
+	});
 </script>
 
-<div class="header-anchor sticky top-0 z-50 flex justify-center">
-	<header
-		class="header-bar flex w-full max-w-6xl items-center justify-between border border-transparent bg-transparent py-5 shadow-none backdrop-blur-none"
-	>
-		<a href="/" class="flex min-w-0 items-center gap-2.5">
-			<img src="/icon.png" alt="" class="header-icon block size-8 rounded-lg shadow-lg" />
-			<span class="header-text font-display text-lg leading-5 font-bold tracking-tight">
+<div class="header-anchor sticky top-0 z-50 flex justify-center" style={`--p: ${progress.current}`}>
+	<header class="header-bar flex w-full items-center justify-between">
+		<a href="/" class="flex min-w-0 items-center gap-2 sm:gap-2.5">
+			<img src="/icon.png" alt="" class="size-6 rounded-md shadow-lg sm:size-8 sm:rounded-lg" />
+			<span
+				class="font-display text-sm leading-4 font-bold tracking-tight sm:text-lg sm:leading-5"
+			>
 				Super Review
 			</span>
 		</a>
 		<button
 			type="button"
 			onclick={focusWaitlist}
-			class="header-cta border-line text-muted-foreground hover:text-fg inline-flex shrink-0 items-center rounded-lg border px-4 py-2 text-sm leading-5 font-semibold transition-colors"
+			class="border-line text-muted-foreground hover:text-fg inline-flex shrink-0 items-center rounded-lg border px-3 py-1.5 text-xs leading-4 font-semibold transition-colors sm:px-4 sm:py-2 sm:text-sm sm:leading-5"
 		>
 			Join Waitlist
 		</button>
@@ -27,114 +65,25 @@
 </div>
 
 <style>
-	@supports (animation-timeline: scroll()) {
-		.header-anchor {
-			animation: header-drop linear both;
-			animation-timeline: scroll(root block);
-			animation-range: 0 4rem;
-		}
-
-		.header-bar {
-			animation: header-bar linear both;
-			animation-timeline: scroll(root block);
-			animation-range: 0 4rem;
-		}
-
-		.header-icon {
-			animation: header-icon linear both;
-			animation-timeline: scroll(root block);
-			animation-range: 0 4rem;
-		}
-
-		.header-text {
-			animation: header-text linear both;
-			animation-timeline: scroll(root block);
-			animation-range: 0 4rem;
-		}
-
-		.header-cta {
-			animation: header-cta linear both;
-			animation-timeline: scroll(root block);
-			animation-range: 0 4rem;
-		}
+	.header-anchor {
+		padding-top: calc(var(--p, 0) * 1rem);
+		padding-inline: calc(var(--p, 0) * 1rem);
 	}
 
-	@keyframes -global-header-drop {
-		from {
-			padding-top: 0;
-			padding-inline: 0;
-		}
-		to {
-			padding-top: 1rem;
-			padding-inline: 1rem;
-		}
-	}
-
-	@keyframes -global-header-bar {
-		from {
-			max-width: 72rem;
-			padding-block: 1.25rem;
-			padding-inline: 0;
-			border-radius: 0;
-			background-color: transparent;
-			border-color: transparent;
-			box-shadow: none;
-			backdrop-filter: blur(0);
-		}
-		to {
-			max-width: 64rem;
-			padding-block: 0.625rem;
-			padding-inline: 1rem;
-			border-radius: 0.75rem;
-			background-color: color-mix(in srgb, var(--color-elevated) 85%, transparent);
-			border-color: var(--color-line);
-			box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.2);
-			backdrop-filter: blur(12px);
-		}
-	}
-
-	@keyframes -global-header-icon {
-		from {
-			width: 2rem;
-			height: 2rem;
-			border-radius: 0.5rem;
-		}
-		to {
-			width: 1.5rem;
-			height: 1.5rem;
-			border-radius: 0.375rem;
-		}
-	}
-
-	@keyframes -global-header-text {
-		from {
-			font-size: 1.125rem;
-		}
-		to {
-			font-size: 0.875rem;
-		}
-	}
-
-	@keyframes -global-header-cta {
-		from {
-			padding-block: 0.5rem;
-			padding-inline: 1rem;
-			font-size: 0.875rem;
-		}
-		to {
-			padding-block: 0.375rem;
-			padding-inline: 0.75rem;
-			font-size: 0.75rem;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.header-anchor,
-		.header-bar,
-		.header-icon,
-		.header-text,
-		.header-cta {
-			animation: none;
-		}
+	.header-bar {
+		max-width: calc(72rem - var(--p, 0) * 7.2rem);
+		padding-block: calc(1.25rem - var(--p, 0) * 0.625rem);
+		padding-inline: calc(var(--p, 0) * 1rem);
+		border-radius: calc(var(--p, 0) * 0.75rem);
+		border: 1px solid
+			color-mix(in srgb, var(--color-line) calc(var(--p, 0) * 100%), transparent);
+		background-color: color-mix(
+			in srgb,
+			color-mix(in srgb, var(--color-elevated) 85%, transparent) calc(var(--p, 0) * 100%),
+			transparent
+		);
+		box-shadow: 0 calc(var(--p, 0) * 10px) calc(var(--p, 0) * 15px) calc(var(--p, 0) * -3px)
+			rgb(0 0 0 / calc(var(--p, 0) * 0.2));
+		backdrop-filter: blur(calc(var(--p, 0) * 12px));
 	}
 </style>

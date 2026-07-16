@@ -15,11 +15,18 @@
 		Made agent ready for
 	</p>
 
-	<ul class="mt-7 flex flex-wrap items-center justify-center gap-24 sm:gap-[7.5rem]">
+	<ul
+		class="mt-7 flex w-full flex-nowrap items-center justify-between gap-1 px-2 sm:justify-center sm:gap-[clamp(1.5rem,7vw,7.5rem)] sm:px-0"
+	>
 		{#each harnesses as harness (harness)}
-			<li class="flex items-center">
+			<li class="flex shrink-0 items-center">
 				<span class="sr-only">{harnessLabel(harness)}</span>
-				<HarnessLogo {harness} size={40} />
+				<span class="sm:hidden">
+					<HarnessLogo {harness} size={28} />
+				</span>
+				<span class="hidden sm:inline-flex">
+					<HarnessLogo {harness} size={40} />
+				</span>
 			</li>
 		{/each}
 	</ul>

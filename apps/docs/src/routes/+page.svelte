@@ -74,7 +74,6 @@
 
 	<div class="flex flex-col items-center">
 		<PullQuote />
-		<BottomCta />
 	</div>
 
 	<section class="border-line flex flex-col items-center border-t pb-20 pt-16">
@@ -133,6 +132,8 @@
 			</FeatureSection>
 		</div>
 	</section>
+
+	<BottomCta />
 
 	<Footer />
 </div>

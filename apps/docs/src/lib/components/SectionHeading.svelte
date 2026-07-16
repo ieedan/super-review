@@ -3,8 +3,8 @@
 		title,
 		description,
 		class: className = '',
-		titleClass = 'mt-20 max-w-2xl text-center text-3xl sm:text-4xl',
-		descriptionClass = 'mt-4 max-w-lg text-center text-base',
+		titleClass = 'mt-20 text-3xl sm:text-4xl',
+		descriptionClass = 'mt-4 text-base',
 		animationDelay,
 		descriptionDelay
 	}: {
@@ -18,7 +18,7 @@
 	} = $props();
 </script>
 
-<div class={className}>
+<div class="mx-auto w-full max-w-2xl text-center {className}">
 	<h2
 		class="reveal font-display font-extrabold tracking-tight text-balance {titleClass}"
 		style={animationDelay ? `animation-delay: ${animationDelay}` : undefined}

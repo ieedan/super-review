@@ -11,8 +11,8 @@
 				class="reveal font-display max-w-2xl text-4xl leading-[1.05] font-extrabold tracking-tight text-balance sm:text-5xl lg:text-[3.25rem]"
 				style="animation-delay: 40ms"
 			>
-				A faster, saner way to review
-				<span class="flame-text">agent-written code.</span>
+				Code review for the
+				<span class="flame-text">agentic era.</span>
 			</h1>
 
 			<p
@@ -29,14 +29,6 @@
 			>
 				<WaitlistForm />
 			</div>
-		</div>
-
-		<div
-			class="reveal pointer-events-none mx-auto mt-10 hidden shrink-0 lg:mx-0 lg:mt-2 lg:block"
-			style="animation-delay: 200ms"
-			aria-hidden="true"
-		>
-			<img src="/icon.png" alt="" class="h-24 w-24 rounded-2xl shadow-2xl" />
 		</div>
 	</div>
 
