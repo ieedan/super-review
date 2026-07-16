@@ -78,6 +78,7 @@
 	--font-body:
 		ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 	--font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+
 }
 
 /* Dark theme for the embedded components — verbatim from the desktop app.css so
