@@ -1,5 +1,11 @@
 # @super-review/ui
 
+## 0.1.4
+
+### Patch Changes
+
+- [#155](https://github.com/ieedan/super-review/pull/155) [`7f0ef08`](https://github.com/ieedan/super-review/commit/7f0ef0827a27b9d0f35d64c055edfb60bf41af50) Thanks [@ieedan](https://github.com/ieedan)! - fix: a few things
+
 ## 0.1.3
 
 ### Patch Changes
