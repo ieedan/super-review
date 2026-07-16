@@ -78,7 +78,7 @@
 
 	<section class="border-line flex flex-col items-center border-t pb-20 pt-16">
 		<SectionHeading
-			title="Super Review helps you read and review the code."
+			title="Super Review makes it possible to actually read the code."
 			description="With sensible UX choices that you can feel the entire way through."
 			animationDelay="580ms"
 			descriptionDelay="660ms"
