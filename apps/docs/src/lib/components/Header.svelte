@@ -48,9 +48,7 @@
 	<header class="header-bar flex w-full items-center justify-between">
 		<a href="/" class="flex min-w-0 items-center gap-2 sm:gap-2.5">
 			<img src="/icon.png" alt="" class="size-6 rounded-md shadow-lg sm:size-8 sm:rounded-lg" />
-			<span
-				class="font-display text-sm leading-4 font-bold tracking-tight sm:text-lg sm:leading-5"
-			>
+			<span class="font-display text-sm leading-4 font-bold tracking-tight sm:text-lg sm:leading-5">
 				Super Review
 			</span>
 		</a>
@@ -75,8 +73,7 @@
 		padding-block: calc(1.25rem - var(--p, 0) * 0.625rem);
 		padding-inline: calc(var(--p, 0) * 1rem);
 		border-radius: calc(var(--p, 0) * 0.75rem);
-		border: 1px solid
-			color-mix(in srgb, var(--color-line) calc(var(--p, 0) * 100%), transparent);
+		border: 1px solid color-mix(in srgb, var(--color-line) calc(var(--p, 0) * 100%), transparent);
 		background-color: color-mix(
 			in srgb,
 			color-mix(in srgb, var(--color-elevated) 85%, transparent) calc(var(--p, 0) * 100%),

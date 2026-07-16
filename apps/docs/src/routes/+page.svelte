@@ -51,10 +51,7 @@
 	<meta property="og:image" content="https://superreview.dev/og.png" />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta
-		property="og:image:alt"
-		content="Super Review: code review for the agentic era"
-	/>
+	<meta property="og:image:alt" content="Super Review: code review for the agentic era" />
 
 	<!-- Twitter / X -->
 	<meta name="twitter:card" content="summary_large_image" />
