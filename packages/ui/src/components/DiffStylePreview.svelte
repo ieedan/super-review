@@ -3,6 +3,7 @@
 	import type { ThemesType } from '@pierre/diffs';
 	import { ensureDiffHighlighter } from '@super-review/ui/diff-highlighter';
 	import { diffThemePair } from '@super-review/ui/diff-themes';
+	import { applyIndentGuides, detectIndentStep } from '@super-review/ui/diff-indent-guides';
 	import { app } from '@super-review/ui/store.svelte';
 	import type { ViewMode } from '@super-review/core/types';
 
@@ -12,9 +13,15 @@
 		// current selection; the settings grid passes a specific pair per option so
 		// several themes can preview side by side.
 		theme?: ThemesType;
+		// Whether to paint indent guides over the preview. Defaults to the app's
+		// current setting; the settings dialog passes its draft value so the
+		// preview tracks the unsaved toggle.
+		indentGuides?: boolean;
 	}
 
-	let { mode, theme }: Props = $props();
+	let { mode, theme, indentGuides }: Props = $props();
+
+	const resolvedIndentGuides = $derived(indentGuides ?? app.indentGuides);
 
 	const resolvedTheme = $derived(theme ?? diffThemePair(app.diffTheme));
 
@@ -49,6 +56,7 @@
 		const diffStyle = mode;
 		const themePair = resolvedTheme;
 		const themeType = app.theme;
+		const guides = resolvedIndentGuides;
 		if (!host) return;
 
 		const container = document.createElement(DIFFS_TAG_NAME);
@@ -63,7 +71,14 @@
 			themeType,
 			disableFileHeader: true,
 			// Character-level intra-line diffs, matching the main diff view.
-			lineDiffType: 'char'
+			lineDiffType: 'char',
+			// Repaint the indent guides after each render (initial plain-text and
+			// the highlighted rerender), matching the main diff view. Toggling the
+			// setting rebuilds the whole preview, so off needs no clearing.
+			onPostRender: () => {
+				if (!guides || !container.shadowRoot) return;
+				applyIndentGuides(container.shadowRoot, detectIndentStep(NEW_CONTENTS));
+			}
 		});
 
 		const paint = (): void => {

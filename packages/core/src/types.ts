@@ -1574,6 +1574,9 @@ export interface UserPrefs {
 	// monospace stack; any other value is a family name installed on the
 	// user's machine.
 	codeFont: string;
+	// Draw vertical indentation guide lines in diff code (like an editor's
+	// indent guides), so nesting depth stays readable. On by default.
+	indentGuides: boolean;
 	// Font family for the app UI (sidebar, lists, chrome). "system" uses the
 	// built-in sans stack; any other value is an installed family name.
 	uiFont: string;

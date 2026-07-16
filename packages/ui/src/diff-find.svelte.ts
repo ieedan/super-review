@@ -15,6 +15,15 @@ import { sessionIdFromManifestPath, isTaskManifestPath } from '@super-review/cor
 import type { ChangedFile, DiffContext, DiffData } from '@super-review/core/types';
 import { sections, builtRanges, renderWaiters } from '@super-review/ui/diff-find-internal';
 import { FindIndex } from '@super-review/ui/diff-find-index';
+import {
+	FIND_ALL_HIGHLIGHT,
+	FIND_CURRENT_HIGHLIGHT,
+	registerHighlight,
+	buildSearchableTreeForSection,
+	rangeFor,
+	type HighlightLike
+} from '@super-review/ui/diff-section-search';
+import { refreshSelectionHighlightsFor } from '@super-review/ui/diff-selection';
 
 // The incremental match index: counts matches across every cached file's patch
 // text without rebuilding from scratch on every preload completion, and maps
@@ -23,20 +32,6 @@ import { FindIndex } from '@super-review/ui/diff-find-index';
 // change sets" performance cliff). Exported under a debug name for the harness.
 const matchIndex = new FindIndex();
 export const _findIndex = matchIndex;
-
-const ALL_HIGHLIGHT = 'sr-find-match';
-const CURRENT_HIGHLIGHT = 'sr-find-current';
-
-const HIGHLIGHT_CSS = `
-::highlight(${ALL_HIGHLIGHT}) {
-  background-color: rgba(250, 204, 21, 0.35);
-  color: inherit;
-}
-::highlight(${CURRENT_HIGHLIGHT}) {
-  background-color: rgba(249, 115, 22, 0.6);
-  color: inherit;
-}
-`;
 
 interface FindState {
 	open: boolean;
@@ -60,10 +55,6 @@ export const find = $state<FindState>({
 	focusNonce: 0,
 	indexEpoch: 0
 });
-
-let allHL: HighlightLike | null = null;
-let currentHL: HighlightLike | null = null;
-let highlightSheet: CSSStyleSheet | null = null;
 
 let scrollContainer: HTMLElement | null = null;
 
@@ -107,75 +98,16 @@ function clearCurrent(): void {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Custom Highlight API plumbing
-
-interface HighlightLike {
-	add(range: Range): void;
-	delete(range: Range): boolean;
-	clear(): void;
-	size: number;
-}
-
-interface HighlightCtor {
-	new (...ranges: Range[]): HighlightLike;
-}
+// Custom Highlight API plumbing. The registry/stylesheet mechanics live in
+// diff-section-search.ts (shared with the selection-occurrence highlighter);
+// here we just hold the two find highlights. Priorities keep the orange pin
+// above the yellow matches, and both above selection occurrences.
 
 function getHighlights(): { all: HighlightLike; current: HighlightLike } | null {
-	if (typeof CSS === 'undefined' || !('highlights' in CSS)) return null;
-	const HC = (globalThis as unknown as { Highlight?: HighlightCtor }).Highlight;
-	if (!HC) return null;
-	if (!allHL) {
-		allHL = new HC();
-		currentHL = new HC();
-		const highlights = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;
-		highlights.set(ALL_HIGHLIGHT, allHL);
-		highlights.set(CURRENT_HIGHLIGHT, currentHL);
-	}
-	return { all: allHL, current: currentHL! };
-}
-
-function getHighlightSheet(): CSSStyleSheet | null {
-	if (highlightSheet) return highlightSheet;
-	if (typeof CSSStyleSheet === 'undefined') return null;
-	try {
-		highlightSheet = new CSSStyleSheet();
-		highlightSheet.replaceSync(HIGHLIGHT_CSS);
-		return highlightSheet;
-	} catch {
-		return null;
-	}
-}
-
-// Make sure this shadow root carries the `::highlight()` style. The Custom
-// Highlight API registers highlights document-globally, but they only PAINT
-// inside a shadow tree whose own stylesheets define the `::highlight()` rule —
-// so every diff's shadow root needs our sheet.
-//
-// Critically, we must NOT trust a "styled once" flag here: Pierre REPLACES the
-// shadow root's `adoptedStyleSheets` on its async worker rerender (it owns that
-// array for its diff theme), which silently drops our sheet. The old WeakSet
-// guard then skipped re-adding it, leaving valid highlight Ranges completely
-// invisible until a full re-render — the "1 of N but nothing highlighted, comes
-// back when I switch tabs" bug. So we re-verify membership every call (cheap: an
-// array `includes`) and re-add if it's gone.
-function ensureShadowHighlightStyle(shadow: ShadowRoot): void {
-	const sheet = getHighlightSheet();
-	if (sheet) {
-		try {
-			if (!shadow.adoptedStyleSheets.includes(sheet)) {
-				shadow.adoptedStyleSheets = [...shadow.adoptedStyleSheets, sheet];
-			}
-			return;
-		} catch {
-			// adoptedStyleSheets unsupported — fall through to the <style> element.
-		}
-	}
-	if (!shadow.querySelector('style[data-sr-find]')) {
-		const styleEl = document.createElement('style');
-		styleEl.setAttribute('data-sr-find', '');
-		styleEl.textContent = HIGHLIGHT_CSS;
-		shadow.appendChild(styleEl);
-	}
+	const all = registerHighlight(FIND_ALL_HIGHLIGHT, 1);
+	const current = registerHighlight(FIND_CURRENT_HIGHLIGHT, 2);
+	if (!all || !current) return null;
+	return { all, current };
 }
 
 function getCachedDiffFor(filePath: string): DiffData | null {
@@ -219,145 +151,10 @@ function addFileToIndex(filePath: string): void {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Per-file DOM walk — same flatten-and-indexOf strategy as before, but
-// rooted at a single section and skipping Pierre's gutter subtree so the
-// match indices align with the patch-text indices.
-
-interface NodeSegment {
-	node: Text;
-	start: number;
-	length: number;
-}
-interface SearchableTree {
-	text: string;
-	segments: NodeSegment[];
-}
-
-const BLOCK_LEVEL_TAGS = new Set([
-	'DIV',
-	'P',
-	'PRE',
-	'LI',
-	'UL',
-	'OL',
-	'H1',
-	'H2',
-	'H3',
-	'H4',
-	'H5',
-	'H6',
-	'BLOCKQUOTE',
-	'SECTION',
-	'ARTICLE',
-	'HEADER',
-	'FOOTER',
-	'NAV',
-	'MAIN',
-	'TABLE',
-	'TR',
-	'TD',
-	'TH',
-	'THEAD',
-	'TBODY',
-	'TFOOT',
-	'FORM',
-	'HR',
-	'ADDRESS',
-	'FIELDSET',
-	'FIGURE',
-	'DETAILS',
-	'SUMMARY',
-	'DL',
-	'DT',
-	'DD'
-]);
-
-// Pierre's gutter wrapper carries `data-gutter=""`. Anything below that point
-// is line-number / metadata content the user doesn't want searched (otherwise
-// a query like "12" would light up every line number). The `data-gutter-buffer`
-// elements are spacer cells with the same caveat.
-function isExcludedFromSearch(el: Element): boolean {
-	return (
-		el.hasAttribute('data-gutter') ||
-		el.hasAttribute('data-gutter-buffer') ||
-		el.hasAttribute('data-gutter-utility-slot') ||
-		// The file header lives inside our own `<header>` element; skip it.
-		el.tagName === 'HEADER'
-	);
-}
-
-function buildSearchableTreeForSection(root: Node): SearchableTree {
-	const segments: NodeSegment[] = [];
-	let text = '';
-
-	const appendSep = (): void => {
-		if (text.length > 0 && !text.endsWith('\n')) text += '\n';
-	};
-
-	const visit = (node: Node): void => {
-		if (node.nodeType === Node.TEXT_NODE) {
-			const t = node as Text;
-			const v = t.nodeValue ?? '';
-			if (v.length > 0) {
-				segments.push({ node: t, start: text.length, length: v.length });
-				text += v;
-			}
-			return;
-		}
-
-		if (node.nodeType === Node.ELEMENT_NODE) {
-			const el = node as Element;
-			if (isExcludedFromSearch(el)) return;
-			const isBlock = BLOCK_LEVEL_TAGS.has(el.tagName);
-			if (isBlock) appendSep();
-			if (el.shadowRoot) {
-				ensureShadowHighlightStyle(el.shadowRoot);
-				visit(el.shadowRoot);
-			}
-			const children = el.childNodes;
-			for (let i = 0; i < children.length; i++) visit(children[i]);
-			if (isBlock) appendSep();
-			return;
-		}
-
-		// DocumentFragment (incl. ShadowRoot) and other containers.
-		const children = node.childNodes;
-		for (let i = 0; i < children.length; i++) visit(children[i]);
-	};
-
-	visit(root);
-	return { text, segments };
-}
-
-function segmentIndexAt(segments: NodeSegment[], pos: number): number {
-	let lo = 0;
-	let hi = segments.length - 1;
-	while (lo <= hi) {
-		const mid = (lo + hi) >>> 1;
-		const seg = segments[mid];
-		if (pos < seg.start) hi = mid - 1;
-		else if (pos >= seg.start + seg.length) lo = mid + 1;
-		else return mid;
-	}
-	return -1;
-}
-
-function rangeFor(segments: NodeSegment[], start: number, end: number): Range | null {
-	if (end <= start) return null;
-	const startIdx = segmentIndexAt(segments, start);
-	const endIdx = segmentIndexAt(segments, end - 1);
-	if (startIdx < 0 || endIdx < 0) return null;
-	const startSeg = segments[startIdx];
-	const endSeg = segments[endIdx];
-	const r = document.createRange();
-	try {
-		r.setStart(startSeg.node, start - startSeg.start);
-		r.setEnd(endSeg.node, end - endSeg.start);
-		return r;
-	} catch {
-		return null;
-	}
-}
+// Per-file DOM walk. The flatten-and-indexOf machinery lives in
+// diff-section-search.ts (shared with the selection-occurrence highlighter);
+// walking a section skips Pierre's gutter subtree so the match indices align
+// with the patch-text indices.
 
 // Walk one file section's shadow DOM, search for the query, return one Range
 // per match. The Nth Range here corresponds to the Nth match the FindIndex
@@ -754,6 +551,9 @@ export function notifySectionState(
 			reg.renderEpoch++;
 			changed = true;
 			flushRenderWaiters(filePath);
+			// The render replaced this section's text nodes, so any painted
+			// selection-occurrence Ranges in it now dangle; repaint them too.
+			refreshSelectionHighlightsFor(filePath);
 		}
 		if (patch.dataLoaded) {
 			// New cached diff data for this file — fold just this file into the index

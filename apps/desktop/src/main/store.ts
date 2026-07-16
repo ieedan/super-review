@@ -105,6 +105,7 @@ const defaults: Schema = {
 		openFileOnArrowNav: true,
 		codeFont: 'system',
 		uiFont: 'system',
+		indentGuides: true,
 		maxDiffLines: 1500,
 		hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 		customFileIcons: [],

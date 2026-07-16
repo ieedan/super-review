@@ -127,18 +127,29 @@ function authConfig(remoteUrl: string | null | undefined): string[] {
 // scratch index (commitPartial) override this, which is fine since those are
 // writes that legitimately hold the lock anyway.
 //
-// GIT_EDITOR / GIT_SEQUENCE_EDITOR are stripped: simple-git refuses to spawn
-// with a custom env carrying editor vars (its allowUnsafeEditor guard), and none
-// of our commands open an editor. This mirrors commitPartial's own env handling.
+// Editor vars are stripped via stripEditorEnv: simple-git refuses to spawn
+// with a custom env carrying them (its allowUnsafeEditor guard), and none of
+// our commands open an editor. This mirrors commitPartial's own env handling.
 function openGit(repoPath: string | null, options?: Partial<SimpleGitOptions>): SimpleGit {
 	const git = repoPath ? simpleGit(repoPath, options) : options ? simpleGit(options) : simpleGit();
 	const env: Record<string, string> = { ...process.env, GIT_OPTIONAL_LOCKS: '0' } as Record<
 		string,
 		string
 	>;
+	stripEditorEnv(env);
+	return git.env(env);
+}
+
+// simple-git refuses to spawn when a custom env carries editor vars: its
+// allowUnsafeEditor guard rejects GIT_EDITOR / GIT_SEQUENCE_EDITOR, and newer
+// versions reject plain EDITOR (and may reject VISUAL) as well. None of our
+// commands open an editor (commit paths pass -m), so drop all of them rather
+// than weaken the guard.
+function stripEditorEnv(env: Record<string, string>): void {
 	delete env.GIT_EDITOR;
 	delete env.GIT_SEQUENCE_EDITOR;
-	return git.env(env);
+	delete env.EDITOR;
+	delete env.VISUAL;
 }
 
 // A simple-git instance for `repoPath` with credentials wired in for
@@ -2992,13 +3003,11 @@ async function commitPartial(
 	const tmpPatchFiles: string[] = [];
 
 	// All index-mutating commands run against the scratch index via GIT_INDEX_FILE.
-	// simple-git refuses to spawn with editor vars in a custom env (its
-	// allowUnsafeEditor guard); none of our commands open an editor (commit-tree
-	// takes `-m`), so drop them rather than weaken the guard. Cast through unknown
-	// because process.env's values are `string | undefined`.
+	// Editor vars are stripped (see stripEditorEnv); none of our commands open an
+	// editor (commit-tree takes `-m`). Cast through unknown because process.env's
+	// values are `string | undefined`.
 	const baseEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-	delete baseEnv.GIT_EDITOR;
-	delete baseEnv.GIT_SEQUENCE_EDITOR;
+	stripEditorEnv(baseEnv);
 	const indexEnv: Record<string, string> = { ...baseEnv, GIT_INDEX_FILE: tmpIndex };
 	const idxGit = openGit(repoPath).env(indexEnv);
 
@@ -3335,12 +3344,10 @@ export async function ensureInitialCommit(
 	const git = openGit(repoPath);
 	if (await headExists(git)) return false;
 	await git.raw(['add', '-A']);
-	// Strip the editor vars: simple-git rejects commands when GIT_EDITOR /
-	// GIT_SEQUENCE_EDITOR are set (its allowUnsafeEditor guard), and `commit -m`
-	// needs no editor anyway. Mirrors the commit() helper above.
+	// Strip the editor vars (see stripEditorEnv): simple-git rejects commands
+	// when they are set, and `commit -m` needs no editor anyway.
 	const env: Record<string, string> = { ...process.env } as Record<string, string>;
-	delete env.GIT_EDITOR;
-	delete env.GIT_SEQUENCE_EDITOR;
+	stripEditorEnv(env);
 	if (identity) {
 		env.GIT_AUTHOR_NAME = identity.name;
 		env.GIT_AUTHOR_EMAIL = identity.email;

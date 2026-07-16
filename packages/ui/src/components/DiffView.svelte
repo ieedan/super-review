@@ -9,6 +9,7 @@
 	import PackageHoverCard from './PackageHoverCard.svelte';
 	import { app, actions, allBranchChangesSeen } from '@super-review/ui/store.svelte';
 	import { find, openFind, closeFind, setFindRoot } from '@super-review/ui/diff-find.svelte';
+	import { initSelectionHighlight } from '@super-review/ui/diff-selection';
 	import {
 		shortcut,
 		type Options as ShortcutOptions
@@ -461,6 +462,10 @@
 		setFindRoot(scrollContainer);
 		return () => setFindRoot(null);
 	});
+
+	// VSCode-style selection highlighting: select text in a diff and every other
+	// occurrence of it in the same file lights up (see diff-selection.ts).
+	$effect(() => initSelectionHighlight());
 
 	// App-wide find shortcuts, mounted on <svelte:window> via the shortcut
 	// action (below) so they fire regardless of where focus currently is:

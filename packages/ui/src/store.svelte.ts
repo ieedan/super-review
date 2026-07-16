@@ -314,6 +314,8 @@ interface AppState {
 	branchFileListLayout: FileListLayout;
 	showFileIcons: boolean;
 	openFileOnArrowNav: boolean;
+	// Draw vertical indentation guide lines in diff code (see UserPrefs).
+	indentGuides: boolean;
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
 	customFileIcons: CustomFileIcon[];
@@ -853,6 +855,7 @@ const initial: AppState = {
 	branchFileListLayout: 'tree',
 	showFileIcons: true,
 	openFileOnArrowNav: true,
+	indentGuides: true,
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 	customFileIcons: [],
@@ -3347,6 +3350,9 @@ export const actions = {
 		app.branchFileListLayout = app.prefs.branchFileListLayout;
 		app.showFileIcons = app.prefs.showFileIcons;
 		app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
+		// `?? true` so prefs files persisted before this setting existed hydrate
+		// to the on-by-default behavior instead of undefined.
+		app.indentGuides = app.prefs.indentGuides ?? true;
 		app.maxDiffLines = app.prefs.maxDiffLines;
 		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
 		app.customFileIcons = app.prefs.customFileIcons;
@@ -6931,6 +6937,11 @@ export const actions = {
 	async setOpenFileOnArrowNav(value: boolean): Promise<void> {
 		app.openFileOnArrowNav = value;
 		app.prefs = await window.api.state.setPrefs({ openFileOnArrowNav: value });
+	},
+
+	async setIndentGuides(value: boolean): Promise<void> {
+		app.indentGuides = value;
+		app.prefs = await window.api.state.setPrefs({ indentGuides: value });
 	},
 
 	async setMaxDiffLines(max: number): Promise<void> {

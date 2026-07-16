@@ -204,6 +204,14 @@
 			keywords: 'font typeface code monospace diff'
 		},
 		{
+			tab: 'diff',
+			id: 'settings-indent-guides',
+			kind: 'row',
+			title: 'Indent guides',
+			description: 'Vertical lines marking indentation levels.',
+			keywords: 'indent indentation guides lines scope nesting whitespace'
+		},
+		{
 			tab: 'behavior',
 			id: 'settings-arrow-nav',
 			kind: 'row',
@@ -519,6 +527,7 @@
 	let draftAccent = $state<Accent>('super');
 	let draftCodeFont = $state<string>('system');
 	let draftUiFont = $state<string>('system');
+	let draftIndentGuides = $state<boolean>(true);
 	let draftEditor = $state<EditorKind | null>(null);
 	let draftTerminal = $state<TerminalKind | null>(null);
 	let draftChangesetsEnabled = $state<boolean>(true);
@@ -577,6 +586,7 @@
 			draftAccent = app.accent;
 			draftCodeFont = app.codeFont;
 			draftUiFont = app.uiFont;
+			draftIndentGuides = app.indentGuides;
 			draftEditor = effectiveEditor();
 			draftTerminal = effectiveTerminal();
 			draftChangesetsEnabled = app.changesetsEnabled;
@@ -689,6 +699,9 @@
 		}
 		if (draftOpenFileOnArrowNav !== app.openFileOnArrowNav) {
 			promises.push(actions.setOpenFileOnArrowNav(draftOpenFileOnArrowNav));
+		}
+		if (draftIndentGuides !== app.indentGuides) {
+			promises.push(actions.setIndentGuides(draftIndentGuides));
 		}
 		if (draftPrMergedBehavior !== app.prMergedBehavior) {
 			promises.push(actions.setPrMergedBehavior(draftPrMergedBehavior));
@@ -1208,6 +1221,8 @@
 			options={CODE_FONTS}
 			onChange={(f) => (draftCodeFont = f)}
 		/>
+	{:else if id === 'settings-indent-guides'}
+		<Switch bind:checked={draftIndentGuides} aria-label="Indent guides" />
 	{:else if id === 'settings-arrow-nav'}
 		<SettingSelect
 			ariaLabel="Arrow-key navigation"
@@ -1328,7 +1343,11 @@
 					</div>
 				</div>
 				<div class="p-3">
-					<DiffStylePreview mode={draftViewMode} theme={draftDiffThemePair} />
+					<DiffStylePreview
+						mode={draftViewMode}
+						theme={draftDiffThemePair}
+						indentGuides={draftIndentGuides}
+					/>
 				</div>
 			</div>
 		{:else}

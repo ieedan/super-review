@@ -54,6 +54,11 @@
 	} from '@super-review/core/session-manifest';
 	import { getDiffWorkerPool } from '@super-review/ui/diff-worker-pool';
 	import { scheduleRender } from '@super-review/ui/render-scheduler';
+	import {
+		applyIndentGuides,
+		clearIndentGuides,
+		detectIndentStep
+	} from '@super-review/ui/diff-indent-guides';
 	import { diffContextKey } from '@super-review/core/diff-context';
 	import {
 		changedLineKeys,
@@ -1132,7 +1137,26 @@
 	// returns and only come back on a full re-render (e.g. switching tabs).
 	function onPierrePostRender(): void {
 		applyStagingControls();
+		applyIndentGuidesNow();
 		notifySectionState(file.path, { bumpRenderEpoch: true });
+	}
+
+	// The file's detected indent unit in columns, computed lazily from the
+	// loaded contents and cached until the data changes (-1 = not detected yet).
+	let indentStep = -1;
+
+	// Paint the indent guides over the current Pierre DOM (diff or raw view).
+	// Runs after every Pierre render/rerender and when the setting turns on;
+	// the painter itself is idempotent.
+	function applyIndentGuidesNow(): void {
+		if (!app.indentGuides) return;
+		const root = diffContainer?.shadowRoot;
+		if (!root || !diffData) return;
+		if (indentStep < 0) {
+			// Prefer the new side; a deleted file only has old contents.
+			indentStep = detectIndentStep(diffData.newContents || diffData.oldContents);
+		}
+		applyIndentGuides(root, indentStep);
 	}
 
 	// Called after each Pierre render/rerender: (re)inject the controls, ensure
@@ -1421,7 +1445,10 @@
 		rawInstance = new FileClass(
 			{
 				themeType: app.theme,
-				disableFileHeader: true
+				disableFileHeader: true,
+				// Repaint the indent guides after each render, including the async
+				// worker rerender that swaps in the highlighted nodes.
+				onPostRender: () => applyIndentGuidesNow()
 			},
 			getDiffWorkerPool()
 		);
@@ -1572,6 +1599,8 @@
 		diffData = d;
 		loadedCtxKey = ctxKey;
 		dataEpoch++;
+		// New contents may indent differently; re-detect on the next paint.
+		indentStep = -1;
 		// The find index reads from the diff cache; signal it that new patch
 		// text just landed so any active query can incorporate this file.
 		notifySectionState(file.path, { dataLoaded: true });
@@ -1580,6 +1609,7 @@
 	function clearLoadedDiff(): void {
 		diffData = null;
 		loadedCtxKey = null;
+		indentStep = -1;
 		cancelPendingRender?.();
 		cancelPendingRender = null;
 		disposeDiff();
@@ -1866,6 +1896,19 @@
 		const map = expandedHunksForComments;
 		if (!instance) return;
 		applyExpandedHunks(map, true);
+	});
+
+	// Toggle indent guides live, without a Pierre re-render: turning them on
+	// paints over the existing DOM, turning them off just drops the injected
+	// stylesheet. Read `app.indentGuides` first so the dependency registers even
+	// while nothing is rendered yet (`diffContainer` is a plain `let`; renders
+	// re-apply through onPostRender instead of waking this effect).
+	$effect(() => {
+		const enabled = app.indentGuides;
+		const root = diffContainer?.shadowRoot;
+		if (!root) return;
+		if (enabled) applyIndentGuidesNow();
+		else clearIndentGuides(root);
 	});
 
 	// Live-swap the diff theme when the app theme changes. `setThemeType` alone

@@ -1,10 +1,11 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import DiffView from '@super-review/ui/components/DiffView.svelte';
+	import { setCachedDiff } from '@super-review/ui/store.svelte';
 	import StoreScope from '../../lib/StoreScope.svelte';
 	import { seedStore, seedDiffCache } from '../../lib/store-harness';
 	import { makeChangedFiles, makeRepos } from '../../lib/fixtures';
-	import type { DiffLayout } from '@super-review/core/types';
+	import type { ChangedFile, DiffLayout } from '@super-review/core/types';
 
 	// DiffView renders the file-by-file diff using @pierre/diffs (real syntax
 	// highlighting in a worker). It reads everything from the global `app` store
@@ -25,6 +26,70 @@
 			viewMode
 		});
 		seedDiffCache(repo.id, files);
+	}
+
+	// Deeply nested contents so the indent guides (the vertical lines marking
+	// each indentation level, painted by diff-indent-guides.ts after every
+	// Pierre render) have something to draw. The generated fixtures are flat
+	// top-level statements, which never show a guide.
+	const INDENTED_OLD = `export function summarize(orders) {
+	const totals = new Map();
+	for (const order of orders) {
+		for (const item of order.items) {
+			if (item.quantity > 0) {
+				const prev = totals.get(item.sku) ?? 0;
+				totals.set(item.sku, prev + item.quantity);
+			}
+		}
+	}
+
+	return totals;
+}
+`;
+
+	const INDENTED_NEW = `export function summarize(orders) {
+	const totals = new Map();
+	for (const order of orders) {
+		for (const item of order.items) {
+			if (item.quantity > 0) {
+				const prev = totals.get(item.sku) ?? 0;
+				const next = prev + item.quantity * (item.multiplier ?? 1);
+				totals.set(item.sku, next);
+			}
+		}
+	}
+
+	return totals;
+}
+`;
+
+	function seedIndented(viewMode: 'split' | 'unified') {
+		const file: ChangedFile = {
+			path: 'src/orders/summarize.ts',
+			status: 'modified',
+			additions: 2,
+			deletions: 1,
+			isBinary: false,
+			contentSig: 'sig-indented'
+		};
+		seedStore({
+			repos: [repo],
+			activeRepo: repo,
+			currentBranch: 'feat/storybook-setup',
+			contextTab: 'branch',
+			diffContext: { kind: 'workingTree' },
+			changedFiles: [file],
+			selectedFile: file.path,
+			diffLayout: 'scroll',
+			viewMode
+		});
+		setCachedDiff(repo.id, { kind: 'workingTree' }, file.path, {
+			file,
+			patch: '',
+			oldContents: INDENTED_OLD,
+			newContents: INDENTED_NEW,
+			truncated: false
+		});
 	}
 
 	const { Story } = defineMeta({
@@ -54,6 +119,23 @@
 <Story name="Unified view">
 	{#snippet template()}
 		<StoreScope setup={() => seed(8, 'scroll', 'unified')} width="980px" height="680px">
+			<DiffView />
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<!-- Nested code, so the vertical indentation guide lines are visible. -->
+<Story name="Indent guides">
+	{#snippet template()}
+		<StoreScope setup={() => seedIndented('split')} width="980px" height="680px">
+			<DiffView />
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<Story name="Indent guides (unified)">
+	{#snippet template()}
+		<StoreScope setup={() => seedIndented('unified')} width="980px" height="680px">
 			<DiffView />
 		</StoreScope>
 	{/snippet}
