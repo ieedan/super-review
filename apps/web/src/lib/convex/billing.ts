@@ -75,8 +75,7 @@ export const resyncSubscriptions = internalAction({
 			const item = sub.items.data[0];
 			await ctx.runMutation(internal.billing.syncSubscription, {
 				userId,
-				stripeCustomerId:
-					typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
+				stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
 				stripeSubscriptionId: sub.id,
 				stripeStatus: sub.status,
 				priceId: item?.price.id ?? null,

@@ -136,7 +136,7 @@
 				class="text-muted-foreground h-9 rounded-lg text-xs"
 			>
 				Go to Dashboard
-				<ArrowUpRightIcon/>
+				<ArrowUpRightIcon />
 			</PlainButton>
 		{/if}
 

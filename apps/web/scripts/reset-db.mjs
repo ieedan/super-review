@@ -23,7 +23,9 @@ const convexUrl = process.env.PUBLIC_CONVEX_URL ?? process.env.CONVEX_URL ?? '';
 
 if (!deployment.startsWith('dev:')) {
 	console.error(
-		red(`Refusing to reset: CONVEX_DEPLOYMENT is "${deployment || '(unset)'}", not a dev deployment.`)
+		red(
+			`Refusing to reset: CONVEX_DEPLOYMENT is "${deployment || '(unset)'}", not a dev deployment.`
+		)
 	);
 	console.error(dim('This script only wipes dev deployments. Aborting.'));
 	process.exit(1);

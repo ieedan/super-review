@@ -1,8 +1,5 @@
 import { ipcMain } from 'electron';
-import {
-	isLicenseAllowedChannel,
-	LicenseGateError
-} from '../../shared/license-ipc.js';
+import { isLicenseAllowedChannel, LicenseGateError } from '../../shared/license-ipc.js';
 import { isUnlocked } from './service.js';
 
 let installed = false;

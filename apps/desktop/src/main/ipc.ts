@@ -1,8 +1,7 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
-import os from 'node:os';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import type {
 	BranchContextMenuAction,
 	BranchContextMenuParams,
@@ -210,6 +209,10 @@ import {
 	setFileCollapsed,
 	setFilesCollapsed,
 	setPrefs,
+	replacePrefsSettings,
+	resetPrefsSettings,
+	getSettingsStartupIssues,
+	clearSettingsStartupIssues,
 	getPRBranch,
 	setPRBranch,
 	setRepoFork,
@@ -218,6 +221,7 @@ import {
 	setSeen,
 	upsertRepo
 } from './store.js';
+import { settingsFilePath, currentSettingsText, watchSettingsFile } from './settings-file.js';
 
 function repoOrThrow(id: string): RepoInfo {
 	const repo = getRepo(id);
@@ -295,9 +299,25 @@ function upstreamFetchUrl(repo: RepoInfo): string {
 	return repoFetchUrl(repo, repo.upstreamOwner ?? '', repo.upstreamRepo ?? '');
 }
 
+// Send to a window only when its render frame is actually alive. A window can
+// exist while its main frame is transiently disposed (during a reload, crash, or
+// early startup); `webContents.send` then throws "Render frame was disposed
+// before WebFrameMain could be accessed". A dropped event is harmless (the
+// renderer re-pulls its state on load), so guard and swallow rather than throw.
+function sendToWindow(win: BrowserWindow, channel: string, payload: unknown): void {
+	if (win.isDestroyed()) return;
+	const wc = win.webContents;
+	if (wc.isDestroyed() || wc.isCrashed()) return;
+	try {
+		wc.send(channel, payload);
+	} catch {
+		/* frame disposed mid-send — drop the event */
+	}
+}
+
 function broadcast(channel: string, payload: unknown): void {
 	for (const win of BrowserWindow.getAllWindows()) {
-		win.webContents.send(channel, payload);
+		sendToWindow(win, channel, payload);
 	}
 }
 
@@ -308,7 +328,7 @@ function broadcast(channel: string, payload: unknown): void {
 function broadcastToOthers(senderId: number, channel: string, payload: unknown): void {
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (win.webContents.id === senderId) continue;
-		win.webContents.send(channel, payload);
+		sendToWindow(win, channel, payload);
 	}
 }
 
@@ -2279,6 +2299,107 @@ export function registerIpc(): void {
 		'state:setPrefs',
 		async (_e, patch: Partial<UserPrefs>): Promise<UserPrefs> => setPrefs(patch)
 	);
+
+	// ─── Settings file (settings.json) ──────────────────────────────────────
+	// The single, human-editable dotfile that is the live source of truth for
+	// every preference. These handlers back the "Settings file" panel: reveal it,
+	// open it in the user's editor, and export/import/reset it.
+	ipcMain.handle('settings:getPath', async (): Promise<string> => settingsFilePath());
+
+	ipcMain.handle('settings:reveal', async (): Promise<void> => {
+		shell.showItemInFolder(settingsFilePath());
+	});
+
+	// Any malformed/reset issue observed the first time settings.json loaded this
+	// session, read once (cleared after) so the renderer can toast it on startup.
+	ipcMain.handle(
+		'settings:getStartupIssues',
+		async (): Promise<{ malformed: boolean; reset: string[] }> => {
+			const issues = getSettingsStartupIssues();
+			clearSettingsStartupIssues();
+			return issues;
+		}
+	);
+
+	ipcMain.handle('settings:openInEditor', async (): Promise<{ ok: boolean; error?: string }> => {
+		const target = settingsFilePath();
+		const editor = getPrefs().externalEditor;
+		if (editor) return openInEditor(editor, target);
+		// No configured editor: fall back to the OS default handler for .json.
+		const error = await shell.openPath(target);
+		return error ? { ok: false, error } : { ok: true };
+	});
+
+	ipcMain.handle(
+		'settings:export',
+		async (): Promise<{ ok: boolean; canceled: boolean; path?: string; error?: string }> => {
+			const result = await dialog.showSaveDialog({
+				title: 'Export settings',
+				defaultPath: 'settings.json',
+				filters: [{ name: 'JSON', extensions: ['json'] }]
+			});
+			if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+			try {
+				await writeFile(result.filePath, currentSettingsText(), 'utf8');
+				return { ok: true, canceled: false, path: result.filePath };
+			} catch (err) {
+				return {
+					ok: false,
+					canceled: false,
+					error: err instanceof Error ? err.message : String(err)
+				};
+			}
+		}
+	);
+
+	ipcMain.handle(
+		'settings:import',
+		async (): Promise<{
+			ok: boolean;
+			canceled: boolean;
+			reset?: string[];
+			prefs?: UserPrefs;
+			error?: string;
+		}> => {
+			const result = await dialog.showOpenDialog({
+				title: 'Import settings',
+				properties: ['openFile'],
+				filters: [{ name: 'JSON', extensions: ['json'] }]
+			});
+			if (result.canceled || result.filePaths.length === 0) return { ok: false, canceled: true };
+			try {
+				const text = await readFile(result.filePaths[0], 'utf8');
+				const raw = JSON.parse(text);
+				const { prefs, reset } = replacePrefsSettings(raw);
+				// Our own write already updated the mirror; tell every window to apply.
+				broadcast('state:prefsChanged', { prefs, reset: [], malformed: false });
+				return { ok: true, canceled: false, reset, prefs };
+			} catch (err) {
+				return {
+					ok: false,
+					canceled: false,
+					error: err instanceof Error ? err.message : String(err)
+				};
+			}
+		}
+	);
+
+	ipcMain.handle('settings:reset', async (): Promise<UserPrefs> => {
+		const prefs = resetPrefsSettings();
+		broadcast('state:prefsChanged', { prefs, reset: [], malformed: false });
+		return prefs;
+	});
+
+	// Live-apply external edits: when the user edits settings.json in their editor,
+	// re-read it and push the new prefs to every window. Our own writes are
+	// suppressed inside the watcher, so only genuine external edits arrive here.
+	watchSettingsFile((parsed) => {
+		broadcast('state:prefsChanged', {
+			prefs: getPrefs(),
+			reset: parsed.reset,
+			malformed: parsed.malformed
+		});
+	});
 
 	// ─── Usage stats ───────────────────────────────────────────────────────
 	ipcMain.handle(

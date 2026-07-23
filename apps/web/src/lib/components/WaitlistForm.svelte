@@ -17,10 +17,8 @@
 	//
 	// `align` controls horizontal alignment: the hero is left-aligned with the
 	// input on large screens; the bottom-of-page form stays centred under its heading.
-	let {
-		class: className = '',
-		align = 'center'
-	}: { class?: string; align?: 'start' | 'center' } = $props();
+	let { class: className = '', align = 'center' }: { class?: string; align?: 'start' | 'center' } =
+		$props();
 
 	const convex = useConvexClient();
 

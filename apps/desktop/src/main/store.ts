@@ -1,11 +1,6 @@
 import Store from 'electron-store';
 import { safeStorage } from 'electron';
 import {
-	DEFAULT_EMPTY_VIEW_ITEMS,
-	DEFAULT_FILE_HEADER_ITEMS,
-	DEFAULT_HEADER_ITEMS,
-	DEFAULT_SIDEBAR_CONTROLS,
-	WINDOW_BOUNDS,
 	type ChangedFile,
 	type CommitDraft,
 	type GithubAccount,
@@ -13,6 +8,15 @@ import {
 	type RepoInfo,
 	type UserPrefs
 } from '@shared/types.js';
+import {
+	DEFAULT_SETTINGS,
+	SETTINGS_KEYS,
+	getSettings,
+	mergeSettingsFile,
+	replaceSettingsFile,
+	initSettingsFile,
+	type AppSettings
+} from './settings-file.js';
 
 // Records which PR a locally checked-out branch corresponds to, so the UI can
 // show "View PR" (and resolve the right repo) even for cross-repo PRs that a
@@ -21,12 +25,10 @@ export interface PRBranchLink {
 	number: number;
 	source: PRSource;
 }
-import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@shared/diff-defer.js';
-import { DEFAULT_HOTKEYS, HOTKEY_ACTIONS, reservedHotkeyLabel } from '@shared/hotkeys.js';
+import { HOTKEY_ACTIONS, reservedHotkeyLabel } from '@shared/hotkeys.js';
 import {
 	addToDay,
 	dayKey,
-	DEFAULT_STATS_WIDGETS,
 	emptyStats,
 	emptyStoredStats,
 	projectStats,
@@ -113,45 +115,20 @@ interface LicenseSlice {
 	fallbackFingerprint: string | null;
 }
 
+// The state (non-shareable) half of prefs, kept in the electron store. The
+// settings half comes from DEFAULT_SETTINGS (the settings.json dotfile); the two
+// together are a full UserPrefs. activeRepoId/contextTab are optional so they're
+// simply absent by default.
+const DEFAULT_PREF_STATE = {
+	sidebarCollapsed: false,
+	commentsSidebarOpen: false,
+	commentsSidebarTab: 'comments',
+	conversationFullscreen: false
+} satisfies Partial<UserPrefs>;
+
 const defaults: Schema = {
 	repos: {},
-	prefs: {
-		viewMode: 'split',
-		diffLayout: 'scroll',
-		theme: 'dark',
-		diffTheme: 'pierre',
-		accent: 'super',
-		unstagedFileListLayout: 'tree',
-		branchFileListLayout: 'tree',
-		showFileIcons: true,
-		openFileOnArrowNav: true,
-		codeFont: 'system',
-		uiFont: 'system',
-		indentGuides: true,
-		maxDiffLines: 1500,
-		hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
-		customFileIcons: [],
-		animations: 'accents',
-		prMergedBehavior: 'prompt',
-		autoRemoveMergedBranch: false,
-		unmarkSeenOnChange: true,
-		hotkeys: DEFAULT_HOTKEYS,
-		windowWidth: WINDOW_BOUNDS.defaultWidth,
-		windowHeight: WINDOW_BOUNDS.defaultHeight,
-		startMaximized: false,
-		sidebarCollapsed: false,
-		commentsSidebarOpen: false,
-		commentsSidebarTab: 'comments',
-		conversationFullscreen: false,
-		recentRepoCount: 5,
-		changesetsEnabled: true,
-		signCommits: true,
-		headerItems: DEFAULT_HEADER_ITEMS,
-		fileHeaderItems: DEFAULT_FILE_HEADER_ITEMS,
-		sidebarControls: DEFAULT_SIDEBAR_CONTROLS,
-		statsWidgets: [...DEFAULT_STATS_WIDGETS],
-		emptyViewItems: DEFAULT_EMPTY_VIEW_ITEMS
-	},
+	prefs: { ...DEFAULT_SETTINGS, ...DEFAULT_PREF_STATE },
 	seen: {},
 	seenInherited: {},
 	collapsedFiles: {},
@@ -306,6 +283,32 @@ export function flushStore(): void {
 // rather than on the first refresh (where it would stall the seen-state read).
 db();
 
+// Prime the settings.json mirror and, on the very first launch after this
+// feature shipped, seed the file from whatever settings the store already holds
+// (the one-time migration off electron-store). Captured so the renderer can warn
+// if the on-disk file was malformed or had fields reset at startup.
+let settingsStartupIssues: { malformed: boolean; reset: string[] } = (() => {
+	const stored = db().prefs as unknown as Record<string, unknown>;
+	const seed: Partial<AppSettings> = {};
+	for (const key of SETTINGS_KEYS) {
+		if (key in stored) (seed as Record<string, unknown>)[key] = stored[key];
+	}
+	const result = initSettingsFile(seed);
+	return { malformed: result.malformed, reset: result.reset };
+})();
+
+// The malformed/reset state observed when settings.json was first loaded this
+// session, so the renderer can surface a one-time warning after it mounts.
+export function getSettingsStartupIssues(): { malformed: boolean; reset: string[] } {
+	return settingsStartupIssues;
+}
+
+// Clear the startup warning once the renderer has shown it, so it isn't shown
+// again on a reload.
+export function clearSettingsStartupIssues(): void {
+	settingsStartupIssues = { malformed: false, reset: [] };
+}
+
 export function upsertRepo(repo: RepoInfo): void {
 	db().repos[repo.id] = repo;
 	flush();
@@ -413,9 +416,12 @@ export function getPRBranch(repoId: string, branch: string): PRBranchLink | null
 }
 
 export function getPrefs(): UserPrefs {
-	// Merge with defaults so prefs files saved by older builds still report
-	// values for fields added in later releases.
-	const merged = { ...defaults.prefs, ...db().prefs };
+	// Compose the full UserPrefs the renderer sees from two sources: the store's
+	// state slice (activeRepoId, sidebar state, ...) and the settings.json file
+	// (every shareable preference). The file is spread last so it is authoritative
+	// for settings keys; defaults back-fill anything missing. Older prefs files
+	// still report values for fields added in later releases via this merge.
+	const merged = { ...defaults.prefs, ...db().prefs, ...getSettings() };
 	// Older builds persisted theme: 'system'; collapse that to the default.
 	if ((merged.theme as string) !== 'light' && (merged.theme as string) !== 'dark') {
 		merged.theme = defaults.prefs.theme;
@@ -446,10 +452,37 @@ export function getPrefs(): UserPrefs {
 }
 
 export function setPrefs(patch: Partial<UserPrefs>): UserPrefs {
-	const next = { ...defaults.prefs, ...db().prefs, ...patch };
-	db().prefs = next;
-	flush();
-	return next;
+	// Route each key to its owner: shareable settings go to settings.json, the
+	// rest (session/UI state) stay in the electron store. The renderer contract is
+	// unchanged — it still sends a Partial<UserPrefs> and gets a full one back.
+	const settingsPatch: Record<string, unknown> = {};
+	const statePatch: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(patch)) {
+		if (SETTINGS_KEYS.has(key as keyof UserPrefs)) settingsPatch[key] = value;
+		else statePatch[key] = value;
+	}
+	if (Object.keys(settingsPatch).length > 0)
+		mergeSettingsFile(settingsPatch as Partial<AppSettings>);
+	if (Object.keys(statePatch).length > 0) {
+		db().prefs = { ...db().prefs, ...(statePatch as Partial<UserPrefs>) };
+		flush();
+	}
+	return getPrefs();
+}
+
+// Apply an imported/replaced settings blob to the settings.json file (validated
+// there), returning the resulting full prefs plus which fields were reset. State
+// keys are ignored — importing settings never touches the open repo or layout.
+export function replacePrefsSettings(raw: unknown): { prefs: UserPrefs; reset: string[] } {
+	const { reset } = replaceSettingsFile(raw);
+	return { prefs: getPrefs(), reset };
+}
+
+// Reset every settings.json-owned preference to its default (leaving state
+// untouched). Returns the resulting full prefs.
+export function resetPrefsSettings(): UserPrefs {
+	replaceSettingsFile({});
+	return getPrefs();
 }
 
 // Coerce a stored seen entry into a path→signature map, migrating the legacy

@@ -7,8 +7,11 @@
 	import Bot from '@lucide/svelte/icons/bot';
 	import Check from '@lucide/svelte/icons/check';
 	import Code2 from '@lucide/svelte/icons/code-2';
+	import ChevronUp from '@lucide/svelte/icons/chevron-up';
 	import Diff from '@lucide/svelte/icons/diff';
+	import Download from '@lucide/svelte/icons/download';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
+	import FileJson from '@lucide/svelte/icons/file-json';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
 	import LogOut from '@lucide/svelte/icons/log-out';
@@ -17,10 +20,12 @@
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+	import Upload from '@lucide/svelte/icons/upload';
 	import User from '@lucide/svelte/icons/user';
 	import X from '@lucide/svelte/icons/x';
 	import SettingsShell from './SettingsShell.svelte';
 	import * as Avatar from './ui/avatar';
+	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Button } from './ui/button';
 	import { Switch } from './ui/switch';
 	import { Input } from './ui/input';
@@ -530,6 +535,19 @@
 
 	let dialogOpen = $derived(app.settingsDialogOpen);
 
+	// Absolute path to the settings.json dotfile, shown in the Settings file
+	// section. Fetched lazily the first time the dialog opens.
+	let settingsPath = $state('');
+	$effect(() => {
+		if (dialogOpen && !settingsPath) {
+			void window.api.settings.getPath().then((p) => (settingsPath = p));
+		}
+	});
+
+	// The editor the "Open in editor" button uses (the configured external editor
+	// if set, else the default), so its label/icon match what will open.
+	const settingsFileEditor = $derived(effectiveEditor());
+
 	// Draft state — snapshot when the dialog opens, applied on Save.
 	let draftViewMode = $state<ViewMode>('split');
 	let draftDiffLayout = $state<DiffLayout>('scroll');
@@ -595,37 +613,52 @@
 			// does NOT read `activeTab` here — that would make this snapshot effect
 			// depend on it and re-run (wiping the drafts) on every tab switch.
 			mountedTabs.clear();
-			draftViewMode = app.viewMode;
-			draftDiffLayout = app.diffLayout;
-			draftShowFileIcons = app.showFileIcons;
-			draftAnimations = app.animations;
-			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
-			draftPrMergedBehavior = app.prMergedBehavior;
-			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
-			draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
-			draftSignCommits = app.signCommits;
-			draftMaxDiffLines = app.maxDiffLines;
-			draftRecentRepoCount = app.recentRepoCount;
-			draftWindowWidth = app.windowWidth;
-			draftWindowHeight = app.windowHeight;
-			draftStartMaximized = app.startMaximized;
-			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
-			newPattern = '';
-			draftCustomFileIcons = app.customFileIcons.map((i) => ({ ...i }));
-			newIconPattern = '';
-			newIconSource = '';
-			draftTheme = app.theme;
-			draftDiffTheme = app.diffTheme;
-			draftAccent = app.accent;
-			draftCodeFont = app.codeFont;
-			draftUiFont = app.uiFont;
-			draftIndentGuides = app.indentGuides;
-			draftEditor = effectiveEditor();
-			draftTerminal = effectiveTerminal();
-			draftChangesetsEnabled = app.changesetsEnabled;
-			draftHotkeys = { ...DEFAULT_HOTKEYS, ...$state.snapshot(app.hotkeys) };
+			snapshotDrafts();
 		}
 	});
+
+	// Re-seed the drafts when the live settings are (re)applied while the dialog is
+	// open — a settings.json edit, import, or reset (each bumps app.prefsVersion).
+	// Without this a live external edit would be silently overwritten by the stale
+	// drafts the next time the user hits Save. Does not clear mountedTabs, so the
+	// heavy previews/panels stay mounted through a live change.
+	$effect(() => {
+		void app.prefsVersion;
+		if (dialogOpen) snapshotDrafts();
+	});
+
+	// Snapshot the current app settings into the editable drafts. Applied on Save.
+	function snapshotDrafts(): void {
+		draftViewMode = app.viewMode;
+		draftDiffLayout = app.diffLayout;
+		draftShowFileIcons = app.showFileIcons;
+		draftAnimations = app.animations;
+		draftOpenFileOnArrowNav = app.openFileOnArrowNav;
+		draftPrMergedBehavior = app.prMergedBehavior;
+		draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
+		draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
+		draftSignCommits = app.signCommits;
+		draftMaxDiffLines = app.maxDiffLines;
+		draftRecentRepoCount = app.recentRepoCount;
+		draftWindowWidth = app.windowWidth;
+		draftWindowHeight = app.windowHeight;
+		draftStartMaximized = app.startMaximized;
+		draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
+		newPattern = '';
+		draftCustomFileIcons = app.customFileIcons.map((i) => ({ ...i }));
+		newIconPattern = '';
+		newIconSource = '';
+		draftTheme = app.theme;
+		draftDiffTheme = app.diffTheme;
+		draftAccent = app.accent;
+		draftCodeFont = app.codeFont;
+		draftUiFont = app.uiFont;
+		draftIndentGuides = app.indentGuides;
+		draftEditor = effectiveEditor();
+		draftTerminal = effectiveTerminal();
+		draftChangesetsEnabled = app.changesetsEnabled;
+		draftHotkeys = { ...DEFAULT_HOTKEYS, ...$state.snapshot(app.hotkeys) };
+	}
 
 	function setHotkey(action: HotkeyAction, hk: Hotkey): void {
 		draftHotkeys = { ...draftHotkeys, [action]: hk };
@@ -836,17 +869,17 @@
 	}
 </script>
 
-{#snippet editorIcon(editor: EditorKind)}
+{#snippet editorIcon(editor: EditorKind, size: string = 'size-5')}
 	{#if editor === 'cursor'}
-		<CursorIcon class="size-5" />
+		<CursorIcon class={size} />
 	{:else if editor === 'vscode'}
-		<VSCodeIcon class="size-5 text-foreground" />
+		<VSCodeIcon class="{size} text-foreground" />
 	{:else if editor === 'zed'}
-		<ZedIcon class="size-5 text-foreground" />
+		<ZedIcon class="{size} text-foreground" />
 	{:else if editor === 'xcode'}
-		<XcodeIcon class="size-5" />
+		<XcodeIcon class={size} />
 	{:else}
-		<VisualStudioIcon class="size-5" />
+		<VisualStudioIcon class={size} />
 	{/if}
 {/snippet}
 
@@ -1559,6 +1592,46 @@
 	{/if}
 {/snippet}
 
+<!-- The settings dotfile lives in a dropup pinned to the bottom of the nav rail,
+	rather than a content section, so it stays one click away from every tab. Its
+	menu is portaled, so it is never clipped by the dialog. -->
+{#snippet settingsFileMenu()}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger
+			class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+			title={settingsPath}
+		>
+			<FileJson class="size-4 shrink-0" />
+			<span class="min-w-0 flex-1 truncate">Settings file</span>
+			<ChevronUp class="size-3.5 shrink-0 opacity-60" />
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content side="top" align="start" class="min-w-[220px]">
+			<DropdownMenu.Item onSelect={() => actions.openSettingsFile()}>
+				{#if settingsFileEditor}
+					{@render editorIcon(settingsFileEditor, 'size-4')}
+					Open in {EDITOR_LABELS[settingsFileEditor]}
+				{:else}
+					<ExternalLink class="size-4" /> Open externally
+				{/if}
+			</DropdownMenu.Item>
+			<DropdownMenu.Item onSelect={() => actions.revealSettingsFile()}>
+				<FolderOpen class="size-4" /> Reveal
+			</DropdownMenu.Item>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item onSelect={() => actions.exportSettings()}>
+				<Download class="size-4" /> Export…
+			</DropdownMenu.Item>
+			<DropdownMenu.Item onSelect={() => actions.importSettings()}>
+				<Upload class="size-4" /> Import…
+			</DropdownMenu.Item>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item onSelect={() => actions.resetSettings()}>
+				<RotateCcw class="size-4" /> Reset to defaults
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
+
 <SettingsShell
 	bind:open={dialogOpen}
 	title="Settings"
@@ -1567,6 +1640,7 @@
 	onClose={cancel}
 	search={searchBox}
 	navReplacement={searching ? searchNav : undefined}
+	navFooter={settingsFileMenu}
 	size="lg"
 >
 	{#snippet content(_tab)}

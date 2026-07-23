@@ -94,15 +94,15 @@ site renders as launched.
 
 ### What waitlist mode changes
 
-| Surface                        | Waitlist mode on                                                       |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| Hero, homepage pricing section | Email waitlist form instead of buy CTAs                                |
-| `/pricing`                     | Sign-in + beta-member gated; non-members redirect to the dashboard     |
-| `/checkout/*`                  | Same membership gate (plus Stripe-side `hasBetaAccess` enforcement)    |
-| Sign-in                        | Open — anyone can sign in and see the dashboard                        |
-| Dashboard                      | Invite-code form for non-members; guest codes for members; no Upgrade  |
-| `/api/download/*`              | Redirects non-members to the dashboard                                 |
-| Desktop activation             | No trial started; app says to redeem a code first                      |
+| Surface                        | Waitlist mode on                                                      |
+| ------------------------------ | --------------------------------------------------------------------- |
+| Hero, homepage pricing section | Email waitlist form instead of buy CTAs                               |
+| `/pricing`                     | Sign-in + beta-member gated; non-members redirect to the dashboard    |
+| `/checkout/*`                  | Same membership gate (plus Stripe-side `hasBetaAccess` enforcement)   |
+| Sign-in                        | Open — anyone can sign in and see the dashboard                       |
+| Dashboard                      | Invite-code form for non-members; guest codes for members; no Upgrade |
+| `/api/download/*`              | Redirects non-members to the dashboard                                |
+| Desktop activation             | No trial started; app says to redeem a code first                     |
 
 ### Buying during the beta
 
@@ -218,13 +218,13 @@ One Stripe constraint worth remembering: `discounts` and
 Four transactional emails, each with its own Loops template id. Variables are
 referenced in the template as `{data.x}`, not `{x}`:
 
-| Email                  | Sent when                              | Variables                                                  |
-| ---------------------- | -------------------------------------- | ---------------------------------------------------------- |
-| Waitlist confirmation  | someone joins the waitlist             | `{data.waitlistUrl}`                                       |
-| Invite code            | you invite someone into the beta       | `{data.code}`, `{data.redeemUrl}`                          |
-| Guest invite           | a member emails a guest code to a friend | `{data.code}`, `{data.redeemUrl}`, `{data.inviterName}`  |
-| Welcome (with invites) | someone redeems a **beta** code        | `{data.guestCodeCount}`, `{data.dashboardUrl}`             |
-| Welcome (no invites)   | someone redeems a **guest** code       | `{data.dashboardUrl}`                                      |
+| Email                  | Sent when                                | Variables                                               |
+| ---------------------- | ---------------------------------------- | ------------------------------------------------------- |
+| Waitlist confirmation  | someone joins the waitlist               | `{data.waitlistUrl}`                                    |
+| Invite code            | you invite someone into the beta         | `{data.code}`, `{data.redeemUrl}`                       |
+| Guest invite           | a member emails a guest code to a friend | `{data.code}`, `{data.redeemUrl}`, `{data.inviterName}` |
+| Welcome (with invites) | someone redeems a **beta** code          | `{data.guestCodeCount}`, `{data.dashboardUrl}`          |
+| Welcome (no invites)   | someone redeems a **guest** code         | `{data.dashboardUrl}`                                   |
 
 There are two welcome emails because **LMX has no conditional rendering**. A beta
 redeemer gets 3 guest codes and a guest redeemer gets none, so a single template

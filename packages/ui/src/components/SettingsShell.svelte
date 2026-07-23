@@ -23,6 +23,7 @@
 		onSelectTab,
 		search,
 		navReplacement,
+		navFooter,
 		size = 'default',
 		content,
 		footer
@@ -47,6 +48,9 @@
 		// dialog passes a search-results list here while searching. Omitted otherwise,
 		// so the tabs render normally.
 		navReplacement?: Snippet;
+		// Optional control pinned to the bottom of the left nav (below the tabs). The
+		// app Settings dialog uses it for the settings-file menu.
+		navFooter?: Snippet;
 		content: Snippet<[string]>;
 		footer?: Snippet;
 	} = $props();
@@ -99,6 +103,11 @@
 							<span class="min-w-0 flex-1 truncate">{tab.label}</span>
 						</button>
 					{/each}
+				{/if}
+				{#if navFooter}
+					<div class="mt-auto border-t border-border/60 pt-2">
+						{@render navFooter()}
+					</div>
 				{/if}
 			</nav>
 

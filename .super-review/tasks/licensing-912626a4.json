@@ -74,7 +74,35 @@
         "harness": "cursor"
       },
       "doneAt": 1784807455581
+    },
+    {
+      "id": "2f154934-5249-4aba-9e17-3ca8181c2b98",
+      "title": "Need to look at flows once we are out of waitlist",
+      "parentId": "86f5898a-f19f-4ec2-9244-c57b8a8860d5",
+      "done": false,
+      "order": 2,
+      "createdAt": 1784821735955,
+      "updatedAt": 1784821735955,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      }
+    },
+    {
+      "id": "8a992c11-c612-4bef-9437-bf0a54458f47",
+      "title": "Double check that un-authed users can't subscribe",
+      "parentId": "2f154934-5249-4aba-9e17-3ca8181c2b98",
+      "done": false,
+      "order": 0,
+      "createdAt": 1784821748467,
+      "updatedAt": 1784821748467,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      }
     }
   ],
-  "updatedAt": 1784807463540
+  "updatedAt": 1784821748467
 }

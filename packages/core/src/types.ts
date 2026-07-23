@@ -1963,6 +1963,17 @@ export interface AiConfigRemoveResult {
 	error?: string;
 }
 
+// A live prefs update pushed from the main process, either because settings.json
+// was edited externally or because a settings file was imported/reset. `reset`
+// lists any settings that were present but invalid and fell back to their
+// default; `malformed` means the file couldn't be parsed at all (last-good prefs
+// are kept). The renderer applies `prefs` and can warn from `reset`/`malformed`.
+export interface PrefsChange {
+	prefs: UserPrefs;
+	reset: string[];
+	malformed: boolean;
+}
+
 export interface PreloadAPI {
 	platform: AppPlatform;
 	license: {
@@ -2558,6 +2569,33 @@ export interface PreloadAPI {
 		// Open a file with the OS default program for its type.
 		openPath(fullPath: string): Promise<{ ok: boolean; error?: string }>;
 	};
+	// The single, human-editable settings.json dotfile that holds every shareable
+	// preference (the live source of truth). Backs the "Settings file" panel.
+	settings: {
+		// Absolute path to settings.json (shown in the UI, used for reveal).
+		getPath(): Promise<string>;
+		// Reveal settings.json in the OS file manager.
+		reveal(): Promise<void>;
+		// Open settings.json in the configured external editor, or the OS default
+		// handler when none is set.
+		openInEditor(): Promise<{ ok: boolean; error?: string }>;
+		// Any malformed/reset issue seen the first time settings.json loaded this
+		// session, read-once (cleared by the call) for a one-time startup warning.
+		getStartupIssues(): Promise<{ malformed: boolean; reset: string[] }>;
+		// Save a copy of the current settings to a user-chosen path (Save dialog).
+		export(): Promise<{ ok: boolean; canceled: boolean; path?: string; error?: string }>;
+		// Load a settings file the user picks (Open dialog), validate it, and make
+		// it the new settings. `reset` lists any fields that were invalid.
+		import(): Promise<{
+			ok: boolean;
+			canceled: boolean;
+			reset?: string[];
+			prefs?: UserPrefs;
+			error?: string;
+		}>;
+		// Reset every settings.json-owned preference to its default (state untouched).
+		reset(): Promise<UserPrefs>;
+	};
 	menu: {
 		// Pop up a native OS context menu for a file row. Resolves to the chosen
 		// action, or null when the menu is dismissed without a selection.
@@ -2642,6 +2680,9 @@ export interface PreloadAPI {
 		// Live license-state changes pushed by the main process (activation
 		// completes, revalidation flips status, etc.). Returns an unsubscribe fn.
 		onLicenseChanged(handler: (state: LicenseState) => void): () => void;
+		// Live prefs changes pushed by the main process: settings.json edited
+		// externally, or a settings file imported/reset. Returns an unsubscribe fn.
+		onPrefsChanged(handler: (change: PrefsChange) => void): () => void;
 	};
 }
 

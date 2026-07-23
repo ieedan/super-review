@@ -373,6 +373,7 @@ interface AppState {
 	codeFont: string;
 	uiFont: string;
 	prefs: UserPrefs | null;
+	prefsVersion: number;
 	githubAccounts: GithubAccount[];
 	activeGithubAccount: GithubAccount | null;
 	// Accounts whose GitHub token no longer authenticates (revoked, or a SAML
@@ -903,6 +904,11 @@ const initial: AppState = {
 	codeFont: 'system',
 	uiFont: 'system',
 	prefs: null,
+	// Bumped whenever the shareable settings are (re)applied from the source of
+	// truth — initial load, a live settings.json edit, or an import/reset. Lets the
+	// open Settings dialog re-snapshot its drafts so a live external edit isn't
+	// clobbered when the user next hits Save.
+	prefsVersion: 0,
 	githubAccounts: [],
 	activeGithubAccount: null,
 	githubAuthErrors: [],
@@ -3418,6 +3424,101 @@ function reconcileInPlaceFileEdit(repoId: string, ctx: DiffContext, fresh: DiffD
 	if (cachedFile) applyStat(cachedFile);
 }
 
+// Apply the shareable-settings half of a prefs object to the live app state:
+// view/diff options, appearance (theme/accent/fonts), behavior toggles, window
+// size, hotkeys, and per-surface visibility. Deliberately does NOT touch the
+// session/UI state (open repo, sidebar collapse, active tab) — those are applied
+// only on the initial load. Reused by the initial load and by live settings.json
+// edits/imports; bumps prefsVersion so an open Settings dialog re-snapshots its
+// drafts and a live external edit isn't clobbered on the next Save.
+function applyPrefsSettings(prefs: UserPrefs): void {
+	app.prefs = prefs;
+	app.viewMode = prefs.viewMode;
+	app.diffLayout = prefs.diffLayout ?? 'scroll';
+	app.unstagedFileListLayout = prefs.unstagedFileListLayout;
+	app.branchFileListLayout = prefs.branchFileListLayout;
+	app.showFileIcons = prefs.showFileIcons;
+	app.openFileOnArrowNav = prefs.openFileOnArrowNav;
+	// `?? true` so prefs files persisted before this setting existed hydrate to
+	// the on-by-default behavior instead of undefined.
+	app.indentGuides = prefs.indentGuides ?? true;
+	app.maxDiffLines = prefs.maxDiffLines;
+	app.hiddenDiffPatterns = prefs.hiddenDiffPatterns;
+	app.customFileIcons = prefs.customFileIcons;
+	// Migrate the legacy boolean `animationsEnabled` to the 3-way mode: an
+	// explicit on→'all' and off→'none' preserve the prior choice; anything unset
+	// falls through to the new 'accents' default.
+	{
+		const legacy = (prefs as { animationsEnabled?: boolean }).animationsEnabled;
+		app.animations =
+			prefs.animations ?? (legacy === true ? 'all' : legacy === false ? 'none' : 'accents');
+	}
+	app.prMergedBehavior = prefs.prMergedBehavior ?? 'prompt';
+	app.autoRemoveMergedBranch = prefs.autoRemoveMergedBranch ?? false;
+	app.unmarkSeenOnChange = prefs.unmarkSeenOnChange ?? true;
+	app.changesetsEnabled = prefs.changesetsEnabled ?? true;
+	app.signCommits = prefs.signCommits ?? true;
+	app.recentRepoCount = prefs.recentRepoCount ?? 5;
+	app.windowWidth = prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
+	app.windowHeight = prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
+	app.startMaximized = prefs.startMaximized ?? false;
+	app.hotkeys = { ...DEFAULT_HOTKEYS, ...prefs.hotkeys };
+	app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...prefs.headerItems };
+	app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...prefs.sidebarTabs };
+	app.sidebarControls = { ...DEFAULT_SIDEBAR_CONTROLS, ...prefs.sidebarControls };
+	app.fileHeaderItems = { ...DEFAULT_FILE_HEADER_ITEMS, ...prefs.fileHeaderItems };
+	app.theme = prefs.theme;
+	applyTheme(app.theme);
+	app.diffTheme = prefs.diffTheme ?? DEFAULT_DIFF_THEME;
+	// Markdown code blocks (comments, md previews) follow the diff theme too. Set
+	// it unconditionally — it's cheap and doesn't init the worker pool — so the
+	// default 'pierre' pair applies as well, not just non-default themes.
+	setMarkdownCodeThemes(diffThemePair(app.diffTheme));
+	// Only reconfigure the pool when it's not the default it already booted with —
+	// avoids eagerly initializing the workers at startup for the common case (the
+	// pool defaults to the 'pierre' pair).
+	if (app.diffTheme !== DEFAULT_DIFF_THEME) applyDiffTheme();
+	app.accent = prefs.accent ?? 'super';
+	applyAccent(app.accent);
+	app.codeFont = prefs.codeFont;
+	app.uiFont = prefs.uiFont;
+	applyFonts();
+	app.prefsVersion++;
+}
+
+// Toast a warning when settings.json couldn't be applied cleanly — either it was
+// unparseable (last-good prefs kept) or some fields were invalid and reset.
+function warnSettingsIssues(malformed: boolean, reset: string[]): void {
+	if (malformed) {
+		setError(
+			"Your settings file couldn't be read and was ignored. Fix the JSON to apply it.",
+			'Load settings'
+		);
+	} else if (reset.length > 0) {
+		setError(
+			`Some settings were invalid and reset to defaults: ${reset.join(', ')}.`,
+			'Load settings'
+		);
+	}
+}
+
+// Subscribe once to live settings.json changes (external editor edits, imports,
+// resets) so they apply without a restart. Guarded because init() can re-run on
+// a license relock → relicense.
+let prefsSubscribed = false;
+function subscribePrefsChanges(): void {
+	if (prefsSubscribed) return;
+	// Guard for a stale dev preload (missing the new event during an HMR window)
+	// so app load never hinges on this subscription existing.
+	const onPrefsChanged = window.api.events?.onPrefsChanged;
+	if (!onPrefsChanged) return;
+	prefsSubscribed = true;
+	onPrefsChanged((change) => {
+		applyPrefsSettings(change.prefs);
+		warnSettingsIssues(change.malformed, change.reset);
+	});
+}
+
 export const actions = {
 	// --- Licensing ---
 	initLicense(): Promise<void> {
@@ -3537,6 +3638,47 @@ export const actions = {
 			await refreshFiles();
 		}
 	},
+	// --- Settings file (settings.json) ---
+	// Open the settings dotfile in the configured external editor (or the OS
+	// default handler). The file is the live source of truth, so edits apply as
+	// soon as the user saves (see subscribePrefsChanges).
+	async openSettingsFile(): Promise<void> {
+		const res = await window.api.settings.openInEditor();
+		if (!res.ok) setError(res.error ?? 'Could not open the settings file.', 'Open settings file');
+	},
+	// Reveal settings.json in the OS file manager.
+	async revealSettingsFile(): Promise<void> {
+		await window.api.settings.reveal();
+	},
+	// Save a copy of the current settings to a user-chosen path.
+	async exportSettings(): Promise<void> {
+		const res = await window.api.settings.export();
+		if (!res.ok && !res.canceled) {
+			setError(res.error ?? 'Could not export settings.', 'Export settings');
+		}
+	},
+	// Load a settings file the user picks, validate it, and apply it live.
+	async importSettings(): Promise<void> {
+		const res = await window.api.settings.import();
+		if (res.canceled) return;
+		if (!res.ok) {
+			setError(res.error ?? 'Could not import settings.', 'Import settings');
+			return;
+		}
+		if (res.prefs) applyPrefsSettings(res.prefs);
+		if (res.reset && res.reset.length > 0) {
+			setError(
+				`Imported. Some settings were invalid and reset: ${res.reset.join(', ')}.`,
+				'Import settings'
+			);
+		}
+	},
+	// Reset every settings.json-owned preference to its default (session/UI state
+	// like the open repo and sidebar layout is untouched).
+	async resetSettings(): Promise<void> {
+		const prefs = await window.api.settings.reset();
+		applyPrefsSettings(prefs);
+	},
 	dismissChangesetPrompt(): void {
 		app.changesetPromptDismissed = true;
 	},
@@ -3604,35 +3746,9 @@ export const actions = {
 		const activeRepoPromise = window.api.repos.getActive();
 		app.prefs = await window.api.state.getPrefs();
 		if (gen !== licenseGeneration || !isLicensed()) return;
-		app.viewMode = app.prefs.viewMode;
-		app.diffLayout = app.prefs.diffLayout ?? 'scroll';
-		app.unstagedFileListLayout = app.prefs.unstagedFileListLayout;
-		app.branchFileListLayout = app.prefs.branchFileListLayout;
-		app.showFileIcons = app.prefs.showFileIcons;
-		app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
-		// `?? true` so prefs files persisted before this setting existed hydrate
-		// to the on-by-default behavior instead of undefined.
-		app.indentGuides = app.prefs.indentGuides ?? true;
-		app.maxDiffLines = app.prefs.maxDiffLines;
-		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
-		app.customFileIcons = app.prefs.customFileIcons;
-		// Migrate the legacy boolean `animationsEnabled` to the 3-way mode: an
-		// explicit on→'all' and off→'none' preserve the prior choice; anything
-		// unset falls through to the new 'accents' default.
-		{
-			const legacy = (app.prefs as { animationsEnabled?: boolean }).animationsEnabled;
-			app.animations =
-				app.prefs.animations ?? (legacy === true ? 'all' : legacy === false ? 'none' : 'accents');
-		}
-		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
-		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
-		app.unmarkSeenOnChange = app.prefs.unmarkSeenOnChange ?? true;
-		app.changesetsEnabled = app.prefs.changesetsEnabled ?? true;
-		app.signCommits = app.prefs.signCommits ?? true;
-		app.recentRepoCount = app.prefs.recentRepoCount ?? 5;
-		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
-		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
-		app.startMaximized = app.prefs.startMaximized ?? false;
+		applyPrefsSettings(app.prefs);
+		// Session/UI state (not part of the shareable settings file): applied only
+		// here on load, never on a live settings.json edit.
 		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
 		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
 		app.commentsSidebarTab = app.prefs.commentsSidebarTab ?? 'comments';
@@ -3643,27 +3759,15 @@ export const actions = {
 			(app.prefs.conversationFullscreen ?? false) &&
 			app.commentsSidebarOpen &&
 			app.sidebarCollapsed;
-		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
-		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
-		app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...app.prefs.sidebarTabs };
-		app.sidebarControls = { ...DEFAULT_SIDEBAR_CONTROLS, ...app.prefs.sidebarControls };
-		app.fileHeaderItems = { ...DEFAULT_FILE_HEADER_ITEMS, ...app.prefs.fileHeaderItems };
-		app.theme = app.prefs.theme;
-		applyTheme(app.theme);
-		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;
-		// Markdown code blocks (comments, md previews) follow the diff theme too.
-		// Set it unconditionally — it's cheap and doesn't init the worker pool — so
-		// the default 'pierre' pair applies as well, not just non-default themes.
-		setMarkdownCodeThemes(diffThemePair(app.diffTheme));
-		// Only reconfigure the pool when it's not the default it already booted
-		// with — avoids eagerly initializing the workers at startup for the common
-		// case (the pool defaults to the 'pierre' pair).
-		if (app.diffTheme !== DEFAULT_DIFF_THEME) applyDiffTheme();
-		app.accent = app.prefs.accent ?? 'super';
-		applyAccent(app.accent);
-		app.codeFont = app.prefs.codeFont;
-		app.uiFont = app.prefs.uiFont;
-		applyFonts();
+		// Live-apply external edits to settings.json and warn on a bad file (both
+		// the one seen at startup and any live edit). Idempotent — safe on re-runs.
+		// Optional-chained so a stale dev preload (missing the new `settings` API
+		// during an HMR window) degrades gracefully instead of crashing app load.
+		subscribePrefsChanges();
+		void window.api.settings
+			?.getStartupIssues?.()
+			.then((issues) => warnSettingsIssues(issues.malformed, issues.reset))
+			.catch(() => {});
 		app.platform = window.api.platform;
 		await refreshGithubAccounts();
 		if (gen !== licenseGeneration || !isLicensed()) return;

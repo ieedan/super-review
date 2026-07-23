@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { tick, onMount } from 'svelte';
+	import { tick } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { fade, slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { browser } from '$app/environment';
+	import { page } from '$app/state';
+	import { replaceState } from '$app/navigation';
 	import { authClient } from '$lib/auth-client';
 	import { useConvexClient } from '$lib/convex.svelte';
 	import { api } from '$lib/convex/_generated/api';
@@ -115,14 +116,11 @@
 		if (openingPortal) return;
 		openingPortal = true;
 		try {
-			// returnUrl must be absolute. better-auth's originCheck allows a relative
-			// path but its trusted-origin regex permits a ?query and NOT a #fragment,
-			// so a relative "/dashboard#billing" fails the check and returns 403. An
-			// absolute URL takes the origin branch instead, where the fragment is
-			// dropped before matching, so #billing survives and still lands the return
-			// on the billing tab (tabFromHash).
+			// Absolute URL: better-auth's origin check accepts a ?query on relative
+			// paths, but an absolute return URL is the safest way to land back on
+			// the billing tab after the Stripe portal.
 			await authClient.subscription.billingPortal({
-				returnUrl: `${window.location.origin}/dashboard#billing`
+				returnUrl: `${window.location.origin}/dashboard?tab=billing`
 			});
 		} finally {
 			openingPortal = false;
@@ -196,24 +194,17 @@
 	const TAB_BY_ID = new Map(TABS.map((t) => [t.id, t]));
 	const TAB_IDS = new Set<string>(TABS.map((t) => t.id));
 
-	function tabFromHash(): SettingsTab {
-		if (!browser) return 'account';
-		const hash = window.location.hash.replace(/^#/, '');
-		return TAB_IDS.has(hash) ? (hash as SettingsTab) : 'account';
+	function parseTab(raw: string | null | undefined): SettingsTab {
+		return raw && TAB_IDS.has(raw) ? (raw as SettingsTab) : 'account';
 	}
 
-	// Always start on Account so SSR and the first client paint match; sync the
-	// URL hash after mount so a deep link like /dashboard#billing still lands
-	// on the right tab without a hydration mismatch.
-	let activeTab = $state<SettingsTab>('account');
+	// Driven by ?tab= so SSR and the first paint match (no post-mount hash sync).
+	// Shallow replaceState updates page.url without re-running loads.
+	const activeTab = $derived(parseTab(page.url.searchParams.get('tab')));
 	let mobileMenuOpen = $state(false);
 	let searchQuery = $state('');
 	let mobileSearchInput = $state<HTMLElement | null>(null);
 	let highlightedIndex = $state(0);
-
-	onMount(() => {
-		activeTab = tabFromHash();
-	});
 
 	const trimmedQuery = $derived(searchQuery.trim());
 	const searching = $derived(trimmedQuery.length > 0);
@@ -243,22 +234,26 @@
 		if (isDesktop.current && mobileMenuOpen) mobileMenuOpen = false;
 	});
 
+	function setTabInUrl(id: SettingsTab): void {
+		const url = new URL(page.url);
+		if (id === 'account') url.searchParams.delete('tab');
+		else url.searchParams.set('tab', id);
+		const next = `${url.pathname}${url.search}${url.hash}`;
+		const current = `${page.url.pathname}${page.url.search}${page.url.hash}`;
+		if (next === current) return;
+		replaceState(next, page.state);
+	}
+
 	function selectTab(id: SettingsTab): void {
-		activeTab = id;
 		searchQuery = '';
 		mobileMenuOpen = false;
-		if (browser) {
-			history.replaceState(history.state, '', `#${id}`);
-		}
+		setTabInUrl(id);
 	}
 
 	function goToSetting(section: SettingsSection): void {
 		searchQuery = '';
 		mobileMenuOpen = false;
-		activeTab = section.tab;
-		if (browser) {
-			history.replaceState(history.state, '', `#${section.tab}`);
-		}
+		setTabInUrl(section.tab);
 		void tick().then(async () => {
 			await tick();
 			const el = document.getElementById(section.id);
@@ -318,14 +313,9 @@
 		await tick();
 		mobileSearchInput?.focus();
 	}
-
-	function onHashChange(): void {
-		activeTab = tabFromHash();
-	}
 </script>
 
 <svelte:head><title>Settings - Super Review</title></svelte:head>
-<svelte:window onhashchange={onHashChange} />
 
 <div class="bg-base text-fg min-h-screen">
 	<!-- Compact top bar: logo home link on every viewport. -->

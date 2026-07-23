@@ -72,7 +72,18 @@ export function getDashboardUrl(): string {
 
 function broadcast(): void {
 	for (const win of BrowserWindow.getAllWindows()) {
-		if (!win.isDestroyed()) win.webContents.send('license:changed', current);
+		if (win.isDestroyed()) continue;
+		const wc = win.webContents;
+		// A window can be alive while its render frame is transiently disposed
+		// (reload / crash / early startup); `send` then throws "Render frame was
+		// disposed". The renderer re-pulls license status on load, so a dropped push
+		// is harmless — guard and swallow rather than let it throw.
+		if (wc.isDestroyed() || wc.isCrashed()) continue;
+		try {
+			wc.send('license:changed', current);
+		} catch {
+			/* frame disposed mid-send */
+		}
 	}
 }
 

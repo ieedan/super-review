@@ -419,11 +419,7 @@
 					</div>
 
 					<Dialog.Footer>
-						<Button
-							type="submit"
-							class="rounded-xl"
-							disabled={emailSending || !friendEmail.trim()}
-						>
+						<Button type="submit" class="rounded-xl" disabled={emailSending || !friendEmail.trim()}>
 							{#if emailSending}
 								<LoaderCircle class="size-3.5 animate-spin" />
 							{/if}

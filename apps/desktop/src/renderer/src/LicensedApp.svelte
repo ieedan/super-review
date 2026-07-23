@@ -563,10 +563,7 @@
 							// set before this fires) or when dragging the diff shut with the
 							// sidebar already collapsed. Otherwise the diff was dragged shut while
 							// the sidebar is open — not allowed, so bounce it back.
-							if (
-								app.conversationFullscreen ||
-								(app.commentsSidebarOpen && app.sidebarCollapsed)
-							) {
+							if (app.conversationFullscreen || (app.commentsSidebarOpen && app.sidebarCollapsed)) {
 								actions.setConversationFullscreen(true);
 							} else {
 								requestAnimationFrame(() => mainPane?.expand());

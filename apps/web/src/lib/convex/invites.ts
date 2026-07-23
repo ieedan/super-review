@@ -189,9 +189,7 @@ export const emailGuestCode = mutation({
 		// Prefer the GitHub display name; fall back to the email local-part so the
 		// template always has something human to put in "{name} sent you...".
 		const inviterName =
-			(typeof user.name === 'string' && user.name.trim()) ||
-			user.email.split('@')[0] ||
-			'A friend';
+			(typeof user.name === 'string' && user.name.trim()) || user.email.split('@')[0] || 'A friend';
 
 		await ctx.db.patch(invite._id, { issuedToEmail: email });
 		await ctx.scheduler.runAfter(0, internal.email.sendGuestInviteEmail, {

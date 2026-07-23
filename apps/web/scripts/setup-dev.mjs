@@ -277,7 +277,7 @@ const LOOPS_TEMPLATES = [
 	{
 		label: 'Guest invite from friend',
 		envVar: 'LOOPS_GUEST_INVITE_TRANSACTIONAL_ID',
-		purpose: "sent when a member emails one of their guest codes to a friend",
+		purpose: 'sent when a member emails one of their guest codes to a friend',
 		variables: '{data.code}, {data.redeemUrl}, {data.inviterName}'
 	},
 	{

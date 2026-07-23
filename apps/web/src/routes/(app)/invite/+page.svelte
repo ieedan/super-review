@@ -60,9 +60,7 @@
 				{/if}
 			</div>
 
-			<Button type="submit" class="h-11 w-full rounded-xl" disabled={!code.trim()}>
-				Continue
-			</Button>
+			<Button type="submit" class="h-11 w-full rounded-xl" disabled={!code.trim()}>Continue</Button>
 		</form>
 
 		<p class="text-muted-foreground text-xs text-pretty">
