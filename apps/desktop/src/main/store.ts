@@ -1,4 +1,5 @@
 import Store from 'electron-store';
+import { safeStorage } from 'electron';
 import {
 	DEFAULT_EMPTY_VIEW_ITEMS,
 	DEFAULT_FILE_HEADER_ITEMS,
@@ -89,6 +90,27 @@ interface Schema {
 	githubToken: string | null;
 	// Local usage statistics keyed by repoId. Purely on-disk; never sent anywhere.
 	stats: Record<string, StoredRepoStats>;
+	// Licensing. The device token is the long-lived, revocable credential the app
+	// exchanges for short-lived signed license tokens; it's safeStorage-encrypted
+	// where available. The cached license token carries its own signature, so its
+	// integrity does not depend on secrecy.
+	license: LicenseSlice;
+}
+
+interface LicenseSlice {
+	// base64 of safeStorage.encryptString(token) when encrypted, else the raw
+	// token. `deviceTokenEncrypted` disambiguates on read.
+	deviceToken: string | null;
+	deviceTokenEncrypted: boolean;
+	// The signed 72h license JWT (last one the server issued).
+	cachedLicenseToken: string | null;
+	// Server time (ms) from the last successful validation.
+	lastValidationAt: number | null;
+	// Wall-clock sentinel bumped periodically; if the clock is ever earlier than
+	// this at startup, the cached token is treated as suspect (clock rollback).
+	lastSeenWallClock: number;
+	// Persisted random fingerprint used when no OS machine id is readable.
+	fallbackFingerprint: string | null;
 }
 
 const defaults: Schema = {
@@ -140,7 +162,15 @@ const defaults: Schema = {
 	githubAccounts: {},
 	activeGithubAccountId: null,
 	githubToken: null,
-	stats: {}
+	stats: {},
+	license: {
+		deviceToken: null,
+		deviceTokenEncrypted: false,
+		cachedLicenseToken: null,
+		lastValidationAt: null,
+		lastSeenWallClock: 0,
+		fallbackFingerprint: null
+	}
 };
 
 export const store = new Store<Schema>({ defaults, name: 'super-review' });
@@ -683,6 +713,70 @@ export function removeGithubAccount(id: string): void {
 	for (const repo of Object.values(d.repos)) {
 		if (repo.githubAccountId === id) delete repo.githubAccountId;
 	}
+	flush();
+}
+
+// --- Licensing ---------------------------------------------------------------
+// The device token is encrypted at rest with the OS keychain (safeStorage) when
+// available. On Linux without a keyring, safeStorage falls back to plaintext; we
+// record which so reads don't try to decrypt plaintext. A decryption failure
+// (e.g. the keychain was reset) is treated as "signed out" rather than a crash.
+
+export function getLicenseSlice(): LicenseSlice {
+	return db().license;
+}
+
+export function setDeviceToken(raw: string | null): void {
+	const d = db();
+	if (raw === null) {
+		d.license.deviceToken = null;
+		d.license.deviceTokenEncrypted = false;
+		flush();
+		return;
+	}
+	if (safeStorage.isEncryptionAvailable()) {
+		d.license.deviceToken = safeStorage.encryptString(raw).toString('base64');
+		d.license.deviceTokenEncrypted = true;
+	} else {
+		d.license.deviceToken = raw;
+		d.license.deviceTokenEncrypted = false;
+	}
+	flush();
+}
+
+export function getDeviceToken(): string | null {
+	const { deviceToken, deviceTokenEncrypted } = db().license;
+	if (!deviceToken) return null;
+	if (!deviceTokenEncrypted) return deviceToken;
+	try {
+		return safeStorage.decryptString(Buffer.from(deviceToken, 'base64'));
+	} catch {
+		// Keychain reset / different machine: behave as signed out.
+		return null;
+	}
+}
+
+export function setCachedLicenseToken(token: string | null): void {
+	db().license.cachedLicenseToken = token;
+	flush();
+}
+
+export function setLastValidation(serverTimeMs: number): void {
+	db().license.lastValidationAt = serverTimeMs;
+	flush();
+}
+
+export function bumpWallClock(nowMs: number): void {
+	db().license.lastSeenWallClock = nowMs;
+	flush();
+}
+
+export function getFallbackFingerprint(): string | null {
+	return db().license.fallbackFingerprint;
+}
+
+export function setFallbackFingerprint(value: string): void {
+	db().license.fallbackFingerprint = value;
 	flush();
 }
 

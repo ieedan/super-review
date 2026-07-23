@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import AppWindow from '@lucide/svelte/icons/app-window';
+	import BadgeCheck from '@lucide/svelte/icons/badge-check';
 	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 	import Bot from '@lucide/svelte/icons/bot';
 	import Check from '@lucide/svelte/icons/check';
 	import Code2 from '@lucide/svelte/icons/code-2';
 	import Diff from '@lucide/svelte/icons/diff';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
 	import LogOut from '@lucide/svelte/icons/log-out';
@@ -33,6 +36,7 @@
 	import PowerShellIcon from './icons/PowerShellIcon.svelte';
 	import ZshIcon from './icons/ZshIcon.svelte';
 	import ChangesetLogo from './ChangesetLogo.svelte';
+	import LicenseCard from './LicenseCard.svelte';
 	import DiffStylePreview from './DiffStylePreview.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import SettingSelect from './SettingSelect.svelte';
@@ -84,8 +88,25 @@
 
 	let activeTab = $state<SettingsTab>('accounts');
 
+	// Which tabs have had their heavy content mounted. A tab's expensive parts (the
+	// live previews, the Agents and Stats panels) mount the first time the user
+	// opens that tab and then STAY mounted for the life of the dialog. Gating them
+	// on `activeTab` instead meant every visit tore the content down and rebuilt it
+	// from scratch — re-running the Pierre + highlighter render for the diff
+	// preview, reconstructing the stats chart, and re-firing the panels' onMount
+	// IPC (the Agents panel rescans the filesystem) on every single click. Keeping
+	// them alive makes the first visit cost what it costs and every return free.
+	// Reset when the dialog opens so a fresh session starts lean again.
+	const mountedTabs = new SvelteSet<SettingsTab>();
+	// Reading `has` keeps this subscribed to the set itself, so the `clear()` on
+	// open re-runs it and the tab being shown is mounted again right away.
+	$effect(() => {
+		if (!mountedTabs.has(activeTab)) mountedTabs.add(activeTab);
+	});
+
 	const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
 		{ id: 'accounts', label: 'Accounts', icon: User },
+		{ id: 'license', label: 'License', icon: BadgeCheck },
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'diff', label: 'Diff', icon: Diff },
 		{ id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
@@ -123,6 +144,13 @@
 	};
 
 	const SECTIONS: SettingsSection[] = [
+		{
+			tab: 'license',
+			id: 'settings-super-review',
+			title: 'Super Review',
+			keywords:
+				'super review license licensed holder subscription subscribe plan perpetual lifetime annual yearly monthly trial upgrade manage billing payment invoice renew renewal cancel purchase buy pay expires expiry active since account signed in sign out signout log out logout activate activation authorize device card'
+		},
 		{
 			tab: 'accounts',
 			id: 'settings-accounts-github',
@@ -562,6 +590,11 @@
 	$effect(() => {
 		if (dialogOpen) {
 			searchQuery = '';
+			// Start each session lean: clearing drops every tab's heavy content, and
+			// the effect above immediately re-adds the tab being shown. Deliberately
+			// does NOT read `activeTab` here — that would make this snapshot effect
+			// depend on it and re-run (wiping the drafts) on every tab switch.
+			mountedTabs.clear();
 			draftViewMode = app.viewMode;
 			draftDiffLayout = app.diffLayout;
 			draftShowFileIcons = app.showFileIcons;
@@ -855,7 +888,94 @@
 	header action are rendered by the loop in the content snippet; everything
 	below the heading lives here. Each branch corresponds to one SECTIONS entry. -->
 {#snippet sectionBody(id: string)}
-	{#if id === 'settings-accounts-github'}
+	{#if id === 'settings-super-review'}
+		{@const lic = app.license.current}
+		{@const holder = lic?.state === 'licensed' ? lic.holder : undefined}
+		{#if lic?.state === 'licensed' && (lic.plan === 'lifetime' || lic.plan === 'monthly' || lic.plan === 'annual') && lic.status === 'active'}
+			<!-- Paid license: the metal card. The holder comes from the signed token,
+				so it's the account the license actually belongs to (NOT whatever
+				GitHub account happens to be signed in locally - they're separate). -->
+			<p class="mt-1 text-xs text-muted-foreground">Your Super Review license.</p>
+			<div class="mt-3 flex flex-col items-center">
+				<LicenseCard
+					variant={lic.plan === 'lifetime' ? 'gold' : 'silver'}
+					plan={lic.plan === 'lifetime'
+						? 'Perpetual'
+						: lic.plan === 'annual'
+							? 'Annual'
+							: 'Monthly'}
+					holder={holder?.name ?? holder?.email}
+					activeSince={lic.activeSince}
+				/>
+				<Button
+					variant="outline"
+					size="sm"
+					class="mt-4"
+					onclick={() => actions.openLicenseDashboard()}
+				>
+					<ExternalLink class="size-3.5" /> Manage license
+				</Button>
+			</div>
+		{:else if lic?.state === 'licensed' && lic.status === 'trialing'}
+			{@const days = lic.trialEndsAt
+				? Math.max(0, Math.ceil((lic.trialEndsAt - Date.now()) / 86_400_000))
+				: 0}
+			<p class="mt-1 text-xs text-muted-foreground">You're on a free trial.</p>
+			<div
+				class="mt-3 flex items-center justify-between rounded-xl border border-border bg-card/30 px-3 py-2.5"
+			>
+				<div>
+					<div class="text-sm font-medium">Free trial</div>
+					<div class="text-xs text-muted-foreground">
+						{days === 0 ? 'Ends today' : `${days} day${days === 1 ? '' : 's'} left`}
+					</div>
+				</div>
+				<Button size="sm" onclick={() => actions.openPricing()}>Upgrade</Button>
+			</div>
+			<Button
+				variant="outline"
+				size="sm"
+				class="mt-3"
+				onclick={() => actions.openLicenseDashboard()}
+			>
+				<ExternalLink class="size-3.5" /> Manage license
+			</Button>
+		{:else}
+			<p class="mt-1 text-xs text-muted-foreground">Manage your Super Review license.</p>
+			<Button size="sm" class="mt-3" onclick={() => actions.openPricing()}>See plans</Button>
+		{/if}
+
+		{#if lic?.state === 'licensed'}
+			<!-- The account this license is signed in as, with sign out. -->
+			<div class="mt-5 text-xs font-medium text-muted-foreground">Signed in as</div>
+			<div
+				class="mt-2 flex items-center gap-3 rounded-xl border border-border bg-card/30 px-3 py-2.5"
+			>
+				{#if holder?.name || holder?.email}
+					{@const label = holder.name ?? holder.email ?? ''}
+					<Avatar.Root class="size-8">
+						{#if holder.avatarUrl}
+							<Avatar.Image src={holder.avatarUrl} alt={label} />
+						{/if}
+						<Avatar.Fallback class="text-[10px]">
+							{label.slice(0, 2).toUpperCase()}
+						</Avatar.Fallback>
+					</Avatar.Root>
+					<div class="min-w-0 flex-1">
+						<div class="truncate text-sm font-medium">{holder.name ?? holder.email}</div>
+						{#if holder.name && holder.email}
+							<div class="truncate text-xs text-muted-foreground">{holder.email}</div>
+						{/if}
+					</div>
+				{:else}
+					<div class="min-w-0 flex-1 text-sm text-muted-foreground">Super Review account</div>
+				{/if}
+				<Button variant="outline" size="sm" onclick={() => actions.signOutLicense()}>
+					<LogOut class="size-3.5" /> Sign out
+				</Button>
+			</div>
+		{/if}
+	{:else if id === 'settings-accounts-github'}
 		{#if app.githubAccounts.length === 0}
 			<p class="mt-1 text-xs text-muted-foreground">
 				Sign in to review pull requests and post comments.
@@ -1118,14 +1238,14 @@
 			{/each}
 		</div>
 	{:else if id === 'settings-agents'}
-		<!-- Gated on the active tab so the panel only mounts (and runs its onMount
-			IPC) when the user opens Agents, even though every tab's text stays in the
-			DOM for search. -->
-		{#if activeTab === 'agents'}
+		<!-- Gated on first visit so the panel only mounts (and runs its onMount IPC)
+			once the user opens Agents, even though every tab's text stays in the DOM
+			for search. It stays mounted afterwards so returning is instant. -->
+		{#if mountedTabs.has('agents')}
 			<AgentsSettingsPanel />
 		{/if}
 	{:else if id === 'settings-stats'}
-		{#if activeTab === 'stats'}
+		{#if mountedTabs.has('stats')}
 			<UsageStatsPanel />
 		{/if}
 	{/if}
@@ -1379,7 +1499,7 @@
 				{@render sectionWrapper(seg.section)}
 			{/if}
 		{/each}
-		{#if previewKind && activeTab === tab}
+		{#if previewKind && mountedTabs.has(tab)}
 			{@render tabPreview(previewKind)}
 		{/if}
 	</div>

@@ -1,0 +1,80 @@
+{
+  "branch": "licensing",
+  "tasks": [
+    {
+      "id": "86f5898a-f19f-4ec2-9244-c57b8a8860d5",
+      "title": "Improve flows (blanket do not close)",
+      "done": false,
+      "order": 0,
+      "createdAt": 1784806480693,
+      "updatedAt": 1784807463540,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "notes": "Left open per 'blanket do not close'. Subtasks done: email-a-friend for guest codes on the dashboard; 'I already have a code' on the waitlist form (including after join) linking to /invite."
+    },
+    {
+      "id": "8f1d7b0c-4555-4c55-b660-9137761fae79",
+      "title": "Need a \"email code\" flow that will email a code to your friend",
+      "parentId": "86f5898a-f19f-4ec2-9244-c57b8a8860d5",
+      "done": true,
+      "order": 0,
+      "createdAt": 1784806503039,
+      "updatedAt": 1784807454468,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Cursor",
+        "harness": "cursor"
+      },
+      "doneAt": 1784807454468
+    },
+    {
+      "id": "f9ad1396-c07e-4f04-ba48-eafbbb077cc9",
+      "title": "let's add a \"I already have a code\" section to the waitlist form that allows users to go and enter the code on a dedicated view",
+      "parentId": "86f5898a-f19f-4ec2-9244-c57b8a8860d5",
+      "done": true,
+      "order": 1,
+      "createdAt": 1784806619214,
+      "updatedAt": 1784807456713,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Cursor",
+        "harness": "cursor"
+      },
+      "doneAt": 1784807456713
+    },
+    {
+      "id": "4600d224-3ad5-4793-bec7-d01fc774201c",
+      "title": "this also needs to be a part of the form once the user joins the wailist",
+      "parentId": "f9ad1396-c07e-4f04-ba48-eafbbb077cc9",
+      "done": true,
+      "order": 0,
+      "createdAt": 1784807220676,
+      "updatedAt": 1784807455581,
+      "createdBy": {
+        "kind": "human",
+        "name": "Aidan Bleser",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/117548273?v=4"
+      },
+      "doneBy": {
+        "kind": "agent",
+        "name": "Cursor",
+        "harness": "cursor"
+      },
+      "doneAt": 1784807455581
+    }
+  ],
+  "updatedAt": 1784807463540
+}

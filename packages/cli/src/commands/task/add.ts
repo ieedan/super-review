@@ -20,13 +20,12 @@ async function runAdd(titleParts: string[], opts: AddOptions): Promise<void> {
 
 	const { root, branch } = await resolveTarget(opts);
 
-	// A --parent must reference an existing top-level task on this branch (subtasks
-	// nest one level only).
+	// A --parent must reference an existing task on this branch. Subtasks nest
+	// arbitrarily deep, so any task (top-level or itself a subtask) is a valid parent.
 	const parentId = opts.parent?.trim() || undefined;
 	if (parentId) {
 		const parent = (await listTasks(root, branch)).find((t) => t.id === parentId);
 		if (!parent) fail(`no task with id "${parentId}" on branch "${branch}"`);
-		if (parent.parentId) fail('cannot add a subtask to a subtask (tasks nest one level only).');
 	}
 
 	const actor = buildActor(opts);

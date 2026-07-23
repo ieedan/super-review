@@ -164,7 +164,16 @@
 	const fmt = (n: number) => nf.format(n);
 
 	// --- Heatmap (a run of whole weeks that fills the panel width) -------------
+	// The measured width, and the last NON-ZERO measurement the heatmap actually
+	// sizes from. The panel stays mounted once opened, so hiding its settings tab
+	// makes the observer report 0 — sizing from that would rebuild the whole
+	// calendar at the fallback size on the way out and again on the way back in.
+	// Holding the last real width keeps the grid stable across tab switches.
+	let measuredWidth = $state(0);
 	let containerWidth = $state(0);
+	$effect(() => {
+		if (measuredWidth > 0) containerWidth = measuredWidth;
+	});
 	// Pick a week count near a ~15px target, then let the cell size be the exact
 	// fractional width / weeks so the grid spans the full container with no
 	// leftover gutter. Whole weeks only (end rounded up to the next week boundary)
@@ -379,7 +388,7 @@
 			<div
 				class="w-full overflow-hidden"
 				style="height: {chartHeight}px"
-				bind:clientWidth={containerWidth}
+				bind:clientWidth={measuredWidth}
 			>
 				<Chart data={calendarData} x={(d: DayData) => d.date}>
 					<Svg>

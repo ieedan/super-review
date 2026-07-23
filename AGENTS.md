@@ -14,7 +14,7 @@ pnpm monorepo (`pnpm@11.7.0`, Node >= 24). Workspaces are `apps/*` and
 ```
 apps/
   desktop/   Electron app (the product) — electron-vite, Svelte 5 renderer
-  docs/      SvelteKit marketing/download site (embeds the real UI components)
+  web/       SvelteKit marketing site + licensing backend (Convex, better-auth, Stripe)
 packages/
   core/       Node-only session + git layer; shared by the CLI and the desktop main process
   ui/         @super-review/ui — Svelte renderer components, stores, diff/find logic
@@ -38,10 +38,13 @@ Electron + electron-vite, with the standard three-config split:
 - `src/shared/` — types/helpers shared between main, preload, and renderer
   (`@shared/...`).
 
-### apps/docs — `@super-review/docs`
+### apps/web — `@super-review/web`
 
-SvelteKit 2 site (Vercel adapter) for the landing/download page and waitlist
-(Upstash Redis). Imports the **real** `@super-review/ui` components.
+SvelteKit 2 site (Vercel adapter) for the landing/download page, plus the
+licensing backend and account dashboard: Convex database, better-auth GitHub
+sign-in, Stripe billing, and the desktop-facing license API. Imports the
+**real** `@super-review/ui` components. Convex functions live in
+`src/lib/convex/`.
 
 ### packages/core — `@super-review/core`
 
@@ -102,9 +105,9 @@ performance story that renders it at scale.
 
 | Task                         | Command            |
 | ---------------------------- | ------------------ |
-| Run desktop + docs in dev    | `pnpm dev`         |
+| Run desktop + web in dev     | `pnpm dev`         |
 | Desktop only                 | `pnpm dev:desktop` |
-| Docs only                    | `pnpm dev:docs`    |
+| Web only                     | `pnpm dev:web`     |
 | Build the desktop app        | `pnpm build`       |
 | Build the CLI for publishing | `pnpm build:cli`   |
 | Run Storybook                | `pnpm storybook`   |

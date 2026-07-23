@@ -22,6 +22,19 @@ extraMetadata:
   main: out/main/index.js
 asar: true
 
+# Harden the packaged binary: flip Electron fuses (disable RunAsNode / NODE_
+# OPTIONS / --inspect, only load from asar, asar integrity on macOS). Runs
+# before signing. See scripts/after-pack.cjs.
+afterPack: scripts/after-pack.cjs
+
+# Custom URL scheme for the license activation deep link
+# (super-review://activate?code=...). electron-builder writes the macOS
+# CFBundleURLTypes and the Windows NSIS registry entries from this.
+protocols:
+  - name: Super Review
+    schemes:
+      - super-review
+
 # electron-builder otherwise computes this by scanning node_modules, which is
 # unreliable under pnpm's symlinked layout on a clean CI runner and fails with
 # "Cannot compute electron version from installed node modules". Pin it — keep

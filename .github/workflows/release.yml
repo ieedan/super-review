@@ -67,7 +67,7 @@ jobs:
       # While changesets are pending, this opens/updates the "Version Packages"
       # PR. Once that PR merges (no changesets left), it instead runs the
       # `publish` command, which publishes the `super-review` CLI to npm. The
-      # private desktop/docs/core packages are skipped by `changeset publish`.
+      # private desktop/web/core packages are skipped by `changeset publish`.
       - name: Create Version PR / publish CLI
         id: changesets
         uses: changesets/action@v2.0.0-next.2

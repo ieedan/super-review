@@ -8,6 +8,29 @@ import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
 import { getPrefs, flushStore } from './store.js';
 import { WINDOW_BOUNDS } from '@shared/types.js';
+import { installLicenseIpcGate } from './license/ipc-gate.js';
+import { initLicenseService, startLicenseBackgroundWork } from './license/service.js';
+
+const PROTOCOL = 'super-review';
+
+// Activation is now a device-code flow (the desktop polls the server), so no
+// code is handed back over the protocol. We still register super-review:// and
+// focus the window when it's opened, in case a future flow needs it.
+function handleDeepLink(url: string): void {
+	try {
+		if (new URL(url).protocol === `${PROTOCOL}:`) focusMainWindow();
+	} catch {
+		// not a URL we care about
+	}
+}
+
+function focusMainWindow(): void {
+	const win = BrowserWindow.getAllWindows()[0];
+	if (win) {
+		if (win.isMinimized()) win.restore();
+		win.focus();
+	}
+}
 
 // macOS/Linux GUI launchers (Finder, Dock, Spotlight) start apps with a minimal
 // PATH that excludes Homebrew, asdf, mise, etc. The git subprocesses we spawn —
@@ -148,23 +171,63 @@ function setupPermissions(): void {
 	ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission as string));
 }
 
-void app.whenReady().then(() => {
-	// macOS shows the dock icon from the app bundle; in dev there's no bundle, so
-	// set it explicitly. No-op off macOS (app.dock is undefined there).
-	if (isDev && process.platform === 'darwin') {
-		const img = nativeImage.createFromPath(devIconPath);
-		if (!img.isEmpty()) app.dock?.setIcon(img);
-	}
-	setupPermissions();
-	registerGitCredentials();
-	registerIpc();
-	setupAppMenu();
-	createWindow();
-	initAutoUpdates();
-	app.on('activate', () => {
-		if (BrowserWindow.getAllWindows().length === 0) createWindow();
+// Single-instance lock: required so a second launch (including one carrying a
+// deep link on Windows/Linux) is routed to the running instance rather than
+// starting a new one. Behavior change: previously two instances could run.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+	app.quit();
+} else {
+	app.on('second-instance', (_event, argv) => {
+		focusMainWindow();
+		// Windows/Linux deliver the deep link as an argv entry.
+		const link = argv.find((a) => a.startsWith(`${PROTOCOL}://`));
+		if (link) handleDeepLink(link);
 	});
-});
+
+	// macOS delivers deep links via open-url. Registered before ready so a
+	// cold-start link is caught.
+	app.on('open-url', (event, url) => {
+		event.preventDefault();
+		handleDeepLink(url);
+	});
+
+	// Register the custom protocol. In dev (unbundled Electron) we must pass the
+	// exec path + the script arg so the OS can relaunch us for the scheme.
+	if (isDev && process.defaultApp && process.argv.length >= 2) {
+		app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+	} else {
+		app.setAsDefaultProtocolClient(PROTOCOL);
+	}
+
+	void app.whenReady().then(async () => {
+		// macOS shows the dock icon from the app bundle; in dev there's no bundle, so
+		// set it explicitly. No-op off macOS (app.dock is undefined there).
+		if (isDev && process.platform === 'darwin') {
+			const img = nativeImage.createFromPath(devIconPath);
+			if (!img.isEmpty()) app.dock?.setIcon(img);
+		}
+		setupPermissions();
+		// License state must be resolved and the IPC gate installed BEFORE any
+		// handlers register, so an unlicensed launch can't reach substantive IPC.
+		await initLicenseService();
+		installLicenseIpcGate();
+		registerGitCredentials();
+		registerIpc();
+		setupAppMenu();
+		createWindow();
+		// Windows cold-start deep link arrives in argv.
+		const coldLink = process.argv.find((a) => a.startsWith(`${PROTOCOL}://`));
+		if (coldLink) handleDeepLink(coldLink);
+		startLicenseBackgroundWork();
+		// Updates stay ungated: a lapsed user must still be able to receive the
+		// build that lets them resubscribe (and security patches).
+		initAutoUpdates();
+		app.on('activate', () => {
+			if (BrowserWindow.getAllWindows().length === 0) createWindow();
+		});
+	});
+}
 
 app.on('window-all-closed', () => {
 	if (process.platform !== 'darwin') app.quit();

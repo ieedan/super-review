@@ -147,6 +147,8 @@ import {
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import { getNpmPackageInfo } from './npm-service.js';
 import * as gh from './github-service.js';
+import { registerLicenseIpc } from './license/ipc.js';
+import { submitFeedback } from './feedback-service.js';
 import {
 	clearSessions,
 	countSessions,
@@ -495,6 +497,9 @@ async function refreshRepoInfoInBackground(repoPath: string, previous: RepoInfo)
 }
 
 export function registerIpc(): void {
+	// ─── Licensing ─────────────────────────────────────────────────────────
+	registerLicenseIpc();
+
 	// ─── Repos ─────────────────────────────────────────────────────────────
 	ipcMain.handle('repos:list', async (): Promise<RepoInfo[]> => listRepos());
 
@@ -1639,11 +1644,7 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle('feedback:submit', async (_e, input: FeedbackInput): Promise<FeedbackResult> => {
-		return gh.createFeedbackIssue(input, {
-			appVersion: app.getVersion(),
-			platform: process.platform,
-			osRelease: os.release()
-		});
+		return submitFeedback(input);
 	});
 
 	ipcMain.handle(
@@ -2015,8 +2016,8 @@ export function registerIpc(): void {
 				item(params.done ? 'Mark as Not Done' : 'Mark as Done', 'toggle'),
 				item(params.onHold ? 'Remove Hold' : 'Put on Hold', 'hold')
 			];
-			// Subtasks nest one level only, so "Add Subtask" is offered on top-level
-			// tasks only.
+			// "Add Subtask" is offered when the row can take another level of children
+			// (the renderer decides; subtasks nest arbitrarily deep).
 			if (params.canAddSubtask) template.push(item('Add Subtask…', 'addSubtask'));
 			template.push(item('Edit…', 'edit'), { type: 'separator' }, item('Delete', 'delete'));
 
