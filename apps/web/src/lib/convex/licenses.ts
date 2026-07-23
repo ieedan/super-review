@@ -122,6 +122,35 @@ export const getMine = query({
 	}
 });
 
+/**
+ * Will activating a device right now start a fresh 7-day trial for the signed-in
+ * user? True only when they hold no paid plan AND have never consumed a trial on
+ * this GitHub account, mirroring startTrialIfEligible exactly. Drives the
+ * /activate page's "Start free trial" vs "Authorize device" copy so it never
+ * promises a trial the activation would not actually grant (e.g. a paying user
+ * adding a second device, or someone whose trial already expired).
+ */
+export const trialEligibility = query({
+	args: {},
+	handler: async (ctx) => {
+		const user = await authComponent.safeGetAuthUser(ctx);
+		if (!user) return { eligible: false };
+		const license = await ctx.db
+			.query('licenses')
+			.withIndex('by_userId', (q) => q.eq('userId', user._id))
+			.unique();
+		// A started trial or any paid plan means no new trial can begin.
+		if (license && license.plan !== 'none') return { eligible: false };
+		const githubAccountId = license?.githubAccountId ?? (await getGithubAccountId(ctx, user._id));
+		if (!githubAccountId) return { eligible: false };
+		const consumed = await ctx.db
+			.query('trials')
+			.withIndex('by_githubAccountId', (q) => q.eq('githubAccountId', githubAccountId))
+			.first();
+		return { eligible: !consumed };
+	}
+});
+
 /** Internal: the plan on a user's license, or null if none. Used by the Stripe
  * checkout guard to stop a lifetime holder from starting a paid subscription. */
 export const getPlanForUser = internalQuery({

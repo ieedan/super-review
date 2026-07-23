@@ -22,6 +22,48 @@ const APP_TABLES = [
 // Order matters: dependent records first, users last.
 const AUTH_MODELS = ['session', 'account', 'verification', 'subscription', 'user'] as const;
 
+/**
+ * Dev-only: set the (single) license's trial to end `days` from now so the
+ * desktop trial countdown can be exercised. Patches the license row and the
+ * matching `trials` record so both stay consistent. Refuses if there isn't
+ * exactly one license, so it can't silently touch the wrong row. Never for prod.
+ */
+export const setTrialDaysLeft = internalMutation({
+	args: { days: v.number() },
+	handler: async (ctx, args) => {
+		const DAY = 24 * 60 * 60 * 1000;
+		const now = Date.now();
+		const endsAt = now + args.days * DAY;
+		const startedAt = endsAt - 7 * DAY;
+
+		const licenses = await ctx.db.query('licenses').collect();
+		if (licenses.length !== 1) {
+			throw new Error(`Expected exactly 1 license, found ${licenses.length}. Refusing to guess.`);
+		}
+		const license = licenses[0];
+		const before = {
+			plan: license.plan,
+			status: license.status,
+			trialEndsAt: license.trialEndsAt ?? null
+		};
+
+		await ctx.db.patch(license._id, {
+			plan: 'trial',
+			status: 'trialing',
+			trialStartedAt: startedAt,
+			trialEndsAt: endsAt
+		});
+
+		const trial = await ctx.db
+			.query('trials')
+			.withIndex('by_githubAccountId', (q) => q.eq('githubAccountId', license.githubAccountId))
+			.first();
+		if (trial) await ctx.db.patch(trial._id, { startedAt, endsAt });
+
+		return { before, after: { plan: 'trial', status: 'trialing', trialEndsAt: endsAt }, days: args.days };
+	}
+});
+
 export const inspect = internalQuery({
 	args: {},
 	handler: async (ctx) => {

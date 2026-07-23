@@ -11,5 +11,10 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 		const next = url.search ? `/activate${url.search}` : '/activate';
 		throw redirect(302, `/login?next=${encodeURIComponent(next)}`);
 	}
-	return { prefill: url.searchParams.get('code') ?? '' };
+	// Whether authorizing this device will actually start the free trial, so the
+	// page can promise it only when it's true.
+	const eligibility = await locals.convex
+		.safeQuery(api.licenses.trialEligibility, {})
+		.unwrapOr({ eligible: false });
+	return { prefill: url.searchParams.get('code') ?? '', willStartTrial: eligibility.eligible };
 };

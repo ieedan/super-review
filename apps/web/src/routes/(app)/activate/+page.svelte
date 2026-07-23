@@ -65,10 +65,11 @@
 
 	onMount(() => {
 		// An optional ?code= prefills the input (the desktop normally opens the
-		// page without one, so this is just a convenience).
+		// page without one, so this is just a convenience). We deliberately do NOT
+		// auto-submit: the user confirms by pressing the button, so a first-time
+		// user sees "Start free trial" before anything happens on their account.
 		const pre = normalize(data.prefill);
 		if (pre) code = pre;
-		if (pre.length === 8) void submitCode();
 	});
 </script>
 
@@ -94,7 +95,6 @@
 			<InputOTP.Root
 				maxlength={8}
 				bind:value={code}
-				onComplete={() => void submitCode()}
 				pasteTransformer={(t) => t.replace(/[^a-zA-Z0-9]/g, '')}
 				disabled={processing}
 				class="justify-center"
@@ -114,14 +114,20 @@
 				{/snippet}
 			</InputOTP.Root>
 
+			{#if data.willStartTrial}
+				<p class="text-muted-foreground text-xs text-pretty">
+					Authorizing this device starts your
+					<span class="text-fg font-medium">7-day free trial</span>. No card required.
+				</p>
+			{/if}
+
 			<Button
-				variant="secondary"
 				onclick={submitCode}
 				loading={processing}
 				disabled={normalize(code).length < 8}
 				class="h-11 w-full rounded-xl"
 			>
-				Continue
+				{data.willStartTrial ? 'Start free trial' : 'Authorize device'}
 			</Button>
 		{:else if step === 'approved'}
 			<div class="flex flex-col gap-1.5">

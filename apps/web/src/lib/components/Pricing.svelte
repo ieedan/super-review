@@ -1,9 +1,11 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import Button from '@super-review/ui/components/button.svelte';
 	import Check from '@lucide/svelte/icons/check';
 	import { env } from '$lib/env.client';
 	import { useQuery } from '$lib/convex.svelte';
 	import { api } from '$lib/convex/_generated/api';
+	import { DOWNLOADS, detectOS, type OS } from '$lib/releases';
 
 	// Base delay for the page-load reveal cascade. The homepage passes ~1760ms so
 	// pricing comes in last after the feature sections; the standalone /pricing
@@ -60,6 +62,18 @@
 		// this button goes straight to a charged subscription: label it honestly.
 		return { label: 'Subscribe', disabled: false };
 	});
+
+	// The free trial is started by downloading and activating the desktop app (it
+	// is the one free window per account), so the trial CTA is a download link,
+	// not a checkout link. /api/download/<os> is auth-gated: signed-out visitors
+	// are sent through sign-in first, then the download. Default to macOS until the
+	// client sniffs the real OS (detectOS needs navigator, absent during SSR).
+	let detected = $state<OS>('other');
+	onMount(() => {
+		detected = detectOS();
+	});
+	const trialOs = $derived<'mac' | 'windows'>(detected === 'windows' ? 'windows' : 'mac');
+	const otherOs = $derived<'mac' | 'windows'>(trialOs === 'mac' ? 'windows' : 'mac');
 </script>
 
 <section
@@ -77,12 +91,27 @@
 		class="text-muted-foreground reveal mt-3 max-w-md text-center text-pretty"
 		style="animation-delay: {revealDelay + 80}ms"
 	>
-		Start with a 7-day free trial.
+		Start with a 7-day free trial. No card required.
 	</p>
 
 	<div
+		class="reveal mt-8 flex flex-col items-center gap-2"
+		style="animation-delay: {revealDelay + 120}ms"
+	>
+		<Button href={DOWNLOADS[trialOs].url} class="h-11 rounded-xl px-6">
+			Download for {DOWNLOADS[trialOs].label}
+		</Button>
+		<a
+			href={DOWNLOADS[otherOs].url}
+			class="text-muted-foreground hover:text-fg text-xs transition-colors"
+		>
+			or download for {DOWNLOADS[otherOs].label}
+		</a>
+	</div>
+
+	<div
 		class="reveal mt-10 grid w-full max-w-3xl gap-5 {launchOpen ? 'md:grid-cols-2' : 'max-w-md'}"
-		style="animation-delay: {revealDelay + 160}ms"
+		style="animation-delay: {revealDelay + 200}ms"
 	>
 		{#if launchOpen}
 			<!-- Lifetime (launch only) -->
