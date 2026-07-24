@@ -40,9 +40,9 @@ app.setName(isDev ? 'Super Review Dev' : 'Super Review');
 // point an update at an empty directory: installs would come back with no repos,
 // no accounts and no license. Packaged builds stay exactly where they are; only
 // dev moves.
-app.setPath('userData', isDev ? devDir : sharedDir);
-
 if (isDev) seedDevDir(sharedDir, devDir);
+
+app.setPath('userData', isDev ? devDir : sharedDir);
 
 /**
  * One-time seed for a dev build that has never run under its own directory: copy
@@ -53,18 +53,22 @@ if (isDev) seedDevDir(sharedDir, devDir);
  * unlicensed and can activate on its own.
  */
 function seedDevDir(from: string, to: string): void {
-	if (existsSync(to)) return;
+	// Keyed on the files, not on the directory: Electron creates userData for us
+	// during startup, so a directory check would be a race we'd usually lose.
+	const config = path.join(to, 'super-review.json');
+	const settings = path.join(to, 'settings.json');
+	if (existsSync(config)) return;
 	try {
 		mkdirSync(to, { recursive: true });
-		const config = path.join(from, 'super-review.json');
-		if (existsSync(config)) {
-			const parsed = JSON.parse(readFileSync(config, 'utf8')) as Record<string, unknown>;
+		const sourceConfig = path.join(from, 'super-review.json');
+		if (existsSync(sourceConfig)) {
+			const parsed = JSON.parse(readFileSync(sourceConfig, 'utf8')) as Record<string, unknown>;
 			delete parsed['license'];
 			// Matches conf's own serializer, so the file stays diffable by hand.
-			writeFileSync(path.join(to, 'super-review.json'), JSON.stringify(parsed, null, '\t'));
+			writeFileSync(config, JSON.stringify(parsed, null, '\t'));
 		}
-		const settings = path.join(from, 'settings.json');
-		if (existsSync(settings)) copyFileSync(settings, path.join(to, 'settings.json'));
+		const sourceSettings = path.join(from, 'settings.json');
+		if (existsSync(sourceSettings) && !existsSync(settings)) copyFileSync(sourceSettings, settings);
 	} catch {
 		// A fresh dev profile is a fine fallback. Never block startup on this.
 	}
