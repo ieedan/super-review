@@ -9,5 +9,5 @@
 		"@super-review/storybook": "0.0.12",
 		"@super-review/ui": "0.1.4"
 	},
-	"changesets": []
+	"changesets": ["shy-lions-sing"]
 }
