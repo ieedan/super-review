@@ -22,3 +22,6 @@ storybook-static
 __screenshots__
 .vitest-attachments
 .env.vercel.*
+
+# Super Review local session data (guided review tours; per-reviewer, not shared)
+.super-review
