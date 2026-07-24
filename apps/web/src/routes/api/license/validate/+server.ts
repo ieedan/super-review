@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { z } from 'zod';
-import { PUBLIC_CONVEX_URL } from '$env/static/public';
+import { env } from '$lib/env.server';
 import { api } from '$lib/convex/_generated/api';
 import { signLicenseToken, sha256Hex, hashIp } from '$lib/server/license-token';
 import type { RequestHandler } from './$types';
@@ -39,7 +39,7 @@ export const POST: RequestHandler = async ({ request, locals, getClientAddress }
 		// signals - never as unlock (that requires a signed token). `convexUrl` is
 		// still returned so a locked app can open the realtime watch and unlock the
 		// instant the user buys, without waiting for the next poll.
-		return json({ ok: false, reason: result.reason, convexUrl: PUBLIC_CONVEX_URL });
+		return json({ ok: false, reason: result.reason, convexUrl: env.PUBLIC_CONVEX_URL });
 	}
 
 	const licenseToken = await signLicenseToken({
@@ -57,5 +57,5 @@ export const POST: RequestHandler = async ({ request, locals, getClientAddress }
 		holderImage: result.holder?.image ?? null
 	});
 
-	return json({ ok: true, licenseToken, serverTime: Date.now(), convexUrl: PUBLIC_CONVEX_URL });
+	return json({ ok: true, licenseToken, serverTime: Date.now(), convexUrl: env.PUBLIC_CONVEX_URL });
 };

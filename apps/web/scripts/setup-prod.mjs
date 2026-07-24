@@ -109,6 +109,26 @@ function vercelLinked(projectRoot) {
 	return existsSync(join(projectRoot, '.vercel', 'project.json'));
 }
 
+// `vercel link` pulls the project's development environment variables down and
+// **overwrites .env.local with them**, which for this repo means replacing a
+// working dev setup (Convex deployment, dev signing key, local secrets) with a
+// file containing little more than a VERCEL_OIDC_TOKEN. Nothing warns you, and
+// the values it clobbers are not all recoverable.
+//
+// So snapshot the file, link, and put it back.
+function vercelLink(projectRoot) {
+	const envLocalPath = join(projectRoot, '.env.local');
+	const before = existsSync(envLocalPath) ? readFileSync(envLocalPath, 'utf8') : null;
+	try {
+		execSync('vercel link', { cwd: projectRoot, stdio: 'inherit' });
+	} finally {
+		if (before !== null && readFileSync(envLocalPath, 'utf8') !== before) {
+			writeFileSync(envLocalPath, before);
+			console.log(dim('  (restored .env.local, which `vercel link` had overwritten)'));
+		}
+	}
+}
+
 // Names of the variables already on the Vercel project for a target. Only used
 // as a resume hint, so a parse miss just means a step re-runs; pushes go out
 // with --force and are idempotent either way.
@@ -247,13 +267,49 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 		vercelProdNames = linked ? vercelEnvNames(projectRoot, 'production') : new Set();
 	};
 
-	// Everything bound for the Vercel project, collected as the steps run and
-	// pushed in one go at the end. Collecting first means a half-finished run
-	// never leaves the project with a FUNCTION_SECRET that doesn't match Convex.
-	const vercelEnv = { production: {}, preview: {} };
-	const forProduction = (vars) => Object.assign(vercelEnv.production, vars);
+	// Vercel-bound values go up the moment a step produces them, mirroring the
+	// Convex writes right next to them.
+	//
+	// An earlier version batched them and pushed once at the end, which was
+	// worse in both directions: quitting midway left Convex written and Vercel
+	// empty (the exact mismatch batching was supposed to prevent), and on a
+	// re-run the Convex-side steps report "already configured" and skip, so
+	// nothing is collected and the push at the end has nothing to send. Values
+	// like the deploy key and the signing key cannot be read back out of Convex,
+	// so that state is not recoverable without redoing the step.
+	//
+	// Anything that cannot be pushed (no CLI, project not linked, a failed call)
+	// is held here and written to .env.vercel.<target> at the end for a manual
+	// dashboard import, so a value is never simply lost.
+	const vercelPending = { production: {}, preview: {} };
+	const vercelPushed = { production: [], preview: [] };
+
+	const writeVercel = (target, vars) => {
+		for (const [name, value] of Object.entries(vars)) {
+			if (value === undefined || value === '') continue;
+			if (linked) {
+				try {
+					vercelEnvSet(projectRoot, name, value, target, {
+						sensitive: SENSITIVE_VERCEL_VARS.has(name)
+					});
+					vercelPushed[target].push(name);
+					console.log(`  ${green('vercel')} ${name} ${dim(`(${target})`)}`);
+					continue;
+				} catch (error) {
+					console.log(
+						`  ${yellow('vercel')} ${name} ${dim(`(${target})`)}: ${
+							error instanceof Error ? error.message.split('\n')[0] : error
+						}`
+					);
+				}
+			}
+			vercelPending[target][name] = value;
+		}
+	};
+
+	const forProduction = (vars) => writeVercel('production', vars);
 	const forPreview = (vars) => {
-		if (!skipPreview) Object.assign(vercelEnv.preview, vars);
+		if (!skipPreview) writeVercel('preview', vars);
 	};
 
 	// Values already configured for dev, offered as defaults for the ones that
@@ -291,14 +347,26 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 				);
 				return;
 			}
+			describe([
+				bold('Link now if you possibly can.'),
+				'Every later step pushes its Vercel values as it goes, and it can only do',
+				'that against a linked project. Unlinked, they are written to',
+				'.env.vercel.<target> files for you to import by hand instead.'
+			]);
 			await pressEnterToOpen(rl, 'https://vercel.com/new', 'Open Vercel');
 			if (await askYesNo(rl, 'Link this directory to the Vercel project now?', true)) {
 				try {
-					execSync('vercel link', { cwd: projectRoot, stdio: 'inherit' });
+					vercelLink(projectRoot);
 				} catch {
 					console.log(dim('  Linking did not complete; you can re-run `vercel link` later.'));
 				}
 				refreshVercelState();
+			}
+			if (!vercelLinked(projectRoot)) {
+				console.log(
+					yellow('  Not linked. Setup continues, but nothing will reach Vercel directly;\n') +
+						yellow('  you will get .env.vercel.production / .preview to import at the end.')
+				);
 			}
 		}
 	);

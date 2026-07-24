@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { z } from 'zod';
-import { PUBLIC_CONVEX_URL } from '$env/static/public';
+import { env } from '$lib/env.server';
 import { api } from '$lib/convex/_generated/api';
 import { signLicenseToken, sha256Hex, randomToken, hashIp } from '$lib/server/license-token';
 import type { RequestHandler } from './$types';
@@ -55,7 +55,7 @@ export const POST: RequestHandler = async ({ request, locals, getClientAddress }
 			ok: false,
 			reason: result.decision.reason,
 			deviceToken,
-			convexUrl: PUBLIC_CONVEX_URL
+			convexUrl: env.PUBLIC_CONVEX_URL
 		});
 	}
 
@@ -79,6 +79,6 @@ export const POST: RequestHandler = async ({ request, locals, getClientAddress }
 		deviceToken,
 		licenseToken,
 		serverTime: Date.now(),
-		convexUrl: PUBLIC_CONVEX_URL
+		convexUrl: env.PUBLIC_CONVEX_URL
 	});
 };
