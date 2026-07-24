@@ -1,5 +1,11 @@
 # @super-review/docs
 
+## 0.0.14-beta.2
+
+### Patch Changes
+
+- [#164](https://github.com/ieedan/super-review/pull/164) [`cf9a0b9`](https://github.com/ieedan/super-review/commit/cf9a0b9ae36b0793f02bef9342a20259bd4cab91) Thanks [@ieedan](https://github.com/ieedan)! - chore: add promo codes
+
 ## 0.0.14-beta.1
 
 ### Patch Changes
