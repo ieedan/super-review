@@ -842,6 +842,60 @@ function prHostArgs(pr: PRSummary | null): [owner: string | undefined, repo: str
 	return [pr?.repoOwner, pr?.repoName];
 }
 
+// Monotonically decreasing source of temporary ids for optimistic comments.
+// Real GitHub comment ids are positive, so negative ids can never collide with
+// a server-sourced comment (or with each other), which lets us find the exact
+// placeholder to reconcile or roll back once the network call settles.
+let optimisticCommentSeq = 0;
+function nextOptimisticCommentId(): number {
+	optimisticCommentSeq -= 1;
+	return optimisticCommentSeq;
+}
+
+// Build the placeholder comment shown the instant a review comment is submitted,
+// before GitHub responds. It is meant to be visually indistinguishable from the
+// real comment (same body, author, avatar, "just now" timestamp, and the
+// viewer's own edit/delete affordances), so the user never sees that anything
+// async is happening. The `optimistic` flag and temporary negative id are purely
+// internal bookkeeping: they let the store find this exact entry to reconcile
+// against the server comment (or roll back on failure), and let a background
+// refresh carry it forward instead of dropping it. Nothing in the UI branches
+// on them.
+function makeOptimisticPRComment(input: {
+	prNumber: number;
+	path: string;
+	body: string;
+	line: number | null;
+	side: 'LEFT' | 'RIGHT';
+	replyTo?: number;
+}): PRReviewComment {
+	const account = effectiveGithubAccount();
+	const now = new Date().toISOString();
+	return {
+		id: nextOptimisticCommentId(),
+		prNumber: input.prNumber,
+		path: input.path,
+		body: input.body,
+		author: account?.login ?? 'you',
+		authorAvatarUrl: account?.avatarUrl ?? '',
+		createdAt: now,
+		updatedAt: now,
+		url: '',
+		line: input.line,
+		originalLine: input.line,
+		position: null,
+		isOutdated: false,
+		side: input.side,
+		inReplyTo: input.replyTo,
+		// The viewer authored it, so it shows the same edit/delete controls a real
+		// own-comment does. Acting on it in the sub-second window before the server
+		// responds is a rare edge; keeping it identical matters more.
+		canDelete: true,
+		isResolved: false,
+		optimistic: true
+	};
+}
+
 const initial: AppState = {
 	repos: [],
 	initializing: true,
@@ -5226,6 +5280,14 @@ export const actions = {
 			for (const c of comments) {
 				(byPath[c.path] ??= []).push(c);
 			}
+			// Carry forward any still-pending optimistic comments the server doesn't
+			// know about yet, so a refresh landing mid-post doesn't make them vanish
+			// before their own create call reconciles them.
+			for (const list of Object.values(app.prComments)) {
+				for (const c of list) {
+					if (c.optimistic) (byPath[c.path] ??= []).push(c);
+				}
+			}
 			// Sort each thread by createdAt so replies follow their parents.
 			for (const list of Object.values(byPath)) {
 				list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -5508,45 +5570,62 @@ export const actions = {
 		const host = prHostArgs(commentablePR());
 		const c = app.pendingComposers[key];
 		if (!c || !c.draft.trim() || c.submitting) return;
-		// Mutate in place — same rationale as setComposerDraft. Flipping
-		// `submitting` shouldn't churn `lineAnnotations` and tear down the form.
-		c.submitting = true;
+		const repoId = app.activeRepo.id;
+		const body = c.draft.trim();
+		const { filePath, line, side, replyTo } = c;
+		const headRef = commentAnchorRef();
+
+		// Post optimistically: drop the composer and show the comment immediately so
+		// submitting feels instant instead of waiting on the GitHub round-trip. We
+		// insert a placeholder now, then reconcile it to the real comment on success
+		// or roll it back and reopen the composer (draft intact) on failure.
+		const optimistic = makeOptimisticPRComment({
+			prNumber,
+			path: filePath,
+			body,
+			line,
+			side,
+			replyTo
+		});
+		app.prComments = {
+			...app.prComments,
+			[filePath]: [...(app.prComments[filePath] ?? []), optimistic]
+		};
+		const { [key]: _removed, ...rest } = app.pendingComposers;
+		void _removed;
+		app.pendingComposers = rest;
+
 		try {
-			const created = c.replyTo
-				? await window.api.github.replyReviewComment(
-						app.activeRepo.id,
-						prNumber,
-						c.replyTo,
-						c.draft.trim(),
-						...host
-					)
+			const created = replyTo
+				? await window.api.github.replyReviewComment(repoId, prNumber, replyTo, body, ...host)
 				: await window.api.github.createReviewComment(
-						app.activeRepo.id,
-						{
-							prNumber,
-							path: c.filePath,
-							line: c.line,
-							side: c.side,
-							body: c.draft.trim(),
-							headRef: commentAnchorRef()
-						},
+						repoId,
+						{ prNumber, path: filePath, line, side, body, headRef },
 						...host
 					);
-			const existing = app.prComments[c.filePath] ?? [];
+			// Swap the placeholder for the server's comment in place, keeping its
+			// position in the thread.
 			app.prComments = {
 				...app.prComments,
-				[c.filePath]: [...existing, created]
+				[filePath]: (app.prComments[filePath] ?? []).map((pc) =>
+					pc.id === optimistic.id ? created : pc
+				)
 			};
-			const { [key]: _done, ...rest } = app.pendingComposers;
-			void _done;
-			app.pendingComposers = rest;
 			// The REST create response has no GraphQL `threadId`, so the new comment
 			// isn't resolvable until we refetch the thread metadata. Do it in the
 			// background so the comment shows instantly but becomes resolvable without
 			// a manual refresh.
 			void actions.refreshPRComments();
 		} catch (err) {
-			c.submitting = false;
+			// Roll the placeholder back and reopen the composer with the draft so the
+			// user can retry without retyping.
+			app.prComments = {
+				...app.prComments,
+				[filePath]: (app.prComments[filePath] ?? []).filter((pc) => pc.id !== optimistic.id)
+			};
+			actions.openComposer(filePath, side, line, replyTo);
+			const reopened = app.pendingComposers[key];
+			if (reopened) reopened.draft = body;
 			setError(err instanceof Error ? err.message : String(err), 'Submitting a review comment');
 		}
 	},
@@ -5561,28 +5640,65 @@ export const actions = {
 		if (prNumber == null) return false;
 		const trimmed = body.trim();
 		if (!trimmed) return false;
+		const repoId = app.activeRepo.id;
 		const host = prHostArgs(commentablePR());
-		try {
-			const created = await window.api.github.replyReviewComment(
-				app.activeRepo.id,
-				prNumber,
-				replyTo,
-				trimmed,
-				...host
-			);
-			const existing = app.prComments[filePath] ?? [];
-			app.prComments = {
-				...app.prComments,
-				[filePath]: [...existing, created]
-			};
-			// Refetch so the reply (and its thread) pick up the GraphQL `threadId`,
-			// keeping the thread resolvable without a manual refresh.
-			void actions.refreshPRComments();
-			return true;
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-			return false;
-		}
+		// Anchor the placeholder (and any failure-recovery composer) to the thread
+		// root's line/side, since a reply carries no line of its own.
+		const root = (app.prComments[filePath] ?? []).find((c) => c.id === replyTo);
+		const side = root?.side ?? 'RIGHT';
+		const line = root?.line ?? null;
+
+		// Show the reply optimistically and let the inline box clear right away
+		// (we return true), then post in the background.
+		const optimistic = makeOptimisticPRComment({
+			prNumber,
+			path: filePath,
+			body: trimmed,
+			line,
+			side,
+			replyTo
+		});
+		app.prComments = {
+			...app.prComments,
+			[filePath]: [...(app.prComments[filePath] ?? []), optimistic]
+		};
+
+		void (async () => {
+			try {
+				const created = await window.api.github.replyReviewComment(
+					repoId,
+					prNumber,
+					replyTo,
+					trimmed,
+					...host
+				);
+				app.prComments = {
+					...app.prComments,
+					[filePath]: (app.prComments[filePath] ?? []).map((pc) =>
+						pc.id === optimistic.id ? created : pc
+					)
+				};
+				// Refetch so the reply (and its thread) pick up the GraphQL `threadId`,
+				// keeping the thread resolvable without a manual refresh.
+				void actions.refreshPRComments();
+			} catch (err) {
+				// Roll back and reopen a composer at the thread anchor with the draft so
+				// the reply isn't lost. A composer must anchor to a real line, so if the
+				// root is outdated (null line) we can only surface the error.
+				app.prComments = {
+					...app.prComments,
+					[filePath]: (app.prComments[filePath] ?? []).filter((pc) => pc.id !== optimistic.id)
+				};
+				if (line != null) {
+					actions.openComposer(filePath, side, line, replyTo);
+					const reopened = app.pendingComposers[composerKey(filePath, side, line)];
+					if (reopened) reopened.draft = trimmed;
+				}
+				setError(err instanceof Error ? err.message : String(err));
+			}
+		})();
+
+		return true;
 	},
 
 	async deleteComment(commentId: number, filePath: string): Promise<void> {
