@@ -274,15 +274,24 @@ const DESKTOP_PUBLIC_KEY_PATH = '../desktop/src/main/license/public-key.ts';
 
 // The kids currently embedded in the desktop app, mapped to their PEM. Parsed
 // rather than imported because the file is TypeScript.
+//
+// The quotes around the kid are optional because `pnpm format` removes them: a
+// kid is a valid JS identifier, so prettier writes `lk_abc123:` where this
+// script wrote `'lk_abc123':`. A pattern that insisted on the quotes silently
+// read back an EMPTY map from every formatted file, which made
+// `desktopKeyHasKid` always false and, worse, turned the
+// `{ ...readDesktopPublicKeys(), [kid]: pem }` merges in setup-dev/setup-prod
+// into a wipe: the next run would have dropped the production key out of the
+// desktop build. Keep this tolerant of both forms.
 export function readDesktopPublicKeys(projectRoot) {
 	const target = resolve(projectRoot, DESKTOP_PUBLIC_KEY_PATH);
 	if (!existsSync(target)) return {};
 	const content = readFileSync(target, 'utf8');
 	const keys = {};
-	const pattern = /'([^']+)':\s*`([^`]+)`/g;
+	const pattern = /(?:'([^']+)'|([A-Za-z_$][\w$]*)):\s*`([^`]+)`/g;
 	let match;
 	while ((match = pattern.exec(content)) !== null) {
-		keys[match[1]] = match[2].trim();
+		keys[match[1] ?? match[2]] = match[3].trim();
 	}
 	return keys;
 }
@@ -303,7 +312,12 @@ export function writeDesktopPublicKeys(projectRoot, keys, generatedBy) {
 		for (const [kid, pem] of entries) console.log(`${kid}:\n${pem}`);
 		return;
 	}
-	const body = entries.map(([kid, pem]) => `\t'${kid}': \`${pem}\``).join(',\n');
+	// Emitted unquoted when the kid is a valid identifier, which is the form
+	// `pnpm format` normalizes to. Writing the quoted form instead left the file
+	// permanently one `pnpm format` away from a diff, and it is what put the
+	// reader above out of step with the file in the first place.
+	const key = (kid) => (/^[A-Za-z_$][\w$]*$/.test(kid) ? kid : `'${kid}'`);
+	const body = entries.map(([kid, pem]) => `\t${key(kid)}: \`${pem}\``).join(',\n');
 	const content = `// Ed25519 public keys used to verify license tokens, keyed by \`kid\`. These are
 // compiled into out/main and protected at rest by asar integrity + the OS code
 // signature (see electron-builder.yml + scripts/after-pack.cjs). The private

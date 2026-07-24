@@ -60,6 +60,14 @@ describe('verifyEdDSAJwt', () => {
 		expect(verifyEdDSAJwt(`${h}.${p}.${badSig}`, keys)).toBeNull();
 	});
 
+	it('accepts a kid the signer padded with whitespace', () => {
+		// A production ED25519_KID once carried a trailing newline from the env var
+		// it was read out of, so every token was signed with kid "lk_test\n" and
+		// matched no embedded key. The signature is still the thing being trusted.
+		const token = sign(validPayload(), { alg: 'EdDSA', kid: `${KID}\n`, typ: 'JWT' });
+		expect(verifyEdDSAJwt(token, keys)?.lic).toBe('lic_1');
+	});
+
 	it('rejects an unknown kid (key not in the embedded map)', () => {
 		const token = sign(validPayload(), { alg: 'EdDSA', kid: 'lk_unknown', typ: 'JWT' });
 		expect(verifyEdDSAJwt(token, keys)).toBeNull();

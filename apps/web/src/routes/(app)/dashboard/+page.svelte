@@ -15,8 +15,7 @@
 	import InvitePanel from '$lib/components/InvitePanel.svelte';
 	import * as Avatar from '@super-review/ui/components/ui/avatar';
 	import { cn } from '@super-review/ui/utils';
-	import UserCog from '@lucide/svelte/icons/user-cog';
-	import Download from '@lucide/svelte/icons/download';
+	import House from '@lucide/svelte/icons/house';
 	import Monitor from '@lucide/svelte/icons/monitor';
 	import CreditCard from '@lucide/svelte/icons/credit-card';
 	import Search from '@lucide/svelte/icons/search';
@@ -141,11 +140,10 @@
 
 	// ── Tabs + search (mirrors the desktop Settings dialog jump-list) ──
 
-	type SettingsTab = 'account' | 'download' | 'devices' | 'billing';
+	type SettingsTab = 'home' | 'devices' | 'billing';
 
 	const TABS: { id: SettingsTab; label: string; icon: LucideIcon }[] = [
-		{ id: 'account', label: 'Account', icon: UserCog },
-		{ id: 'download', label: 'Download', icon: Download },
+		{ id: 'home', label: 'Home', icon: House },
 		{ id: 'devices', label: 'Devices', icon: Monitor },
 		{ id: 'billing', label: 'Billing', icon: CreditCard }
 	];
@@ -159,28 +157,28 @@
 
 	const SECTIONS: SettingsSection[] = [
 		{
-			tab: 'account',
-			id: 'settings-account',
-			title: 'Account',
-			keywords: 'account signed in sign out logout email name github profile'
-		},
-		{
-			tab: 'account',
-			id: 'settings-license',
-			title: 'Your license',
-			keywords: 'license card perpetual lifetime annual yearly monthly trial upgrade active since'
-		},
-		{
-			tab: 'download',
+			tab: 'home',
 			id: 'settings-download',
 			title: 'Download',
-			keywords: 'download mac windows app desktop install apple silicon'
+			keywords: 'download mac windows app desktop install apple silicon get started home'
+		},
+		{
+			tab: 'home',
+			id: 'settings-account',
+			title: 'Account',
+			keywords: 'account signed in sign out logout email name github profile home'
 		},
 		{
 			tab: 'devices',
 			id: 'settings-devices',
 			title: 'Your devices',
 			keywords: 'device revoke activate platform last seen machine logout'
+		},
+		{
+			tab: 'billing',
+			id: 'settings-license',
+			title: 'Your license',
+			keywords: 'license card perpetual lifetime annual yearly monthly trial upgrade active since'
 		},
 		{
 			tab: 'billing',
@@ -194,13 +192,32 @@
 	const TAB_BY_ID = new Map(TABS.map((t) => [t.id, t]));
 	const TAB_IDS = new Set<string>(TABS.map((t) => t.id));
 
+	// 'account' and 'download' are the old tabs that Home replaced; keep them
+	// resolving so any link still pointing at them lands somewhere sensible.
+	const LEGACY_TABS: Record<string, SettingsTab> = { account: 'home', download: 'home' };
+
 	function parseTab(raw: string | null | undefined): SettingsTab {
-		return raw && TAB_IDS.has(raw) ? (raw as SettingsTab) : 'account';
+		if (!raw) return 'home';
+		if (TAB_IDS.has(raw)) return raw as SettingsTab;
+		return LEGACY_TABS[raw] ?? 'home';
 	}
 
-	// Driven by ?tab= so SSR and the first paint match (no post-mount hash sync).
-	// Shallow replaceState updates page.url without re-running loads.
-	const activeTab = $derived(parseTab(page.url.searchParams.get('tab')));
+	function tabFromUrl(): SettingsTab {
+		return parseTab(page.url.searchParams.get('tab'));
+	}
+
+	// Seeded from ?tab= so SSR and the first paint match (no post-mount sync), and
+	// written back to the URL on every pick so the tab is linkable and survives a
+	// reload (the Stripe portal returns to ?tab=billing).
+	//
+	// A writable $derived, because it has to move for two different reasons.
+	// Picking a tab assigns it directly: shallow routing's replaceState rewrites
+	// the address bar and page.state but leaves page.url alone, so a read-only
+	// derived would never move on a pick. Real navigations (reload, back/forward,
+	// a link into ?tab=billing) do change page.url, and the derived re-runs and
+	// takes over again.
+	let activeTab = $derived(tabFromUrl());
+
 	let mobileMenuOpen = $state(false);
 	let searchQuery = $state('');
 	let mobileSearchInput = $state<HTMLElement | null>(null);
@@ -235,24 +252,29 @@
 	});
 
 	function setTabInUrl(id: SettingsTab): void {
-		const url = new URL(page.url);
-		if (id === 'account') url.searchParams.delete('tab');
+		// Read the address bar, not page.url: replaceState leaves page.url on
+		// whatever the last real navigation loaded, so comparing against it would
+		// go stale the moment the first tab is picked.
+		const here = new URL(window.location.href);
+		const url = new URL(here);
+		if (id === 'home') url.searchParams.delete('tab');
 		else url.searchParams.set('tab', id);
 		const next = `${url.pathname}${url.search}${url.hash}`;
-		const current = `${page.url.pathname}${page.url.search}${page.url.hash}`;
-		if (next === current) return;
+		if (next === `${here.pathname}${here.search}${here.hash}`) return;
 		replaceState(next, page.state);
 	}
 
 	function selectTab(id: SettingsTab): void {
 		searchQuery = '';
 		mobileMenuOpen = false;
+		activeTab = id;
 		setTabInUrl(id);
 	}
 
 	function goToSetting(section: SettingsSection): void {
 		searchQuery = '';
 		mobileMenuOpen = false;
+		activeTab = section.tab;
 		setTabInUrl(section.tab);
 		void tick().then(async () => {
 			await tick();
@@ -414,8 +436,10 @@
 			{/if}
 		</nav>
 
-		<!-- Right column: account always first, then invites, then tab content.
-		     License lives only on the Account tab. -->
+		<!-- Right column: the signed-in account always first (it's the page header,
+		     and keeps sign out one click away from every tab), then invites, then
+		     tab content. Home leads with the download; the license lives on Billing
+		     next to the plan it belongs to. -->
 		<div class="flex min-w-0 flex-1 flex-col gap-4">
 			<section class="flex flex-col gap-4">
 				<div
@@ -450,46 +474,7 @@
 					/>
 				{/if}
 
-				{#if activeTab === 'account'}
-					<div id="settings-license" class="flex flex-col gap-3">
-						<h2 class="font-display text-lg font-semibold">Your license</h2>
-						{#if license && cardPlan}
-							<div class="flex flex-col items-center gap-4">
-								<LicenseCard
-									variant={cardPlan === 'lifetime' ? 'gold' : 'silver'}
-									plan={planNames[cardPlan]}
-									holder={data.holderName}
-									activeSince={cardPlan === 'lifetime'
-										? license.lifetimePurchasedAt
-										: (license.subscribedAt ?? license._creationTime)}
-								/>
-							</div>
-						{:else}
-							<div class="border-line bg-elevated rounded-xl border p-4">
-								{#if !license}
-									<p class="text-muted-foreground text-sm text-pretty">
-										No license yet. Download the desktop app and sign in to start your free trial.
-									</p>
-								{:else}
-									<div class="flex flex-wrap items-center justify-between gap-3">
-										<div>
-											<div class="text-lg font-semibold">
-												{statusLabel(license.plan, license.status, license.trialEndsAt)}
-											</div>
-											{#if !waitlistPending && (license.plan === 'trial' || license.plan === 'none')}
-												<!-- /pricing, not the homepage anchor: in waitlist mode the homepage
-												     pricing section is hidden, so #pricing lands on the home page
-												     with nothing to scroll to. /pricing works in both modes.
-												     Hidden while waitlist-pending: non-invited accounts cannot buy yet. -->
-												<a href="/pricing" class="text-flame text-sm font-semibold">Upgrade</a>
-											{/if}
-										</div>
-									</div>
-								{/if}
-							</div>
-						{/if}
-					</div>
-				{:else if activeTab === 'download'}
+				{#if activeTab === 'home'}
 					<div id="settings-download" class="flex flex-col gap-3">
 						{#if waitlistPending}
 							<h2 class="font-display text-lg font-semibold">Download</h2>
@@ -530,6 +515,45 @@
 						{/if}
 					</div>
 				{:else if activeTab === 'billing'}
+					<div id="settings-license" class="flex flex-col gap-3">
+						<h2 class="font-display text-lg font-semibold">Your license</h2>
+						{#if license && cardPlan}
+							<div class="flex flex-col items-center gap-4">
+								<LicenseCard
+									variant={cardPlan === 'lifetime' ? 'gold' : 'silver'}
+									plan={planNames[cardPlan]}
+									holder={data.holderName}
+									activeSince={cardPlan === 'lifetime'
+										? license.lifetimePurchasedAt
+										: (license.subscribedAt ?? license._creationTime)}
+								/>
+							</div>
+						{:else}
+							<div class="border-line bg-elevated rounded-xl border p-4">
+								{#if !license}
+									<p class="text-muted-foreground text-sm text-pretty">
+										No license yet. Download the desktop app and sign in to start your free trial.
+									</p>
+								{:else}
+									<div class="flex flex-wrap items-center justify-between gap-3">
+										<div>
+											<div class="text-lg font-semibold">
+												{statusLabel(license.plan, license.status, license.trialEndsAt)}
+											</div>
+											{#if !waitlistPending && (license.plan === 'trial' || license.plan === 'none')}
+												<!-- /pricing, not the homepage anchor: in waitlist mode the homepage
+												     pricing section is hidden, so #pricing lands on the home page
+												     with nothing to scroll to. /pricing works in both modes.
+												     Hidden while waitlist-pending: non-invited accounts cannot buy yet. -->
+												<a href="/pricing" class="text-flame text-sm font-semibold">Upgrade</a>
+											{/if}
+										</div>
+									</div>
+								{/if}
+							</div>
+						{/if}
+					</div>
+
 					<div id="settings-billing" class="flex flex-col gap-3">
 						<h2 class="font-display text-lg font-semibold">Billing</h2>
 						<div class="border-line bg-elevated flex flex-col gap-4 rounded-xl border p-4">

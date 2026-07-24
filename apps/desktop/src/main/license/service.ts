@@ -429,12 +429,23 @@ async function applyActivation(
 
 	if (body.ok && body.licenseToken) {
 		const claims = verifyLicenseToken(body.licenseToken);
-		if (claims) {
-			setCachedLicenseToken(body.licenseToken);
-			if (typeof body.serverTime === 'number') setLastValidation(body.serverTime);
-			clockSuspect = false;
-			setState(licenseClaimsToState(claims, Date.now(), fingerprint));
+		if (!claims) {
+			// The server approved us but handed back a token this build cannot
+			// verify - a signing key it doesn't embed, or a `kid` that doesn't match
+			// one. Nothing local can fix that, and staying silent here is what made
+			// this look like the sign-in button doing nothing: the code screen closed
+			// and the unchanged 'unlicensed' state put the sign-in card straight back
+			// up. Report it instead.
+			activationStatus = {
+				state: 'error',
+				message: 'This build could not verify the license the server issued. Please update the app.'
+			};
+			return;
 		}
+		setCachedLicenseToken(body.licenseToken);
+		if (typeof body.serverTime === 'number') setLastValidation(body.serverTime);
+		clockSuspect = false;
+		setState(licenseClaimsToState(claims, Date.now(), fingerprint));
 	} else if (body.reason) {
 		setState(mapDenial(body.reason));
 	}
