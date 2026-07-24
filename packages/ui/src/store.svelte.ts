@@ -834,6 +834,24 @@ function commentablePR(): PRSummary | null {
 	return app.branchPR;
 }
 
+// Stable signature of the render-affecting fields of a PR-comment map, used to
+// tell whether a background (focus/poll) re-fetch actually changed anything. A
+// resolve made on GitHub flips `isResolved`; an edit bumps `updatedAt`; the diff
+// moving on nulls `line`/sets `isOutdated`; new/removed comments change the id
+// set. Ordering is normalized (paths sorted; each path's list is already sorted
+// by createdAt) so an unchanged fetch produces an identical string.
+function prCommentsSignature(byPath: Record<string, PRReviewComment[]>): string {
+	const parts: string[] = [];
+	for (const path of Object.keys(byPath).sort()) {
+		for (const c of byPath[path]) {
+			parts.push(
+				`${c.id}:${c.isResolved ? 1 : 0}:${c.isOutdated ? 1 : 0}:${c.line ?? ''}:${c.updatedAt}`
+			);
+		}
+	}
+	return parts.join('|');
+}
+
 // Host repo (owner, repo) a PR's operations must target — its base repo, which
 // for an upstream PR is the parent, not the active fork. Returned as a tuple to
 // spread into the host-aware github IPC calls; undefineds fall back server-side
@@ -5264,12 +5282,20 @@ export const actions = {
 		}
 	},
 
-	async refreshPRComments(): Promise<void> {
+	// Re-fetch the active PR's review comments (the source of each thread's
+	// `isResolved`/`isOutdated` state). `silent` is for background focus/poll
+	// refreshes: it skips the loading spinner, swaps `app.prComments` in only when
+	// the threads actually changed (so a no-op poll doesn't churn/flash the diff
+	// annotations), and downgrades errors to a console warning rather than a
+	// user-facing banner. Foreground callers (opening a PR, posting a comment)
+	// leave it off so they show loading and surface failures.
+	async refreshPRComments(opts?: { silent?: boolean }): Promise<void> {
 		if (!app.activeRepo) return;
 		const prNumber = commentablePRNumber();
 		if (prNumber == null) return;
 		const host = prHostArgs(commentablePR());
-		app.loadingComments = true;
+		const silent = opts?.silent ?? false;
+		if (!silent) app.loadingComments = true;
 		try {
 			const comments = await window.api.github.listReviewComments(
 				app.activeRepo.id,
@@ -5292,11 +5318,17 @@ export const actions = {
 			for (const list of Object.values(byPath)) {
 				list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 			}
+			// A background refresh that finds nothing changed must not reassign the
+			// reactive map, which re-renders every diff annotation and flashes them.
+			if (silent && prCommentsSignature(byPath) === prCommentsSignature(app.prComments)) {
+				return;
+			}
 			app.prComments = byPath;
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			if (silent) console.warn('Background PR comment refresh failed:', err);
+			else setError(err instanceof Error ? err.message : String(err));
 		} finally {
-			app.loadingComments = false;
+			if (!silent) app.loadingComments = false;
 		}
 	},
 
@@ -6301,6 +6333,12 @@ export const actions = {
 		if (app.contextTab === 'history') await actions.loadCommits();
 		if (gen !== licenseGeneration || !isLicensed()) return;
 		await refreshBranchPR();
+		if (gen !== licenseGeneration || !isLicensed()) return;
+		// Pick up review-comment state changed on the PR from outside the app (e.g.
+		// a reviewer resolving a thread on GitHub) without a manual reopen. Silent
+		// so an unchanged poll doesn't flash the annotations. Covers both the PR tab
+		// and the branch tab's PR; refreshBranchPR only refetches on a PR *switch*.
+		if (commentablePRNumber() != null) void actions.refreshPRComments({ silent: true });
 	},
 
 	// Fetch origin in the background, then refresh. Reported failures don't
@@ -6330,6 +6368,10 @@ export const actions = {
 			if (app.contextTab === 'history') await actions.loadCommits();
 			if (gen !== licenseGeneration || !isLicensed()) return;
 			await refreshBranchPR();
+			if (gen !== licenseGeneration || !isLicensed()) return;
+			// Mirror refresh(): pick up PR comment state (e.g. a thread resolved on
+			// GitHub) changed outside the app. Silent so an unchanged poll is a no-op.
+			if (commentablePRNumber() != null) void actions.refreshPRComments({ silent: true });
 		} finally {
 			app.fetchingOrigin = false;
 		}
