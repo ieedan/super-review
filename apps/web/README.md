@@ -199,42 +199,6 @@ Checkout routes and the Stripe session hooks (`createLifetimeCheckout`,
 `getCheckoutSessionParams`) re-check `hasBetaAccess`, so a deep link cannot
 open payment for a non-invited account.
 
-### Importing the old (Upstash) waitlist
-
-The pre-Convex marketing site collected signups in an Upstash Redis sorted set
-(key `waitlist`, member = email, score = signup time).
-[`waitlistImport.ts`](src/lib/convex/waitlistImport.ts) brings those across and
-sends each of them the confirmation email they never got.
-
-Set the credentials on the Convex deployment first:
-
-```sh
-pnpm --filter @super-review/web exec convex env set UPSTASH_REDIS_REST_URL '...'
-```
-
-Then run the two phases, each with a dry run first:
-
-```sh
-pnpm --filter @super-review/web exec convex run waitlistImport:importFromUpstash '{"dryRun":true}'
-pnpm --filter @super-review/web exec convex run waitlistImport:importFromUpstash '{}'
-pnpm --filter @super-review/web exec convex run waitlistImport:sendImportedConfirmations '{"dryRun":true}'
-pnpm --filter @super-review/web exec convex run waitlistImport:sendImportedConfirmations '{}'
-```
-
-Importing and mailing are separate commands on purpose: the import is
-idempotent and inspectable, the mail-out is not undoable. Check
-`waitlistImport:importStatus` between the two.
-
-Rows keep their original signup time, so `invites:inviteNext` still goes out in
-the order people actually joined, and are tagged `importedFrom: "upstash"`.
-Both phases are safe to re-run: the import skips addresses already on the list,
-and the mail-out skips rows that already have `confirmationSentAt`. Sends are
-spaced 250ms apart (Loops allows 10/s) and one pass chains into the next until
-the list is drained, so a single command handles any size of list.
-
-If the Upstash database is already gone, dump the set by hand and feed the rows
-straight in with `waitlistImport:importRows`.
-
 ### Inviting people
 
 Invite the next wave in signup order:

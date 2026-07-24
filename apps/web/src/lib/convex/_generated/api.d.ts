@@ -22,6 +22,7 @@ import type * as invites from "../invites.js";
 import type * as licenses from "../licenses.js";
 import type * as licensing from "../licensing.js";
 import type * as licensingShared from "../licensingShared.js";
+import type * as migrations from "../migrations.js";
 import type * as notify from "../notify.js";
 import type * as rateLimiter from "../rateLimiter.js";
 import type * as settings from "../settings.js";
@@ -29,7 +30,6 @@ import type * as settingsShared from "../settingsShared.js";
 import type * as triggers from "../triggers.js";
 import type * as utils from "../utils.js";
 import type * as waitlist from "../waitlist.js";
-import type * as waitlistImport from "../waitlistImport.js";
 
 import type {
   ApiFromModules,
@@ -52,6 +52,7 @@ declare const fullApi: ApiFromModules<{
   licenses: typeof licenses;
   licensing: typeof licensing;
   licensingShared: typeof licensingShared;
+  migrations: typeof migrations;
   notify: typeof notify;
   rateLimiter: typeof rateLimiter;
   settings: typeof settings;
@@ -59,7 +60,6 @@ declare const fullApi: ApiFromModules<{
   triggers: typeof triggers;
   utils: typeof utils;
   waitlist: typeof waitlist;
-  waitlistImport: typeof waitlistImport;
 }>;
 
 /**
@@ -91,4 +91,5 @@ export declare const internal: FilterApi<
 export declare const components: {
   betterAuth: import("../betterAuth/_generated/component.js").ComponentApi<"betterAuth">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+  migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
 };
