@@ -60,7 +60,11 @@ export const setTrialDaysLeft = internalMutation({
 			.first();
 		if (trial) await ctx.db.patch(trial._id, { startedAt, endsAt });
 
-		return { before, after: { plan: 'trial', status: 'trialing', trialEndsAt: endsAt }, days: args.days };
+		return {
+			before,
+			after: { plan: 'trial', status: 'trialing', trialEndsAt: endsAt },
+			days: args.days
+		};
 	}
 });
 
