@@ -26,13 +26,13 @@
 		},
 		"dev": {
 			"tasks": {
+				"web": {
+					"color": "green",
+					"command": "pnpm dev:web"
+				},
 				"desktop": {
 					"color": "blue",
-					"command": "pnpm dev:desktop"
-				},
-				"docs": {
-					"color": "green",
-					"command": "pnpm dev:docs"
+					"command": "SUPER_REVIEW_API_URL=http://localhost:5173 pnpm dev:desktop"
 				}
 			}
 		}

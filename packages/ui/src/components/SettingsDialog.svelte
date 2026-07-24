@@ -1,23 +1,34 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import AppWindow from '@lucide/svelte/icons/app-window';
+	import BadgeCheck from '@lucide/svelte/icons/badge-check';
 	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 	import Bot from '@lucide/svelte/icons/bot';
 	import Check from '@lucide/svelte/icons/check';
 	import Code2 from '@lucide/svelte/icons/code-2';
+	import ChevronUp from '@lucide/svelte/icons/chevron-up';
 	import Diff from '@lucide/svelte/icons/diff';
+	import Download from '@lucide/svelte/icons/download';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
+	import FileJson from '@lucide/svelte/icons/file-json';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import Palette from '@lucide/svelte/icons/palette';
 	import Plus from '@lucide/svelte/icons/plus';
+	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+	import Upload from '@lucide/svelte/icons/upload';
 	import User from '@lucide/svelte/icons/user';
 	import X from '@lucide/svelte/icons/x';
 	import SettingsShell from './SettingsShell.svelte';
 	import * as Avatar from './ui/avatar';
+	import * as DropdownMenu from './ui/dropdown-menu';
 	import { Button } from './ui/button';
 	import { Switch } from './ui/switch';
 	import { Input } from './ui/input';
@@ -33,6 +44,8 @@
 	import PowerShellIcon from './icons/PowerShellIcon.svelte';
 	import ZshIcon from './icons/ZshIcon.svelte';
 	import ChangesetLogo from './ChangesetLogo.svelte';
+	import LicenseCard from './LicenseCard.svelte';
+	import UpdateNotice from './UpdateNotice.svelte';
 	import DiffStylePreview from './DiffStylePreview.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import SettingSelect from './SettingSelect.svelte';
@@ -84,8 +97,25 @@
 
 	let activeTab = $state<SettingsTab>('accounts');
 
+	// Which tabs have had their heavy content mounted. A tab's expensive parts (the
+	// live previews, the Agents and Stats panels) mount the first time the user
+	// opens that tab and then STAY mounted for the life of the dialog. Gating them
+	// on `activeTab` instead meant every visit tore the content down and rebuilt it
+	// from scratch — re-running the Pierre + highlighter render for the diff
+	// preview, reconstructing the stats chart, and re-firing the panels' onMount
+	// IPC (the Agents panel rescans the filesystem) on every single click. Keeping
+	// them alive makes the first visit cost what it costs and every return free.
+	// Reset when the dialog opens so a fresh session starts lean again.
+	const mountedTabs = new SvelteSet<SettingsTab>();
+	// Reading `has` keeps this subscribed to the set itself, so the `clear()` on
+	// open re-runs it and the tab being shown is mounted again right away.
+	$effect(() => {
+		if (!mountedTabs.has(activeTab)) mountedTabs.add(activeTab);
+	});
+
 	const TABS: { id: SettingsTab; label: string; icon: typeof User }[] = [
 		{ id: 'accounts', label: 'Accounts', icon: User },
+		{ id: 'license', label: 'License', icon: BadgeCheck },
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'diff', label: 'Diff', icon: Diff },
 		{ id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
@@ -93,8 +123,24 @@
 		{ id: 'editor', label: 'Integrations', icon: Code2 },
 		{ id: 'agents', label: 'Agents', icon: Bot },
 		{ id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
-		{ id: 'stats', label: 'Stats', icon: BarChart3 }
+		{ id: 'stats', label: 'Stats', icon: BarChart3 },
+		{ id: 'updates', label: 'Updates', icon: RefreshCw }
 	];
+
+	// An update that exists but isn't installed yet, in any of its stages. Drives
+	// the dot on the Updates tab so the dialog advertises it without the user
+	// having to go looking.
+	const updatePending = $derived(
+		app.update.state === 'available' ||
+			app.update.state === 'downloading' ||
+			app.update.state === 'downloaded'
+	);
+
+	// TABS is the structural list (it also drives the content loop); the nav needs
+	// the live indicator layered on, so derive it rather than mutating TABS.
+	const navTabs = $derived(
+		TABS.map((t) => (t.id === 'updates' ? { ...t, indicator: updatePending } : t))
+	);
 
 	// One declarative list is the structural source of truth for every settings
 	// section: it drives the rendered tab content (the loops in the content snippet)
@@ -123,6 +169,13 @@
 	};
 
 	const SECTIONS: SettingsSection[] = [
+		{
+			tab: 'license',
+			id: 'settings-super-review',
+			title: 'Super Review',
+			keywords:
+				'super review license licensed holder subscription subscribe plan perpetual lifetime annual yearly monthly trial upgrade manage billing payment invoice renew renewal cancel purchase buy pay expires expiry active since account signed in sign out signout log out logout activate activation authorize device card'
+		},
 		{
 			tab: 'accounts',
 			id: 'settings-accounts-github',
@@ -339,6 +392,13 @@
 			id: 'settings-stats',
 			label: 'Usage statistics',
 			keywords: 'stats statistics usage activity metrics'
+		},
+		{
+			tab: 'updates',
+			id: 'settings-updates',
+			title: 'Updates',
+			keywords:
+				'update updates upgrade version release new latest check download install restart relaunch changelog auto automatic'
 		}
 	];
 
@@ -502,6 +562,19 @@
 
 	let dialogOpen = $derived(app.settingsDialogOpen);
 
+	// Absolute path to the settings.json dotfile, shown in the Settings file
+	// section. Fetched lazily the first time the dialog opens.
+	let settingsPath = $state('');
+	$effect(() => {
+		if (dialogOpen && !settingsPath) {
+			void window.api.settings.getPath().then((p) => (settingsPath = p));
+		}
+	});
+
+	// The editor the "Open in editor" button uses (the configured external editor
+	// if set, else the default), so its label/icon match what will open.
+	const settingsFileEditor = $derived(effectiveEditor());
+
 	// Draft state — snapshot when the dialog opens, applied on Save.
 	let draftViewMode = $state<ViewMode>('split');
 	let draftDiffLayout = $state<DiffLayout>('scroll');
@@ -562,37 +635,57 @@
 	$effect(() => {
 		if (dialogOpen) {
 			searchQuery = '';
-			draftViewMode = app.viewMode;
-			draftDiffLayout = app.diffLayout;
-			draftShowFileIcons = app.showFileIcons;
-			draftAnimations = app.animations;
-			draftOpenFileOnArrowNav = app.openFileOnArrowNav;
-			draftPrMergedBehavior = app.prMergedBehavior;
-			draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
-			draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
-			draftSignCommits = app.signCommits;
-			draftMaxDiffLines = app.maxDiffLines;
-			draftRecentRepoCount = app.recentRepoCount;
-			draftWindowWidth = app.windowWidth;
-			draftWindowHeight = app.windowHeight;
-			draftStartMaximized = app.startMaximized;
-			draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
-			newPattern = '';
-			draftCustomFileIcons = app.customFileIcons.map((i) => ({ ...i }));
-			newIconPattern = '';
-			newIconSource = '';
-			draftTheme = app.theme;
-			draftDiffTheme = app.diffTheme;
-			draftAccent = app.accent;
-			draftCodeFont = app.codeFont;
-			draftUiFont = app.uiFont;
-			draftIndentGuides = app.indentGuides;
-			draftEditor = effectiveEditor();
-			draftTerminal = effectiveTerminal();
-			draftChangesetsEnabled = app.changesetsEnabled;
-			draftHotkeys = { ...DEFAULT_HOTKEYS, ...$state.snapshot(app.hotkeys) };
+			// Start each session lean: clearing drops every tab's heavy content, and
+			// the effect above immediately re-adds the tab being shown. Deliberately
+			// does NOT read `activeTab` here — that would make this snapshot effect
+			// depend on it and re-run (wiping the drafts) on every tab switch.
+			mountedTabs.clear();
+			snapshotDrafts();
 		}
 	});
+
+	// Re-seed the drafts when the live settings are (re)applied while the dialog is
+	// open — a settings.json edit, import, or reset (each bumps app.prefsVersion).
+	// Without this a live external edit would be silently overwritten by the stale
+	// drafts the next time the user hits Save. Does not clear mountedTabs, so the
+	// heavy previews/panels stay mounted through a live change.
+	$effect(() => {
+		void app.prefsVersion;
+		if (dialogOpen) snapshotDrafts();
+	});
+
+	// Snapshot the current app settings into the editable drafts. Applied on Save.
+	function snapshotDrafts(): void {
+		draftViewMode = app.viewMode;
+		draftDiffLayout = app.diffLayout;
+		draftShowFileIcons = app.showFileIcons;
+		draftAnimations = app.animations;
+		draftOpenFileOnArrowNav = app.openFileOnArrowNav;
+		draftPrMergedBehavior = app.prMergedBehavior;
+		draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
+		draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
+		draftSignCommits = app.signCommits;
+		draftMaxDiffLines = app.maxDiffLines;
+		draftRecentRepoCount = app.recentRepoCount;
+		draftWindowWidth = app.windowWidth;
+		draftWindowHeight = app.windowHeight;
+		draftStartMaximized = app.startMaximized;
+		draftHiddenDiffPatterns = [...app.hiddenDiffPatterns];
+		newPattern = '';
+		draftCustomFileIcons = app.customFileIcons.map((i) => ({ ...i }));
+		newIconPattern = '';
+		newIconSource = '';
+		draftTheme = app.theme;
+		draftDiffTheme = app.diffTheme;
+		draftAccent = app.accent;
+		draftCodeFont = app.codeFont;
+		draftUiFont = app.uiFont;
+		draftIndentGuides = app.indentGuides;
+		draftEditor = effectiveEditor();
+		draftTerminal = effectiveTerminal();
+		draftChangesetsEnabled = app.changesetsEnabled;
+		draftHotkeys = { ...DEFAULT_HOTKEYS, ...$state.snapshot(app.hotkeys) };
+	}
 
 	function setHotkey(action: HotkeyAction, hk: Hotkey): void {
 		draftHotkeys = { ...draftHotkeys, [action]: hk };
@@ -803,17 +896,17 @@
 	}
 </script>
 
-{#snippet editorIcon(editor: EditorKind)}
+{#snippet editorIcon(editor: EditorKind, size: string = 'size-5')}
 	{#if editor === 'cursor'}
-		<CursorIcon class="size-5" />
+		<CursorIcon class={size} />
 	{:else if editor === 'vscode'}
-		<VSCodeIcon class="size-5 text-foreground" />
+		<VSCodeIcon class="{size} text-foreground" />
 	{:else if editor === 'zed'}
-		<ZedIcon class="size-5 text-foreground" />
+		<ZedIcon class="{size} text-foreground" />
 	{:else if editor === 'xcode'}
-		<XcodeIcon class="size-5" />
+		<XcodeIcon class={size} />
 	{:else}
-		<VisualStudioIcon class="size-5" />
+		<VisualStudioIcon class={size} />
 	{/if}
 {/snippet}
 
@@ -855,7 +948,94 @@
 	header action are rendered by the loop in the content snippet; everything
 	below the heading lives here. Each branch corresponds to one SECTIONS entry. -->
 {#snippet sectionBody(id: string)}
-	{#if id === 'settings-accounts-github'}
+	{#if id === 'settings-super-review'}
+		{@const lic = app.license.current}
+		{@const holder = lic?.state === 'licensed' ? lic.holder : undefined}
+		{#if lic?.state === 'licensed' && (lic.plan === 'lifetime' || lic.plan === 'monthly' || lic.plan === 'annual') && lic.status === 'active'}
+			<!-- Paid license: the metal card. The holder comes from the signed token,
+				so it's the account the license actually belongs to (NOT whatever
+				GitHub account happens to be signed in locally - they're separate). -->
+			<p class="mt-1 text-xs text-muted-foreground">Your Super Review license.</p>
+			<div class="mt-3 flex flex-col items-center">
+				<LicenseCard
+					variant={lic.plan === 'lifetime' ? 'gold' : 'silver'}
+					plan={lic.plan === 'lifetime'
+						? 'Perpetual'
+						: lic.plan === 'annual'
+							? 'Annual'
+							: 'Monthly'}
+					holder={holder?.name ?? holder?.email}
+					activeSince={lic.activeSince}
+				/>
+				<Button
+					variant="outline"
+					size="sm"
+					class="mt-4"
+					onclick={() => actions.openLicenseDashboard()}
+				>
+					<ExternalLink class="size-3.5" /> Manage license
+				</Button>
+			</div>
+		{:else if lic?.state === 'licensed' && lic.status === 'trialing'}
+			{@const days = lic.trialEndsAt
+				? Math.max(0, Math.ceil((lic.trialEndsAt - Date.now()) / 86_400_000))
+				: 0}
+			<p class="mt-1 text-xs text-muted-foreground">You're on a free trial.</p>
+			<div
+				class="mt-3 flex items-center justify-between rounded-xl border border-border bg-card/30 px-3 py-2.5"
+			>
+				<div>
+					<div class="text-sm font-medium">Free trial</div>
+					<div class="text-xs text-muted-foreground">
+						{days === 0 ? 'Ends today' : `${days} day${days === 1 ? '' : 's'} left`}
+					</div>
+				</div>
+				<Button size="sm" onclick={() => actions.openPricing()}>Upgrade</Button>
+			</div>
+			<Button
+				variant="outline"
+				size="sm"
+				class="mt-3"
+				onclick={() => actions.openLicenseDashboard()}
+			>
+				<ExternalLink class="size-3.5" /> Manage license
+			</Button>
+		{:else}
+			<p class="mt-1 text-xs text-muted-foreground">Manage your Super Review license.</p>
+			<Button size="sm" class="mt-3" onclick={() => actions.openPricing()}>See plans</Button>
+		{/if}
+
+		{#if lic?.state === 'licensed'}
+			<!-- The account this license is signed in as, with sign out. -->
+			<div class="mt-5 text-xs font-medium text-muted-foreground">Signed in as</div>
+			<div
+				class="mt-2 flex items-center gap-3 rounded-xl border border-border bg-card/30 px-3 py-2.5"
+			>
+				{#if holder?.name || holder?.email}
+					{@const label = holder.name ?? holder.email ?? ''}
+					<Avatar.Root class="size-8">
+						{#if holder.avatarUrl}
+							<Avatar.Image src={holder.avatarUrl} alt={label} />
+						{/if}
+						<Avatar.Fallback class="text-[10px]">
+							{label.slice(0, 2).toUpperCase()}
+						</Avatar.Fallback>
+					</Avatar.Root>
+					<div class="min-w-0 flex-1">
+						<div class="truncate text-sm font-medium">{holder.name ?? holder.email}</div>
+						{#if holder.name && holder.email}
+							<div class="truncate text-xs text-muted-foreground">{holder.email}</div>
+						{/if}
+					</div>
+				{:else}
+					<div class="min-w-0 flex-1 text-sm text-muted-foreground">Super Review account</div>
+				{/if}
+				<Button variant="outline" size="sm" onclick={() => actions.signOutLicense()}>
+					<LogOut class="size-3.5" /> Sign out
+				</Button>
+			</div>
+		{/if}
+	{:else if id === 'settings-accounts-github'}
 		{#if app.githubAccounts.length === 0}
 			<p class="mt-1 text-xs text-muted-foreground">
 				Sign in to review pull requests and post comments.
@@ -1026,6 +1206,65 @@
 				</div>
 			{/if}
 		</div>
+	{:else if id === 'settings-updates'}
+		{@const u = app.update}
+		<p class="mt-1 text-xs text-muted-foreground">
+			Super Review updates in the background and installs when you quit.
+		</p>
+
+		<!-- 58px is the measured height of the two-line (version + status) case, so
+			the row keeps one height across every state and the button never hops. -->
+		<div
+			class="mt-3 flex min-h-[58px] items-center justify-between gap-3 rounded-xl border border-border bg-card/30 px-3 py-2.5"
+		>
+			<div class="min-w-0">
+				<div class="text-sm font-medium">
+					{app.appVersion ? `Version ${app.appVersion}` : 'Super Review'}
+				</div>
+				<!-- Collapses when there's no status, so a lone version line stays
+					centered against the button. The row's min-height (not this) is what
+					keeps the button from hopping as the status comes and goes. -->
+				<div class="truncate text-xs text-muted-foreground empty:hidden">
+					{#if u.state === 'checking'}
+						Checking for updates
+					{:else if u.state === 'available' || u.state === 'downloading'}
+						Downloading update{u.version ? ` ${u.version}` : ''}
+					{:else if u.state === 'downloaded'}
+						{u.version ? `Version ${u.version} ready to install` : 'Ready to install'}
+					{:else if u.state === 'error'}
+						<span title={u.message}>Couldn't check for updates</span>
+					{:else if app.updateCheckedAt !== null}
+						Up to date
+					{/if}
+				</div>
+			</div>
+
+			{#if u.state === 'downloaded'}
+				<Button size="sm" class="shrink-0" onclick={() => actions.restartToUpdate()}>
+					<RotateCw class="size-3.5" /> Restart to install
+				</Button>
+			{:else if u.state === 'checking' || u.state === 'available' || u.state === 'downloading'}
+				<Button variant="outline" size="sm" class="shrink-0" disabled>
+					<Loader2 class="size-3.5 animate-spin" />
+					{u.state === 'checking' ? 'Checking' : 'Downloading'}
+				</Button>
+			{:else}
+				<Button
+					variant="outline"
+					size="sm"
+					class="shrink-0"
+					onclick={() => actions.checkForUpdates()}
+				>
+					<RefreshCw class="size-3.5" /> Check for updates
+				</Button>
+			{/if}
+		</div>
+
+		{#if u.state === 'downloading'}
+			<div class="mt-2">
+				<UpdateNotice status={u} onRestart={() => actions.restartToUpdate()} />
+			</div>
+		{/if}
 	{:else if id === 'settings-external-editor'}
 		<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in editor" button.</p>
 
@@ -1118,14 +1357,14 @@
 			{/each}
 		</div>
 	{:else if id === 'settings-agents'}
-		<!-- Gated on the active tab so the panel only mounts (and runs its onMount
-			IPC) when the user opens Agents, even though every tab's text stays in the
-			DOM for search. -->
-		{#if activeTab === 'agents'}
+		<!-- Gated on first visit so the panel only mounts (and runs its onMount IPC)
+			once the user opens Agents, even though every tab's text stays in the DOM
+			for search. It stays mounted afterwards so returning is instant. -->
+		{#if mountedTabs.has('agents')}
 			<AgentsSettingsPanel />
 		{/if}
 	{:else if id === 'settings-stats'}
-		{#if activeTab === 'stats'}
+		{#if mountedTabs.has('stats')}
 			<UsageStatsPanel />
 		{/if}
 	{/if}
@@ -1379,7 +1618,7 @@
 				{@render sectionWrapper(seg.section)}
 			{/if}
 		{/each}
-		{#if previewKind && activeTab === tab}
+		{#if previewKind && mountedTabs.has(tab)}
 			{@render tabPreview(previewKind)}
 		{/if}
 	</div>
@@ -1439,14 +1678,55 @@
 	{/if}
 {/snippet}
 
+<!-- The settings dotfile lives in a dropup pinned to the bottom of the nav rail,
+	rather than a content section, so it stays one click away from every tab. Its
+	menu is portaled, so it is never clipped by the dialog. -->
+{#snippet settingsFileMenu()}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger
+			class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+			title={settingsPath}
+		>
+			<FileJson class="size-4 shrink-0" />
+			<span class="min-w-0 flex-1 truncate">Settings file</span>
+			<ChevronUp class="size-3.5 shrink-0 opacity-60" />
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content side="top" align="start" class="min-w-[220px]">
+			<DropdownMenu.Item onSelect={() => actions.openSettingsFile()}>
+				{#if settingsFileEditor}
+					{@render editorIcon(settingsFileEditor, 'size-4')}
+					Open in {EDITOR_LABELS[settingsFileEditor]}
+				{:else}
+					<ExternalLink class="size-4" /> Open externally
+				{/if}
+			</DropdownMenu.Item>
+			<DropdownMenu.Item onSelect={() => actions.revealSettingsFile()}>
+				<FolderOpen class="size-4" /> Reveal
+			</DropdownMenu.Item>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item onSelect={() => actions.exportSettings()}>
+				<Download class="size-4" /> Export…
+			</DropdownMenu.Item>
+			<DropdownMenu.Item onSelect={() => actions.importSettings()}>
+				<Upload class="size-4" /> Import…
+			</DropdownMenu.Item>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item onSelect={() => actions.resetSettings()}>
+				<RotateCcw class="size-4" /> Reset to defaults
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
+
 <SettingsShell
 	bind:open={dialogOpen}
 	title="Settings"
-	tabs={TABS}
+	tabs={navTabs}
 	bind:activeTab
 	onClose={cancel}
 	search={searchBox}
 	navReplacement={searching ? searchNav : undefined}
+	navFooter={settingsFileMenu}
 	size="lg"
 >
 	{#snippet content(_tab)}

@@ -39,6 +39,16 @@ export default ts.config(
 		}
 	},
 	{
+		// CommonJS build scripts (electron-builder hooks) legitimately use require.
+		files: ['**/*.cjs'],
+		languageOptions: {
+			globals: { ...globals.node }
+		},
+		rules: {
+			'@typescript-eslint/no-require-imports': 'off'
+		}
+	},
+	{
 		files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
 
 		languageOptions: {

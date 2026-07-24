@@ -14,7 +14,7 @@ pnpm monorepo (`pnpm@11.7.0`, Node >= 24). Workspaces are `apps/*` and
 ```
 apps/
   desktop/   Electron app (the product) — electron-vite, Svelte 5 renderer
-  docs/      SvelteKit marketing/download site (embeds the real UI components)
+  web/       SvelteKit marketing site + licensing backend (Convex, better-auth, Stripe)
 packages/
   core/       Node-only session + git layer; shared by the CLI and the desktop main process
   ui/         @super-review/ui — Svelte renderer components, stores, diff/find logic
@@ -38,10 +38,13 @@ Electron + electron-vite, with the standard three-config split:
 - `src/shared/` — types/helpers shared between main, preload, and renderer
   (`@shared/...`).
 
-### apps/docs — `@super-review/docs`
+### apps/web — `@super-review/web`
 
-SvelteKit 2 site (Vercel adapter) for the landing/download page and waitlist
-(Upstash Redis). Imports the **real** `@super-review/ui` components.
+SvelteKit 2 site (Vercel adapter) for the landing/download page, plus the
+licensing backend and account dashboard: Convex database, better-auth GitHub
+sign-in, Stripe billing, and the desktop-facing license API. Imports the
+**real** `@super-review/ui` components. Convex functions live in
+`src/lib/convex/`.
 
 ### packages/core — `@super-review/core`
 
@@ -100,21 +103,53 @@ performance story that renders it at scale.
 
 ## Commands (run from repo root)
 
-| Task                         | Command            |
-| ---------------------------- | ------------------ |
-| Run desktop + docs in dev    | `pnpm dev`         |
-| Desktop only                 | `pnpm dev:desktop` |
-| Docs only                    | `pnpm dev:docs`    |
-| Build the desktop app        | `pnpm build`       |
-| Build the CLI for publishing | `pnpm build:cli`   |
-| Run Storybook                | `pnpm storybook`   |
-| Typecheck all packages       | `pnpm typecheck`   |
-| Test all packages            | `pnpm test`        |
-| Lint (prettier + eslint)     | `pnpm lint`        |
-| Format                       | `pnpm format`      |
+| Task                          | Command            |
+| ----------------------------- | ------------------ |
+| Run desktop + web in dev      | `pnpm dev`         |
+| Desktop only                  | `pnpm dev:desktop` |
+| Web only                      | `pnpm dev:web`     |
+| Configure the web app for dev | `pnpm setup:dev`   |
+| Configure it for deploying    | `pnpm setup:prod`  |
+| Build the desktop app         | `pnpm build`       |
+| Build the CLI for publishing  | `pnpm build:cli`   |
+| Run Storybook                 | `pnpm storybook`   |
+| Typecheck all packages        | `pnpm typecheck`   |
+| Test all packages             | `pnpm test`        |
+| Lint (prettier + eslint)      | `pnpm lint`        |
+| Format                        | `pnpm format`      |
+
+`setup:dev` and `setup:prod` are interactive and resumable; both live in
+`apps/web/scripts/` and are documented in
+[`apps/web/README.md`](apps/web/README.md).
 
 Tests use **vitest**. Browser tests live in `*.browser.test.ts` and run against
 real Chromium via `@vitest/browser` (Playwright); other `*.test.ts` run in Node.
+
+## Branches
+
+Work flows `dev` -> `main`.
+
+| Branch | Role                                                                              |
+| ------ | --------------------------------------------------------------------------------- |
+| `dev`  | The **default branch**. Every PR targets it, so `gh pr create` needs no `--base`. |
+| `main` | The **release branch**. A push to it runs `release.yml`.                          |
+
+`dev` is GitHub's default branch purely so new PRs pre-fill it: GitHub has one
+default-branch setting and it is what a new PR bases on, so this is the only way
+to make `dev` the automatic target. `main` is still the branch releases are cut
+from.
+
+Only `dev` (and changesets' `changeset-release/*`) may open a PR against `main`.
+No branch protection rule or ruleset can express that, so it is the **Base
+branch** job in [`ci.yml`](.github/workflows/ci.yml), required on `main`.
+
+Both branches require a PR (zero approvals, so a solo merge still works),
+require CI to pass, and reject force pushes and deletions. Admins are not
+locked out, so an emergency direct push is still possible.
+
+`dev` also earns its keep on the deploy side: its Vercel branch alias is a
+stable origin, which is what the preview `SITE_URL` points at. Per-commit
+preview URLs change every push, and better-auth needs one fixed origin.
 
 ## Conventions
 

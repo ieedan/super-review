@@ -758,7 +758,7 @@ export interface Task {
 	// Optional longer notes / description (Markdown).
 	notes?: string;
 	// The parent task's id when this is a subtask; absent for a top-level task.
-	// Subtasks nest one level only (a subtask can't itself have children).
+	// Subtasks nest arbitrarily deep (a subtask can itself have children).
 	parentId?: string;
 	// On hold: the task is upcoming but not ready to be worked on yet. Purely a
 	// display state (dimmed in the UI); distinct from `done` and carries no
@@ -896,8 +896,8 @@ export type BranchContextMenuAction = 'copy' | 'delete' | 'view';
 export type PRContextMenuAction = 'view' | 'copyUrl' | 'openOnGitHub';
 
 // What a task row's native context menu was opened on, so the menu can label the
-// check-off and hold items to match the current state and hide "Add Subtask" on
-// subtasks (which don't nest further).
+// check-off and hold items to match the current state and gate "Add Subtask" on
+// whether the row can take another level of children.
 export interface TaskContextMenuParams {
 	done: boolean;
 	onHold: boolean;
@@ -1073,25 +1073,31 @@ export type RepositoryMenuAction =
 // the chosen action to the focused renderer, which runs the matching store flow.
 export type HelpMenuAction = 'sendFeedback';
 
-// How the user classified their feedback — woven into the issue's title and an
-// extra label so triage can route it.
+// How the user classified their feedback, so it can be routed on arrival.
 export type FeedbackCategory = 'bug' | 'idea' | 'other';
 
-// What the feedback dialog hands the main process to open an issue on the app's
-// own repository.
+// What the feedback dialog hands the main process to send to the Super Review
+// backend.
 export interface FeedbackInput {
 	category: FeedbackCategory;
-	// One-line summary (becomes the issue title).
+	// One-line summary.
 	title: string;
-	// Free-form details (becomes the issue body; app/system metadata is appended
-	// in the main process so the renderer can't spoof it).
+	// Free-form details. App version and OS are attached in the main process so
+	// the renderer can't spoof them.
 	body: string;
+	// Optional reply-to address. The only way to follow up with someone who
+	// isn't signed in, so it's offered even though most reports won't have one.
+	email?: string;
+	// What the user was doing, when the report came from an error toast. Sent
+	// structured rather than pasted into `body` so triage can read it as fields
+	// and the body stays the reporter's own words.
+	context?: ErrorContext;
 }
 
-// The created feedback issue, so the renderer can link the user to it.
+// Acknowledgement of a stored submission. `id` is the backend row id — useful
+// in a support conversation, but not something the user can browse to.
 export interface FeedbackResult {
-	url: string;
-	number: number;
+	id: string;
 }
 
 // Best-effort snapshot of what the user was doing when an error fired, so a
@@ -1134,6 +1140,9 @@ export interface FeedbackDraft {
 	category?: FeedbackCategory;
 	title?: string;
 	body?: string;
+	// Carried through to the submission so the captured context survives as
+	// structured data instead of only as prose in the body.
+	context?: ErrorContext;
 }
 
 // Renderer-computed state deciding which "Repository" menu items are enabled and
@@ -1740,6 +1749,114 @@ export interface GithubAuthError {
 	reason: 'revoked' | 'sso' | 'scope';
 }
 
+// --- Licensing ---------------------------------------------------------------
+// The plan claim carried by a signed license token.
+export type LicensePlan = 'trial' | 'monthly' | 'annual' | 'lifetime';
+
+// Why the app is locked. `offline_expired`: the cached token expired and the
+// server was unreachable. `clock_rollback`: the system clock ran backwards, so
+// the cached token can't be trusted until an online check. The rest mirror the
+// server's denial reasons.
+export type LicenseLockReason =
+	// The account is on the beta waitlist but has not been accepted yet. Only
+	// possible while the server has waitlist mode on.
+	| 'waitlist'
+	| 'trial_expired'
+	| 'subscription_lapsed'
+	| 'suspended'
+	| 'offline_expired'
+	| 'revoked'
+	| 'fingerprint_mismatch'
+	| 'clock_rollback';
+
+// Display identity of the license holder, carried in the signed token so the
+// desktop can show the account the license actually belongs to.
+export interface LicenseHolder {
+	name?: string;
+	email?: string;
+	avatarUrl?: string;
+}
+
+// The main process's authoritative license state. The renderer mirrors this but
+// never decides on it — the IPC gate reads the main-process copy.
+export type LicenseState =
+	| { state: 'unlicensed' }
+	| { state: 'activating' }
+	| {
+			state: 'licensed';
+			plan: LicensePlan;
+			status: 'active' | 'trialing';
+			// Present while trialing: ms epoch the trial ends.
+			trialEndsAt?: number;
+			// ms epoch the paid plan started (lifetime purchase / first subscription).
+			// Display only — drives "Active since" on the license card.
+			activeSince?: number;
+			// Who the license belongs to. Comes from the server (the desktop's local
+			// GitHub sign-ins are a separate thing and often a different account).
+			holder?: LicenseHolder;
+			// ms epoch the cached token expires — the offline budget runs out here.
+			offlineExpiresAt: number;
+	  }
+	| { state: 'locked'; reason: LicenseLockReason };
+
+// Status of an in-progress device-code activation, polled by the renderer.
+// `waiting` carries the user code to display and the URL where it is entered;
+// the main process polls the server in the background until the browser side is
+// approved or denied.
+export type ActivationStatus =
+	| { state: 'idle' }
+	| { state: 'waiting'; userCode: string; verificationUri: string }
+	| { state: 'success'; license: LicenseState }
+	| { state: 'denied' } // the user rejected the request in the browser
+	| { state: 'error'; message: string };
+
+// Live state of the electron-updater background update, pushed from the main
+// process to the renderer (updater:status) and mirrored in the app store. Drives
+// the update toast: `downloading` shows a progress bar, `downloaded` shows the
+// "Restart to update" button. `available`/`checking`/`error` are informational
+// (the toast stays quiet for them); `not-available` collapses to `idle`.
+export type UpdateStatus =
+	| { state: 'idle' }
+	| { state: 'checking' }
+	| { state: 'available'; version: string }
+	| {
+			state: 'downloading';
+			version: string;
+			// 0–100, already rounded for display.
+			percent: number;
+			bytesPerSecond: number;
+			transferred: number;
+			total: number;
+	  }
+	| { state: 'downloaded'; version: string }
+	| { state: 'error'; message: string };
+
+// The decoded claims of a license token (post-signature-verify). Field names
+// match the JWT payload the web app signs.
+export interface LicenseClaims {
+	// Standard JWT claims.
+	sub: string; // userId
+	aud: string;
+	iss: string;
+	iat: number; // seconds
+	exp: number; // seconds
+	// App claims.
+	lic: string; // licenseId
+	dev: string; // deviceId
+	plan: LicensePlan;
+	sta: 'active' | 'trialing';
+	fp: string; // sha256(machineFingerprint)
+	tex: number | null; // display expiry (trialEndsAt / currentPeriodEnd / null)
+	// ms epoch the paid plan started. Optional so tokens minted before this claim
+	// existed still parse (an older cached token just won't show "Active since").
+	since?: number | null;
+	// Holder display identity (name / email / avatar). Optional for the same
+	// backward-compatibility reason as `since`.
+	hn?: string | null;
+	he?: string | null;
+	hi?: string | null;
+}
+
 // Trimmed npm-registry metadata for a single package, surfaced in the diff
 // viewer's package.json hover cards. The full registry document is large (it
 // inlines every version's manifest); the main process strips it down to just
@@ -1867,8 +1984,51 @@ export interface AiConfigRemoveResult {
 	error?: string;
 }
 
+// A live prefs update pushed from the main process, either because settings.json
+// was edited externally or because a settings file was imported/reset. `reset`
+// lists any settings that were present but invalid and fell back to their
+// default; `malformed` means the file couldn't be parsed at all (last-good prefs
+// are kept). The renderer applies `prefs` and can warn from `reset`/`malformed`.
+export interface PrefsChange {
+	prefs: UserPrefs;
+	reset: string[];
+	malformed: boolean;
+}
+
 export interface PreloadAPI {
 	platform: AppPlatform;
+	license: {
+		getStatus(): Promise<LicenseState>;
+		// Requests a device code from the server and opens the browser to the
+		// activation page. Returns the user code to display and where to enter it.
+		startActivation(): Promise<{ userCode: string; verificationUri: string }>;
+		pollActivation(): Promise<ActivationStatus>;
+		cancelActivation(): Promise<void>;
+		// Re-open the browser verification page for the in-progress activation.
+		openVerification(): Promise<void>;
+		// Force an immediate online revalidation (e.g. after "I've subscribed").
+		recheck(): Promise<LicenseState>;
+		signOut(): Promise<void>;
+		openPricing(): Promise<void>;
+		// Opens the web dashboard, where the license, billing, and activated
+		// devices are managed.
+		openDashboard(): Promise<void>;
+	};
+	updater: {
+		// The running app's version (e.g. "0.1.27"), shown in the Updates settings
+		// tab so the user can see what they're on.
+		getVersion(): Promise<string>;
+		// Current background-update state, so a window opened after a download
+		// already completed can seed its toast instead of waiting for the next
+		// event. Resolves `{ state: 'idle' }` in dev (no packaged app to update).
+		getStatus(): Promise<UpdateStatus>;
+		// Trigger an immediate update check (the app also checks on launch and on a
+		// timer). No-op in dev.
+		check(): Promise<void>;
+		// Quit and install a downloaded update now. Only meaningful in the
+		// `downloaded` state; a no-op otherwise.
+		quitAndInstall(): void;
+	};
 	repos: {
 		list(): Promise<RepoInfo[]>;
 		openPicker(): Promise<RepoInfo | null>;
@@ -2432,9 +2592,10 @@ export interface PreloadAPI {
 		): Promise<ReleaseNotesRangeResult>;
 	};
 	feedback: {
-		// Open a GitHub issue on the app's own repository (always the project repo,
-		// not the repo the user is reviewing), tagged `in-app-feedback` so a triage
-		// workflow can pick it up. App version + OS are appended in the main process.
+		// Send feedback to the Super Review backend. No GitHub account or license
+		// is required; the device token is attached when there is one, purely so
+		// the report can be attributed. App version + OS are added in the main
+		// process. Rejects with a readable message the dialog shows inline.
 		submit(input: FeedbackInput): Promise<FeedbackResult>;
 	};
 	shell: {
@@ -2443,6 +2604,33 @@ export interface PreloadAPI {
 		showItemInFolder(fullPath: string): Promise<void>;
 		// Open a file with the OS default program for its type.
 		openPath(fullPath: string): Promise<{ ok: boolean; error?: string }>;
+	};
+	// The single, human-editable settings.json dotfile that holds every shareable
+	// preference (the live source of truth). Backs the "Settings file" panel.
+	settings: {
+		// Absolute path to settings.json (shown in the UI, used for reveal).
+		getPath(): Promise<string>;
+		// Reveal settings.json in the OS file manager.
+		reveal(): Promise<void>;
+		// Open settings.json in the configured external editor, or the OS default
+		// handler when none is set.
+		openInEditor(): Promise<{ ok: boolean; error?: string }>;
+		// Any malformed/reset issue seen the first time settings.json loaded this
+		// session, read-once (cleared by the call) for a one-time startup warning.
+		getStartupIssues(): Promise<{ malformed: boolean; reset: string[] }>;
+		// Save a copy of the current settings to a user-chosen path (Save dialog).
+		export(): Promise<{ ok: boolean; canceled: boolean; path?: string; error?: string }>;
+		// Load a settings file the user picks (Open dialog), validate it, and make
+		// it the new settings. `reset` lists any fields that were invalid.
+		import(): Promise<{
+			ok: boolean;
+			canceled: boolean;
+			reset?: string[];
+			prefs?: UserPrefs;
+			error?: string;
+		}>;
+		// Reset every settings.json-owned preference to its default (state untouched).
+		reset(): Promise<UserPrefs>;
 	};
 	menu: {
 		// Pop up a native OS context menu for a file row. Resolves to the chosen
@@ -2525,6 +2713,15 @@ export interface PreloadAPI {
 		// Payload is the full current list of failing accounts (empty = all good).
 		// Returns an unsubscribe fn.
 		onGithubAuthChanged(handler: (errors: GithubAuthError[]) => void): () => void;
+		// Live license-state changes pushed by the main process (activation
+		// completes, revalidation flips status, etc.). Returns an unsubscribe fn.
+		onLicenseChanged(handler: (state: LicenseState) => void): () => void;
+		// Live prefs changes pushed by the main process: settings.json edited
+		// externally, or a settings file imported/reset. Returns an unsubscribe fn.
+		onPrefsChanged(handler: (change: PrefsChange) => void): () => void;
+		// Background auto-update progress pushed by the main process (checking →
+		// downloading → downloaded, or error). Returns an unsubscribe fn.
+		onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
 	};
 }
 
