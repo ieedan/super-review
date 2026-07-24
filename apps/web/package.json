@@ -41,6 +41,7 @@
 	"dependencies": {
 		"@better-auth/stripe": "1.6.23",
 		"@convex-dev/better-auth": "0.12.5",
+		"@convex-dev/migrations": "^0.3.5",
 		"@convex-dev/rate-limiter": "^0.3.2",
 		"@ethercorps/sveltekit-og": "^4.3.0",
 		"@iconify/svelte": "^5.2.1",
