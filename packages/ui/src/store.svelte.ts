@@ -5092,6 +5092,15 @@ export const actions = {
 	// Load (or reload) the first page of PRs, replacing whatever was there.
 	async loadPRs(): Promise<void> {
 		if (!app.activeRepo) return;
+		// No GitHub remote means there's nothing to list, and the main-process
+		// handler would throw ("This repository does not have a GitHub remote.").
+		// Clear the list and wait until a remote is attached (the repo/account
+		// change that attaches one re-triggers this load).
+		if (!app.activeRepo.githubOwner || !app.activeRepo.githubRepo) {
+			app.prs = [];
+			app.prsHasMore = false;
+			return;
+		}
 		// Resolve the fork's upstream (if any) and settle the source before the
 		// first fetch so we hit the right repo and the picker can offer the switch.
 		await detectUpstream();
