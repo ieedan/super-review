@@ -1,6 +1,7 @@
 import { error, redirect } from '@sveltejs/kit';
 import { api } from '$lib/convex/_generated/api';
 import { DOWNLOADS } from '$lib/releases';
+import { isWaitlistBlocked } from '$lib/entitlement';
 import { assetSignedUrl, getLatestReleaseAssets, releasesToken } from '$lib/server/github-releases';
 import type { RequestHandler } from './$types';
 
@@ -33,9 +34,11 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 	// Beta gate. Resolves to allowed whenever waitlist mode is off, so this is
 	// inert after launch. Handing the binary to someone who can't activate it
 	// would just be a confusing dead end, so bounce them to the dashboard, which
-	// explains where they stand.
+	// explains where they stand. Closed when the query fails: the user is known
+	// to be signed in by here, so no answer means Convex is unreachable, and the
+	// wrong guess would serve private release binaries to anyone with an account.
 	const invites = await locals.convex.safeQuery(api.invites.getMine, {}).unwrapOr(null);
-	if (invites && invites !== 'unauthenticated' && invites.waitlistMode && !invites.isMember) {
+	if (isWaitlistBlocked(invites)) {
 		throw redirect(302, '/dashboard');
 	}
 

@@ -2,13 +2,14 @@ import { v } from 'convex/values';
 import { query } from './_generated/server';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation } from './utils';
+import { WAITLIST_MODE_DEFAULT } from './settingsShared';
 
 // The single settings row. One document, looked up by a literal key, so reads
 // stay a point lookup and there is never a second row to disagree with.
 const SETTINGS_KEY = 'app' as const;
 
 const DEFAULTS = {
-	waitlistMode: false
+	waitlistMode: WAITLIST_MODE_DEFAULT
 };
 
 async function readSettings(ctx: QueryCtx | MutationCtx) {
@@ -21,7 +22,7 @@ async function readSettings(ctx: QueryCtx | MutationCtx) {
 /**
  * Public runtime flags for the marketing site. Safe to expose: it carries no
  * user data. Returns the defaults when the row does not exist yet, so a fresh
- * deployment renders the launched site rather than erroring.
+ * deployment renders the pre-launch site rather than erroring.
  */
 export const getPublic = query({
 	args: {},

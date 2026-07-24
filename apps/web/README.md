@@ -91,7 +91,9 @@ Three things the script cannot do for you, and reminds you about at the end:
   can only verify tokens from a deployment whose key it embeds, so commit that
   file and cut a release from it before activating against production.
 - **Waitlist mode.** A row in the `settings` table, not an env var, so flip it
-  with `convex run settings:setWaitlistMode '{"enabled":true}' --prod`.
+  with `convex run settings:setWaitlistMode '{"enabled":true}' --prod`. A
+  deployment with no row is closed, so a new one is invite-only until you say
+  otherwise.
 
 Reference: the convex-app template's
 [`DEPLOY.md`](https://github.com/ieedan/convex-app/blob/main/.agents/skills/codebase/references/DEPLOY.md),
@@ -126,7 +128,8 @@ Pre-launch the app runs as a closed, invite-only beta. Three pieces:
 1. **Waitlist mode** — the master switch, a row in the Convex `settings` table
    (not an env var), so flipping it takes effect immediately with **no
    redeploy**. The marketing layout SSR-loads it and upgrades it to a live
-   subscription, so open tabs switch over without a reload.
+   subscription, so open tabs switch over without a reload. **On by default**:
+   see [Defaults](#defaults-fail-closed) below.
 2. **The waitlist** — `waitlistSignups`, just emails. Joining costs one field
    and no OAuth, and grants nothing on its own.
 3. **Invite codes** — `inviteCodes`, single-use. Redeeming one is what makes a
@@ -145,8 +148,28 @@ From the [Convex dashboard](https://dashboard.convex.dev) → **Functions** →
 pnpm --filter @super-review/web exec convex run settings:setWaitlistMode '{"enabled":true}'
 ```
 
-The mutation upserts, so it works before the row exists; with no row at all the
-site renders as launched.
+The mutation upserts, so it works before the row exists.
+
+### Defaults: fail closed
+
+`WAITLIST_MODE_DEFAULT` in
+[`src/lib/convex/settingsShared.ts`](src/lib/convex/settingsShared.ts) is `true`,
+and it is what every gate assumes when the answer is missing:
+
+- **No `settings` row.** A fresh preview branch, a re-provisioned production, or
+  a wiped dev database has never been configured, so it stays closed until
+  someone runs `setWaitlistMode { enabled: false }` against it. Launching is a
+  decision; a default should not be able to make it.
+- **A failed query.** The server gates (`/pricing`, `/checkout/*`,
+  `/api/download/*`) treat an unanswerable `invites.getMine` as blocked, via
+  `isWaitlistBlocked`. By the time they call it the visitor is known to be signed
+  in, so no answer means Convex is unreachable, not that the account is allowed.
+  The marketing surfaces do the same through `waitlistModeFrom`, so a settings
+  blip renders the pre-launch page rather than flashing buy CTAs.
+
+The one intentional exception is `isWaitlistPending`, which drives dashboard copy
+and answers "not pending" when it doesn't know: it gates nothing, and the cost of
+guessing wrong there is telling a paying member they are uninvited.
 
 ### What waitlist mode changes
 

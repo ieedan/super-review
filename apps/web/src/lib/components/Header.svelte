@@ -3,6 +3,7 @@
 	import { Spring } from 'svelte/motion';
 	import { Button } from '@super-review/ui/components/ui/button';
 	import { page } from '$app/state';
+	import { waitlistModeFrom } from '$lib/entitlement';
 
 	// Comes from the root layout's SSR auth state, so the header renders the right
 	// link on the server instead of flipping after hydration.
@@ -11,7 +12,7 @@
 	// From the marketing layout's Convex-backed settings. Pre-launch there is
 	// nothing to buy, so the header drops the purchase CTA and keeps sign-in
 	// (existing accounts and the desktop activation flow still work).
-	const waitlistMode = $derived(page.data.settings?.data?.waitlistMode ?? false);
+	const waitlistMode = $derived(waitlistModeFrom(page.data.settings));
 
 	const SCROLL_DOWN = 40;
 	const SCROLL_UP = 8;

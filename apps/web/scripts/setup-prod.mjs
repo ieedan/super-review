@@ -1079,77 +1079,61 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 		}
 	);
 
-	// --- Step 12: push everything to Vercel --------------------------------------
+	// --- Step 12: report, and rescue anything that could not be pushed ----------
 	//
-	// Not a step(): it is the flush of whatever the steps above collected, so it
-	// has to run whenever anything was collected - including under --only, where
-	// a step like `--only downloads` produces a Vercel-bound value and would
-	// otherwise gather it and throw it away.
-	const flushVercelEnv = async () => {
-		const targets = [
-			['production', vercelEnv.production],
-			...(skipPreview ? [] : [['preview', vercelEnv.preview]])
+	// Not a step(): the pushes already happened inline, so this only summarises
+	// them and writes files for whatever could not go up. It has to run whenever
+	// anything was produced, including under --only.
+	const reportVercelEnv = () => {
+		const pending = [
+			['production', vercelPending.production],
+			...(skipPreview ? [] : [['preview', vercelPending.preview]])
 		].filter(([, vars]) => Object.keys(vars).length > 0);
+		const pushed = vercelPushed.production.length + vercelPushed.preview.length;
 
-		if (targets.length === 0) return;
+		if (pending.length === 0 && pushed === 0) return;
 		heading('Vercel environment variables');
-
 		describe([
 			'What the SvelteKit server itself reads. PUBLIC_CONVEX_URL is not in the',
 			'list on purpose: `convex deploy` injects it into the build (that is what',
 			'--cmd-url-env-var-name does in the vercel:deploy script).'
 		]);
-		for (const [target, vars] of targets) {
-			console.log(`  ${bold(target)}`);
+
+		if (pushed > 0) {
+			console.log(green(`  ${pushed} variable(s) already pushed as the steps ran.`));
+		}
+		if (pending.length === 0) return;
+
+		console.log(
+			yellow(
+				`  ${pending.reduce((n, [, v]) => n + Object.keys(v).length, 0)} variable(s) could not be pushed.`
+			)
+		);
+		console.log(
+			dim(
+				vercelLinked(projectRoot)
+					? '  The pushes failed; the values are written out below so none are lost.'
+					: '  The project is not linked, so they are written out below instead.'
+			)
+		);
+
+		ensureGitignored(repoRoot, '.env.vercel.*');
+		for (const [target, vars] of pending) {
+			writeEnvFile(join(projectRoot, `.env.vercel.${target}`), vars);
+			console.log(`  ${green('wrote')} apps/web/.env.vercel.${target}`);
 			for (const name of Object.keys(vars)) {
 				console.log(`    ${name}${SENSITIVE_VERCEL_VARS.has(name) ? dim('  (sensitive)') : ''}`);
 			}
 		}
-		console.log('');
-
-		const canPush = hasVercel && vercelLinked(projectRoot);
-		if (canPush && (await askYesNo(rl, 'Push these to Vercel now?', true))) {
-			let failed = 0;
-			for (const [target, vars] of targets) {
-				for (const [name, value] of Object.entries(vars)) {
-					try {
-						vercelEnvSet(projectRoot, name, value, target, {
-							sensitive: SENSITIVE_VERCEL_VARS.has(name)
-						});
-						console.log(`  ${green('set')}   ${name} ${dim(`(${target})`)}`);
-					} catch (error) {
-						failed++;
-						console.log(
-							`  ${yellow('fail')}  ${name} ${dim(`(${target})`)}: ${
-								error instanceof Error ? error.message.split('\n')[0] : error
-							}`
-						);
-					}
-				}
-			}
-			if (failed === 0) {
-				console.log(green('\n  All environment variables are on Vercel.'));
-				return;
-			}
-			console.log(yellow(`\n  ${failed} variable(s) did not push; writing the files instead.`));
-		} else if (canPush) {
-			console.log(dim('  Skipped the CLI push; writing the files instead.'));
-		}
-
-		// Fallback (and belt-and-braces after a partial failure): dotenv files the
-		// Vercel dashboard can import directly.
-		ensureGitignored(repoRoot, '.env.vercel.*');
-		for (const [target, vars] of targets) {
-			writeEnvFile(join(projectRoot, `.env.vercel.${target}`), vars);
-			console.log(`  ${green('wrote')} apps/web/.env.vercel.${target}`);
-		}
 		console.log(
-			dim('\n  Import them at Settings > Environment Variables > (…) > Import .env,\n') +
-				dim('  selecting the matching environment, then delete the files.')
+			dim('\n  Import them at Settings > Environment Variables > (...) > Import .env,\n') +
+				dim('  picking the matching environment. Delete the files once a deploy has\n') +
+				dim('  succeeded: a sensitive variable cannot be read back out of Vercel, so\n') +
+				dim('  these are the only remaining copy of the signing key until then.')
 		);
 	};
 
-	await flushVercelEnv();
+	reportVercelEnv();
 
 	rl.close();
 

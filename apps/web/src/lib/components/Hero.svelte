@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { Button } from '@super-review/ui/components/ui/button';
 	import { page } from '$app/state';
+	import { waitlistModeFrom } from '$lib/entitlement';
 	import WaitlistForm from './WaitlistForm.svelte';
 
 	const screenshot: string | null = '/app-preview.webp';
 
 	// Pre-launch the hero collects emails instead of pointing at pricing. Driven
 	// by the Convex settings row loaded in the marketing layout, so it flips live.
-	const waitlistMode = $derived(page.data.settings?.data?.waitlistMode ?? false);
+	const waitlistMode = $derived(waitlistModeFrom(page.data.settings));
 </script>
 
 <main class="pb-16 pt-10 sm:pb-20 sm:pt-14">

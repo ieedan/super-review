@@ -6,6 +6,7 @@ import { internal } from './_generated/api';
 import { authComponent } from './auth';
 import { rateLimiter } from './rateLimiter';
 import { convexError, createConvexError } from './errors';
+import { WAITLIST_MODE_DEFAULT } from './settingsShared';
 
 /**
  * Deliberately loose: this is a signup form, not an identity check. It rejects
@@ -27,14 +28,15 @@ export function isValidEmail(email: string): boolean {
  * Whether beta access is currently restricted. Reads the same settings row the
  * marketing site uses, so every gate switches off together the moment waitlist
  * mode is turned off. Written once because if two gates disagreed, flipping the
- * flag would half-open the app.
+ * flag would half-open the app - which is also why the no-row fallback is the
+ * shared `WAITLIST_MODE_DEFAULT` rather than a second literal here.
  */
 export async function waitlistModeOn(ctx: QueryCtx | MutationCtx): Promise<boolean> {
 	const row = await ctx.db
 		.query('settings')
 		.withIndex('by_key', (q) => q.eq('key', 'app'))
 		.unique();
-	return row?.waitlistMode ?? false;
+	return row?.waitlistMode ?? WAITLIST_MODE_DEFAULT;
 }
 
 /**

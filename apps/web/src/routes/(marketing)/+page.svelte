@@ -12,11 +12,12 @@
 	import Footer from '$lib/components/Footer.svelte';
 	import DemoPlaceholder from '$lib/components/DemoPlaceholder.svelte';
 	import { MARK_AS_SEEN_FILES, COMMENTS_FILE, SEED_COMMENT } from '$lib/demo/mock-data';
+	import { waitlistModeFrom } from '$lib/entitlement';
 
 	let { data } = $props();
 
 	// Pre-launch the pricing section is replaced by a second waitlist prompt.
-	const waitlistMode = $derived(data.settings?.data?.waitlistMode ?? false);
+	const waitlistMode = $derived(waitlistModeFrom(data.settings));
 
 	// The interactive demos embed the real desktop components, whose module graph
 	// (Pierre, a syntax highlighter, DOMPurify) can't be server-rendered. Load them

@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { api } from '$lib/convex/_generated/api';
-import { hasPaidPlan, isWaitlistPending } from '$lib/entitlement';
+import { hasPaidPlan, isWaitlistBlocked } from '$lib/entitlement';
 import type { PageServerLoad } from './$types';
 
 // Auth + beta guard for the subscription checkout. Signed-out users go to sign
@@ -17,7 +17,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	}
 
 	const invites = await locals.convex.safeQuery(api.invites.getMine, {}).unwrapOr(null);
-	if (isWaitlistPending(invites)) {
+	if (isWaitlistBlocked(invites)) {
 		throw redirect(302, '/dashboard');
 	}
 

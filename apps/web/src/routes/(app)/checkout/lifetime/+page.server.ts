@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { api } from '$lib/convex/_generated/api';
-import { isWaitlistPending } from '$lib/entitlement';
+import { isWaitlistBlocked } from '$lib/entitlement';
 import type { PageServerLoad } from './$types';
 
 // Create the lifetime Checkout session server-side and redirect straight to
@@ -15,7 +15,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	}
 
 	const invites = await locals.convex.safeQuery(api.invites.getMine, {}).unwrapOr(null);
-	if (isWaitlistPending(invites)) {
+	if (isWaitlistBlocked(invites)) {
 		throw redirect(302, '/dashboard');
 	}
 

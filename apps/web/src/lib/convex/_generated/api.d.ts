@@ -25,6 +25,7 @@ import type * as licensingShared from "../licensingShared.js";
 import type * as notify from "../notify.js";
 import type * as rateLimiter from "../rateLimiter.js";
 import type * as settings from "../settings.js";
+import type * as settingsShared from "../settingsShared.js";
 import type * as triggers from "../triggers.js";
 import type * as utils from "../utils.js";
 import type * as waitlist from "../waitlist.js";
@@ -54,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   notify: typeof notify;
   rateLimiter: typeof rateLimiter;
   settings: typeof settings;
+  settingsShared: typeof settingsShared;
   triggers: typeof triggers;
   utils: typeof utils;
   waitlist: typeof waitlist;
