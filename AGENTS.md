@@ -125,6 +125,32 @@ performance story that renders it at scale.
 Tests use **vitest**. Browser tests live in `*.browser.test.ts` and run against
 real Chromium via `@vitest/browser` (Playwright); other `*.test.ts` run in Node.
 
+## Branches
+
+Work flows `dev` -> `main`.
+
+| Branch | Role                                                                              |
+| ------ | --------------------------------------------------------------------------------- |
+| `dev`  | The **default branch**. Every PR targets it, so `gh pr create` needs no `--base`. |
+| `main` | The **release branch**. A push to it runs `release.yml`.                          |
+
+`dev` is GitHub's default branch purely so new PRs pre-fill it: GitHub has one
+default-branch setting and it is what a new PR bases on, so this is the only way
+to make `dev` the automatic target. `main` is still the branch releases are cut
+from.
+
+Only `dev` (and changesets' `changeset-release/*`) may open a PR against `main`.
+No branch protection rule or ruleset can express that, so it is the **Base
+branch** job in [`ci.yml`](.github/workflows/ci.yml), required on `main`.
+
+Both branches require a PR (zero approvals, so a solo merge still works),
+require CI to pass, and reject force pushes and deletions. Admins are not
+locked out, so an emergency direct push is still possible.
+
+`dev` also earns its keep on the deploy side: its Vercel branch alias is a
+stable origin, which is what the preview `SITE_URL` points at. Per-commit
+preview URLs change every push, and better-auth needs one fixed origin.
+
 ## Conventions
 
 ### No em-dashes in prose

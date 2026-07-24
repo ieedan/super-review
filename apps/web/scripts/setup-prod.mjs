@@ -75,6 +75,12 @@ import {
 // means changing it there too.
 const PRODUCTION_SITE_URL = 'https://superreview.dev';
 
+// The long-lived branch PRs merge into. `main` is the release branch (the
+// Release workflow triggers on a push to it), so `dev` is what day to day work
+// lands on, and its Vercel branch alias is the one stable preview origin worth
+// pointing sign-in and Stripe redirects at.
+const INTEGRATION_BRANCH = 'dev';
+
 // Vercel project settings the build depends on. This is a pnpm monorepo, so the
 // project's Root Directory has to be apps/web AND "Include files outside of the
 // Root Directory" has to be on, otherwise the workspace deps (@super-review/ui,
@@ -563,12 +569,18 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 			if (skipPreview) return;
 			describe([
 				'',
-				'Preview deployments get a different URL per branch, and better-auth',
-				'needs one fixed origin, so previews only really work against a stable',
-				'alias (Vercel gives every branch one:',
-				dim('  https://<project>-git-<branch>-<team>.vercel.app'),
-				'). Set the one you actually test on, or skip and set SITE_URL by hand',
-				'on the preview deployment when you need it.'
+				'Preview deployments get a different URL per commit, and better-auth needs',
+				`one fixed origin, so the preview SITE_URL is the ${bold(INTEGRATION_BRANCH)} branch's`,
+				'stable Vercel alias:',
+				dim(`  https://<project>-git-${INTEGRATION_BRANCH}-<team>.vercel.app`),
+				'',
+				`That is why PRs target ${bold(INTEGRATION_BRANCH)} rather than ${bold('main')}: one long-lived branch`,
+				'means one long-lived preview origin, which is the only kind sign-in and',
+				'Stripe redirects can actually be pointed at. Per-commit preview URLs',
+				'still build, they just will not complete an OAuth round trip.',
+				'',
+				dim('Skippable: without it, previews have no SITE_URL and sign-in there is'),
+				dim('unconfigured until you set one by hand on the deployment.')
 			]);
 			const previewSiteUrl = await ask(rl, 'Preview SITE_URL (or Enter to skip)');
 			setConvexEnv(

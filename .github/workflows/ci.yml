@@ -6,6 +6,37 @@ on:
   pull_request:
 
 jobs:
+  # Work flows dev -> main: `dev` is the default branch, so PRs land there, and
+  # `main` is the release branch (a push to it runs release.yml). Nothing in
+  # GitHub's branch protection or rulesets can express "only this branch may
+  # open a PR against main", so it is a required check instead.
+  base-branch:
+    name: Base branch
+    runs-on: ubuntu-latest
+    steps:
+      # Deliberately not a job-level `if`, so the check always reports a real
+      # conclusion. PRs into anything other than main pass immediately.
+      - name: Check the head branch
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          if [ "$BASE" != "main" ]; then
+            echo "Base is '$BASE', not main. Nothing to enforce."
+            exit 0
+          fi
+          # changesets/action opens the "Version Packages" PR from
+          # changeset-release/main against main, so that one is allowed too.
+          case "$HEAD" in
+            dev|changeset-release/*)
+              echo "'$HEAD' -> main is allowed."
+              ;;
+            *)
+              echo "::error::PRs into main must come from 'dev' (got '$HEAD'). Retarget this PR at dev; main only takes dev and the changesets release branch."
+              exit 1
+              ;;
+          esac
+
   check:
     runs-on: ubuntu-latest
     steps:

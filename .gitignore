@@ -21,3 +21,4 @@ storybook-static
 # Vitest browser-mode failure artifacts
 __screenshots__
 .vitest-attachments
+.env.vercel.*
