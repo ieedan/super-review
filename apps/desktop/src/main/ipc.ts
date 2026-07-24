@@ -752,7 +752,14 @@ export function registerIpc(): void {
 	ipcMain.handle('repos:getActive', async (): Promise<RepoInfo | null> => {
 		const prefs = getPrefs();
 		if (!prefs.activeRepoId) return null;
-		return getRepo(prefs.activeRepoId);
+		const repo = getRepo(prefs.activeRepoId);
+		// Launch restores the last-active repo through here, not setActive, so
+		// without this the repo you always open into never re-derives its metadata:
+		// a default branch that moved (origin/HEAD repointed at another branch)
+		// would stay stale forever. Same deal as setActive: answer from the store
+		// now, re-derive off the critical path.
+		if (repo) void refreshRepoInfoInBackground(repo.path, repo);
+		return repo;
 	});
 
 	// ─── Git ───────────────────────────────────────────────────────────────

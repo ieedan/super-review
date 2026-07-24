@@ -356,7 +356,10 @@
 		const offRepoChanged = window.api.events.onRepoChanged((repo) => {
 			if (!repo) return;
 			// Different repo → a real switch (e.g. triggered from another window).
-			if (repo.id !== app.activeRepo?.id) {
+			// Only once we have an active repo to compare against: during boot it's
+			// still null, and a background refresh landing then is metadata for the
+			// repo init is in the middle of restoring, not a switch.
+			if (app.activeRepo && repo.id !== app.activeRepo.id) {
 				void actions.switchRepo(repo.id);
 				return;
 			}

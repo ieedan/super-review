@@ -1599,6 +1599,10 @@ export function isMainInitCompleted(): boolean {
 	return mainInitCompleted;
 }
 
+// Repo metadata from a background refresh that arrived before init assigned
+// app.activeRepo. Applied (and cleared) by init once the restore lands.
+let pendingRepoMetadata: RepoInfo | null = null;
+
 // Bumped on every licensed → locked transition so in-flight init/refresh work
 // started while licensed bails instead of surfacing LicenseGateError toasts.
 let licenseGeneration = 0;
@@ -3851,7 +3855,15 @@ export const actions = {
 			app.githubAuthErrors = errors;
 		});
 		try {
-			app.activeRepo = await activeRepoPromise;
+			const restored = await activeRepoPromise;
+			// A background refresh that beat us here parked its result (see
+			// updateActiveRepoMetadata); prefer it, it's the newer read of the same
+			// repo.
+			app.activeRepo =
+				pendingRepoMetadata && pendingRepoMetadata.id === restored?.id
+					? pendingRepoMetadata
+					: restored;
+			pendingRepoMetadata = null;
 		} finally {
 			// Even if the lookup fails the UI has to stop waiting, otherwise the
 			// window sits blank with no way to open a repo. Skip if we locked mid-
@@ -3955,7 +3967,15 @@ export const actions = {
 	},
 
 	updateActiveRepoMetadata(repo: RepoInfo): void {
-		if (app.activeRepo?.id !== repo.id) return;
+		// Boot kicks a background metadata refresh for the restored repo, which can
+		// land before init assigns app.activeRepo. Hold it until init does, or the
+		// freshly derived info is dropped and the UI runs on the stale record for
+		// the whole session.
+		if (!app.activeRepo) {
+			pendingRepoMetadata = repo;
+			return;
+		}
+		if (app.activeRepo.id !== repo.id) return;
 		const prev = app.activeRepo;
 		app.activeRepo = repo;
 		app.repos = app.repos.map((r) => (r.id === repo.id ? repo : r));

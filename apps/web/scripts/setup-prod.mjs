@@ -147,10 +147,18 @@ function vercelEnvNames(projectRoot, target) {
 // Adds one variable to the Vercel project, overwriting any existing value for
 // that target. The value goes in over stdin so it never reaches the shell
 // history or the process list.
+//
+// The value is written WITHOUT a trailing newline, and trimmed: when stdin is a
+// pipe rather than a TTY, `vercel env add` stores everything it reads, so a "\n"
+// sent to mean "press enter" is stored as part of the value. That is how
+// production once ended up with an ED25519_KID of "lk_63d406cf\n", which put a
+// newline in the `kid` header of every signed license token and made every
+// desktop build fail to find the matching public key. EOF terminates the read on
+// its own, so the newline was never needed.
 function vercelEnvSet(projectRoot, name, value, target, { sensitive = false } = {}) {
 	execSync(`vercel env add ${name} ${target} --force${sensitive ? ' --sensitive' : ''}`, {
 		cwd: projectRoot,
-		input: `${value}\n`,
+		input: String(value).trim(),
 		stdio: ['pipe', 'ignore', 'pipe'],
 		timeout: 120_000
 	});
