@@ -139,15 +139,19 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
 						// check out at a discount. Applied server-side rather than via a
 						// promo code the user types, so it cannot be shared or guessed.
 						//
-						// Note `discounts` and `allow_promotion_codes` are mutually
-						// exclusive in Stripe Checkout: adding a promo-code box later
-						// means choosing one per session, not both.
+						// `discounts` and `allow_promotion_codes` are mutually exclusive
+						// in Stripe Checkout, so it is one or the other per session: the
+						// earned referral reward wins, and everyone else gets the
+						// promo-code box.
 						const coupon = env.STRIPE_REFERRAL_COUPON_ID;
-						if (!coupon) return {};
-						const earned = await actionCtx.runQuery(internal.invites.hasReferralReward, {
-							userId: user.id
-						});
-						return earned ? { params: { discounts: [{ coupon }] } } : {};
+						const earned =
+							!!coupon &&
+							(await actionCtx.runQuery(internal.invites.hasReferralReward, {
+								userId: user.id
+							}));
+						return earned
+							? { params: { discounts: [{ coupon }] } }
+							: { params: { allow_promotion_codes: true } };
 					},
 					onSubscriptionComplete: async ({ subscription, stripeSubscription }) => {
 						await syncSubscription(actionCtx, subscription.referenceId, stripeSubscription);

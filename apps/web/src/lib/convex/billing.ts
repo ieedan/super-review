@@ -172,7 +172,10 @@ export const createLifetimeCheckout = action({
 			customer: customerId,
 			customer_email: customerId ? undefined : user.email,
 			line_items: [{ price: env.STRIPE_PRICE_LIFETIME, quantity: 1 }],
-			...(earned ? { discounts: [{ coupon }] } : {}),
+			// `discounts` and `allow_promotion_codes` are mutually exclusive in
+			// Stripe Checkout, so the earned referral reward wins and everyone
+			// else gets the promo-code box.
+			...(earned ? { discounts: [{ coupon }] } : { allow_promotion_codes: true }),
 			metadata: { kind: 'lifetime', userId: user._id },
 			success_url: `${env.SITE_URL}/dashboard?checkout=success`,
 			// /pricing rather than the homepage anchor, which is hidden in waitlist
