@@ -54,6 +54,7 @@ import type {
 	SidebarTabVisibility,
 	SidebarControlVisibility,
 	TerminalKind,
+	UpdateStatus,
 	UserPrefs,
 	ViewMode
 } from '@super-review/core/types';
@@ -97,6 +98,7 @@ export type SettingsTab =
 	| 'editor'
 	| 'agents'
 	| 'hotkeys'
+	| 'updates'
 	| 'stats';
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
@@ -660,6 +662,19 @@ interface AppState {
 	// Active error toasts, newest last. Errors stack instead of overwriting so a
 	// new failure never silently replaces one the user hasn't seen yet.
 	errors: ErrorToast[];
+	// Background auto-update state, mirrored from the main process. Drives the
+	// update notice in the commit-box stack (see CommitNotices.svelte).
+	update: UpdateStatus;
+	// Whether the user dismissed the current "ready to restart" toast. Reset when
+	// a fresh download starts so a newer update re-prompts.
+	updateDismissed: boolean;
+	// The running app's version, for the Updates settings tab. Empty until the
+	// first fetch lands.
+	appVersion: string;
+	// When a check last finished having found nothing (ms epoch), so the Updates
+	// tab can say "Up to date" instead of sitting on a bare version number. Null
+	// until a check completes in this session.
+	updateCheckedAt: number | null;
 }
 
 export function composerKey(filePath: string, side: 'LEFT' | 'RIGHT', line: number): string {
@@ -1012,7 +1027,11 @@ const initial: AppState = {
 	diffRevalidateToken: 0,
 	diffFileReloadTokens: new SvelteMap(),
 	loading: { files: false, branches: false, prs: false, repos: false },
-	errors: []
+	errors: [],
+	update: { state: 'idle' },
+	updateDismissed: false,
+	appVersion: '',
+	updateCheckedAt: null
 };
 
 export const app = $state<AppState>(initial);
@@ -1695,6 +1714,44 @@ async function initLicense(): Promise<void> {
 		if (wasLicensed && !nowLicensed) onLicenseLocked();
 		app.license.current = state;
 	});
+}
+
+// --- Auto-updates ------------------------------------------------------------
+
+function applyUpdateStatus(status: UpdateStatus): void {
+	// A fresh check or download supersedes any earlier "ready to restart" the
+	// user dismissed, so a newer version prompts again.
+	if (status.state === 'checking' || status.state === 'downloading') {
+		app.updateDismissed = false;
+	}
+	// checking → idle means a check ran and found nothing. Stamp it so the
+	// Updates tab can confirm "Up to date" rather than leaving a manual check
+	// looking like it did nothing. (The startup seed is idle→idle, so it won't
+	// falsely claim we checked.)
+	if (app.update.state === 'checking' && status.state === 'idle') {
+		app.updateCheckedAt = Date.now();
+	}
+	app.update = status;
+}
+
+// Seed the current update state and subscribe to live progress from the main
+// process. Called from App.svelte's onMount alongside initLicense, independent of
+// where the update UI renders.
+async function initUpdater(): Promise<void> {
+	applyUpdateStatus(await window.api.updater.getStatus());
+	window.api.events.onUpdateStatus(applyUpdateStatus);
+	app.appVersion = await window.api.updater.getVersion();
+}
+
+// Quit and relaunch into the downloaded update.
+function restartToUpdate(): void {
+	window.api.updater.quitAndInstall();
+}
+
+// Hide the "ready to restart" toast without installing. The update still
+// installs on the next quit (autoInstallOnAppQuit).
+function dismissUpdate(): void {
+	app.updateDismissed = true;
 }
 
 // Drive a device-code activation from start to finish: request a code, show it,
@@ -3520,6 +3577,21 @@ function subscribePrefsChanges(): void {
 }
 
 export const actions = {
+	// --- Auto-updates ---
+	initUpdater(): Promise<void> {
+		return initUpdater();
+	},
+	restartToUpdate(): void {
+		restartToUpdate();
+	},
+	dismissUpdate(): void {
+		dismissUpdate();
+	},
+	// Manual "Check for updates" from the Updates settings tab. Progress arrives
+	// over updater:status like an automatic check, so there's nothing to await.
+	checkForUpdates(): void {
+		void window.api.updater.check();
+	},
 	// --- Licensing ---
 	initLicense(): Promise<void> {
 		return initLicense();

@@ -41,8 +41,14 @@ protocols:
 # in sync with the `electron` devDependency in package.json.
 electronVersion: 33.4.11
 
-# Where `--publish` uploads artifacts and where electron-updater looks for
-# updates. The GitHub release tag must be `v${version}` (see PUBLISHING.md).
+# Where `--publish` uploads artifacts: the private GitHub release. The release
+# tag must be `v${version}` (see PUBLISHING.md).
+#
+# NOTE: installed apps do NOT read updates from here — the repo is private, so
+# electron-updater couldn't fetch its assets. The client overrides this feed at
+# runtime to the web app's generic proxy (apps/desktop/src/main/updater.ts →
+# setFeedURL → <site>/api/update), which serves these same assets with a
+# server-side token. This block only governs where the CI build uploads.
 publish:
   provider: github
   owner: ieedan

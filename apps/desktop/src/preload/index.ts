@@ -76,6 +76,7 @@ import type {
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
 	TerminalKind,
+	UpdateStatus,
 	UserPrefs
 } from '@shared/types.js';
 import { isLicenseAllowedChannel, LicenseGateError } from '@shared/license-ipc.js';
@@ -147,6 +148,14 @@ const api: PreloadAPI = {
 		signOut: () => invoke('license:signOut') as Promise<void>,
 		openPricing: () => invoke('license:openPricing') as Promise<void>,
 		openDashboard: () => invoke('license:openDashboard') as Promise<void>
+	},
+	updater: {
+		getVersion: () => invoke('updater:getVersion') as Promise<string>,
+		getStatus: () => invoke('updater:getStatus') as Promise<UpdateStatus>,
+		check: () => invoke('updater:check') as Promise<void>,
+		quitAndInstall: () => {
+			void invoke('updater:quitAndInstall');
+		}
 	},
 	repos: {
 		list: () => invoke('repos:list') as Promise<RepoInfo[]>,
@@ -621,6 +630,11 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, change: PrefsChange) => handler(change);
 			ipcRenderer.on('state:prefsChanged', listener);
 			return () => ipcRenderer.off('state:prefsChanged', listener);
+		},
+		onUpdateStatus(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status);
+			ipcRenderer.on('updater:status', listener);
+			return () => ipcRenderer.off('updater:status', listener);
 		}
 	}
 };

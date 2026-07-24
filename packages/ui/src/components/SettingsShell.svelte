@@ -12,7 +12,10 @@
 	// `LucideIcon` (a `Component<LucideProps>`) is the shared type every lucide
 	// icon is assignable to. Imported type-only so it's erased at build and never
 	// pulls the icon barrel into the bundle.
-	type Tab = { id: string; label: string; icon: LucideIcon };
+	// `indicator` draws a small dot after the label, for a tab that wants
+	// attention without a number (the Updates tab uses it when an update is
+	// waiting).
+	type Tab = { id: string; label: string; icon: LucideIcon; indicator?: boolean };
 
 	let {
 		open = $bindable(false),
@@ -101,6 +104,12 @@
 						>
 							<Icon class="size-4 shrink-0" />
 							<span class="min-w-0 flex-1 truncate">{tab.label}</span>
+							{#if tab.indicator}
+								<span
+									class="size-1.5 shrink-0 rounded-full bg-primary"
+									aria-label="Update available"
+								></span>
+							{/if}
 						</button>
 					{/each}
 				{/if}

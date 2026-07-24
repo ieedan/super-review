@@ -16,6 +16,10 @@
 
 	onMount(() => {
 		void actions.initLicense();
+		// Seed + subscribe to background update state here (globally), independent
+		// of where it's rendered. The update notice itself rides the commit-box
+		// notices stack (CommitNotices).
+		void actions.initUpdater();
 	});
 </script>
 

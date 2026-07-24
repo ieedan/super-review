@@ -14,10 +14,13 @@
 	import FileJson from '@lucide/svelte/icons/file-json';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import Palette from '@lucide/svelte/icons/palette';
 	import Plus from '@lucide/svelte/icons/plus';
+	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import Upload from '@lucide/svelte/icons/upload';
@@ -42,6 +45,7 @@
 	import ZshIcon from './icons/ZshIcon.svelte';
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import LicenseCard from './LicenseCard.svelte';
+	import UpdateNotice from './UpdateNotice.svelte';
 	import DiffStylePreview from './DiffStylePreview.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import SettingSelect from './SettingSelect.svelte';
@@ -119,8 +123,24 @@
 		{ id: 'editor', label: 'Integrations', icon: Code2 },
 		{ id: 'agents', label: 'Agents', icon: Bot },
 		{ id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
-		{ id: 'stats', label: 'Stats', icon: BarChart3 }
+		{ id: 'stats', label: 'Stats', icon: BarChart3 },
+		{ id: 'updates', label: 'Updates', icon: RefreshCw }
 	];
+
+	// An update that exists but isn't installed yet, in any of its stages. Drives
+	// the dot on the Updates tab so the dialog advertises it without the user
+	// having to go looking.
+	const updatePending = $derived(
+		app.update.state === 'available' ||
+			app.update.state === 'downloading' ||
+			app.update.state === 'downloaded'
+	);
+
+	// TABS is the structural list (it also drives the content loop); the nav needs
+	// the live indicator layered on, so derive it rather than mutating TABS.
+	const navTabs = $derived(
+		TABS.map((t) => (t.id === 'updates' ? { ...t, indicator: updatePending } : t))
+	);
 
 	// One declarative list is the structural source of truth for every settings
 	// section: it drives the rendered tab content (the loops in the content snippet)
@@ -372,6 +392,13 @@
 			id: 'settings-stats',
 			label: 'Usage statistics',
 			keywords: 'stats statistics usage activity metrics'
+		},
+		{
+			tab: 'updates',
+			id: 'settings-updates',
+			title: 'Updates',
+			keywords:
+				'update updates upgrade version release new latest check download install restart relaunch changelog auto automatic'
 		}
 	];
 
@@ -1179,6 +1206,65 @@
 				</div>
 			{/if}
 		</div>
+	{:else if id === 'settings-updates'}
+		{@const u = app.update}
+		<p class="mt-1 text-xs text-muted-foreground">
+			Super Review updates in the background and installs when you quit.
+		</p>
+
+		<!-- 58px is the measured height of the two-line (version + status) case, so
+			the row keeps one height across every state and the button never hops. -->
+		<div
+			class="mt-3 flex min-h-[58px] items-center justify-between gap-3 rounded-xl border border-border bg-card/30 px-3 py-2.5"
+		>
+			<div class="min-w-0">
+				<div class="text-sm font-medium">
+					{app.appVersion ? `Version ${app.appVersion}` : 'Super Review'}
+				</div>
+				<!-- Collapses when there's no status, so a lone version line stays
+					centered against the button. The row's min-height (not this) is what
+					keeps the button from hopping as the status comes and goes. -->
+				<div class="truncate text-xs text-muted-foreground empty:hidden">
+					{#if u.state === 'checking'}
+						Checking for updates
+					{:else if u.state === 'available' || u.state === 'downloading'}
+						Downloading update{u.version ? ` ${u.version}` : ''}
+					{:else if u.state === 'downloaded'}
+						{u.version ? `Version ${u.version} ready to install` : 'Ready to install'}
+					{:else if u.state === 'error'}
+						<span title={u.message}>Couldn't check for updates</span>
+					{:else if app.updateCheckedAt !== null}
+						Up to date
+					{/if}
+				</div>
+			</div>
+
+			{#if u.state === 'downloaded'}
+				<Button size="sm" class="shrink-0" onclick={() => actions.restartToUpdate()}>
+					<RotateCw class="size-3.5" /> Restart to install
+				</Button>
+			{:else if u.state === 'checking' || u.state === 'available' || u.state === 'downloading'}
+				<Button variant="outline" size="sm" class="shrink-0" disabled>
+					<Loader2 class="size-3.5 animate-spin" />
+					{u.state === 'checking' ? 'Checking' : 'Downloading'}
+				</Button>
+			{:else}
+				<Button
+					variant="outline"
+					size="sm"
+					class="shrink-0"
+					onclick={() => actions.checkForUpdates()}
+				>
+					<RefreshCw class="size-3.5" /> Check for updates
+				</Button>
+			{/if}
+		</div>
+
+		{#if u.state === 'downloading'}
+			<div class="mt-2">
+				<UpdateNotice status={u} onRestart={() => actions.restartToUpdate()} />
+			</div>
+		{/if}
 	{:else if id === 'settings-external-editor'}
 		<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in editor" button.</p>
 
@@ -1635,7 +1721,7 @@
 <SettingsShell
 	bind:open={dialogOpen}
 	title="Settings"
-	tabs={TABS}
+	tabs={navTabs}
 	bind:activeTab
 	onClose={cancel}
 	search={searchBox}

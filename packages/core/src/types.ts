@@ -1810,6 +1810,27 @@ export type ActivationStatus =
 	| { state: 'denied' } // the user rejected the request in the browser
 	| { state: 'error'; message: string };
 
+// Live state of the electron-updater background update, pushed from the main
+// process to the renderer (updater:status) and mirrored in the app store. Drives
+// the update toast: `downloading` shows a progress bar, `downloaded` shows the
+// "Restart to update" button. `available`/`checking`/`error` are informational
+// (the toast stays quiet for them); `not-available` collapses to `idle`.
+export type UpdateStatus =
+	| { state: 'idle' }
+	| { state: 'checking' }
+	| { state: 'available'; version: string }
+	| {
+			state: 'downloading';
+			version: string;
+			// 0–100, already rounded for display.
+			percent: number;
+			bytesPerSecond: number;
+			transferred: number;
+			total: number;
+	  }
+	| { state: 'downloaded'; version: string }
+	| { state: 'error'; message: string };
+
 // The decoded claims of a license token (post-signature-verify). Field names
 // match the JWT payload the web app signs.
 export interface LicenseClaims {
@@ -1992,6 +2013,21 @@ export interface PreloadAPI {
 		// Opens the web dashboard, where the license, billing, and activated
 		// devices are managed.
 		openDashboard(): Promise<void>;
+	};
+	updater: {
+		// The running app's version (e.g. "0.1.27"), shown in the Updates settings
+		// tab so the user can see what they're on.
+		getVersion(): Promise<string>;
+		// Current background-update state, so a window opened after a download
+		// already completed can seed its toast instead of waiting for the next
+		// event. Resolves `{ state: 'idle' }` in dev (no packaged app to update).
+		getStatus(): Promise<UpdateStatus>;
+		// Trigger an immediate update check (the app also checks on launch and on a
+		// timer). No-op in dev.
+		check(): Promise<void>;
+		// Quit and install a downloaded update now. Only meaningful in the
+		// `downloaded` state; a no-op otherwise.
+		quitAndInstall(): void;
 	};
 	repos: {
 		list(): Promise<RepoInfo[]>;
@@ -2683,6 +2719,9 @@ export interface PreloadAPI {
 		// Live prefs changes pushed by the main process: settings.json edited
 		// externally, or a settings file imported/reset. Returns an unsubscribe fn.
 		onPrefsChanged(handler: (change: PrefsChange) => void): () => void;
+		// Background auto-update progress pushed by the main process (checking →
+		// downloading → downloaded, or error). Returns an unsubscribe fn.
+		onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
 	};
 }
 

@@ -1,7 +1,7 @@
 import { error, redirect } from '@sveltejs/kit';
 import { api } from '$lib/convex/_generated/api';
-import { env } from '$lib/env.server';
-import { REPO, DOWNLOADS } from '$lib/releases';
+import { DOWNLOADS } from '$lib/releases';
+import { assetSignedUrl, getLatestReleaseAssets, releasesToken } from '$lib/server/github-releases';
 import type { RequestHandler } from './$types';
 
 export const prerender = false;
@@ -17,15 +17,9 @@ export const prerender = false;
 // server and we don't pay for the bandwidth or hold a serverless function open
 // for the length of a ~100MB download.
 //
-// Note this only fixes *downloads*. electron-updater still polls the private
-// repo's release feed directly (apps/desktop/electron-builder.yml `publish`),
-// which 404s for installed copies; fixing that needs a `provider: generic`
-// feed served from here too.
-
-interface ReleaseAsset {
-	id: number;
-	name: string;
-}
+// This handles manual downloads; installed copies get their updates from the
+// sibling /api/update feed, which proxies the same private assets for
+// electron-updater. Both share $lib/server/github-releases.
 
 export const GET: RequestHandler = async ({ params, locals, url }) => {
 	const os = params.os;
@@ -45,44 +39,29 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 		throw redirect(302, '/dashboard');
 	}
 
-	const token = env.GITHUB_RELEASES_TOKEN;
+	const token = releasesToken();
 	if (!token) {
 		console.error('[download] GITHUB_RELEASES_TOKEN is not set');
 		throw error(503, 'Downloads are temporarily unavailable. Try again in a minute.');
 	}
 
-	const headers = {
-		authorization: `Bearer ${token}`,
-		accept: 'application/vnd.github+json',
-		'x-github-api-version': '2022-11-28'
-	};
-
-	const releaseRes = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-		headers
-	});
-	if (!releaseRes.ok) {
-		console.error(`[download] latest release lookup failed: ${releaseRes.status}`);
+	const filename = DOWNLOADS[os].filename;
+	let asset;
+	try {
+		const assets = await getLatestReleaseAssets(token);
+		asset = assets.find((a) => a.name === filename);
+	} catch (e) {
+		console.error(`[download] ${(e as Error).message}`);
 		throw error(502, 'Downloads are temporarily unavailable. Try again in a minute.');
 	}
-
-	const release = (await releaseRes.json()) as { assets?: ReleaseAsset[] };
-	const filename = DOWNLOADS[os].filename;
-	const asset = release.assets?.find((a) => a.name === filename);
 	if (!asset) {
 		console.error(`[download] no asset named ${filename} on the latest release`);
 		throw error(404, 'That build is not published yet.');
 	}
 
-	// `Accept: application/octet-stream` turns the asset endpoint into a 302 to
-	// a signed URL. `redirect: 'manual'` stops fetch following it so we can hand
-	// the location to the browser instead of streaming the file ourselves.
-	const assetRes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, {
-		headers: { ...headers, accept: 'application/octet-stream' },
-		redirect: 'manual'
-	});
-	const location = assetRes.headers.get('location');
+	const location = await assetSignedUrl(token, asset.id);
 	if (!location) {
-		console.error(`[download] asset ${asset.id} returned no location (${assetRes.status})`);
+		console.error(`[download] asset ${asset.id} returned no signed URL`);
 		throw error(502, 'Downloads are temporarily unavailable. Try again in a minute.');
 	}
 

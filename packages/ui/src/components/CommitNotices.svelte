@@ -16,6 +16,7 @@
 	import ConfigureAiButton from './ConfigureAiButton.svelte';
 	import NoticeCard from './NoticeCard.svelte';
 	import Stack from './stack/Stack.svelte';
+	import UpdateNotice from './UpdateNotice.svelte';
 
 	const showAdd = $derived(
 		(app.changesetStatus?.needsChangeset ?? false) && !app.changesetPromptDismissed
@@ -70,13 +71,24 @@
 	let trialDismissed = $state(readTrialDismissed());
 	const showTrial = $derived(trialDaysLeft !== null && !trialDismissed);
 
-	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' | 'trial' };
+	// App auto-update: rides the same stack. Visible while downloading, and once
+	// downloaded until dismissed (the store un-dismisses when a newer download
+	// starts). The `update` payload itself lives in the store, mirrored from the
+	// main process (see initUpdater).
+	const update = $derived(app.update);
+	const showUpdate = $derived(
+		update.state === 'downloading' || (update.state === 'downloaded' && !app.updateDismissed)
+	);
+
+	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' | 'trial' | 'update' };
 
 	// Front-first (index 0 is the fully-visible front card; later ones peek behind
-	// it). The trial nudge leads, then "Add a changeset?", the AI-config nudge, and
-	// the unnecessary-changeset warning sits at the back of the pile.
+	// it). An app update leads (it's the most consequential prompt and the user
+	// asked for it up front), then the trial nudge, "Add a changeset?", the
+	// AI-config nudge, and the unnecessary-changeset warning at the back.
 	const notices = $derived.by(() => {
 		const list: Notice[] = [];
+		if (showUpdate) list.push({ id: 'update' });
 		if (showTrial) list.push({ id: 'trial' });
 		if (showAdd) list.push({ id: 'add' });
 		if (showConfigure) list.push({ id: 'ai-config' });
@@ -88,7 +100,8 @@
 	// Stack animates the card out, then calls this so we run the actual dismissal
 	// (which drops the notice from `notices` via the reactive flags above).
 	function dismissNotice(n: Notice): void {
-		if (n.id === 'trial') {
+		if (n.id === 'update') actions.dismissUpdate();
+		else if (n.id === 'trial') {
 			try {
 				localStorage.setItem(TRIAL_KEY, trialDayKey());
 			} catch {
@@ -106,7 +119,13 @@
 	<div class="mx-2 mt-2 mb-2">
 		<Stack items={notices} onDismiss={dismissNotice} gap={8}>
 			{#snippet card(n, { dismiss })}
-				{#if n.id === 'trial'}
+				{#if n.id === 'update'}
+					<UpdateNotice
+						status={update}
+						onRestart={() => actions.restartToUpdate()}
+						onDismiss={dismiss}
+					/>
+				{:else if n.id === 'trial'}
 					<NoticeCard
 						onDismiss={dismiss}
 						dismissTitle="Dismiss for today"

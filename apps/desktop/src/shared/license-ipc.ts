@@ -7,7 +7,11 @@ export const LICENSE_GATE_CODE = 'UNLICENSED';
 export const LICENSE_GATE_MESSAGE = 'A valid Super Review license is required.';
 
 /** Namespaces usable while the app is NOT licensed. */
-export const LICENSE_ALLOWED_NAMESPACES = ['license:', 'window:'] as const;
+// `updater:` is allowed unlicensed so the app can still fetch its own updates —
+// and let the user restart into them — while sitting on the activation screen.
+// Delivering a fix (or a build that can be activated at all) must never depend
+// on already being licensed.
+export const LICENSE_ALLOWED_NAMESPACES = ['license:', 'window:', 'updater:'] as const;
 
 /** Exact channels usable while the app is NOT licensed. */
 export const LICENSE_ALLOWED_EXACT = new Set([
