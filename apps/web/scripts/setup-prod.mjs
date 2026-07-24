@@ -967,55 +967,6 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 		}
 	);
 
-	// --- Step 10b: Upstash (one-shot waitlist import) ----------------------------
-	let upstashConfigured = false;
-	await step(
-		'Waitlist import (Upstash Redis)',
-		() => prodHas('UPSTASH_REDIS_REST_URL') && prodHas('UPSTASH_REDIS_REST_TOKEN'),
-		async () => {
-			describe([
-				'The pre-Convex marketing site collected signups in an Upstash Redis',
-				'sorted set (key `waitlist`, member = email, score = signup time).',
-				'src/lib/convex/waitlistImport.ts brings those across and sends each of',
-				'them the confirmation they never got, so production needs the Redis',
-				'credentials until that has run.',
-				'',
-				`  ${bold('1)')} ${cyan('https://console.upstash.com')} -> your database -> REST API`,
-				`  ${bold('2)')} Copy ${cyan('UPSTASH_REDIS_REST_URL')} and ${cyan('UPSTASH_REDIS_REST_TOKEN')}`,
-				'',
-				dim('These are read by nothing else. Once the import has run, unset them'),
-				dim('(the last step of this script prints the commands) - there is no reason'),
-				dim('for a live deployment to keep credentials to a database it never'),
-				dim('touches again. Skippable if the import is already done or the database'),
-				dim('is already gone.')
-			]);
-			await pressEnterToOpen(rl, 'https://console.upstash.com', 'Open the Upstash console');
-			const url = await ask(
-				rl,
-				'UPSTASH_REDIS_REST_URL (or Enter to skip)',
-				devLocal('UPSTASH_REDIS_REST_URL') ?? undefined
-			);
-			if (!url) {
-				console.log(dim('  Skipped. The waitlist import will refuse to run until these are set.'));
-				return;
-			}
-			const token =
-				(await askSecret(rl, 'UPSTASH_REDIS_REST_TOKEN')) || devLocal('UPSTASH_REDIS_REST_TOKEN');
-			rl = createPrompt();
-			if (!token) {
-				console.log(dim('  No token given; skipping. Both values are needed together.'));
-				return;
-			}
-			setConvexEnv(
-				projectRoot,
-				{ UPSTASH_REDIS_REST_URL: url, UPSTASH_REDIS_REST_TOKEN: token },
-				CONVEX_PROD
-			);
-			upstashConfigured = true;
-			console.log(green('  Stored the Upstash credentials on production.'));
-		}
-	);
-
 	// --- Step 11: in-app feedback -------------------------------------------------
 	await step(
 		'In-app feedback notifications (Discord)',
@@ -1188,27 +1139,6 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 	];
 	for (const [label, text] of checklist) {
 		console.log(`  ${bold(label.padEnd(11))} ${text}`);
-	}
-
-	if (upstashConfigured || prodHas('UPSTASH_REDIS_REST_URL')) {
-		const run = (fn, argsJson) =>
-			`  ${cyan(`pnpm --filter @super-review/web exec convex run ${fn} '${argsJson}' --prod`)}`;
-		console.log(`\n${bold('Waitlist import')} ${dim('(one-shot, dry run each phase first)')}`);
-		console.log(run('waitlistImport:importFromUpstash', '{"dryRun":true}'));
-		console.log(run('waitlistImport:importFromUpstash', '{}'));
-		console.log(run('waitlistImport:sendImportedConfirmations', '{"dryRun":true}'));
-		console.log(run('waitlistImport:sendImportedConfirmations', '{}'));
-		console.log(
-			dim('  Check waitlistImport:importStatus between the two: the import is\n') +
-				dim('  idempotent and inspectable, the mail-out is not undoable.')
-		);
-		console.log('  Then drop the credentials it needed:');
-		console.log(
-			`  ${cyan('pnpm --filter @super-review/web exec convex env remove --prod UPSTASH_REDIS_REST_URL')}`
-		);
-		console.log(
-			`  ${cyan('pnpm --filter @super-review/web exec convex env remove --prod UPSTASH_REDIS_REST_TOKEN')}`
-		);
 	}
 
 	const embeddedKids = Object.keys(readDesktopPublicKeys(projectRoot));

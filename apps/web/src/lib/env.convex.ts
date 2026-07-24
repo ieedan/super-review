@@ -100,16 +100,6 @@ export const env = {
 	get LOOPS_REFERRAL_REWARD_TRANSACTIONAL_ID() {
 		return str('LOOPS_REFERRAL_REWARD_TRANSACTIONAL_ID');
 	},
-	// Upstash Redis REST credentials, read only by the one-shot waitlist import
-	// (convex/waitlistImport.ts) that pulls the pre-Convex list across. Nothing
-	// else touches Redis, so these can be unset (and the database deleted) once
-	// the import has run.
-	get UPSTASH_REDIS_REST_URL() {
-		return str('UPSTASH_REDIS_REST_URL');
-	},
-	get UPSTASH_REDIS_REST_TOKEN() {
-		return str('UPSTASH_REDIS_REST_TOKEN');
-	},
 	// Stripe coupon applied at checkout for members who earned the referral
 	// reward. Stripe is the source of truth for the actual percentage; the
 	// REFERRAL_DISCOUNT_PERCENT constant only drives what we advertise, so the
