@@ -41,11 +41,21 @@ export default defineSchema({
 		createdAt: v.number(),
 		// Set when a beta code has been minted for this address, so the invite
 		// sweep can skip them. Doubles as "have we contacted this person yet".
-		invitedAt: v.optional(v.number())
+		invitedAt: v.optional(v.number()),
+		// Set on rows carried over from the pre-Convex Upstash waitlist by
+		// `waitlistImport`. Absent means they signed up here, on this list.
+		importedFrom: v.optional(v.literal('upstash')),
+		// When the "you're on the list" email went out. Only imported rows carry
+		// it: the import brings people over and mails them in two separate runs,
+		// and this is what stops the mailing run from reaching anyone twice.
+		// Rows created by the signup form email immediately and leave it unset.
+		confirmationSentAt: v.optional(v.number())
 	})
 		.index('by_email', ['email'])
 		// Invite in signup order, and find the not-yet-invited without a full scan.
-		.index('by_invitedAt_createdAt', ['invitedAt', 'createdAt']),
+		.index('by_invitedAt_createdAt', ['invitedAt', 'createdAt'])
+		// Imported rows still owed a confirmation email, without a full scan.
+		.index('by_importedFrom_confirmationSentAt', ['importedFrom', 'confirmationSentAt']),
 
 	// Single-use invitations.
 	//

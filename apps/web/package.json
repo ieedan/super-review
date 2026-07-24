@@ -15,6 +15,7 @@
 		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"test": "vitest run",
 		"setup:dev": "node scripts/setup-dev.mjs",
+		"setup:prod": "node scripts/setup-prod.mjs",
 		"reset:db": "dotenvx run -f .env.local -- node scripts/reset-db.mjs",
 		"stripe:listen": "node scripts/stripe-listen.mjs"
 	},

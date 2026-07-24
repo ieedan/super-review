@@ -103,18 +103,24 @@ performance story that renders it at scale.
 
 ## Commands (run from repo root)
 
-| Task                         | Command            |
-| ---------------------------- | ------------------ |
-| Run desktop + web in dev     | `pnpm dev`         |
-| Desktop only                 | `pnpm dev:desktop` |
-| Web only                     | `pnpm dev:web`     |
-| Build the desktop app        | `pnpm build`       |
-| Build the CLI for publishing | `pnpm build:cli`   |
-| Run Storybook                | `pnpm storybook`   |
-| Typecheck all packages       | `pnpm typecheck`   |
-| Test all packages            | `pnpm test`        |
-| Lint (prettier + eslint)     | `pnpm lint`        |
-| Format                       | `pnpm format`      |
+| Task                          | Command            |
+| ----------------------------- | ------------------ |
+| Run desktop + web in dev      | `pnpm dev`         |
+| Desktop only                  | `pnpm dev:desktop` |
+| Web only                      | `pnpm dev:web`     |
+| Configure the web app for dev | `pnpm setup:dev`   |
+| Configure it for deploying    | `pnpm setup:prod`  |
+| Build the desktop app         | `pnpm build`       |
+| Build the CLI for publishing  | `pnpm build:cli`   |
+| Run Storybook                 | `pnpm storybook`   |
+| Typecheck all packages        | `pnpm typecheck`   |
+| Test all packages             | `pnpm test`        |
+| Lint (prettier + eslint)      | `pnpm lint`        |
+| Format                        | `pnpm format`      |
+
+`setup:dev` and `setup:prod` are interactive and resumable; both live in
+`apps/web/scripts/` and are documented in
+[`apps/web/README.md`](apps/web/README.md).
 
 Tests use **vitest**. Browser tests live in `*.browser.test.ts` and run against
 real Chromium via `@vitest/browser` (Playwright); other `*.test.ts` run in Node.

@@ -8,11 +8,11 @@ in `src/lib/convex/`.
 
 ## First-time dev setup
 
-```sh
-cd apps/web
+From the repo root:
 
+```sh
 # 1. Create your Convex dev project (writes PUBLIC_CONVEX_URL into .env.local)
-pnpm convex dev --once
+pnpm --filter @super-review/web exec convex dev --once
 
 # 2. Configure secrets, GitHub OAuth, Stripe, and the license keypair.
 #    Interactive, resumable, and it prints exactly what to do at each step.
@@ -40,6 +40,62 @@ SUPER_REVIEW_API_URL=http://localhost:5173 pnpm dev:desktop
 ```sh
 pnpm --filter @super-review/web build
 ```
+
+## Deploying
+
+From the repo root:
+
+```sh
+pnpm setup:prod
+```
+
+`pnpm setup:prod` is the production counterpart to `setup:dev`. Same shape
+(interactive, resumable, `--only <text>` to redo one thing), but it writes to
+the three places a real deployment reads from instead of your dev deployment
+and `.env.local`:
+
+| Target                      | Set with                            | Holds                                                                    |
+| --------------------------- | ----------------------------------- | ------------------------------------------------------------------------ |
+| Convex **production** env   | `convex env set --prod`             | `SITE_URL`, auth, live Stripe, Loops, Discord, `BETTER_AUTH_SECRET`, ... |
+| Convex **preview** defaults | `convex env default --type preview` | the same set, copied into each branch's preview deployment as it is made |
+| **Vercel** project env      | `vercel env add <name> <target>`    | `CONVEX_DEPLOY_KEY`, `FUNCTION_SECRET`, the license signing key, ...     |
+
+Preview deployments are created on demand by CI and have no stable name, so
+project-level **defaults** are the only way to configure them; that is what the
+middle row is. Pass `--skip-preview` to configure production only.
+
+The script also prints the Vercel project settings the build depends on, and
+they are easy to get wrong in a monorepo:
+
+| Setting                    | Value                                      |
+| -------------------------- | ------------------------------------------ |
+| Root Directory             | `apps/web`                                 |
+| Include files outside root | **enabled** (`@super-review/ui` + `/core`) |
+| Build Command              | `pnpm vercel:deploy`                       |
+| Install Command            | `pnpm install`                             |
+
+`pnpm vercel:deploy` is `convex deploy --cmd 'pnpm build'`, so the **Vercel
+build is what pushes the Convex functions** using `CONVEX_DEPLOY_KEY`, and it
+injects `PUBLIC_CONVEX_URL` into the build. There is no separate
+`convex deploy` step to remember, and no need to set `PUBLIC_CONVEX_URL` on
+Vercel yourself.
+
+Three things the script cannot do for you, and reminds you about at the end:
+
+- **The domain.** `SITE_URL` is better-auth's `baseURL`, so it must match the
+  origin users actually arrive on, exactly. So must the GitHub OAuth app's
+  callback URL (`<SITE_URL>/api/auth/callback/github`).
+- **The desktop app.** Production gets its own Ed25519 keypair, and the public
+  half is written into
+  [`public-key.ts`](../desktop/src/main/license/public-key.ts). A shipped build
+  can only verify tokens from a deployment whose key it embeds, so commit that
+  file and cut a release from it before activating against production.
+- **Waitlist mode.** A row in the `settings` table, not an env var, so flip it
+  with `convex run settings:setWaitlistMode '{"enabled":true}' --prod`.
+
+Reference: the convex-app template's
+[`DEPLOY.md`](https://github.com/ieedan/convex-app/blob/main/.agents/skills/codebase/references/DEPLOY.md),
+which this follows.
 
 ## How downloads work
 
@@ -119,6 +175,42 @@ prices on.
 Checkout routes and the Stripe session hooks (`createLifetimeCheckout`,
 `getCheckoutSessionParams`) re-check `hasBetaAccess`, so a deep link cannot
 open payment for a non-invited account.
+
+### Importing the old (Upstash) waitlist
+
+The pre-Convex marketing site collected signups in an Upstash Redis sorted set
+(key `waitlist`, member = email, score = signup time).
+[`waitlistImport.ts`](src/lib/convex/waitlistImport.ts) brings those across and
+sends each of them the confirmation email they never got.
+
+Set the credentials on the Convex deployment first:
+
+```sh
+pnpm --filter @super-review/web exec convex env set UPSTASH_REDIS_REST_URL '...'
+```
+
+Then run the two phases, each with a dry run first:
+
+```sh
+pnpm --filter @super-review/web exec convex run waitlistImport:importFromUpstash '{"dryRun":true}'
+pnpm --filter @super-review/web exec convex run waitlistImport:importFromUpstash '{}'
+pnpm --filter @super-review/web exec convex run waitlistImport:sendImportedConfirmations '{"dryRun":true}'
+pnpm --filter @super-review/web exec convex run waitlistImport:sendImportedConfirmations '{}'
+```
+
+Importing and mailing are separate commands on purpose: the import is
+idempotent and inspectable, the mail-out is not undoable. Check
+`waitlistImport:importStatus` between the two.
+
+Rows keep their original signup time, so `invites:inviteNext` still goes out in
+the order people actually joined, and are tagged `importedFrom: "upstash"`.
+Both phases are safe to re-run: the import skips addresses already on the list,
+and the mail-out skips rows that already have `confirmationSentAt`. Sends are
+spaced 250ms apart (Loops allows 10/s) and one pass chains into the next until
+the list is drained, so a single command handles any size of list.
+
+If the Upstash database is already gone, dump the set by hand and feed the rows
+straight in with `waitlistImport:importRows`.
 
 ### Inviting people
 

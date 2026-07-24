@@ -18,393 +18,44 @@
 //
 // Prerequisite: run `pnpm convex dev --once` first so .env.local exists with a
 // PUBLIC_CONVEX_URL. Run this from apps/web with `pnpm setup:dev`.
-import { execSync } from 'node:child_process';
-import { generateKeyPairSync, randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import * as readline from 'node:readline/promises';
-import { stdin as input, stdout as output } from 'node:process';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-// --- small terminal helpers --------------------------------------------------
-
-const ESC = '\x1b[';
-const bold = (s) => `${ESC}1m${s}${ESC}0m`;
-const dim = (s) => `${ESC}2m${s}${ESC}0m`;
-const green = (s) => `${ESC}32m${s}${ESC}0m`;
-const cyan = (s) => `${ESC}36m${s}${ESC}0m`;
-
-function heading(title) {
-	console.log(`\n${bold(title)}`);
-}
-
-// Prints a multi-line description block for a complicated step so you know
-// exactly what to do before being prompted.
-function describe(lines) {
-	for (const line of lines) console.log(`  ${line}`);
-	console.log('');
-}
-
-function findProjectRoot(start) {
-	let dir = start;
-	while (dir !== dirname(dir)) {
-		if (existsSync(join(dir, 'convex.json')) && existsSync(join(dir, 'package.json'))) {
-			return dir;
-		}
-		dir = dirname(dir);
-	}
-	throw new Error('Could not find project root (expected convex.json and package.json).');
-}
-
-function generateSecret() {
-	return randomBytes(32).toString('base64');
-}
-
-// Ed25519 keypair for signing/verifying license tokens. Private key (base64
-// PKCS#8) stays in the SvelteKit env; public key (SPKI PEM) is embedded in the
-// desktop app, keyed by the kid.
-function generateLicenseKeypair() {
-	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-	return {
-		kid: `lk_${randomBytes(4).toString('hex')}`,
-		privateKeyB64: privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
-		publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString().trim()
-	};
-}
-
-function createPrompt() {
-	return readline.createInterface({ input, output });
-}
-
-async function ask(rl, question, defaultValue) {
-	const suffix = defaultValue ? ` (${defaultValue})` : '';
-	const answer = (await rl.question(`${question}${suffix}: `)).trim();
-	return answer || defaultValue || '';
-}
-
-function askSecretRaw(question) {
-	return new Promise((resolvePromise, reject) => {
-		output.write(`${question}: `);
-		const wasRaw = input.isRaw ?? false;
-		input.setRawMode(true);
-		input.resume();
-		input.setEncoding('utf8');
-		let value = '';
-		const cleanup = () => {
-			input.setRawMode(wasRaw);
-			input.off('data', onData);
-		};
-		const onData = (chunk) => {
-			for (const char of chunk) {
-				// Enter / Ctrl-D: submit.
-				if (char === '\r' || char === '\n' || char === '\u0004') {
-					cleanup();
-					output.write('\n');
-					resolvePromise(value);
-					return;
-				}
-				// Ctrl-C: cancel.
-				if (char === '\u0003') {
-					cleanup();
-					output.write('\n');
-					reject(new Error('Setup cancelled.'));
-					return;
-				}
-				// Backspace / Delete.
-				if (char === '\u007f' || char === '\b') {
-					if (value.length > 0) {
-						value = value.slice(0, -1);
-						output.write('\b \b');
-					}
-					continue;
-				}
-				value += char;
-				output.write('*');
-			}
-		};
-		input.on('data', onData);
-	});
-}
-
-async function askSecret(rl, question) {
-	rl.close();
-	await new Promise((r) => setImmediate(r));
-	const value = (await askSecretRaw(question)).trim();
-	return value;
-}
-
-function openUrl(url) {
-	const command =
-		process.platform === 'darwin'
-			? `open "${url}"`
-			: process.platform === 'win32'
-				? `start "" "${url}"`
-				: `xdg-open "${url}"`;
-	try {
-		execSync(command, { stdio: 'ignore' });
-	} catch {
-		console.log(dim(`  (could not open a browser; visit: ${url})`));
-	}
-}
-
-async function pressEnterToOpen(rl, url, label) {
-	const answer = (await rl.question(`${label} ${dim('(Enter to open, s to skip)')}: `))
-		.trim()
-		.toLowerCase();
-	if (answer !== 's' && answer !== 'skip') openUrl(url);
-}
-
-// --- env file + convex env io ------------------------------------------------
-
-function readEnvValue(envText, key) {
-	const match = envText.match(new RegExp(`^${key}=(.*)$`, 'm'));
-	if (!match) return null;
-	return match[1].replace(/^["']|["']$/g, '').trim();
-}
-
-function upsertEnvLocal(projectRoot, key, value) {
-	const envPath = join(projectRoot, '.env.local');
-	const line = `${key}="${value}"`;
-	const existing = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
-	const pattern = new RegExp(`^${key}=.*$`, 'm');
-	const updated = existing
-		? pattern.test(existing)
-			? existing.replace(pattern, line)
-			: `${existing.replace(/\n?$/, '\n')}${line}\n`
-		: `${line}\n`;
-	writeFileSync(envPath, updated);
-}
-
-function setConvexEnv(projectRoot, variables) {
-	const entries = Object.entries(variables).filter(([, v]) => v !== undefined && v !== '');
-	if (entries.length === 0) return;
-	const tempDir = mkdtempSync(join(tmpdir(), 'convex-setup-'));
-	const envFile = join(tempDir, 'convex.env');
-	try {
-		writeFileSync(envFile, `${entries.map(([k, v]) => `${k}=${v}`).join('\n')}\n`);
-		execSync(`pnpm convex env set --from-file "${envFile}" --force`, {
-			cwd: projectRoot,
-			stdio: 'inherit'
-		});
-	} finally {
-		rmSync(tempDir, { recursive: true, force: true });
-	}
-}
-
-// Names of the variables already set on the Convex dev deployment. Used to
-// detect which steps are already done (resume). Returns an empty set if the
-// deployment can't be reached yet.
-function listConvexEnvNames(projectRoot) {
-	try {
-		const out = execSync('pnpm convex env list --names-only', {
-			cwd: projectRoot,
-			stdio: ['ignore', 'pipe', 'ignore']
-		}).toString();
-		return new Set(
-			out
-				.split('\n')
-				.map((l) => l.trim())
-				.filter(Boolean)
-		);
-	} catch {
-		return new Set();
-	}
-}
-
-// Write the generated public key into the desktop app's embedded key map so
-// the desktop verifies tokens this deployment signs.
-function writeDesktopPublicKey(projectRoot, kid, publicKeyPem) {
-	const target = resolve(projectRoot, '../desktop/src/main/license/public-key.ts');
-	if (!existsSync(target)) {
-		console.log(`\nCould not find ${target}; paste this public key there manually:`);
-		console.log(publicKeyPem);
-		return;
-	}
-	const content = `// Ed25519 public keys used to verify license tokens, keyed by \`kid\`. These are
-// compiled into out/main and protected at rest by asar integrity + the OS code
-// signature (see electron-builder.yml + scripts/after-pack.cjs). The private
-// key lives ONLY in the web app's server env.
-//
-// To rotate: generate a new pair (apps/web/scripts/generate-license-keys.mjs),
-// add the new public key here under its kid, deploy, then retire the old kid.
-//
-// Generated by apps/web/scripts/setup-dev.mjs.
-export const LICENSE_PUBLIC_KEYS: Record<string, string> = {
-	'${kid}': \`${publicKeyPem}\`
-};
-`;
-	writeFileSync(target, content);
-	console.log(
-		green(`  Wrote the license public key (${kid}) to apps/desktop/src/main/license/public-key.ts`)
-	);
-}
-
-function desktopKeyHasKid(projectRoot, kid) {
-	const target = resolve(projectRoot, '../desktop/src/main/license/public-key.ts');
-	if (!existsSync(target)) return false;
-	return readFileSync(target, 'utf8').includes(`'${kid}'`);
-}
-
-// Repo the desktop releases are published to. Mirrors REPO in src/lib/releases.ts
-// and the `publish` block in apps/desktop/electron-builder.yml.
-const RELEASES_REPO = 'ieedan/super-review';
-
-// Deep link straight to the API key page rather than the Loops home page.
-const LOOPS_API_SETTINGS_URL = 'https://app.loops.so/settings?page=api';
-
-// Keep in step with REFERRAL_DISCOUNT_PERCENT in src/lib/convex/invites.ts and
-// with the actual Stripe coupon; this only drives the setup instructions.
-const REFERRAL_DISCOUNT_PERCENT = 15;
-
-// The transactional emails the beta flow sends, one Loops template each. Keep
-// `variables` in step with the dataVariables in src/lib/convex/email.ts: a
-// template referencing a variable we don't send renders it empty.
-// Variables are referenced in LMX as {data.x}, not {x}.
-const LOOPS_TEMPLATES = [
-	{
-		label: 'Waitlist confirmation',
-		envVar: 'LOOPS_WAITLIST_TRANSACTIONAL_ID',
-		purpose: 'sent when someone joins the waitlist',
-		variables: '{data.waitlistUrl}'
-	},
-	{
-		label: 'Invite code',
-		envVar: 'LOOPS_INVITE_TRANSACTIONAL_ID',
-		purpose: 'sent when you invite someone into the beta',
-		variables: '{data.code}, {data.redeemUrl}'
-	},
-	{
-		label: 'Guest invite from friend',
-		envVar: 'LOOPS_GUEST_INVITE_TRANSACTIONAL_ID',
-		purpose: 'sent when a member emails one of their guest codes to a friend',
-		variables: '{data.code}, {data.redeemUrl}, {data.inviterName}'
-	},
-	{
-		label: 'Welcome (with guest invites)',
-		envVar: 'LOOPS_WELCOME_TRANSACTIONAL_ID',
-		purpose: 'sent when someone redeems a BETA code and gets 3 invites',
-		variables: '{data.guestCodeCount}, {data.dashboardUrl}'
-	},
-	{
-		// Separate template because LMX has no conditionals: a guest redeemer has
-		// no codes, so the "invite your friends" section has to be absent rather
-		// than empty.
-		label: 'Welcome (no guest invites)',
-		envVar: 'LOOPS_WELCOME_GUEST_TRANSACTIONAL_ID',
-		purpose: 'sent when someone redeems a GUEST code and gets none',
-		variables: '{data.dashboardUrl}'
-	},
-	{
-		label: 'Referral reward',
-		envVar: 'LOOPS_REFERRAL_REWARD_TRANSACTIONAL_ID',
-		purpose: "sent when all of a member's guest codes have been redeemed",
-		variables: '{data.percentOff}, {data.pricingUrl}'
-	}
-];
-
-// Confirm a releases token can actually read the repo's releases. Never throws:
-// a bad token shouldn't abort setup, it should just tell you what's wrong.
-async function verifyReleasesToken(token) {
-	try {
-		const res = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, {
-			headers: {
-				authorization: `Bearer ${token}`,
-				accept: 'application/vnd.github+json',
-				'x-github-api-version': '2022-11-28'
-			}
-		});
-		if (res.ok) {
-			const release = await res.json();
-			console.log(green(`  Verified: can read releases (latest is ${release.tag_name}).`));
-			return;
-		}
-		if (res.status === 404) {
-			console.log(
-				dim(
-					`  Warning: got 404 for ${RELEASES_REPO}. Either the token doesn't grant access\n` +
-						'  to that repo (check Contents: Read-only), or no release is published yet.'
-				)
-			);
-			return;
-		}
-		if (res.status === 401) {
-			console.log(dim('  Warning: GitHub rejected the token (401). It may be mistyped.'));
-			return;
-		}
-		console.log(dim(`  Warning: GitHub returned ${res.status} when checking the token.`));
-	} catch {
-		console.log(dim('  Could not reach GitHub to verify the token; skipping the check.'));
-	}
-}
-
-// Checks the Loops key against the real endpoint now, rather than letting a
-// mistyped key surface later as invites that silently never arrive.
-async function verifyLoopsKey(key) {
-	try {
-		const res = await fetch('https://app.loops.so/api/v1/api-key', {
-			headers: { authorization: `Bearer ${key}`, accept: 'application/json' }
-		});
-		if (res.ok) {
-			const body = await res.json().catch(() => ({}));
-			console.log(
-				green(`  Verified: Loops key is valid${body.teamName ? ` (${body.teamName})` : ''}.`)
-			);
-			return;
-		}
-		if (res.status === 401) {
-			console.log(dim('  Warning: Loops rejected the key (401). It may be mistyped.'));
-			return;
-		}
-		console.log(dim(`  Warning: Loops returned ${res.status} when checking the key.`));
-	} catch {
-		console.log(dim('  Could not reach Loops to verify the key; skipping the check.'));
-	}
-}
-
-// Confirms the bot token is valid by asking Discord who it belongs to, and
-// returns the bot's id (which for a bot user IS the application id, so the
-// invite URL can be built without asking for a client id separately).
-//
-// A valid token does NOT prove the bot is in your server or can see the target
-// channel; a wrong invite shows up as a 403 in the Convex logs on the first
-// report.
-async function verifyDiscordBot(token) {
-	try {
-		const res = await fetch('https://discord.com/api/v10/users/@me', {
-			headers: { authorization: `Bot ${token}` }
-		});
-		if (res.ok) {
-			const me = await res.json().catch(() => ({}));
-			console.log(
-				green(`  Verified: bot token is valid${me.username ? ` (${me.username})` : ''}.`)
-			);
-			return me.id ?? null;
-		}
-		if (res.status === 401) {
-			console.log(dim('  Warning: Discord rejected the bot token (401). It may be mistyped.'));
-			return null;
-		}
-		console.log(dim(`  Warning: Discord returned ${res.status} when checking the bot token.`));
-		return null;
-	} catch {
-		console.log(dim('  Could not reach Discord to verify the bot token; skipping the check.'));
-		return null;
-	}
-}
-
-// Everything the bot needs and nothing more: VIEW_CHANNEL (1<<10),
-// SEND_MESSAGES (1<<11), EMBED_LINKS (1<<14), CREATE_PUBLIC_THREADS (1<<35).
-// Note 2**35 rather than 1<<35: `<<` is a 32-bit operator in JS, so 1<<35
-// silently wraps to 8. EMBED_LINKS is in there because without it a bot's rich
-// embed is stripped to an empty message.
-const FEEDBACK_BOT_PERMISSIONS = String((1 << 10) + (1 << 11) + (1 << 14) + 2 ** 35);
-
-function defaultLaunchCutoff() {
-	const d = new Date();
-	d.setDate(d.getDate() + 30);
-	return d.toISOString().slice(0, 10);
-}
+import {
+	CONVEX_DEV,
+	FEEDBACK_BOT_PERMISSIONS,
+	LOOPS_API_SETTINGS_URL,
+	LOOPS_TEMPLATES,
+	REFERRAL_DISCOUNT_PERCENT,
+	RELEASES_REPO,
+	STRIPE_WEBHOOK_EVENTS,
+	ask,
+	askSecret,
+	bold,
+	createPrompt,
+	createStepRunner,
+	cyan,
+	defaultLaunchCutoff,
+	describe,
+	desktopKeyHasKid,
+	dim,
+	findProjectRoot,
+	generateLicenseKeypair,
+	generateSecret,
+	green,
+	isRealSecret,
+	listConvexEnvNames,
+	parseSetupArgs,
+	pressEnterToOpen,
+	readDesktopPublicKeys,
+	readEnvValue,
+	setConvexEnv,
+	upsertEnvLocal,
+	verifyDiscordBot,
+	verifyLoopsKey,
+	verifyReleasesToken,
+	writeDesktopPublicKeys
+} from './setup-shared.mjs';
 
 // --- main --------------------------------------------------------------------
 
@@ -430,20 +81,8 @@ Resumable by default: re-running skips steps whose output already exists
 Prerequisite: run \`pnpm convex dev --once\` first.`);
 		return;
 	}
-	const fresh = args.includes('--fresh') || args.includes('--no-resume');
-	// `--only stripe` or `--only=stripe`
-	const onlyIndex = args.findIndex((a) => a === '--only' || a.startsWith('--only='));
-	let only = null;
-	if (onlyIndex !== -1) {
-		const arg = args[onlyIndex];
-		only = (arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[onlyIndex + 1] || '')
-			.trim()
-			.toLowerCase();
-		if (!only) {
-			console.error('\n--only needs a value, e.g. `--only stripe`.');
-			process.exit(1);
-		}
-	}
+	// `--fresh`, and `--only stripe` / `--only=stripe`
+	const { fresh, only } = parseSetupArgs(args);
 
 	const projectRoot = findProjectRoot(dirname(fileURLToPath(import.meta.url)));
 	const envLocalPath = join(projectRoot, '.env.local');
@@ -472,32 +111,11 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 
 	const localHas = (key) => readEnvValue(readFileSync(envLocalPath, 'utf8'), key) !== null;
 	const localValue = (key) => readEnvValue(readFileSync(envLocalPath, 'utf8'), key);
-	// A generated secret that's actually usable: long enough and not an empty or
-	// angle-bracket placeholder (e.g. "<random-32+>") copied in from .env.example.
-	const isRealSecret = (v) => !!v && v.length >= 16 && !v.includes('<') && !v.includes('>');
-	const convexNames = listConvexEnvNames(projectRoot);
+	const convexNames = listConvexEnvNames(projectRoot, CONVEX_DEV);
 	const convexHas = (key) => convexNames.has(key);
 	let rl = createPrompt();
 
-	// A step runs unless (not fresh) and it's already done. With --only, just the
-	// matching steps run and the "already configured" check is bypassed for them,
-	// so you can redo one step in isolation.
-	let onlyMatched = 0;
-	const step = async (title, isDone, run) => {
-		if (only) {
-			if (!title.toLowerCase().includes(only)) return;
-			onlyMatched++;
-			heading(title);
-			await run();
-			return;
-		}
-		if (!fresh && isDone()) {
-			console.log(`${green('  done')}  ${title} ${dim('(already configured, skipping)')}`);
-			return;
-		}
-		heading(title);
-		await run();
-	};
+	const { step, matched } = createStepRunner({ fresh, only });
 
 	// --- Step 1: app secrets --------------------------------------------------
 	await step(
@@ -545,7 +163,13 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 			const keys = generateLicenseKeypair();
 			upsertEnvLocal(projectRoot, 'ED25519_PRIVATE_KEY', keys.privateKeyB64);
 			upsertEnvLocal(projectRoot, 'ED25519_KID', keys.kid);
-			writeDesktopPublicKey(projectRoot, keys.kid, keys.publicKeyPem);
+			// Merge rather than replace: the production key set by `pnpm setup:prod`
+			// lives in the same map, and re-running dev setup must not evict it.
+			writeDesktopPublicKeys(
+				projectRoot,
+				{ ...readDesktopPublicKeys(projectRoot), [keys.kid]: keys.publicKeyPem },
+				'setup-dev.mjs'
+			);
 		}
 	);
 
@@ -689,12 +313,7 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 				`${bold('2) Create the webhook')} (Developers > Webhooks > Add endpoint):`,
 				`   Endpoint URL:  ${bold(webhookUrl)}`,
 				'   Select exactly these 6 events:',
-				`     ${cyan('•')} checkout.session.completed`,
-				`     ${cyan('•')} customer.subscription.created`,
-				`     ${cyan('•')} customer.subscription.updated`,
-				`     ${cyan('•')} customer.subscription.deleted`,
-				`     ${cyan('•')} charge.refunded`,
-				`     ${cyan('•')} charge.dispute.created`,
+				...STRIPE_WEBHOOK_EVENTS.map((e) => `     ${cyan('•')} ${e}`),
 				'   After creating it, reveal and copy the Signing secret (whsec_...).',
 				dim('   Stripe delivers straight to the Convex deployment, so nothing has to'),
 				dim('   be running locally and Stripe retries failed deliveries for 3 days.'),
@@ -922,6 +541,7 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 	rl.close();
 
 	// A typo in --only would otherwise look like a clean run that did nothing.
+	const onlyMatched = matched();
 	if (only && onlyMatched === 0) {
 		console.error(`\nNo step title matched "${only}", so nothing ran.`);
 		console.error(
