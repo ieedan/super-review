@@ -511,10 +511,11 @@ export interface PRReviewComment {
 	isResolved: boolean;
 	// True while this is a locally-created placeholder shown optimistically the
 	// instant the user hits submit, before the GitHub round-trip returns. It
-	// carries a temporary negative `id`, no `url`/`threadId`, and can't yet be
-	// edited/deleted/resolved, so the renderer hides those actions until the real
-	// comment replaces it (or it's rolled back on failure). Never set on a
-	// server-sourced comment.
+	// carries a temporary negative `id` (and no `url`/`threadId` yet). This is
+	// internal bookkeeping only: it renders identically to a real comment, and the
+	// store uses the flag purely to find this entry and reconcile it to the server
+	// comment on success (or roll it back on failure), and to carry it through a
+	// background refresh. Never set on a server-sourced comment.
 	optimistic?: boolean;
 }
 

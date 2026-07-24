@@ -853,9 +853,14 @@ function nextOptimisticCommentId(): number {
 }
 
 // Build the placeholder comment shown the instant a review comment is submitted,
-// before GitHub responds. It stands in for the real comment (same body, author,
-// anchor) but is flagged `optimistic` so the renderer skips actions that need a
-// real id/threadId, and carries a temporary negative id we reconcile against.
+// before GitHub responds. It is meant to be visually indistinguishable from the
+// real comment (same body, author, avatar, "just now" timestamp, and the
+// viewer's own edit/delete affordances), so the user never sees that anything
+// async is happening. The `optimistic` flag and temporary negative id are purely
+// internal bookkeeping: they let the store find this exact entry to reconcile
+// against the server comment (or roll back on failure), and let a background
+// refresh carry it forward instead of dropping it. Nothing in the UI branches
+// on them.
 function makeOptimisticPRComment(input: {
 	prNumber: number;
 	path: string;
@@ -882,7 +887,10 @@ function makeOptimisticPRComment(input: {
 		isOutdated: false,
 		side: input.side,
 		inReplyTo: input.replyTo,
-		canDelete: false,
+		// The viewer authored it, so it shows the same edit/delete controls a real
+		// own-comment does. Acting on it in the sub-second window before the server
+		// responds is a rare edge; keeping it identical matters more.
+		canDelete: true,
 		isResolved: false,
 		optimistic: true
 	};
