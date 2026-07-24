@@ -9,7 +9,7 @@ const config = {
 	kit: {
 		// Vercel adapter: the marketing pages still prerender to static HTML (see
 		// +layout.ts), but the waitlist endpoint (/api/waitlist) needs a serverless
-		// function to write to Upstash, which adapter-static can't host.
+		// function to write to Convex, which adapter-static can't host.
 		adapter: adapter(),
 		alias: { '@super-review/ui': '../../packages/ui/src' }
 	}
