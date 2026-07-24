@@ -1,0 +1,21 @@
+{
+	"branch": "feat/recurring",
+	"tasks": [
+		{
+			"title": "Add a cadence to the Expense model",
+			"notes": "Extend `src/lib/types.ts` so an expense can repeat: add an optional `recurrence` of `'weekly' | 'monthly'` plus the anchor date it counts from. A one-off expense leaves it undefined. Keep everything in integer cents as usual."
+		},
+		{
+			"title": "Materialize occurrences up to today",
+			"notes": "In `src/lib/store.svelte.ts`, expand a recurring template into concrete dated expenses from its anchor up to the current date, so balances and the list include every occurrence that has come due. Use date-fns (already a dependency) rather than hand-rolled date math."
+		},
+		{
+			"title": "Show a Recurring badge in the expense list",
+			"notes": "In `src/lib/components/ExpenseList.svelte`, mark expenses that came from a recurring template with a small badge, and show the cadence (weekly / monthly) so a materialized occurrence is distinguishable from a one-off."
+		},
+		{
+			"title": "Test the month-end and DST boundaries",
+			"notes": "Add `tests/recurring.test.ts`. Cover the awkward cases: a monthly expense anchored on the 31st landing in February, and a weekly expense crossing a daylight-saving change, so occurrences do not drift by a day."
+		}
+	]
+}

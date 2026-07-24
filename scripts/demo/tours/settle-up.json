@@ -1,0 +1,75 @@
+{
+	"name": "Settle up",
+	"description": "Turn a group's balances into the shortest list of payments that clears them, plus shares/percent splits. Read the money model first, then the split strategies, then the settle-up algorithm, then the UI, then the tests.",
+	"commitTitle": "feat: settle up and weighted splits",
+	"harness": "claude-code",
+	"steps": [
+		{
+			"title": "The money model",
+			"body": "Start here. `types.ts` gains a `Transfer` (one payment that moves the group toward square) and widens `SplitKind` to the four strategies. `money.ts` gains `parseAmount`, the single place a typed amount becomes cents. Everything downstream is a function over these shapes.",
+			"files": ["src/lib/types.ts", "src/lib/money.ts"],
+			"callouts": [
+				{
+					"file": "src/lib/money.ts",
+					"startLine": 26,
+					"body": "`Math.trunc` here silently drops a third decimal: `parseAmount('1.005')` becomes 100 cents, not a rejected input. Worth deciding whether that should round or refuse."
+				}
+			]
+		},
+		{
+			"title": "Splitting by weight",
+			"body": "`split.ts` adds `exact`, `shares`, and `percent` alongside the existing equal split. `shares` and `percent` divide a total by weight. The contract for the whole file is that a Split's shares sum back to the total it divided.",
+			"files": ["src/lib/split.ts"],
+			"callouts": [
+				{
+					"file": "src/lib/split.ts",
+					"startLine": 45,
+					"body": "Each share rounds independently, so the parts can miss the total by a cent (three equal shares of 1000 give 333+333+333 = 999). Compare against how `equalSplit` hands out the remainder just above."
+				}
+			]
+		},
+		{
+			"title": "Settling up",
+			"body": "`settle.ts` is the heart of the feature: greedy matching pays the largest debt into the largest credit until everyone is square, in at most n-1 transfers. The invariant to hold in your head is that `totalMoved` must equal `totalOwed`: the money owed does not change just because it took a shorter route.",
+			"files": ["src/lib/settle.ts"],
+			"callouts": [
+				{
+					"file": "src/lib/settle.ts",
+					"startLine": 54,
+					"endLine": 55,
+					"body": "`owed` is already integer cents (the min of two integer balances), so this round-trip out to major units and back only reintroduces the float error the rest of the codebase is careful to avoid. `const amount = owed` would do."
+				}
+			]
+		},
+		{
+			"title": "Wiring it into the UI",
+			"body": "The store gains a `transfers` derived (settleUp over the live balances) and a `settle` action that records a payment as an ordinary expense, so the list recomputes itself. `SettleUpSheet` renders the payments, the balance card grows a Settle up button, and the expense form exposes the new split kinds.",
+			"files": [
+				"src/lib/store.svelte.ts",
+				"src/lib/components/SettleUpSheet.svelte",
+				"src/lib/components/BalanceCard.svelte",
+				"src/lib/components/ExpenseForm.svelte",
+				"src/routes/groups/[id]/+page.svelte"
+			],
+			"callouts": [
+				{
+					"file": "src/lib/components/SettleUpSheet.svelte",
+					"startLine": 29,
+					"body": "This `{#each}` has no key. The transfer list is fully recomputed on every settle, so an unkeyed each will reuse the wrong DOM rows. Key it by something stable like `from + to`."
+				}
+			]
+		},
+		{
+			"title": "Tests and release",
+			"body": "New `settle.test.ts` covers the algorithm (one payment for two people, at most n-1 transfers, every owed cent actually moves). The money and split specs grow cases for `parseAmount` and the weighted strategies. `package.json` adds `date-fns` and `zod`, the changeset describes the release, and the OG image is refreshed.",
+			"files": [
+				"tests/settle.test.ts",
+				"tests/split.test.ts",
+				"tests/money.test.ts",
+				"package.json",
+				"static/og.png",
+				".changeset/settle-up.md"
+			]
+		}
+	]
+}
