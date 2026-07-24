@@ -1,3 +1,7 @@
+// Keep first: sets the app name and (in dev) the userData directory, which has
+// to happen before any module that resolves a path off them is evaluated. See
+// app-identity.ts.
+import './app-identity.js';
 import { app, BrowserWindow, ipcMain, nativeImage, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,11 +44,6 @@ function focusMainWindow(): void {
 // before anything spawns. No-ops on Windows; harmless in dev (re-derives the
 // same PATH a terminal launch already has).
 fixPath();
-
-// Set before the app menu is built so macOS shows our name (not "Electron") in
-// the app menu and its About/Hide/Quit items. Matches electron-builder's
-// productName so dev and packaged builds read the same.
-app.setName('Super Review');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

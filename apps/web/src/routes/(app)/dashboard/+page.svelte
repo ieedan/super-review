@@ -210,16 +210,13 @@
 	// written back to the URL on every pick so the tab is linkable and survives a
 	// reload (the Stripe portal returns to ?tab=billing).
 	//
-	// This has to be local state rather than a $derived off page.url: shallow
-	// routing's replaceState rewrites the address bar and page.state but leaves
-	// page.url alone, so a derived tab would never move when one was picked.
-	const urlTab = $derived(tabFromUrl());
-	let activeTab = $state<SettingsTab>(tabFromUrl());
-	// Real navigations (reload, back/forward, a link into ?tab=billing) do change
-	// page.url, so follow it when the tab it names actually changes.
-	$effect(() => {
-		activeTab = urlTab;
-	});
+	// A writable $derived, because it has to move for two different reasons.
+	// Picking a tab assigns it directly: shallow routing's replaceState rewrites
+	// the address bar and page.state but leaves page.url alone, so a read-only
+	// derived would never move on a pick. Real navigations (reload, back/forward,
+	// a link into ?tab=billing) do change page.url, and the derived re-runs and
+	// takes over again.
+	let activeTab = $derived(tabFromUrl());
 
 	let mobileMenuOpen = $state(false);
 	let searchQuery = $state('');
