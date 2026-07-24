@@ -6,9 +6,11 @@
 	"private": true,
 	"license": "MIT",
 	"scripts": {
-		"dev": "pnpm run \"/^dev:(desktop|docs)$/\"",
+		"dev": "pnpm run \"/^dev:(desktop|web)$/\"",
 		"dev:desktop": "pnpm --filter @super-review/desktop dev",
-		"dev:docs": "pnpm --filter @super-review/docs dev",
+		"dev:web": "pnpm --filter @super-review/web dev",
+		"setup:dev": "pnpm --filter @super-review/web setup:dev",
+		"setup:prod": "pnpm --filter @super-review/web setup:prod",
 		"storybook": "pnpm --filter @super-review/storybook storybook",
 		"build": "pnpm --filter @super-review/desktop build",
 		"build:cli": "pnpm --filter ./packages/cli build",

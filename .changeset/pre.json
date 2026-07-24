@@ -1,0 +1,13 @@
+{
+	"mode": "pre",
+	"tag": "beta",
+	"initialVersions": {
+		"@super-review/desktop": "0.0.0",
+		"@super-review/web": "0.0.13",
+		"super-review": "0.0.8",
+		"@super-review/core": "0.2.2",
+		"@super-review/storybook": "0.0.12",
+		"@super-review/ui": "0.1.4"
+	},
+	"changesets": []
+}

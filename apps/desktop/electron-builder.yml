@@ -22,14 +22,33 @@ extraMetadata:
   main: out/main/index.js
 asar: true
 
+# Harden the packaged binary: flip Electron fuses (disable RunAsNode / NODE_
+# OPTIONS / --inspect, only load from asar, asar integrity on macOS). Runs
+# before signing. See scripts/after-pack.cjs.
+afterPack: scripts/after-pack.cjs
+
+# Custom URL scheme for the license activation deep link
+# (super-review://activate?code=...). electron-builder writes the macOS
+# CFBundleURLTypes and the Windows NSIS registry entries from this.
+protocols:
+  - name: Super Review
+    schemes:
+      - super-review
+
 # electron-builder otherwise computes this by scanning node_modules, which is
 # unreliable under pnpm's symlinked layout on a clean CI runner and fails with
 # "Cannot compute electron version from installed node modules". Pin it — keep
 # in sync with the `electron` devDependency in package.json.
 electronVersion: 33.4.11
 
-# Where `--publish` uploads artifacts and where electron-updater looks for
-# updates. The GitHub release tag must be `v${version}` (see PUBLISHING.md).
+# Where `--publish` uploads artifacts: the private GitHub release. The release
+# tag must be `v${version}` (see PUBLISHING.md).
+#
+# NOTE: installed apps do NOT read updates from here — the repo is private, so
+# electron-updater couldn't fetch its assets. The client overrides this feed at
+# runtime to the web app's generic proxy (apps/desktop/src/main/updater.ts →
+# setFeedURL → <site>/api/update), which serves these same assets with a
+# server-side token. This block only governs where the CI build uploads.
 publish:
   provider: github
   owner: ieedan

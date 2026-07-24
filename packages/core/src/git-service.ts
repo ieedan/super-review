@@ -1595,6 +1595,16 @@ async function countWorkingLines(
 	}
 }
 
+// Whether a working-tree path is untracked (present on disk, unknown to git).
+// `-z` keeps the raw path: without it git applies core.quotePath and mangles any
+// path with non-ASCII or special characters, so the comparison would miss.
+async function isUntrackedFile(git: SimpleGit, filePath: string): Promise<boolean> {
+	const out = await git
+		.raw(['ls-files', '-z', '--others', '--exclude-standard', '--', filePath])
+		.catch(() => '');
+	return out.split('\0').some((p) => p === filePath);
+}
+
 async function showFile(git: SimpleGit, ref: string, filePath: string): Promise<string> {
 	try {
 		return await git.show([`${ref}:${filePath}`]);
@@ -1826,6 +1836,18 @@ export async function getDiff(
 		additions = ns.additions;
 		deletions = ns.deletions;
 		isBinary = ns.binary;
+		// An untracked file is in neither HEAD nor the index, so `git diff` reports
+		// nothing for it and numstat comes back 0/0. Left alone, a brand new file is
+		// captured as a zero-line change even though every line of it is new. Count
+		// it from disk instead (the same fallback listChangedFiles uses) so the
+		// synthesized added-file patch below is backed by a truthful stat.
+		if (additions === 0 && deletions === 0 && (await isUntrackedFile(git, filePath))) {
+			const counted = await countWorkingLines(repoPath, filePath);
+			if (counted) {
+				additions = counted.additions;
+				isBinary = counted.binary;
+			}
+		}
 	} else if (refs.base && refs.head) {
 		// The patch, both file contents, and the numstat are independent reads —
 		// fetch them concurrently so a file's diff is one round-trip deep, not four.

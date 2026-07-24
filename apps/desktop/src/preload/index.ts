@@ -17,12 +17,14 @@ import type {
 	CommitInfo,
 	CommitFileSelection,
 	CommitResult,
+	ActivationStatus,
 	CreateBranchResult,
 	DeleteBranchResult,
 	DeviceFlowStart,
 	DeviceFlowStatus,
 	DiffContext,
 	DiffData,
+	LicenseState,
 	DiffLineContextMenuAction,
 	EditorKind,
 	FeedbackInput,
@@ -42,6 +44,7 @@ import type {
 	MentionableUser,
 	LocalOnlyBranch,
 	NewLocalCommentInput,
+	PrefsChange,
 	ManagedStash,
 	NewReviewCommentInput,
 	NpmPackageResult,
@@ -73,121 +76,172 @@ import type {
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
 	TerminalKind,
+	UpdateStatus,
 	UserPrefs
 } from '@shared/types.js';
+import { isLicenseAllowedChannel, LicenseGateError } from '@shared/license-ipc.js';
+
+// Live mirror of main-process unlock state. Seeded before the API is exposed and
+// kept in sync via license:changed + license status invokes so gated invokes
+// never hit main while locked (avoids Electron's "Error invoking remote
+// method..." wrapper).
+let unlocked = false;
+
+function applyLicenseState(state: LicenseState): void {
+	unlocked = state.state === 'licensed';
+}
+
+ipcRenderer.on('license:changed', (_e, state: LicenseState) => {
+	applyLicenseState(state);
+});
+
+function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+	if (!isLicenseAllowedChannel(channel) && !unlocked) {
+		return Promise.reject(new LicenseGateError());
+	}
+	const result = ipcRenderer.invoke(channel, ...args);
+	// Keep the unlock flag in lockstep with any license status the renderer
+	// fetches, so LicensedApp's first gated calls aren't soft-rejected while
+	// the fire-and-forget seed is still in flight.
+	if (channel === 'license:getStatus' || channel === 'license:recheck') {
+		return result.then((state) => {
+			applyLicenseState(state as LicenseState);
+			return state;
+		});
+	}
+	if (channel === 'license:pollActivation') {
+		return result.then((status) => {
+			const s = status as ActivationStatus;
+			if (s.state === 'success') applyLicenseState(s.license);
+			return status;
+		});
+	}
+	if (channel === 'license:signOut') {
+		return result.then((value) => {
+			unlocked = false;
+			return value;
+		});
+	}
+	return result;
+}
+
+// Fire-and-forget seed; license:* is always allowed. Until this lands, unlocked
+// stays false so any early gated invoke soft-rejects instead of racing main.
+void ipcRenderer.invoke('license:getStatus').then((state: LicenseState) => {
+	applyLicenseState(state);
+});
 
 const api: PreloadAPI = {
 	platform:
 		process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux',
+	license: {
+		getStatus: () => invoke('license:getStatus') as Promise<LicenseState>,
+		startActivation: () =>
+			invoke('license:startActivation') as Promise<{
+				userCode: string;
+				verificationUri: string;
+			}>,
+		pollActivation: () => invoke('license:pollActivation') as Promise<ActivationStatus>,
+		cancelActivation: () => invoke('license:cancelActivation') as Promise<void>,
+		openVerification: () => invoke('license:openVerification') as Promise<void>,
+		recheck: () => invoke('license:recheck') as Promise<LicenseState>,
+		signOut: () => invoke('license:signOut') as Promise<void>,
+		openPricing: () => invoke('license:openPricing') as Promise<void>,
+		openDashboard: () => invoke('license:openDashboard') as Promise<void>
+	},
+	updater: {
+		getVersion: () => invoke('updater:getVersion') as Promise<string>,
+		getStatus: () => invoke('updater:getStatus') as Promise<UpdateStatus>,
+		check: () => invoke('updater:check') as Promise<void>,
+		quitAndInstall: () => {
+			void invoke('updater:quitAndInstall');
+		}
+	},
 	repos: {
-		list: () => ipcRenderer.invoke('repos:list') as Promise<RepoInfo[]>,
-		openPicker: () => ipcRenderer.invoke('repos:openPicker') as Promise<RepoInfo | null>,
-		addByPath: (path) => ipcRenderer.invoke('repos:addByPath', path) as Promise<RepoInfo | null>,
-		openFolder: () => ipcRenderer.invoke('repos:openFolder') as Promise<RepoInfo[]>,
-		chooseDirectory: () => ipcRenderer.invoke('repos:chooseDirectory') as Promise<string | null>,
-		isGitRepo: (path) => ipcRenderer.invoke('repos:isGitRepo', path) as Promise<boolean>,
-		getCreateDefaults: () =>
-			ipcRenderer.invoke('repos:getCreateDefaults') as Promise<CreateRepoDefaults>,
+		list: () => invoke('repos:list') as Promise<RepoInfo[]>,
+		openPicker: () => invoke('repos:openPicker') as Promise<RepoInfo | null>,
+		addByPath: (path) => invoke('repos:addByPath', path) as Promise<RepoInfo | null>,
+		openFolder: () => invoke('repos:openFolder') as Promise<RepoInfo[]>,
+		chooseDirectory: () => invoke('repos:chooseDirectory') as Promise<string | null>,
+		isGitRepo: (path) => invoke('repos:isGitRepo', path) as Promise<boolean>,
+		getCreateDefaults: () => invoke('repos:getCreateDefaults') as Promise<CreateRepoDefaults>,
 		checkRemoteRepo: (name, accountId, owner) =>
-			ipcRenderer.invoke(
-				'repos:checkRemoteRepo',
-				name,
-				accountId,
-				owner
-			) as Promise<RemoteRepoRef | null>,
-		createRepo: (options) =>
-			ipcRenderer.invoke('repos:createRepo', options) as Promise<RepoInfo | null>,
-		publish: (repoId, options) =>
-			ipcRenderer.invoke('repos:publish', repoId, options) as Promise<RepoInfo>,
-		remove: (id, moveToTrash) =>
-			ipcRenderer.invoke('repos:remove', id, moveToTrash) as Promise<void>,
-		setActive: (id) => ipcRenderer.invoke('repos:setActive', id) as Promise<RepoInfo | null>,
-		getActive: () => ipcRenderer.invoke('repos:getActive') as Promise<RepoInfo | null>
+			invoke('repos:checkRemoteRepo', name, accountId, owner) as Promise<RemoteRepoRef | null>,
+		createRepo: (options) => invoke('repos:createRepo', options) as Promise<RepoInfo | null>,
+		publish: (repoId, options) => invoke('repos:publish', repoId, options) as Promise<RepoInfo>,
+		remove: (id, moveToTrash) => invoke('repos:remove', id, moveToTrash) as Promise<void>,
+		setActive: (id) => invoke('repos:setActive', id) as Promise<RepoInfo | null>,
+		getActive: () => invoke('repos:getActive') as Promise<RepoInfo | null>
 	},
 	git: {
-		listBranches: (repoId) =>
-			ipcRenderer.invoke('git:listBranches', repoId) as Promise<BranchInfo[]>,
+		listBranches: (repoId) => invoke('git:listBranches', repoId) as Promise<BranchInfo[]>,
 		listLocalOnlyBranches: (repoId) =>
-			ipcRenderer.invoke('git:listLocalOnlyBranches', repoId) as Promise<LocalOnlyBranch[]>,
-		getCurrentBranch: (repoId) =>
-			ipcRenderer.invoke('git:getCurrentBranch', repoId) as Promise<string | null>,
-		checkout: (repoId, branch) =>
-			ipcRenderer.invoke('git:checkout', repoId, branch) as Promise<void>,
+			invoke('git:listLocalOnlyBranches', repoId) as Promise<LocalOnlyBranch[]>,
+		getCurrentBranch: (repoId) => invoke('git:getCurrentBranch', repoId) as Promise<string | null>,
+		checkout: (repoId, branch) => invoke('git:checkout', repoId, branch) as Promise<void>,
 		checkoutPR: (repoId, pr, source) =>
-			ipcRenderer.invoke('git:checkoutPR', repoId, pr, source) as Promise<void>,
-		isDirty: (repoId) => ipcRenderer.invoke('git:isDirty', repoId) as Promise<boolean>,
+			invoke('git:checkoutPR', repoId, pr, source) as Promise<void>,
+		isDirty: (repoId) => invoke('git:isDirty', repoId) as Promise<boolean>,
 		createBranch: (repoId, name, opts) =>
-			ipcRenderer.invoke('git:createBranch', repoId, name, opts) as Promise<CreateBranchResult>,
+			invoke('git:createBranch', repoId, name, opts) as Promise<CreateBranchResult>,
 		deleteBranch: (repoId, name, opts) =>
-			ipcRenderer.invoke('git:deleteBranch', repoId, name, opts) as Promise<DeleteBranchResult>,
+			invoke('git:deleteBranch', repoId, name, opts) as Promise<DeleteBranchResult>,
 		listChangedFiles: (repoId, ctx: DiffContext) =>
-			ipcRenderer.invoke('git:listChangedFiles', repoId, ctx) as Promise<ChangedFile[]>,
-		refExists: (repoId, ref) =>
-			ipcRenderer.invoke('git:refExists', repoId, ref) as Promise<boolean>,
+			invoke('git:listChangedFiles', repoId, ctx) as Promise<ChangedFile[]>,
+		refExists: (repoId, ref) => invoke('git:refExists', repoId, ref) as Promise<boolean>,
 		getDiff: (repoId, filePath, ctx: DiffContext) =>
-			ipcRenderer.invoke('git:getDiff', repoId, filePath, ctx) as Promise<DiffData>,
+			invoke('git:getDiff', repoId, filePath, ctx) as Promise<DiffData>,
 		fetchOrigin: (repoId) =>
-			ipcRenderer.invoke('git:fetchOrigin', repoId) as Promise<{
+			invoke('git:fetchOrigin', repoId) as Promise<{
 				ok: boolean;
 				error?: string;
 			}>,
-		getPushStatus: (repoId) =>
-			ipcRenderer.invoke('git:getPushStatus', repoId) as Promise<PushStatus>,
-		pull: (repoId) => ipcRenderer.invoke('git:pull', repoId) as Promise<PullPushResult>,
-		push: (repoId) => ipcRenderer.invoke('git:push', repoId) as Promise<PullPushResult>,
+		getPushStatus: (repoId) => invoke('git:getPushStatus', repoId) as Promise<PushStatus>,
+		pull: (repoId) => invoke('git:pull', repoId) as Promise<PullPushResult>,
+		push: (repoId) => invoke('git:push', repoId) as Promise<PullPushResult>,
 		mergeIntoCurrent: (repoId, ref) =>
-			ipcRenderer.invoke('git:mergeIntoCurrent', repoId, ref) as Promise<PullPushResult>,
+			invoke('git:mergeIntoCurrent', repoId, ref) as Promise<PullPushResult>,
 		updateFromUpstream: (repoId, branch) =>
-			ipcRenderer.invoke('git:updateFromUpstream', repoId, branch) as Promise<PullPushResult>,
-		getConflicts: (repoId) => ipcRenderer.invoke('git:getConflicts', repoId) as Promise<string[]>,
+			invoke('git:updateFromUpstream', repoId, branch) as Promise<PullPushResult>,
+		getConflicts: (repoId) => invoke('git:getConflicts', repoId) as Promise<string[]>,
 		recheckConflicts: (repoId, files) =>
-			ipcRenderer.invoke('git:recheckConflicts', repoId, files) as Promise<string[]>,
-		stageFile: (repoId, filePath) =>
-			ipcRenderer.invoke('git:stageFile', repoId, filePath) as Promise<void>,
+			invoke('git:recheckConflicts', repoId, files) as Promise<string[]>,
+		stageFile: (repoId, filePath) => invoke('git:stageFile', repoId, filePath) as Promise<void>,
 		discardChanges: (repoId, filePath, oldPath) =>
-			ipcRenderer.invoke('git:discardChanges', repoId, filePath, oldPath) as Promise<void>,
-		discardFiles: (repoId, files) =>
-			ipcRenderer.invoke('git:discardFiles', repoId, files) as Promise<void>,
+			invoke('git:discardChanges', repoId, filePath, oldPath) as Promise<void>,
+		discardFiles: (repoId, files) => invoke('git:discardFiles', repoId, files) as Promise<void>,
 		discardLines: (repoId, filePath, patch) =>
-			ipcRenderer.invoke('git:discardLines', repoId, filePath, patch) as Promise<void>,
+			invoke('git:discardLines', repoId, filePath, patch) as Promise<void>,
 		addToGitignore: (repoId, patterns) =>
-			ipcRenderer.invoke('git:addToGitignore', repoId, patterns) as Promise<void>,
-		continueMerge: (repoId) =>
-			ipcRenderer.invoke('git:continueMerge', repoId) as Promise<PullPushResult>,
-		abortMerge: (repoId) => ipcRenderer.invoke('git:abortMerge', repoId) as Promise<void>,
+			invoke('git:addToGitignore', repoId, patterns) as Promise<void>,
+		continueMerge: (repoId) => invoke('git:continueMerge', repoId) as Promise<PullPushResult>,
+		abortMerge: (repoId) => invoke('git:abortMerge', repoId) as Promise<void>,
 		createManagedStash: (repoId) =>
-			ipcRenderer.invoke('git:createManagedStash', repoId) as Promise<{
+			invoke('git:createManagedStash', repoId) as Promise<{
 				ok: boolean;
 				error?: string;
 			}>,
 		findManagedStash: (repoId) =>
-			ipcRenderer.invoke('git:findManagedStash', repoId) as Promise<ManagedStash | null>,
+			invoke('git:findManagedStash', repoId) as Promise<ManagedStash | null>,
 		restoreManagedStash: (repoId, ref) =>
-			ipcRenderer.invoke('git:restoreManagedStash', repoId, ref) as Promise<PullPushResult>,
+			invoke('git:restoreManagedStash', repoId, ref) as Promise<PullPushResult>,
 		restoreManagedStashKeepingLocal: (repoId, ref) =>
-			ipcRenderer.invoke(
-				'git:restoreManagedStashKeepingLocal',
-				repoId,
-				ref
-			) as Promise<PullPushResult>,
+			invoke('git:restoreManagedStashKeepingLocal', repoId, ref) as Promise<PullPushResult>,
 		discardManagedStash: (repoId, ref) =>
-			ipcRenderer.invoke('git:discardManagedStash', repoId, ref) as Promise<void>,
+			invoke('git:discardManagedStash', repoId, ref) as Promise<void>,
 		finishStashPop: (repoId, ref) =>
-			ipcRenderer.invoke('git:finishStashPop', repoId, ref) as Promise<PullPushResult>,
-		abortStashPop: (repoId) => ipcRenderer.invoke('git:abortStashPop', repoId) as Promise<void>,
+			invoke('git:finishStashPop', repoId, ref) as Promise<PullPushResult>,
+		abortStashPop: (repoId) => invoke('git:abortStashPop', repoId) as Promise<void>,
 		commit: (repoId, message, files: CommitFileSelection[]) =>
-			ipcRenderer.invoke('git:commit', repoId, message, files) as Promise<CommitResult>,
-		getLastCommit: (repoId) =>
-			ipcRenderer.invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
+			invoke('git:commit', repoId, message, files) as Promise<CommitResult>,
+		getLastCommit: (repoId) => invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
 		listCommits: (repoId, head, limit) =>
-			ipcRenderer.invoke('git:listCommits', repoId, head, limit) as Promise<CommitInfo[]>,
-		mergeBase: (repoId, a, b) =>
-			ipcRenderer.invoke('git:mergeBase', repoId, a, b) as Promise<string | null>,
-		undoLastCommit: (repoId) =>
-			ipcRenderer.invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
-		cloneRepo: (url) => ipcRenderer.invoke('git:cloneRepo', url) as Promise<CloneResult>,
+			invoke('git:listCommits', repoId, head, limit) as Promise<CommitInfo[]>,
+		mergeBase: (repoId, a, b) => invoke('git:mergeBase', repoId, a, b) as Promise<string | null>,
+		undoLastCommit: (repoId) => invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
+		cloneRepo: (url) => invoke('git:cloneRepo', url) as Promise<CloneResult>,
 		convertToFork: (repoId, forkOwner, forkRepo, contributeToParent) =>
-			ipcRenderer.invoke(
+			invoke(
 				'git:convertToFork',
 				repoId,
 				forkOwner,
@@ -195,102 +249,86 @@ const api: PreloadAPI = {
 				contributeToParent
 			) as Promise<RepoInfo>,
 		setForkContribution: (repoId, contributeToParent) =>
-			ipcRenderer.invoke('git:setForkContribution', repoId, contributeToParent) as Promise<RepoInfo>
+			invoke('git:setForkContribution', repoId, contributeToParent) as Promise<RepoInfo>
 	},
 	changesets: {
-		getStatus: (repoId) =>
-			ipcRenderer.invoke('changesets:getStatus', repoId) as Promise<ChangesetStatus>,
+		getStatus: (repoId) => invoke('changesets:getStatus', repoId) as Promise<ChangesetStatus>,
 		create: (repoId, input: CreateChangesetInput) =>
-			ipcRenderer.invoke('changesets:create', repoId, input) as Promise<string>,
-		remove: (repoId, path: string) =>
-			ipcRenderer.invoke('changesets:remove', repoId, path) as Promise<void>
+			invoke('changesets:create', repoId, input) as Promise<string>,
+		remove: (repoId, path: string) => invoke('changesets:remove', repoId, path) as Promise<void>
 	},
 	editor: {
-		detect: () => ipcRenderer.invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,
+		detect: () => invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,
 		open: (editor: EditorKind, target: string, line?: number) =>
-			ipcRenderer.invoke('editor:open', editor, target, line) as Promise<{
+			invoke('editor:open', editor, target, line) as Promise<{
 				ok: boolean;
 				error?: string;
 			}>
 	},
 	terminal: {
-		detect: () => ipcRenderer.invoke('terminal:detect') as Promise<Record<TerminalKind, boolean>>,
+		detect: () => invoke('terminal:detect') as Promise<Record<TerminalKind, boolean>>,
 		open: (terminal: TerminalKind, target: string) =>
-			ipcRenderer.invoke('terminal:open', terminal, target) as Promise<{
+			invoke('terminal:open', terminal, target) as Promise<{
 				ok: boolean;
 				error?: string;
 			}>
 	},
 	github: {
-		listAccounts: () => ipcRenderer.invoke('github:listAccounts') as Promise<GithubAccount[]>,
+		listAccounts: () => invoke('github:listAccounts') as Promise<GithubAccount[]>,
 		listOrganizations: (repoId) =>
-			ipcRenderer.invoke('github:listOrganizations', repoId) as Promise<GithubOrg[]>,
+			invoke('github:listOrganizations', repoId) as Promise<GithubOrg[]>,
 		listAccountOrganizations: (accountId) =>
-			ipcRenderer.invoke('github:listAccountOrganizations', accountId) as Promise<GithubOrg[]>,
-		getActiveAccount: () =>
-			ipcRenderer.invoke('github:getActiveAccount') as Promise<GithubAccount | null>,
+			invoke('github:listAccountOrganizations', accountId) as Promise<GithubOrg[]>,
+		getActiveAccount: () => invoke('github:getActiveAccount') as Promise<GithubAccount | null>,
 		setActiveAccount: (id) =>
-			ipcRenderer.invoke('github:setActiveAccount', id) as Promise<GithubAccount | null>,
-		removeAccount: (id) => ipcRenderer.invoke('github:removeAccount', id) as Promise<void>,
+			invoke('github:setActiveAccount', id) as Promise<GithubAccount | null>,
+		removeAccount: (id) => invoke('github:removeAccount', id) as Promise<void>,
 		setRepoAccount: (repoId, accountId) =>
-			ipcRenderer.invoke('github:setRepoAccount', repoId, accountId) as Promise<RepoInfo | null>,
-		startDeviceFlow: () => ipcRenderer.invoke('github:startDeviceFlow') as Promise<DeviceFlowStart>,
-		pollDeviceFlow: () => ipcRenderer.invoke('github:pollDeviceFlow') as Promise<DeviceFlowStatus>,
-		cancelDeviceFlow: () => ipcRenderer.invoke('github:cancelDeviceFlow') as Promise<void>,
+			invoke('github:setRepoAccount', repoId, accountId) as Promise<RepoInfo | null>,
+		startDeviceFlow: () => invoke('github:startDeviceFlow') as Promise<DeviceFlowStart>,
+		pollDeviceFlow: () => invoke('github:pollDeviceFlow') as Promise<DeviceFlowStatus>,
+		cancelDeviceFlow: () => invoke('github:cancelDeviceFlow') as Promise<void>,
 		listPRs: (repoId, page, source) =>
-			ipcRenderer.invoke('github:listPRs', repoId, page, source) as Promise<PRSummary[]>,
+			invoke('github:listPRs', repoId, page, source) as Promise<PRSummary[]>,
 		listMentionableUsers: (repoId) =>
-			ipcRenderer.invoke('github:listMentionableUsers', repoId) as Promise<MentionableUser[]>,
+			invoke('github:listMentionableUsers', repoId) as Promise<MentionableUser[]>,
 		listIssueReferences: (repoId, query) =>
-			ipcRenderer.invoke('github:listIssueReferences', repoId, query) as Promise<IssueReference[]>,
+			invoke('github:listIssueReferences', repoId, query) as Promise<IssueReference[]>,
 		resolveCommitAuthors: (repoId, candidates) =>
-			ipcRenderer.invoke('github:resolveCommitAuthors', repoId, candidates) as Promise<
+			invoke('github:resolveCommitAuthors', repoId, candidates) as Promise<
 				Record<string, CommitAuthorIdentity>
 			>,
-		detectUpstream: (repoId) =>
-			ipcRenderer.invoke('github:detectUpstream', repoId) as Promise<RepoInfo | null>,
+		detectUpstream: (repoId) => invoke('github:detectUpstream', repoId) as Promise<RepoInfo | null>,
 		getRepoPushAccess: (repoId) =>
-			ipcRenderer.invoke('github:getRepoPushAccess', repoId) as Promise<boolean | null>,
+			invoke('github:getRepoPushAccess', repoId) as Promise<boolean | null>,
 		createFork: (repoId) =>
-			ipcRenderer.invoke('github:createFork', repoId) as Promise<{ owner: string; repo: string }>,
+			invoke('github:createFork', repoId) as Promise<{ owner: string; repo: string }>,
 		getRepoParent: (repoId) =>
-			ipcRenderer.invoke('github:getRepoParent', repoId) as Promise<{
+			invoke('github:getRepoParent', repoId) as Promise<{
 				owner: string;
 				repo: string;
 			} | null>,
 		fetchPR: (repoId, prNumber, owner, repo) =>
-			ipcRenderer.invoke('github:fetchPR', repoId, prNumber, owner, repo) as Promise<{
+			invoke('github:fetchPR', repoId, prNumber, owner, repo) as Promise<{
 				headRef: string;
 				baseRef: string;
 			}>,
 		findPRForBranch: (repoId, branch) =>
-			ipcRenderer.invoke('github:findPRForBranch', repoId, branch) as Promise<PRSummary | null>,
+			invoke('github:findPRForBranch', repoId, branch) as Promise<PRSummary | null>,
 		canPushToPR: (repoId, pr) =>
-			ipcRenderer.invoke('github:canPushToPR', repoId, pr) as Promise<boolean | null>,
+			invoke('github:canPushToPR', repoId, pr) as Promise<boolean | null>,
 		getChecks: (repoId, ref, owner, repo) =>
-			ipcRenderer.invoke('github:getChecks', repoId, ref, owner, repo) as Promise<PRChecksSummary>,
+			invoke('github:getChecks', repoId, ref, owner, repo) as Promise<PRChecksSummary>,
 		getPR: (repoId, prNumber, owner, repo) =>
-			ipcRenderer.invoke(
-				'github:getPR',
-				repoId,
-				prNumber,
-				owner,
-				repo
-			) as Promise<PRSummary | null>,
+			invoke('github:getPR', repoId, prNumber, owner, repo) as Promise<PRSummary | null>,
 		listReviewComments: (repoId, prNumber, owner, repo) =>
-			ipcRenderer.invoke('github:listReviewComments', repoId, prNumber, owner, repo) as Promise<
+			invoke('github:listReviewComments', repoId, prNumber, owner, repo) as Promise<
 				PRReviewComment[]
 			>,
 		createReviewComment: (repoId, input: NewReviewCommentInput, owner, repo) =>
-			ipcRenderer.invoke(
-				'github:createReviewComment',
-				repoId,
-				input,
-				owner,
-				repo
-			) as Promise<PRReviewComment>,
+			invoke('github:createReviewComment', repoId, input, owner, repo) as Promise<PRReviewComment>,
 		replyReviewComment: (repoId, prNumber, commentId, body, owner, repo) =>
-			ipcRenderer.invoke(
+			invoke(
 				'github:replyReviewComment',
 				repoId,
 				prNumber,
@@ -300,32 +338,19 @@ const api: PreloadAPI = {
 				repo
 			) as Promise<PRReviewComment>,
 		deleteReviewComment: (repoId, commentId, owner, repo) =>
-			ipcRenderer.invoke(
-				'github:deleteReviewComment',
-				repoId,
-				commentId,
-				owner,
-				repo
-			) as Promise<void>,
+			invoke('github:deleteReviewComment', repoId, commentId, owner, repo) as Promise<void>,
 		updateReviewComment: (repoId, commentId, body, owner, repo) =>
-			ipcRenderer.invoke(
-				'github:updateReviewComment',
-				repoId,
-				commentId,
-				body,
-				owner,
-				repo
-			) as Promise<string>,
+			invoke('github:updateReviewComment', repoId, commentId, body, owner, repo) as Promise<string>,
 		setReviewThreadResolved: (repoId, threadId, resolved) =>
-			ipcRenderer.invoke('github:setReviewThreadResolved', repoId, threadId, resolved) as Promise<{
+			invoke('github:setReviewThreadResolved', repoId, threadId, resolved) as Promise<{
 				isResolved: boolean;
 			}>,
 		listConversation: (repoId, prNumber, owner, repo) =>
-			ipcRenderer.invoke('github:listConversation', repoId, prNumber, owner, repo) as Promise<
+			invoke('github:listConversation', repoId, prNumber, owner, repo) as Promise<
 				PRConversationItem[]
 			>,
 		createIssueComment: (repoId, prNumber, body, owner, repo) =>
-			ipcRenderer.invoke(
+			invoke(
 				'github:createIssueComment',
 				repoId,
 				prNumber,
@@ -334,24 +359,11 @@ const api: PreloadAPI = {
 				repo
 			) as Promise<PRConversationItem>,
 		deleteIssueComment: (repoId, commentId, owner, repo) =>
-			ipcRenderer.invoke(
-				'github:deleteIssueComment',
-				repoId,
-				commentId,
-				owner,
-				repo
-			) as Promise<void>,
+			invoke('github:deleteIssueComment', repoId, commentId, owner, repo) as Promise<void>,
 		updateIssueComment: (repoId, commentId, body, owner, repo) =>
-			ipcRenderer.invoke(
-				'github:updateIssueComment',
-				repoId,
-				commentId,
-				body,
-				owner,
-				repo
-			) as Promise<string>,
+			invoke('github:updateIssueComment', repoId, commentId, body, owner, repo) as Promise<string>,
 		updatePullRequestBody: (repoId, prNumber, body, owner, repo) =>
-			ipcRenderer.invoke(
+			invoke(
 				'github:updatePullRequestBody',
 				repoId,
 				prNumber,
@@ -360,7 +372,7 @@ const api: PreloadAPI = {
 				repo
 			) as Promise<string>,
 		mergePullRequest: (repoId, prNumber, method, owner, repo, commitTitle, commitMessage) =>
-			ipcRenderer.invoke(
+			invoke(
 				'github:mergePullRequest',
 				repoId,
 				prNumber,
@@ -371,159 +383,114 @@ const api: PreloadAPI = {
 				commitMessage
 			) as Promise<PRMergeResult>,
 		markPullRequestReady: (repoId, prNumber, owner, repo) =>
-			ipcRenderer.invoke(
-				'github:markPullRequestReady',
-				repoId,
-				prNumber,
-				owner,
-				repo
-			) as Promise<void>,
-		getAuthErrors: () => ipcRenderer.invoke('github:getAuthErrors') as Promise<GithubAuthError[]>,
-		validateAccounts: () =>
-			ipcRenderer.invoke('github:validateAccounts') as Promise<GithubAuthError[]>
+			invoke('github:markPullRequestReady', repoId, prNumber, owner, repo) as Promise<void>,
+		getAuthErrors: () => invoke('github:getAuthErrors') as Promise<GithubAuthError[]>,
+		validateAccounts: () => invoke('github:validateAccounts') as Promise<GithubAuthError[]>
 	},
 	state: {
-		getPrefs: () => ipcRenderer.invoke('state:getPrefs') as Promise<UserPrefs>,
-		setPrefs: (patch) => ipcRenderer.invoke('state:setPrefs', patch) as Promise<UserPrefs>,
+		getPrefs: () => invoke('state:getPrefs') as Promise<UserPrefs>,
+		setPrefs: (patch) => invoke('state:setPrefs', patch) as Promise<UserPrefs>,
 		getSeenFiles: (repoId, contextKey) =>
-			ipcRenderer.invoke('state:getSeenFiles', repoId, contextKey) as Promise<string[]>,
+			invoke('state:getSeenFiles', repoId, contextKey) as Promise<string[]>,
 		getSeenSignatures: (repoId, contextKey) =>
-			ipcRenderer.invoke('state:getSeenSignatures', repoId, contextKey) as Promise<
-				Record<string, string>
-			>,
+			invoke('state:getSeenSignatures', repoId, contextKey) as Promise<Record<string, string>>,
 		getInheritedSeen: (repoId, contextKey, fileDiffSigs) =>
-			ipcRenderer.invoke('state:getInheritedSeen', repoId, contextKey, fileDiffSigs) as Promise<
-				string[]
-			>,
+			invoke('state:getInheritedSeen', repoId, contextKey, fileDiffSigs) as Promise<string[]>,
 		getRetainedSeen: (repoId, contextKey, fileDiffSigs) =>
-			ipcRenderer.invoke('state:getRetainedSeen', repoId, contextKey, fileDiffSigs) as Promise<
-				string[]
-			>,
+			invoke('state:getRetainedSeen', repoId, contextKey, fileDiffSigs) as Promise<string[]>,
 		setFileSeen: (repoId, contextKey, filePath, seen, sig) =>
-			ipcRenderer.invoke(
-				'state:setFileSeen',
-				repoId,
-				contextKey,
-				filePath,
-				seen,
-				sig
-			) as Promise<void>,
+			invoke('state:setFileSeen', repoId, contextKey, filePath, seen, sig) as Promise<void>,
 		clearSeen: (repoId, contextKey) =>
-			ipcRenderer.invoke('state:clearSeen', repoId, contextKey) as Promise<void>,
+			invoke('state:clearSeen', repoId, contextKey) as Promise<void>,
 		getCollapsedFiles: (repoId, contextKey) =>
-			ipcRenderer.invoke('state:getCollapsedFiles', repoId, contextKey) as Promise<string[]>,
+			invoke('state:getCollapsedFiles', repoId, contextKey) as Promise<string[]>,
 		setFileCollapsed: (repoId, contextKey, filePath, collapsed) =>
-			ipcRenderer.invoke(
-				'state:setFileCollapsed',
-				repoId,
-				contextKey,
-				filePath,
-				collapsed
-			) as Promise<void>,
+			invoke('state:setFileCollapsed', repoId, contextKey, filePath, collapsed) as Promise<void>,
 		setFilesCollapsed: (repoId, contextKey, filePaths, collapsed) =>
-			ipcRenderer.invoke(
-				'state:setFilesCollapsed',
-				repoId,
-				contextKey,
-				filePaths,
-				collapsed
-			) as Promise<void>,
+			invoke('state:setFilesCollapsed', repoId, contextKey, filePaths, collapsed) as Promise<void>,
 		clearCollapsedFiles: (repoId, contextKey) =>
-			ipcRenderer.invoke('state:clearCollapsedFiles', repoId, contextKey) as Promise<void>,
+			invoke('state:clearCollapsedFiles', repoId, contextKey) as Promise<void>,
 		getCachedFileList: (repoId, contextKey) =>
-			ipcRenderer.invoke('state:getCachedFileList', repoId, contextKey) as Promise<ChangedFile[]>,
+			invoke('state:getCachedFileList', repoId, contextKey) as Promise<ChangedFile[]>,
 		setCachedFileList: (repoId, contextKey, files) =>
-			ipcRenderer.invoke('state:setCachedFileList', repoId, contextKey, files) as Promise<void>,
+			invoke('state:setCachedFileList', repoId, contextKey, files) as Promise<void>,
 		getBranchBase: (repoId, branch) =>
-			ipcRenderer.invoke('state:getBranchBase', repoId, branch) as Promise<string | null>,
+			invoke('state:getBranchBase', repoId, branch) as Promise<string | null>,
 		setBranchBase: (repoId, branch, base) =>
-			ipcRenderer.invoke('state:setBranchBase', repoId, branch, base) as Promise<void>,
-		getCommitDraft: (repoId) =>
-			ipcRenderer.invoke('state:getCommitDraft', repoId) as Promise<CommitDraft>,
+			invoke('state:setBranchBase', repoId, branch, base) as Promise<void>,
+		getCommitDraft: (repoId) => invoke('state:getCommitDraft', repoId) as Promise<CommitDraft>,
 		setCommitDraft: (repoId, draft) =>
-			ipcRenderer.invoke('state:setCommitDraft', repoId, draft) as Promise<void>
+			invoke('state:setCommitDraft', repoId, draft) as Promise<void>
 	},
 	stats: {
-		get: (repoId) => ipcRenderer.invoke('stats:get', repoId) as Promise<RepoUsageStats>,
-		getAll: () => ipcRenderer.invoke('stats:getAll') as Promise<Record<string, RepoUsageStats>>,
+		get: (repoId) => invoke('stats:get', repoId) as Promise<RepoUsageStats>,
+		getAll: () => invoke('stats:getAll') as Promise<Record<string, RepoUsageStats>>,
 		recordFileReviewed: (repoId, sig, loc) =>
-			ipcRenderer.invoke('stats:recordFileReviewed', repoId, sig, loc) as Promise<void>,
+			invoke('stats:recordFileReviewed', repoId, sig, loc) as Promise<void>,
 		recordSessionReviewed: (repoId, sessionId) =>
-			ipcRenderer.invoke('stats:recordSessionReviewed', repoId, sessionId) as Promise<void>
+			invoke('stats:recordSessionReviewed', repoId, sessionId) as Promise<void>
 	},
 	icons: {
 		resolveCustomIcon: (source) =>
-			ipcRenderer.invoke('icons:resolveCustomIcon', source) as Promise<string | null>,
-		pickIconFile: () => ipcRenderer.invoke('icons:pickIconFile') as Promise<string | null>
+			invoke('icons:resolveCustomIcon', source) as Promise<string | null>,
+		pickIconFile: () => invoke('icons:pickIconFile') as Promise<string | null>
 	},
 	sessions: {
-		list: (repoId, ref) =>
-			ipcRenderer.invoke('sessions:list', repoId, ref) as Promise<SessionSummary[]>,
-		get: (repoId, id, ref) =>
-			ipcRenderer.invoke('sessions:get', repoId, id, ref) as Promise<Session | null>,
-		remove: (repoId, id) => ipcRenderer.invoke('sessions:remove', repoId, id) as Promise<void>,
-		clear: (repoId) => ipcRenderer.invoke('sessions:clear', repoId) as Promise<void>,
-		count: (repoId, ref) => ipcRenderer.invoke('sessions:count', repoId, ref) as Promise<number>,
-		watch: (repoId) => ipcRenderer.invoke('sessions:watch', repoId) as Promise<void>,
-		unwatch: () => ipcRenderer.invoke('sessions:unwatch') as Promise<void>
+		list: (repoId, ref) => invoke('sessions:list', repoId, ref) as Promise<SessionSummary[]>,
+		get: (repoId, id, ref) => invoke('sessions:get', repoId, id, ref) as Promise<Session | null>,
+		remove: (repoId, id) => invoke('sessions:remove', repoId, id) as Promise<void>,
+		clear: (repoId) => invoke('sessions:clear', repoId) as Promise<void>,
+		count: (repoId, ref) => invoke('sessions:count', repoId, ref) as Promise<number>,
+		watch: (repoId) => invoke('sessions:watch', repoId) as Promise<void>,
+		unwatch: () => invoke('sessions:unwatch') as Promise<void>
 	},
 	comments: {
 		list: (repoId, contextKey) =>
-			ipcRenderer.invoke('comments:list', repoId, contextKey) as Promise<LocalComment[]>,
+			invoke('comments:list', repoId, contextKey) as Promise<LocalComment[]>,
 		add: (repoId, input: NewLocalCommentInput) =>
-			ipcRenderer.invoke('comments:add', repoId, input) as Promise<LocalComment>,
+			invoke('comments:add', repoId, input) as Promise<LocalComment>,
 		edit: (repoId, id, body) =>
-			ipcRenderer.invoke('comments:edit', repoId, id, body) as Promise<LocalComment | null>,
+			invoke('comments:edit', repoId, id, body) as Promise<LocalComment | null>,
 		resolve: (repoId, id, resolver: LocalCommentAuthor, sessionId) =>
-			ipcRenderer.invoke(
-				'comments:resolve',
-				repoId,
-				id,
-				resolver,
-				sessionId
-			) as Promise<LocalComment | null>,
+			invoke('comments:resolve', repoId, id, resolver, sessionId) as Promise<LocalComment | null>,
 		unresolve: (repoId, id) =>
-			ipcRenderer.invoke('comments:unresolve', repoId, id) as Promise<LocalComment | null>,
-		remove: (repoId, id) => ipcRenderer.invoke('comments:remove', repoId, id) as Promise<void>,
-		watch: (repoId) => ipcRenderer.invoke('comments:watch', repoId) as Promise<void>,
-		unwatch: () => ipcRenderer.invoke('comments:unwatch') as Promise<void>
+			invoke('comments:unresolve', repoId, id) as Promise<LocalComment | null>,
+		remove: (repoId, id) => invoke('comments:remove', repoId, id) as Promise<void>,
+		watch: (repoId) => invoke('comments:watch', repoId) as Promise<void>,
+		unwatch: () => invoke('comments:unwatch') as Promise<void>
 	},
 	tasks: {
-		list: (repoId, branch, ref) =>
-			ipcRenderer.invoke('tasks:list', repoId, branch, ref) as Promise<Task[]>,
+		list: (repoId, branch, ref) => invoke('tasks:list', repoId, branch, ref) as Promise<Task[]>,
 		add: (repoId, branch, input: NewTaskInput) =>
-			ipcRenderer.invoke('tasks:add', repoId, branch, input) as Promise<Task>,
+			invoke('tasks:add', repoId, branch, input) as Promise<Task>,
 		update: (repoId, branch, id, patch: TaskPatch) =>
-			ipcRenderer.invoke('tasks:update', repoId, branch, id, patch) as Promise<Task | null>,
+			invoke('tasks:update', repoId, branch, id, patch) as Promise<Task | null>,
 		setDone: (repoId, branch, id, done, actor: TaskActor) =>
-			ipcRenderer.invoke('tasks:setDone', repoId, branch, id, done, actor) as Promise<Task | null>,
-		remove: (repoId, branch, id) =>
-			ipcRenderer.invoke('tasks:remove', repoId, branch, id) as Promise<void>,
-		reorder: (repoId, branch, ids) =>
-			ipcRenderer.invoke('tasks:reorder', repoId, branch, ids) as Promise<void>,
-		clear: (repoId, branch) => ipcRenderer.invoke('tasks:clear', repoId, branch) as Promise<void>,
-		watch: (repoId) => ipcRenderer.invoke('tasks:watch', repoId) as Promise<void>,
-		unwatch: () => ipcRenderer.invoke('tasks:unwatch') as Promise<void>
+			invoke('tasks:setDone', repoId, branch, id, done, actor) as Promise<Task | null>,
+		remove: (repoId, branch, id) => invoke('tasks:remove', repoId, branch, id) as Promise<void>,
+		reorder: (repoId, branch, ids) => invoke('tasks:reorder', repoId, branch, ids) as Promise<void>,
+		clear: (repoId, branch) => invoke('tasks:clear', repoId, branch) as Promise<void>,
+		watch: (repoId) => invoke('tasks:watch', repoId) as Promise<void>,
+		unwatch: () => invoke('tasks:unwatch') as Promise<void>
 	},
 	aiConfig: {
-		status: (repoId) => ipcRenderer.invoke('aiConfig:status', repoId) as Promise<AiConfigStatus>,
+		status: (repoId) => invoke('aiConfig:status', repoId) as Promise<AiConfigStatus>,
 		apply: (repoId, request) =>
-			ipcRenderer.invoke('aiConfig:apply', repoId, request) as Promise<AiConfigApplyResult>,
+			invoke('aiConfig:apply', repoId, request) as Promise<AiConfigApplyResult>,
 		remove: (repoId, item) =>
-			ipcRenderer.invoke('aiConfig:remove', repoId, item) as Promise<AiConfigRemoveResult>
+			invoke('aiConfig:remove', repoId, item) as Promise<AiConfigRemoveResult>
 	},
 	npm: {
-		getPackageInfo: (name) =>
-			ipcRenderer.invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>,
+		getPackageInfo: (name) => invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>,
 		getReleaseNotes: (repositoryUrl, packageName, version) =>
-			ipcRenderer.invoke(
+			invoke(
 				'npm:getReleaseNotes',
 				repositoryUrl,
 				packageName,
 				version
 			) as Promise<ReleaseNotesResult>,
 		getReleaseNotesRange: (repositoryUrl, packageName, fromVersion, toVersion) =>
-			ipcRenderer.invoke(
+			invoke(
 				'npm:getReleaseNotesRange',
 				repositoryUrl,
 				packageName,
@@ -532,68 +499,69 @@ const api: PreloadAPI = {
 			) as Promise<ReleaseNotesRangeResult>
 	},
 	feedback: {
-		submit: (input: FeedbackInput) =>
-			ipcRenderer.invoke('feedback:submit', input) as Promise<FeedbackResult>
+		// Posts to the Super Review backend, not GitHub. Works signed out.
+		submit: (input: FeedbackInput) => invoke('feedback:submit', input) as Promise<FeedbackResult>
 	},
 	shell: {
-		openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,
-		showItemInFolder: (fullPath) =>
-			ipcRenderer.invoke('shell:showItemInFolder', fullPath) as Promise<void>,
+		openExternal: (url) => invoke('shell:openExternal', url) as Promise<void>,
+		showItemInFolder: (fullPath) => invoke('shell:showItemInFolder', fullPath) as Promise<void>,
 		openPath: (fullPath) =>
-			ipcRenderer.invoke('shell:openPath', fullPath) as Promise<{
+			invoke('shell:openPath', fullPath) as Promise<{
 				ok: boolean;
 				error?: string;
 			}>
 	},
+	settings: {
+		getPath: () => invoke('settings:getPath') as Promise<string>,
+		reveal: () => invoke('settings:reveal') as Promise<void>,
+		openInEditor: () => invoke('settings:openInEditor') as Promise<{ ok: boolean; error?: string }>,
+		getStartupIssues: () =>
+			invoke('settings:getStartupIssues') as Promise<{ malformed: boolean; reset: string[] }>,
+		export: () =>
+			invoke('settings:export') as Promise<{
+				ok: boolean;
+				canceled: boolean;
+				path?: string;
+				error?: string;
+			}>,
+		import: () =>
+			invoke('settings:import') as Promise<{
+				ok: boolean;
+				canceled: boolean;
+				reset?: string[];
+				prefs?: UserPrefs;
+				error?: string;
+			}>,
+		reset: () => invoke('settings:reset') as Promise<UserPrefs>
+	},
 	menu: {
 		showFileContextMenu: (params) =>
-			ipcRenderer.invoke(
-				'menu:showFileContextMenu',
-				params
-			) as Promise<FileContextMenuResult | null>,
+			invoke('menu:showFileContextMenu', params) as Promise<FileContextMenuResult | null>,
 		showDiffLineContextMenu: (params) =>
-			ipcRenderer.invoke(
-				'menu:showDiffLineContextMenu',
-				params
-			) as Promise<DiffLineContextMenuAction | null>,
+			invoke('menu:showDiffLineContextMenu', params) as Promise<DiffLineContextMenuAction | null>,
 		showBranchContextMenu: (params) =>
-			ipcRenderer.invoke(
-				'menu:showBranchContextMenu',
-				params
-			) as Promise<BranchContextMenuAction | null>,
+			invoke('menu:showBranchContextMenu', params) as Promise<BranchContextMenuAction | null>,
 		showPRContextMenu: (params) =>
-			ipcRenderer.invoke('menu:showPRContextMenu', params) as Promise<PRContextMenuAction | null>,
+			invoke('menu:showPRContextMenu', params) as Promise<PRContextMenuAction | null>,
 		showTaskContextMenu: (params) =>
-			ipcRenderer.invoke(
-				'menu:showTaskContextMenu',
-				params
-			) as Promise<TaskContextMenuAction | null>,
+			invoke('menu:showTaskContextMenu', params) as Promise<TaskContextMenuAction | null>,
 		showRepoContextMenu: (params) =>
-			ipcRenderer.invoke(
-				'menu:showRepoContextMenu',
-				params
-			) as Promise<RepoContextMenuAction | null>,
+			invoke('menu:showRepoContextMenu', params) as Promise<RepoContextMenuAction | null>,
 		showCommitContextMenu: () =>
-			ipcRenderer.invoke('menu:showCommitContextMenu') as Promise<CommitContextMenuAction | null>,
+			invoke('menu:showCommitContextMenu') as Promise<CommitContextMenuAction | null>,
 		showHeaderContextMenu: (params) =>
-			ipcRenderer.invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
+			invoke('menu:showHeaderContextMenu', params) as Promise<HeaderContextMenuResult>,
 		showEmptyViewContextMenu: (params) =>
-			ipcRenderer.invoke(
-				'menu:showEmptyViewContextMenu',
-				params
-			) as Promise<EmptyViewContextMenuResult>,
+			invoke('menu:showEmptyViewContextMenu', params) as Promise<EmptyViewContextMenuResult>,
 		showTabsContextMenu: (params) =>
-			ipcRenderer.invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
+			invoke('menu:showTabsContextMenu', params) as Promise<TabsContextMenuResult>,
 		showSidebarControlsContextMenu: (params) =>
-			ipcRenderer.invoke(
+			invoke(
 				'menu:showSidebarControlsContextMenu',
 				params
 			) as Promise<SidebarControlsContextMenuResult>,
 		showFileHeaderContextMenu: (params) =>
-			ipcRenderer.invoke(
-				'menu:showFileHeaderContextMenu',
-				params
-			) as Promise<FileHeaderContextMenuResult>,
+			invoke('menu:showFileHeaderContextMenu', params) as Promise<FileHeaderContextMenuResult>,
 		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
 		setRepositoryState: (state: RepositoryMenuState) =>
 			ipcRenderer.send('menu:setRepositoryState', state)
@@ -652,6 +620,21 @@ const api: PreloadAPI = {
 				handler(errors);
 			ipcRenderer.on('github:auth-changed', listener);
 			return () => ipcRenderer.off('github:auth-changed', listener);
+		},
+		onLicenseChanged(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, state: LicenseState) => handler(state);
+			ipcRenderer.on('license:changed', listener);
+			return () => ipcRenderer.off('license:changed', listener);
+		},
+		onPrefsChanged(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, change: PrefsChange) => handler(change);
+			ipcRenderer.on('state:prefsChanged', listener);
+			return () => ipcRenderer.off('state:prefsChanged', listener);
+		},
+		onUpdateStatus(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status);
+			ipcRenderer.on('updater:status', listener);
+			return () => ipcRenderer.off('updater:status', listener);
 		}
 	}
 };

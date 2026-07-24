@@ -16,6 +16,7 @@
 	import ConfigureAiButton from './ConfigureAiButton.svelte';
 	import NoticeCard from './NoticeCard.svelte';
 	import Stack from './stack/Stack.svelte';
+	import UpdateNotice from './UpdateNotice.svelte';
 
 	const showAdd = $derived(
 		(app.changesetStatus?.needsChangeset ?? false) && !app.changesetPromptDismissed
@@ -47,13 +48,48 @@
 		app.aiConfigStatus?.anyUpdateAvailable === true && !app.aiConfigUpdateDismissed
 	);
 
-	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' };
+	// Trial nudge — rides the same stack. Reappears once per calendar day
+	// (dismissing hides it for the rest of the day) until the license stops being
+	// a trial (subscribe or buy), after which it never shows.
+	const trialDaysLeft = $derived.by(() => {
+		const lic = app.license.current;
+		if (lic?.state !== 'licensed' || lic.status !== 'trialing' || !lic.trialEndsAt) return null;
+		return Math.max(0, Math.ceil((lic.trialEndsAt - Date.now()) / 86_400_000));
+	});
+	const TRIAL_KEY = 'sr-trial-notice-dismissed';
+	function trialDayKey(): string {
+		const d = new Date();
+		return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+	}
+	function readTrialDismissed(): boolean {
+		try {
+			return localStorage.getItem(TRIAL_KEY) === trialDayKey();
+		} catch {
+			return false;
+		}
+	}
+	let trialDismissed = $state(readTrialDismissed());
+	const showTrial = $derived(trialDaysLeft !== null && !trialDismissed);
+
+	// App auto-update: rides the same stack. Visible while downloading, and once
+	// downloaded until dismissed (the store un-dismisses when a newer download
+	// starts). The `update` payload itself lives in the store, mirrored from the
+	// main process (see initUpdater).
+	const update = $derived(app.update);
+	const showUpdate = $derived(
+		update.state === 'downloading' || (update.state === 'downloaded' && !app.updateDismissed)
+	);
+
+	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' | 'trial' | 'update' };
 
 	// Front-first (index 0 is the fully-visible front card; later ones peek behind
-	// it). "Add a changeset?" leads, then the AI-config nudge, and the unnecessary-
-	// changeset warning sits at the back of the pile.
+	// it). An app update leads (it's the most consequential prompt and the user
+	// asked for it up front), then the trial nudge, "Add a changeset?", the
+	// AI-config nudge, and the unnecessary-changeset warning at the back.
 	const notices = $derived.by(() => {
 		const list: Notice[] = [];
+		if (showUpdate) list.push({ id: 'update' });
+		if (showTrial) list.push({ id: 'trial' });
 		if (showAdd) list.push({ id: 'add' });
 		if (showConfigure) list.push({ id: 'ai-config' });
 		if (showConfigUpdate) list.push({ id: 'ai-config-update' });
@@ -64,7 +100,15 @@
 	// Stack animates the card out, then calls this so we run the actual dismissal
 	// (which drops the notice from `notices` via the reactive flags above).
 	function dismissNotice(n: Notice): void {
-		if (n.id === 'warning') actions.dismissChangesetWarning();
+		if (n.id === 'update') actions.dismissUpdate();
+		else if (n.id === 'trial') {
+			try {
+				localStorage.setItem(TRIAL_KEY, trialDayKey());
+			} catch {
+				// non-fatal: dismissal just won't persist
+			}
+			trialDismissed = true;
+		} else if (n.id === 'warning') actions.dismissChangesetWarning();
 		else if (n.id === 'add') actions.dismissChangesetPrompt();
 		else if (n.id === 'ai-config-update') actions.dismissAiConfigUpdate();
 		else actions.dismissAiConfigNotice();
@@ -75,7 +119,40 @@
 	<div class="mx-2 mt-2 mb-2">
 		<Stack items={notices} onDismiss={dismissNotice} gap={8}>
 			{#snippet card(n, { dismiss })}
-				{#if n.id === 'warning'}
+				{#if n.id === 'update'}
+					<UpdateNotice
+						status={update}
+						onRestart={() => actions.restartToUpdate()}
+						onDismiss={dismiss}
+					/>
+				{:else if n.id === 'trial'}
+					<NoticeCard
+						onDismiss={dismiss}
+						dismissTitle="Dismiss for today"
+						tooltip="Subscribe or buy a perpetual license to keep using Super Review after your trial."
+					>
+						{#snippet logo()}
+							<!-- size-5 (not size-4 like the AI-config notices): the brand tile
+							     has ~9% padding in its viewBox, so it needs to be a touch larger
+							     to match the changeset butterfly's visual height. -->
+							<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-5 shrink-0" />
+						{/snippet}
+						{trialDaysLeft === 0
+							? 'Trial ends today'
+							: `${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left in trial`}
+						{#snippet action()}
+							<Button
+								type="button"
+								size="xs"
+								variant="outline"
+								class="border-flame/40 text-flame hover:bg-flame/10 h-6 text-[11px]"
+								onclick={() => actions.openPricing()}
+							>
+								Upgrade
+							</Button>
+						{/snippet}
+					</NoticeCard>
+				{:else if n.id === 'warning'}
 					<NoticeCard
 						variant="warning"
 						onDismiss={dismiss}

@@ -6,14 +6,13 @@
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import CircleCheck from '@lucide/svelte/icons/circle-check';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import { Button } from './ui/button';
 	import { Input } from './ui/input';
 	import { Textarea } from './ui/textarea';
 	import * as Dialog from './ui/dialog';
 	import { actions, app } from '@super-review/ui/store.svelte';
 	import { cn } from '@super-review/ui/utils';
-	import type { FeedbackCategory, FeedbackResult } from '@super-review/core/types';
+	import type { ErrorContext, FeedbackCategory, FeedbackResult } from '@super-review/core/types';
 
 	const open = $derived(app.feedbackDialogOpen);
 
@@ -28,9 +27,15 @@
 	let category = $state<FeedbackCategory>('bug');
 	let title = $state('');
 	let body = $state('');
+	// Optional reply-to. Feedback no longer becomes a public GitHub issue the
+	// reporter can watch, so this is their only way to hear back.
+	let email = $state('');
+	// Carried straight through from the prefill. The user never edits it, so it
+	// is state rather than an input.
+	let context = $state<ErrorContext | undefined>(undefined);
 	let submitting = $state(false);
 	let errorMsg = $state<string | null>(null);
-	// Set once the issue is created — flips the dialog to its "thanks" view.
+	// Set once the submission is stored — flips the dialog to its "thanks" view.
 	let result = $state<FeedbackResult | null>(null);
 
 	// Reset every field whenever the dialog opens so a fresh report never inherits
@@ -42,6 +47,8 @@
 			category = prefill?.category ?? 'bug';
 			title = prefill?.title ?? '';
 			body = prefill?.body ?? '';
+			email = '';
+			context = prefill?.context;
 			errorMsg = null;
 			result = null;
 			submitting = false;
@@ -58,7 +65,9 @@
 			result = await actions.submitFeedback({
 				category,
 				title: title.trim(),
-				body: body.trim()
+				body: body.trim(),
+				email: email.trim() || undefined,
+				context
 			});
 		} catch (err) {
 			// Inline so the user keeps their typed text and can retry.
@@ -70,10 +79,6 @@
 
 	function close(): void {
 		actions.closeFeedbackDialog();
-	}
-
-	async function viewIssue(): Promise<void> {
-		if (result) await window.api.shell.openExternal(result.url);
 	}
 
 	// Cmd/Ctrl+Enter submits from either field, matching the app's commit/comment
@@ -96,21 +101,17 @@
 					Thanks for the feedback!
 				</Dialog.Title>
 				<Dialog.Description class="text-xs">
-					We filed issue #{result.number}. You can follow along on GitHub.
+					Your report reached the team. We read every one.
 				</Dialog.Description>
 			</Dialog.Header>
 			<Dialog.Footer>
-				<Button variant="secondary" size="sm" onclick={viewIssue}>
-					<ExternalLink class="size-3.5" />
-					View issue #{result.number}
-				</Button>
 				<Button size="sm" onclick={close}>Done</Button>
 			</Dialog.Footer>
 		{:else}
 			<Dialog.Header>
 				<Dialog.Title class="text-sm font-semibold">Send feedback</Dialog.Title>
 				<Dialog.Description class="text-xs">
-					Report a bug or share an idea. This opens an issue on the Super Review repo.
+					Report a bug or share an idea. This goes straight to the Super Review team.
 				</Dialog.Description>
 			</Dialog.Header>
 
@@ -167,6 +168,23 @@
 						disabled={submitting}
 						onkeydown={onKeydown}
 						class="resize-none"
+					/>
+				</div>
+
+				<!-- Reply-to. Optional, and labelled as such, so it never reads as a
+					 gate on sending. -->
+				<div class="flex flex-col gap-1.5">
+					<label for="feedback-email" class="text-xs font-medium text-muted-foreground">
+						Email <span class="font-normal">(optional, if you want a reply)</span>
+					</label>
+					<Input
+						id="feedback-email"
+						type="email"
+						bind:value={email}
+						maxlength={320}
+						placeholder="you@example.com"
+						disabled={submitting}
+						onkeydown={onKeydown}
 					/>
 				</div>
 

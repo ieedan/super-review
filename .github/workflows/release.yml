@@ -67,7 +67,7 @@ jobs:
       # While changesets are pending, this opens/updates the "Version Packages"
       # PR. Once that PR merges (no changesets left), it instead runs the
       # `publish` command, which publishes the `super-review` CLI to npm. The
-      # private desktop/docs/core packages are skipped by `changeset publish`.
+      # private desktop/web/core packages are skipped by `changeset publish`.
       - name: Create Version PR / publish CLI
         id: changesets
         uses: changesets/action@v2.0.0-next.2
@@ -200,6 +200,12 @@ jobs:
           ' apps/desktop/CHANGELOG.md > release-notes.md
           # electron-builder uploads to a *draft* release; add the notes and
           # flip it live so electron-updater can resolve it.
+          #
+          # Do NOT add --prerelease, even while the version carries a `-beta.N`
+          # suffix. Both the updater feed and the download page resolve through
+          # GitHub's /releases/latest, which skips releases flagged prerelease
+          # (see apps/web/src/lib/server/github-releases.ts) — flagging one
+          # would strand every installed copy on the last non-prerelease build.
           TITLE="Super Review Desktop@$VERSION"
           if [ -s release-notes.md ]; then
             gh release edit "$V" --title "$TITLE" --notes-file release-notes.md --draft=false --latest

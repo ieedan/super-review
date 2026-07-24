@@ -162,9 +162,9 @@ export async function setTaskDone(
 	return task;
 }
 
-// Remove a task from the branch's list, along with any subtasks parented to it
-// (a deleted parent's children would otherwise be orphaned). No-op when the id
-// isn't present.
+// Remove a task from the branch's list, along with its entire subtree of
+// subtasks (tasks nest arbitrarily deep, so a deleted parent's descendants would
+// otherwise be orphaned). No-op when the id isn't present.
 export async function removeTask(
 	repoPath: string,
 	branch: string,
@@ -173,7 +173,19 @@ export async function removeTask(
 ): Promise<void> {
 	const list = await getTaskList(repoPath, branch);
 	if (!list) return;
-	const next = list.tasks.filter((t) => t.id !== id && t.parentId !== id);
+	// Collect the task and every descendant. Loop until no new descendant is
+	// found so nesting of any depth is fully cleaned up.
+	const doomed = new Set([id]);
+	for (let added = true; added; ) {
+		added = false;
+		for (const t of list.tasks) {
+			if (t.parentId && doomed.has(t.parentId) && !doomed.has(t.id)) {
+				doomed.add(t.id);
+				added = true;
+			}
+		}
+	}
+	const next = list.tasks.filter((t) => !doomed.has(t.id));
 	if (next.length === list.tasks.length) return;
 	list.tasks = next;
 	list.updatedAt = now;

@@ -23,9 +23,11 @@ import type {
 	FeedbackResult,
 	FileListLayout,
 	AnimationMode,
+	ActivationStatus,
 	CustomFileIcon,
 	GithubAccount,
 	GithubAuthError,
+	LicenseState,
 	LastCommit,
 	LocalComment,
 	LocalCommentAuthor,
@@ -52,6 +54,7 @@ import type {
 	SidebarTabVisibility,
 	SidebarControlVisibility,
 	TerminalKind,
+	UpdateStatus,
 	UserPrefs,
 	ViewMode
 } from '@super-review/core/types';
@@ -87,6 +90,7 @@ import {
 
 export type SettingsTab =
 	| 'accounts'
+	| 'license'
 	| 'appearance'
 	| 'diff'
 	| 'behavior'
@@ -94,6 +98,7 @@ export type SettingsTab =
 	| 'editor'
 	| 'agents'
 	| 'hotkeys'
+	| 'updates'
 	| 'stats';
 export type SettingsScrollTarget = 'hidden-files';
 import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
@@ -154,8 +159,28 @@ export interface GithubSignInState {
 	error: string | null;
 }
 
+// Renderer mirror of the main process's license state. `null` = not yet
+// fetched. This drives the activation/lock screen but is NOT the enforcement:
+// the main-process IPC gate is. See ActivationScreen.svelte.
+export interface LicenseUiState {
+	// The authoritative state from the main process.
+	current: LicenseState | null;
+	// True while a device-code activation is waiting for browser approval.
+	activating: boolean;
+	// The code the user types into the browser, and where they enter it. Set once
+	// the server hands back a device code; null otherwise.
+	activationUserCode: string | null;
+	activationVerificationUri: string | null;
+	// Error surfaced from the last activation attempt.
+	activationError: string | null;
+}
+
 interface AppState {
 	repos: RepoInfo[];
+	// True until `init()` has resolved the persisted active repo. Distinguishes
+	// "we don't know yet" from "there genuinely is no repo" so the UI can hold
+	// off on the empty state instead of flashing it on every launch.
+	initializing: boolean;
 	activeRepo: RepoInfo | null;
 	branches: BranchInfo[];
 	currentBranch: string | null;
@@ -350,6 +375,7 @@ interface AppState {
 	codeFont: string;
 	uiFont: string;
 	prefs: UserPrefs | null;
+	prefsVersion: number;
 	githubAccounts: GithubAccount[];
 	activeGithubAccount: GithubAccount | null;
 	// Accounts whose GitHub token no longer authenticates (revoked, or a SAML
@@ -410,6 +436,7 @@ interface AppState {
 	// global "search files (sidebar)" hotkey, which lives outside FileList.
 	focusSidebarSearchNonce: number;
 	githubSignIn: GithubSignInState;
+	license: LicenseUiState;
 	pushStatus: PushStatus | null;
 	// Tip commit of the current branch, surfaced so the commit box can offer an
 	// "Undo" affordance for the most recent unpushed commit.
@@ -635,6 +662,19 @@ interface AppState {
 	// Active error toasts, newest last. Errors stack instead of overwriting so a
 	// new failure never silently replaces one the user hasn't seen yet.
 	errors: ErrorToast[];
+	// Background auto-update state, mirrored from the main process. Drives the
+	// update notice in the commit-box stack (see CommitNotices.svelte).
+	update: UpdateStatus;
+	// Whether the user dismissed the current "ready to restart" toast. Reset when
+	// a fresh download starts so a newer update re-prompts.
+	updateDismissed: boolean;
+	// The running app's version, for the Updates settings tab. Empty until the
+	// first fetch lands.
+	appVersion: string;
+	// When a check last finished having found nothing (ms epoch), so the Updates
+	// tab can say "Up to date" instead of sitting on a bare version number. Null
+	// until a check completes in this session.
+	updateCheckedAt: number | null;
 }
 
 export function composerKey(filePath: string, side: 'LEFT' | 'RIGHT', line: number): string {
@@ -804,6 +844,7 @@ function prHostArgs(pr: PRSummary | null): [owner: string | undefined, repo: str
 
 const initial: AppState = {
 	repos: [],
+	initializing: true,
 	activeRepo: null,
 	branches: [],
 	currentBranch: null,
@@ -878,6 +919,11 @@ const initial: AppState = {
 	codeFont: 'system',
 	uiFont: 'system',
 	prefs: null,
+	// Bumped whenever the shareable settings are (re)applied from the source of
+	// truth — initial load, a live settings.json edit, or an import/reset. Lets the
+	// open Settings dialog re-snapshot its drafts so a live external edit isn't
+	// clobbered when the user next hits Save.
+	prefsVersion: 0,
 	githubAccounts: [],
 	activeGithubAccount: null,
 	githubAuthErrors: [],
@@ -922,6 +968,13 @@ const initial: AppState = {
 		verificationUri: null,
 		polling: false,
 		error: null
+	},
+	license: {
+		current: null,
+		activating: false,
+		activationUserCode: null,
+		activationVerificationUri: null,
+		activationError: null
 	},
 	pushStatus: null,
 	lastCommit: null,
@@ -974,7 +1027,11 @@ const initial: AppState = {
 	diffRevalidateToken: 0,
 	diffFileReloadTokens: new SvelteMap(),
 	loading: { files: false, branches: false, prs: false, repos: false },
-	errors: []
+	errors: [],
+	update: { state: 'idle' },
+	updateDismissed: false,
+	appVersion: '',
+	updateCheckedAt: null
 };
 
 export const app = $state<AppState>(initial);
@@ -1275,6 +1332,8 @@ export function setError(msg: string | null, action?: string): void {
 		app.errors = [];
 		return;
 	}
+	// License-gate rejections are expected during lock races; never toast them.
+	if (isLicenseGateMessage(msg)) return;
 	const last = app.errors[app.errors.length - 1];
 	if (last && last.message === msg) {
 		last.count += 1;
@@ -1313,20 +1372,15 @@ function feedbackDraftFromError(toast: ErrorToast): FeedbackDraft {
 		'```',
 		''
 	];
-	const ctxLines: string[] = [];
-	if (ctx?.action) ctxLines.push(`- Action: ${ctx.action}`);
-	if (ctx?.tab) ctxLines.push(`- Tab: ${ctx.tab}`);
-	if (ctx?.repo) ctxLines.push(`- Repo: ${ctx.repo}`);
-	if (ctx?.branch) ctxLines.push(`- Branch: ${ctx.branch}`);
-	if (ctx?.location) ctxLines.push(`- Location: ${ctx.location}`);
-	if (ctxLines.length > 0) {
-		lines.push('**Context:**', ...ctxLines, '');
-	}
 	lines.push('_Reported in one click from an error toast. Please add anything else you remember._');
 	return {
 		category: 'bug',
 		title: ctx?.action ? `Error while ${ctx.action.toLowerCase()}` : `Error: ${firstLine}`,
-		body: lines.join('\n')
+		body: lines.join('\n'),
+		// The captured context travels as its own field rather than as prose in
+		// the body: triage reads it as structured data, and the body stays
+		// whatever the user actually writes.
+		context: ctx
 	};
 }
 
@@ -1517,6 +1571,57 @@ export function effectiveGithubAccount(): GithubAccount | null {
 	return app.activeGithubAccount;
 }
 
+// False until the first license fetch lands. Callers must wait on this before
+// reading `licenseBlocked()`, otherwise "not fetched yet" reads as "locked" and
+// the activation screen flashes on every launch.
+export function licenseResolved(): boolean {
+	return app.license.current !== null;
+}
+
+// True whenever the app must show the activation/lock screen instead of the
+// main UI. Only meaningful once `licenseResolved()` is true. Purely cosmetic;
+// the main-process IPC gate is the real enforcement.
+export function licenseBlocked(): boolean {
+	return app.license.current !== null && app.license.current.state !== 'licensed';
+}
+
+export function isLicensed(): boolean {
+	return app.license.current?.state === 'licensed';
+}
+
+// True after a licensed `actions.init()` has finished successfully. Survives
+// LicensedApp unmount so a lock → re-license remount can skip full init and
+// paint from the warm store (no empty-state flash). Cleared if init is aborted
+// by a license drop so the next mount re-runs it.
+let mainInitCompleted = false;
+
+export function isMainInitCompleted(): boolean {
+	return mainInitCompleted;
+}
+
+// Bumped on every licensed → locked transition so in-flight init/refresh work
+// started while licensed bails instead of surfacing LicenseGateError toasts.
+let licenseGeneration = 0;
+
+function isLicenseGateMessage(message: string): boolean {
+	return (
+		message.includes('A valid Super Review license is required.') ||
+		message.includes('LicenseGateError') ||
+		message.includes('LicenseGateSkip')
+	);
+}
+
+function onLicenseLocked(): void {
+	licenseGeneration += 1;
+	setError(null);
+	app.settingsDialogOpen = false;
+	app.repoSettingsDialogOpen = false;
+	// If init never finished, the next LicensedApp mount must run it again.
+	if (!mainInitCompleted) {
+		app.initializing = true;
+	}
+}
+
 // Auth failure (revoked token / lapsed SAML session) for the account the active
 // project authenticates as, if any — drives the "sign in again" prompt.
 export function effectiveAccountAuthError(): GithubAuthError | null {
@@ -1593,6 +1698,118 @@ async function startGithubSignInFlow(): Promise<void> {
 		s.polling = false;
 		s.error = err instanceof Error ? err.message : String(err);
 	}
+}
+
+// --- Licensing ---------------------------------------------------------------
+// Bumped each time an activation starts/cancels so a stale poll loop bails.
+let licenseActivationRunToken = 0;
+
+// Fetch the current license state and subscribe to live changes from the main
+// process. Called first in App.svelte's onMount, before LicensedApp mounts.
+async function initLicense(): Promise<void> {
+	app.license.current = await window.api.license.getStatus();
+	window.api.events.onLicenseChanged((state) => {
+		const wasLicensed = app.license.current?.state === 'licensed';
+		const nowLicensed = state.state === 'licensed';
+		if (wasLicensed && !nowLicensed) onLicenseLocked();
+		app.license.current = state;
+	});
+}
+
+// --- Auto-updates ------------------------------------------------------------
+
+function applyUpdateStatus(status: UpdateStatus): void {
+	// A fresh check or download supersedes any earlier "ready to restart" the
+	// user dismissed, so a newer version prompts again.
+	if (status.state === 'checking' || status.state === 'downloading') {
+		app.updateDismissed = false;
+	}
+	// checking → idle means a check ran and found nothing. Stamp it so the
+	// Updates tab can confirm "Up to date" rather than leaving a manual check
+	// looking like it did nothing. (The startup seed is idle→idle, so it won't
+	// falsely claim we checked.)
+	if (app.update.state === 'checking' && status.state === 'idle') {
+		app.updateCheckedAt = Date.now();
+	}
+	app.update = status;
+}
+
+// Seed the current update state and subscribe to live progress from the main
+// process. Called from App.svelte's onMount alongside initLicense, independent of
+// where the update UI renders.
+async function initUpdater(): Promise<void> {
+	applyUpdateStatus(await window.api.updater.getStatus());
+	window.api.events.onUpdateStatus(applyUpdateStatus);
+	app.appVersion = await window.api.updater.getVersion();
+}
+
+// Quit and relaunch into the downloaded update.
+function restartToUpdate(): void {
+	window.api.updater.quitAndInstall();
+}
+
+// Hide the "ready to restart" toast without installing. The update still
+// installs on the next quit (autoInstallOnAppQuit).
+function dismissUpdate(): void {
+	app.updateDismissed = true;
+}
+
+// Drive a device-code activation from start to finish: request a code, show it,
+// and poll the main process (which polls the server) until it is approved,
+// denied, or errors.
+async function startLicenseActivation(): Promise<void> {
+	if (app.license.activating) return;
+	const runToken = ++licenseActivationRunToken;
+	app.license.activating = true;
+	app.license.activationError = null;
+	app.license.activationUserCode = null;
+	app.license.activationVerificationUri = null;
+	try {
+		const { userCode, verificationUri } = await window.api.license.startActivation();
+		if (runToken !== licenseActivationRunToken) return;
+		app.license.activationUserCode = userCode;
+		app.license.activationVerificationUri = verificationUri;
+
+		for (;;) {
+			await delay(1500);
+			if (runToken !== licenseActivationRunToken) return;
+			const status: ActivationStatus = await window.api.license.pollActivation();
+			if (status.state === 'waiting') {
+				app.license.activationUserCode = status.userCode;
+				app.license.activationVerificationUri = status.verificationUri;
+				continue;
+			}
+			if (status.state === 'success') {
+				app.license.current = status.license;
+				resetActivation();
+				return;
+			}
+			if (status.state === 'denied') {
+				resetActivation();
+				app.license.activationError = 'Request denied in the browser.';
+				return;
+			}
+			if (status.state === 'error') {
+				resetActivation();
+				app.license.activationError = status.message;
+				return;
+			}
+			if (status.state === 'idle') {
+				resetActivation();
+				return;
+			}
+		}
+	} catch (err) {
+		if (runToken !== licenseActivationRunToken) return;
+		resetActivation();
+		app.license.activationError = err instanceof Error ? err.message : String(err);
+	}
+}
+
+function resetActivation(): void {
+	app.license.activating = false;
+	app.license.activationUserCode = null;
+	app.license.activationVerificationUri = null;
 }
 
 async function refreshRepos(): Promise<void> {
@@ -1674,12 +1891,15 @@ async function syncWithOrigin(): Promise<void> {
 }
 
 async function refreshBranches(): Promise<void> {
-	if (!app.activeRepo) return;
+	if (!app.activeRepo || !isLicensed()) return;
+	const gen = licenseGeneration;
 	app.loading.branches = true;
 	try {
 		app.branches = await window.api.git.listBranches(app.activeRepo.id);
+		if (gen !== licenseGeneration || !isLicensed()) return;
 		const prevBranch = app.currentBranch;
 		app.currentBranch = await window.api.git.getCurrentBranch(app.activeRepo.id);
+		if (gen !== licenseGeneration || !isLicensed()) return;
 		// A changeset prompt/warning dismissal only lasts while you stay on the branch
 		// you dismissed it on — switching branches brings it back.
 		if (app.currentBranch !== prevBranch) {
@@ -1694,6 +1914,7 @@ async function refreshBranches(): Promise<void> {
 		// the sidebar row is non-critical and shouldn't block the branch refresh.
 		void refreshStash();
 	} catch (err) {
+		if (gen !== licenseGeneration || !isLicensed()) return;
 		setError(err instanceof Error ? err.message : String(err));
 	} finally {
 		app.loading.branches = false;
@@ -3260,7 +3481,146 @@ function reconcileInPlaceFileEdit(repoId: string, ctx: DiffContext, fresh: DiffD
 	if (cachedFile) applyStat(cachedFile);
 }
 
+// Apply the shareable-settings half of a prefs object to the live app state:
+// view/diff options, appearance (theme/accent/fonts), behavior toggles, window
+// size, hotkeys, and per-surface visibility. Deliberately does NOT touch the
+// session/UI state (open repo, sidebar collapse, active tab) — those are applied
+// only on the initial load. Reused by the initial load and by live settings.json
+// edits/imports; bumps prefsVersion so an open Settings dialog re-snapshots its
+// drafts and a live external edit isn't clobbered on the next Save.
+function applyPrefsSettings(prefs: UserPrefs): void {
+	app.prefs = prefs;
+	app.viewMode = prefs.viewMode;
+	app.diffLayout = prefs.diffLayout ?? 'scroll';
+	app.unstagedFileListLayout = prefs.unstagedFileListLayout;
+	app.branchFileListLayout = prefs.branchFileListLayout;
+	app.showFileIcons = prefs.showFileIcons;
+	app.openFileOnArrowNav = prefs.openFileOnArrowNav;
+	// `?? true` so prefs files persisted before this setting existed hydrate to
+	// the on-by-default behavior instead of undefined.
+	app.indentGuides = prefs.indentGuides ?? true;
+	app.maxDiffLines = prefs.maxDiffLines;
+	app.hiddenDiffPatterns = prefs.hiddenDiffPatterns;
+	app.customFileIcons = prefs.customFileIcons;
+	// Migrate the legacy boolean `animationsEnabled` to the 3-way mode: an
+	// explicit on→'all' and off→'none' preserve the prior choice; anything unset
+	// falls through to the new 'accents' default.
+	{
+		const legacy = (prefs as { animationsEnabled?: boolean }).animationsEnabled;
+		app.animations =
+			prefs.animations ?? (legacy === true ? 'all' : legacy === false ? 'none' : 'accents');
+	}
+	app.prMergedBehavior = prefs.prMergedBehavior ?? 'prompt';
+	app.autoRemoveMergedBranch = prefs.autoRemoveMergedBranch ?? false;
+	app.unmarkSeenOnChange = prefs.unmarkSeenOnChange ?? true;
+	app.changesetsEnabled = prefs.changesetsEnabled ?? true;
+	app.signCommits = prefs.signCommits ?? true;
+	app.recentRepoCount = prefs.recentRepoCount ?? 5;
+	app.windowWidth = prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
+	app.windowHeight = prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
+	app.startMaximized = prefs.startMaximized ?? false;
+	app.hotkeys = { ...DEFAULT_HOTKEYS, ...prefs.hotkeys };
+	app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...prefs.headerItems };
+	app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...prefs.sidebarTabs };
+	app.sidebarControls = { ...DEFAULT_SIDEBAR_CONTROLS, ...prefs.sidebarControls };
+	app.fileHeaderItems = { ...DEFAULT_FILE_HEADER_ITEMS, ...prefs.fileHeaderItems };
+	app.theme = prefs.theme;
+	applyTheme(app.theme);
+	app.diffTheme = prefs.diffTheme ?? DEFAULT_DIFF_THEME;
+	// Markdown code blocks (comments, md previews) follow the diff theme too. Set
+	// it unconditionally — it's cheap and doesn't init the worker pool — so the
+	// default 'pierre' pair applies as well, not just non-default themes.
+	setMarkdownCodeThemes(diffThemePair(app.diffTheme));
+	// Only reconfigure the pool when it's not the default it already booted with —
+	// avoids eagerly initializing the workers at startup for the common case (the
+	// pool defaults to the 'pierre' pair).
+	if (app.diffTheme !== DEFAULT_DIFF_THEME) applyDiffTheme();
+	app.accent = prefs.accent ?? 'super';
+	applyAccent(app.accent);
+	app.codeFont = prefs.codeFont;
+	app.uiFont = prefs.uiFont;
+	applyFonts();
+	app.prefsVersion++;
+}
+
+// Toast a warning when settings.json couldn't be applied cleanly — either it was
+// unparseable (last-good prefs kept) or some fields were invalid and reset.
+function warnSettingsIssues(malformed: boolean, reset: string[]): void {
+	if (malformed) {
+		setError(
+			"Your settings file couldn't be read and was ignored. Fix the JSON to apply it.",
+			'Load settings'
+		);
+	} else if (reset.length > 0) {
+		setError(
+			`Some settings were invalid and reset to defaults: ${reset.join(', ')}.`,
+			'Load settings'
+		);
+	}
+}
+
+// Subscribe once to live settings.json changes (external editor edits, imports,
+// resets) so they apply without a restart. Guarded because init() can re-run on
+// a license relock → relicense.
+let prefsSubscribed = false;
+function subscribePrefsChanges(): void {
+	if (prefsSubscribed) return;
+	// Guard for a stale dev preload (missing the new event during an HMR window)
+	// so app load never hinges on this subscription existing.
+	const onPrefsChanged = window.api.events?.onPrefsChanged;
+	if (!onPrefsChanged) return;
+	prefsSubscribed = true;
+	onPrefsChanged((change) => {
+		applyPrefsSettings(change.prefs);
+		warnSettingsIssues(change.malformed, change.reset);
+	});
+}
+
 export const actions = {
+	// --- Auto-updates ---
+	initUpdater(): Promise<void> {
+		return initUpdater();
+	},
+	restartToUpdate(): void {
+		restartToUpdate();
+	},
+	dismissUpdate(): void {
+		dismissUpdate();
+	},
+	// Manual "Check for updates" from the Updates settings tab. Progress arrives
+	// over updater:status like an automatic check, so there's nothing to await.
+	checkForUpdates(): void {
+		void window.api.updater.check();
+	},
+	// --- Licensing ---
+	initLicense(): Promise<void> {
+		return initLicense();
+	},
+	startLicenseActivation(): Promise<void> {
+		return startLicenseActivation();
+	},
+	cancelLicenseActivation(): void {
+		licenseActivationRunToken++;
+		resetActivation();
+		void window.api.license.cancelActivation();
+	},
+	openVerificationPage(): void {
+		void window.api.license.openVerification();
+	},
+	async recheckLicense(): Promise<void> {
+		app.license.current = await window.api.license.recheck();
+	},
+	async signOutLicense(): Promise<void> {
+		await window.api.license.signOut();
+		onLicenseLocked();
+		app.license.current = { state: 'unlicensed' };
+	},
+	openPricing(): void {
+		void window.api.license.openPricing();
+	},
+	openLicenseDashboard(): void {
+		void window.api.license.openDashboard();
+	},
 	openChangesetDialog(): void {
 		app.changesetDialogOpen = true;
 	},
@@ -3350,6 +3710,47 @@ export const actions = {
 			await refreshFiles();
 		}
 	},
+	// --- Settings file (settings.json) ---
+	// Open the settings dotfile in the configured external editor (or the OS
+	// default handler). The file is the live source of truth, so edits apply as
+	// soon as the user saves (see subscribePrefsChanges).
+	async openSettingsFile(): Promise<void> {
+		const res = await window.api.settings.openInEditor();
+		if (!res.ok) setError(res.error ?? 'Could not open the settings file.', 'Open settings file');
+	},
+	// Reveal settings.json in the OS file manager.
+	async revealSettingsFile(): Promise<void> {
+		await window.api.settings.reveal();
+	},
+	// Save a copy of the current settings to a user-chosen path.
+	async exportSettings(): Promise<void> {
+		const res = await window.api.settings.export();
+		if (!res.ok && !res.canceled) {
+			setError(res.error ?? 'Could not export settings.', 'Export settings');
+		}
+	},
+	// Load a settings file the user picks, validate it, and apply it live.
+	async importSettings(): Promise<void> {
+		const res = await window.api.settings.import();
+		if (res.canceled) return;
+		if (!res.ok) {
+			setError(res.error ?? 'Could not import settings.', 'Import settings');
+			return;
+		}
+		if (res.prefs) applyPrefsSettings(res.prefs);
+		if (res.reset && res.reset.length > 0) {
+			setError(
+				`Imported. Some settings were invalid and reset: ${res.reset.join(', ')}.`,
+				'Import settings'
+			);
+		}
+	},
+	// Reset every settings.json-owned preference to its default (session/UI state
+	// like the open repo and sidebar layout is untouched).
+	async resetSettings(): Promise<void> {
+		const prefs = await window.api.settings.reset();
+		applyPrefsSettings(prefs);
+	},
 	dismissChangesetPrompt(): void {
 		app.changesetPromptDismissed = true;
 	},
@@ -3402,36 +3803,24 @@ export const actions = {
 		}
 	},
 	async init(): Promise<void> {
-		app.prefs = await window.api.state.getPrefs();
-		app.viewMode = app.prefs.viewMode;
-		app.diffLayout = app.prefs.diffLayout ?? 'scroll';
-		app.unstagedFileListLayout = app.prefs.unstagedFileListLayout;
-		app.branchFileListLayout = app.prefs.branchFileListLayout;
-		app.showFileIcons = app.prefs.showFileIcons;
-		app.openFileOnArrowNav = app.prefs.openFileOnArrowNav;
-		// `?? true` so prefs files persisted before this setting existed hydrate
-		// to the on-by-default behavior instead of undefined.
-		app.indentGuides = app.prefs.indentGuides ?? true;
-		app.maxDiffLines = app.prefs.maxDiffLines;
-		app.hiddenDiffPatterns = app.prefs.hiddenDiffPatterns;
-		app.customFileIcons = app.prefs.customFileIcons;
-		// Migrate the legacy boolean `animationsEnabled` to the 3-way mode: an
-		// explicit on→'all' and off→'none' preserve the prior choice; anything
-		// unset falls through to the new 'accents' default.
-		{
-			const legacy = (app.prefs as { animationsEnabled?: boolean }).animationsEnabled;
-			app.animations =
-				app.prefs.animations ?? (legacy === true ? 'all' : legacy === false ? 'none' : 'accents');
+		if (!isLicensed()) return;
+		if (mainInitCompleted) {
+			// Warm remount after a lock → re-license: store still has the last
+			// session; skip the full boot so we don't flash the empty state.
+			app.initializing = false;
+			return;
 		}
-		app.prMergedBehavior = app.prefs.prMergedBehavior ?? 'prompt';
-		app.autoRemoveMergedBranch = app.prefs.autoRemoveMergedBranch ?? false;
-		app.unmarkSeenOnChange = app.prefs.unmarkSeenOnChange ?? true;
-		app.changesetsEnabled = app.prefs.changesetsEnabled ?? true;
-		app.signCommits = app.prefs.signCommits ?? true;
-		app.recentRepoCount = app.prefs.recentRepoCount ?? 5;
-		app.windowWidth = app.prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
-		app.windowHeight = app.prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
-		app.startMaximized = app.prefs.startMaximized ?? false;
+		const gen = licenseGeneration;
+		// Kick this off before anything else and keep `initializing` set until it
+		// lands: it's the one value the first paint depends on, and everything
+		// below (editor/terminal probing, the repo list, GitHub accounts) used to
+		// sit in front of it and flash the empty state on every launch.
+		const activeRepoPromise = window.api.repos.getActive();
+		app.prefs = await window.api.state.getPrefs();
+		if (gen !== licenseGeneration || !isLicensed()) return;
+		applyPrefsSettings(app.prefs);
+		// Session/UI state (not part of the shareable settings file): applied only
+		// here on load, never on a live settings.json edit.
 		app.sidebarCollapsed = app.prefs.sidebarCollapsed ?? false;
 		app.commentsSidebarOpen = app.prefs.commentsSidebarOpen ?? false;
 		app.commentsSidebarTab = app.prefs.commentsSidebarTab ?? 'comments';
@@ -3442,39 +3831,52 @@ export const actions = {
 			(app.prefs.conversationFullscreen ?? false) &&
 			app.commentsSidebarOpen &&
 			app.sidebarCollapsed;
-		app.hotkeys = { ...DEFAULT_HOTKEYS, ...app.prefs.hotkeys };
-		app.headerItems = { ...DEFAULT_HEADER_ITEMS, ...app.prefs.headerItems };
-		app.sidebarTabs = { ...DEFAULT_SIDEBAR_TABS, ...app.prefs.sidebarTabs };
-		app.sidebarControls = { ...DEFAULT_SIDEBAR_CONTROLS, ...app.prefs.sidebarControls };
-		app.fileHeaderItems = { ...DEFAULT_FILE_HEADER_ITEMS, ...app.prefs.fileHeaderItems };
-		app.theme = app.prefs.theme;
-		applyTheme(app.theme);
-		app.diffTheme = app.prefs.diffTheme ?? DEFAULT_DIFF_THEME;
-		// Markdown code blocks (comments, md previews) follow the diff theme too.
-		// Set it unconditionally — it's cheap and doesn't init the worker pool — so
-		// the default 'pierre' pair applies as well, not just non-default themes.
-		setMarkdownCodeThemes(diffThemePair(app.diffTheme));
-		// Only reconfigure the pool when it's not the default it already booted
-		// with — avoids eagerly initializing the workers at startup for the common
-		// case (the pool defaults to the 'pierre' pair).
-		if (app.diffTheme !== DEFAULT_DIFF_THEME) applyDiffTheme();
-		app.accent = app.prefs.accent ?? 'super';
-		applyAccent(app.accent);
-		app.codeFont = app.prefs.codeFont;
-		app.uiFont = app.prefs.uiFont;
-		applyFonts();
+		// Live-apply external edits to settings.json and warn on a bad file (both
+		// the one seen at startup and any live edit). Idempotent — safe on re-runs.
+		// Optional-chained so a stale dev preload (missing the new `settings` API
+		// during an HMR window) degrades gracefully instead of crashing app load.
+		subscribePrefsChanges();
+		void window.api.settings
+			?.getStartupIssues?.()
+			.then((issues) => warnSettingsIssues(issues.malformed, issues.reset))
+			.catch(() => {});
+		app.platform = window.api.platform;
 		await refreshGithubAccounts();
+		if (gen !== licenseGeneration || !isLicensed()) return;
 		// Probe the stored tokens in the background so one revoked while the app
 		// was closed surfaces the sign-in prompt right away, not whenever a feature
 		// first happens to fail. Offline is fine — only real auth failures flag.
 		void window.api.github.validateAccounts().then((errors) => {
+			if (gen !== licenseGeneration || !isLicensed()) return;
 			app.githubAuthErrors = errors;
 		});
-		app.platform = window.api.platform;
-		app.editors = await window.api.editor.detect();
-		app.terminals = await window.api.terminal.detect();
-		await refreshRepos();
-		app.activeRepo = await window.api.repos.getActive();
+		try {
+			app.activeRepo = await activeRepoPromise;
+		} finally {
+			// Even if the lookup fails the UI has to stop waiting, otherwise the
+			// window sits blank with no way to open a repo. Skip if we locked mid-
+			// flight — onLicenseLocked already reset initializing for a remount.
+			if (gen === licenseGeneration && isLicensed()) {
+				app.initializing = false;
+			}
+		}
+		if (gen !== licenseGeneration || !isLicensed()) return;
+		// Nothing in the repo restore below needs these, and they're the slow ones
+		// (filesystem probes per editor/terminal, `git status` per repo), so let
+		// them fill in behind the first paint.
+		void window.api.editor.detect().then((editors) => {
+			if (gen !== licenseGeneration || !isLicensed()) return;
+			app.editors = editors;
+		});
+		void window.api.terminal.detect().then((terminals) => {
+			if (gen !== licenseGeneration || !isLicensed()) return;
+			app.terminals = terminals;
+		});
+		// The dirty dots need the repo list, so chain them rather than firing both.
+		void refreshRepos().then(() => {
+			if (gen !== licenseGeneration || !isLicensed()) return;
+			return refreshDirtyRepos();
+		});
 		if (app.activeRepo) {
 			repoFrecency.use(app.activeRepo.id);
 			// Seed this repo's per-session layout memory from the launch state (read
@@ -3486,13 +3888,12 @@ export const actions = {
 			// Restore the last tab. Shared with switchRepo so the active repo also
 			// seeds its per-repo tab memory for this session.
 			await restoreContextTab(app.prefs.contextTab);
+			if (gen !== licenseGeneration || !isLicensed()) return;
 			await refreshBranchPR();
 		}
-		// Pre-populate the picker's "uncommitted changes" dots. Deferred to the end
-		// of init so its per-repo `git status` flood doesn't compete with — and
-		// delay — the first paint of the active repo's view (which would flash the
-		// empty state). The picker also refreshes these whenever it opens.
-		void refreshDirtyRepos();
+		if (gen === licenseGeneration && isLicensed()) {
+			mainInitCompleted = true;
+		}
 	},
 
 	async openRepo(): Promise<void> {
@@ -5737,31 +6138,37 @@ export const actions = {
 	// Refresh both the working-tree file list and branch info. Used by the
 	// top-bar refresh button and the window-focus listener.
 	async refresh(): Promise<void> {
-		if (!app.activeRepo) return;
+		if (!app.activeRepo || !isLicensed()) return;
+		const gen = licenseGeneration;
 		// External edits (made while the app was unfocused) keep the same file in
 		// the list but change its contents — nudge open diffs to re-validate.
 		bumpDiffRevalidate();
 		// On the Sessions tab, reload the manifests so an agent's CLI update lands
 		// (loadSessions re-opens the active session if one is showing).
 		if (app.contextTab === 'sessions') await actions.loadSessions();
+		if (gen !== licenseGeneration || !isLicensed()) return;
 		await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+		if (gen !== licenseGeneration || !isLicensed()) return;
 		// On the History tab, reload the commit list so a fresh commit shows up.
 		// After refreshBranches, so a branch switched outside the app lists the
 		// new head (and fork point) instead of the stale one; before the network
 		// PR lookup, which reloads again itself only when the PR picture changed.
 		if (app.contextTab === 'history') await actions.loadCommits();
+		if (gen !== licenseGeneration || !isLicensed()) return;
 		await refreshBranchPR();
 	},
 
 	// Fetch origin in the background, then refresh. Reported failures don't
 	// block the UI — many repos have no remote, or the user may be offline.
 	async fetchAndRefresh(): Promise<void> {
-		if (!app.activeRepo || app.fetchingOrigin) return;
+		if (!app.activeRepo || app.fetchingOrigin || !isLicensed()) return;
+		const gen = licenseGeneration;
 		app.fetchingOrigin = true;
 		// Same as refresh(): pick up out-of-app edits on open diffs.
 		bumpDiffRevalidate();
 		try {
 			const result = await window.api.git.fetchOrigin(app.activeRepo.id);
+			if (gen !== licenseGeneration || !isLicensed()) return;
 			if (!result.ok && result.error) {
 				// Don't show as user-facing error — surface only on explicit failures
 				console.warn('fetchOrigin failed:', result.error);
@@ -5769,11 +6176,14 @@ export const actions = {
 			// Mirror refresh(): on the Sessions tab, reload the manifests so an
 			// agent's CLI update lands (loadSessions re-opens the active session).
 			if (app.contextTab === 'sessions') await actions.loadSessions();
+			if (gen !== licenseGeneration || !isLicensed()) return;
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
+			if (gen !== licenseGeneration || !isLicensed()) return;
 			// Mirror refresh(): reload the commit list after refreshBranches so it
 			// follows the branch actually checked out, and after the fetch above so
 			// the fork point sees the freshly fetched base tip.
 			if (app.contextTab === 'history') await actions.loadCommits();
+			if (gen !== licenseGeneration || !isLicensed()) return;
 			await refreshBranchPR();
 		} finally {
 			app.fetchingOrigin = false;
@@ -7168,17 +7578,16 @@ export const actions = {
 	},
 	// One-click report: turn an error toast into a pre-filled feedback report and
 	// open the dialog so the user can add detail and send. The captured context
-	// (action/tab/repo/branch/location) is woven into the body so an agent
-	// triaging the issue knows what the user was doing. Dismisses the toast since
+	// (action/tab/repo/branch/location) rides along as structured data so whoever
+	// triages the report knows what the user was doing. Dismisses the toast since
 	// it's now being acted on.
 	reportErrorToast(toast: ErrorToast): void {
 		app.feedbackPrefill = feedbackDraftFromError(toast);
 		app.feedbackDialogOpen = true;
 		dismissError(toast.id);
 	},
-	// File the feedback as a GitHub issue on the project's own repo. Returns the
-	// created issue so the dialog can link to it; throws on failure so the dialog
-	// can show the error inline without losing the user's typed text.
+	// Send the feedback to the Super Review backend. Throws on failure so the
+	// dialog can show the error inline without losing the user's typed text.
 	async submitFeedback(input: FeedbackInput): Promise<FeedbackResult> {
 		return window.api.feedback.submit(input);
 	},

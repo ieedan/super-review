@@ -151,8 +151,9 @@
 		}
 	}
 
-	// Top-level tasks (in order) and their subtasks grouped by parent id. `app.tasks`
-	// is already ordered, so both preserve order.
+	// Top-level tasks (in order) and every task's direct children grouped by parent
+	// id. The map covers parents at any depth (subtasks nest arbitrarily deep), so
+	// it drives the recursive render. `app.tasks` is already ordered.
 	const topLevelTasks = $derived(app.tasks.filter((t) => !t.parentId));
 	const subtasksByParent = $derived.by(() => {
 		const map = new SvelteMap<string, Task[]>();
@@ -164,6 +165,15 @@
 		}
 		return map;
 	});
+
+	// Indent each nesting level. The visual indent is clamped so a deeply nested
+	// tree stays usable in the narrow panel; nesting itself is unbounded.
+	const INDENT_BASE_PX = 12;
+	const INDENT_STEP_PX = 24;
+	const MAX_INDENT_DEPTH = 8;
+	function indentPx(depth: number): number {
+		return INDENT_BASE_PX + Math.min(depth, MAX_INDENT_DEPTH) * INDENT_STEP_PX;
+	}
 
 	// Drag-and-drop reordering (mirrors UsageStatsPanel). `dragId` is the task being
 	// dragged; `dropTarget` tracks which row, and which side of it, the drop would
@@ -224,33 +234,40 @@
 		return order;
 	}
 
-	// The full flat id list (each top-level task followed by its subtasks) after
-	// moving `fromId` next to `targetId`. A moved top-level task carries its
-	// subtasks; a moved subtask reorders only within its parent's group.
+	// Pre-order flatten of a task's subtree, using `siblingOrder` to override the
+	// child order for the one parent whose group was reordered.
+	function subtreeIds(id: string, siblingOrder: Map<string | null, string[]>): string[] {
+		const kids = siblingOrder.get(id) ?? (subtasksByParent.get(id) ?? []).map((t) => t.id);
+		return [id, ...kids.flatMap((k) => subtreeIds(k, siblingOrder))];
+	}
+
+	// The full flat id list (pre-order: each task immediately followed by its whole
+	// subtree) after moving `fromId` next to `targetId`. A moved task carries its
+	// entire subtree; the drag is gated to same-parent rows, so only that one
+	// sibling group's order changes.
 	function flatOrderAfterMove(fromId: string, targetId: string, after: boolean): string[] {
 		const from = app.tasks.find((t) => t.id === fromId);
-		const topIds = topLevelTasks.map((t) => t.id);
-		const childIds = (pid: string): string[] => (subtasksByParent.get(pid) ?? []).map((t) => t.id);
 		if (!from) return app.tasks.map((t) => t.id);
-		if (!from.parentId) {
-			const newTop = reorderIds(topIds, fromId, targetId, after);
-			return newTop.flatMap((id) => [id, ...childIds(id)]);
-		}
-		const pid = from.parentId;
-		const newChildren = reorderIds(childIds(pid), fromId, targetId, after);
-		return topIds.flatMap((id) => (id === pid ? [id, ...newChildren] : [id, ...childIds(id)]));
+		const pid = from.parentId ?? null;
+		const siblingIds = (pid === null ? topLevelTasks : (subtasksByParent.get(pid) ?? [])).map(
+			(t) => t.id
+		);
+		const reordered = reorderIds(siblingIds, fromId, targetId, after);
+		const override = new Map<string | null, string[]>([[pid, reordered]]);
+		const rootIds = pid === null ? reordered : topLevelTasks.map((t) => t.id);
+		return rootIds.flatMap((id) => subtreeIds(id, override));
 	}
 
 	// Native right-click menu on a task row (toggle / add subtask / edit / delete),
 	// matching the app's native-menu convention. The renderer runs the chosen
-	// action. "Add Subtask" is offered on top-level tasks only.
+	// action. "Add Subtask" is offered on every row (subtasks nest arbitrarily deep).
 	async function onRowContextMenu(e: MouseEvent, t: Task): Promise<void> {
 		if (readOnly) return;
 		e.preventDefault();
 		const action = await window.api.menu.showTaskContextMenu({
 			done: t.done,
 			onHold: !!t.onHold,
-			canAddSubtask: !t.parentId
+			canAddSubtask: true
 		});
 		if (action === 'toggle') void actions.toggleTask(t.id, !t.done);
 		else if (action === 'hold') void actions.setTaskHold(t.id, !t.onHold);
@@ -270,11 +287,11 @@
 {/snippet}
 
 <!-- One task row: the inline editor when it's being edited, otherwise the
-     checkbox + title + overflow menu. `isSub` indents subtasks and hides the
-     "Add subtask" action (tasks nest one level only). -->
-{#snippet taskRow(t: Task, isSub: boolean)}
+     checkbox + title + overflow menu. `depth` sets the indent (subtasks nest
+     arbitrarily deep). -->
+{#snippet taskRow(t: Task, depth: number)}
 	{#if editingId === t.id}
-		<div class={['py-2.5 pr-3', isSub ? 'pl-9' : 'pl-3']}>
+		<div class="py-2.5 pr-3" style="padding-left: {indentPx(depth)}px">
 			<Input
 				bind:ref={editTitleEl}
 				bind:value={editTitle}
@@ -305,9 +322,10 @@
 	{:else}
 		<div
 			data-task-row
+			style="padding-left: {indentPx(depth)}px"
 			class={[
 				'group relative flex gap-2.5 pr-3',
-				isSub ? 'py-2 pl-9' : 'py-2.5 pl-3',
+				depth === 0 ? 'py-2.5' : 'py-2',
 				// A held task is dimmed (upcoming, not ready); the drag ghost dims more.
 				dragId === t.id ? 'opacity-40' : t.onHold && !t.done ? 'opacity-60' : ''
 			]}
@@ -355,9 +373,9 @@
 							>
 								<GripVertical class="size-4" />
 							</button>
-							<!-- Edit, delete, and (top-level only) add-subtask live under one
-							     overflow menu. Right-click on the row opens the same actions
-							     natively. The trigger shows on row hover or while its menu is open. -->
+							<!-- Edit, delete, and add-subtask live under one overflow menu.
+							     Right-click on the row opens the same actions natively. The
+							     trigger shows on row hover or while its menu is open. -->
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger
 									class="grid size-6 place-items-center rounded text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground data-[state=open]:opacity-100"
@@ -366,12 +384,10 @@
 									<MoreHorizontal class="size-4" />
 								</DropdownMenu.Trigger>
 								<DropdownMenu.Content align="end" class="w-auto!">
-									{#if !isSub}
-										<DropdownMenu.Item onSelect={() => startAddSubtask(t.id)}>
-											<Plus class="size-3.5" /> Add subtask
-										</DropdownMenu.Item>
-										<DropdownMenu.Separator />
-									{/if}
+									<DropdownMenu.Item onSelect={() => startAddSubtask(t.id)}>
+										<Plus class="size-3.5" /> Add subtask
+									</DropdownMenu.Item>
+									<DropdownMenu.Separator />
 									<DropdownMenu.Item onSelect={() => actions.setTaskHold(t.id, !t.onHold)}>
 										<Pause class="size-3.5" />
 										{t.onHold ? 'Remove hold' : 'Put on hold'}
@@ -417,6 +433,45 @@
 					{/if}
 				</div>
 			</div>
+		</div>
+	{/if}
+{/snippet}
+
+<!-- A task and its whole subtree, rendered depth-first: the row, then each
+     child recursively, then this task's inline "add subtask" composer (kept
+     open after adding so several can be entered in a row). Nesting is unbounded. -->
+{#snippet taskTree(t: Task, depth: number)}
+	{@render taskRow(t, depth)}
+	{#each subtasksByParent.get(t.id) ?? [] as child (child.id)}
+		{@render taskTree(child, depth + 1)}
+	{/each}
+	{#if addingSubtaskFor === t.id}
+		<div class="flex items-center gap-1.5 py-2 pr-3" style="padding-left: {indentPx(depth + 1)}px">
+			<Input
+				bind:ref={subtaskInputEl}
+				bind:value={subtaskTitle}
+				onkeydown={(e: KeyboardEvent) => onSubtaskKeydown(e, t.id)}
+				placeholder="Subtask title…"
+				class="h-8 text-sm"
+			/>
+			<Button
+				size="icon-sm"
+				class="shrink-0"
+				title="Add subtask"
+				disabled={subtaskTitle.trim().length === 0}
+				onclick={() => submitSubtask(t.id)}
+			>
+				<Plus class="size-4" />
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				class="shrink-0 text-muted-foreground"
+				title="Done adding subtasks"
+				onclick={cancelSubtask}
+			>
+				<X class="size-4" />
+			</Button>
 		</div>
 	{/if}
 {/snippet}
@@ -476,41 +531,7 @@
 			<ul>
 				{#each topLevelTasks as t (t.id)}
 					<li class="border-b border-border">
-						{@render taskRow(t, false)}
-						{#each subtasksByParent.get(t.id) ?? [] as sub (sub.id)}
-							{@render taskRow(sub, true)}
-						{/each}
-						{#if addingSubtaskFor === t.id}
-							<!-- Inline subtask composer, indented under the parent. Stays open
-							     after adding so several subtasks can be entered in a row. -->
-							<div class="flex items-center gap-1.5 py-2 pr-3 pl-9">
-								<Input
-									bind:ref={subtaskInputEl}
-									bind:value={subtaskTitle}
-									onkeydown={(e: KeyboardEvent) => onSubtaskKeydown(e, t.id)}
-									placeholder="Subtask title…"
-									class="h-8 text-sm"
-								/>
-								<Button
-									size="icon-sm"
-									class="shrink-0"
-									title="Add subtask"
-									disabled={subtaskTitle.trim().length === 0}
-									onclick={() => submitSubtask(t.id)}
-								>
-									<Plus class="size-4" />
-								</Button>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									class="shrink-0 text-muted-foreground"
-									title="Done adding subtasks"
-									onclick={cancelSubtask}
-								>
-									<X class="size-4" />
-								</Button>
-							</div>
-						{/if}
+						{@render taskTree(t, 0)}
 					</li>
 				{/each}
 			</ul>

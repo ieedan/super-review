@@ -14,19 +14,20 @@ function actorLabel(a: TaskActor | undefined): string {
 }
 
 // One-line summary of a task for the human-readable listing. Subtasks are
-// indented under their parent.
-function formatLine(t: Task, indent: boolean): string {
+// indented under their parent by four spaces per nesting level.
+function formatLine(t: Task, depth: number): string {
 	const box = t.done ? '[x]' : '[ ]';
 	const status =
 		t.done && t.doneBy ? ` (done by ${actorLabel(t.doneBy)})` : t.onHold ? ' (on hold)' : '';
-	return `${indent ? '    ' : ''}${box} ${t.id}  ${t.title}${status}`;
+	return `${'    '.repeat(depth)}${box} ${t.id}  ${t.title}${status}`;
 }
 
-// Print one task followed by its notes, indented when it's a subtask.
-function printTask(t: Task, indent: boolean): void {
-	console.log(formatLine(t, indent));
+// Print one task followed by its notes, indented to its nesting depth. Notes
+// align under the title (two extra spaces past the checkbox indent).
+function printTask(t: Task, depth: number): void {
+	console.log(formatLine(t, depth));
 	if (t.notes?.trim()) {
-		const pad = indent ? '        ' : '      ';
+		const pad = '    '.repeat(depth) + '      ';
 		for (const line of t.notes.split('\n')) console.log(`${pad}${line}`);
 	}
 }
@@ -45,7 +46,8 @@ async function runList(opts: ListOptions): Promise<void> {
 		console.log(`no tasks on branch "${branch}"`);
 		return;
 	}
-	// Top-level tasks in order, each followed by its subtasks.
+	// Tasks in order, each subtree printed depth-first so a subtask's own
+	// subtasks (nesting is unbounded) appear indented right below it.
 	const childrenByParent = new Map<string, Task[]>();
 	for (const t of tasks) {
 		if (t.parentId) {
@@ -54,10 +56,13 @@ async function runList(opts: ListOptions): Promise<void> {
 			childrenByParent.set(t.parentId, list);
 		}
 	}
+	const printSubtree = (t: Task, depth: number): void => {
+		printTask(t, depth);
+		for (const child of childrenByParent.get(t.id) ?? []) printSubtree(child, depth + 1);
+	};
 	for (const t of tasks) {
 		if (t.parentId) continue;
-		printTask(t, false);
-		for (const child of childrenByParent.get(t.id) ?? []) printTask(child, true);
+		printSubtree(t, 0);
 	}
 }
 

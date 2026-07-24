@@ -17,10 +17,13 @@
 		"./diff-staging": "./src/diff-staging.ts",
 		"./seen-inheritance": "./src/seen-inheritance.ts",
 		"./session-manifest": "./src/session-manifest.ts",
-		"./usage-stats": "./src/usage-stats.ts"
+		"./usage-stats": "./src/usage-stats.ts",
+		"./license-claims": "./src/license-claims.ts",
+		"./license-verify": "./src/license-verify.ts"
 	},
 	"scripts": {
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@libsql/client": "^0.17.3",
@@ -29,6 +32,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0",
-		"typescript": "^5.7.3"
+		"typescript": "^5.7.3",
+		"vitest": "^4.1.9"
 	}
 }
