@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.2.3-beta.1
+
+### Patch Changes
+
+- [#161](https://github.com/ieedan/super-review/pull/161) [`8d3da92`](https://github.com/ieedan/super-review/commit/8d3da9264f4506704a4503d6d42389a1b3425a06) Thanks [@ieedan](https://github.com/ieedan)! - chore: a few fixes
+
 ## 0.2.3-beta.0
 
 ### Patch Changes
