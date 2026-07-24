@@ -33,7 +33,13 @@ export function verifyEdDSAJwt(
 	}
 	if (header.alg !== 'EdDSA' || typeof header.kid !== 'string') return null;
 
-	const pem = publicKeys[header.kid];
+	// Trimmed before the lookup because a key id is a bare identifier and the
+	// server env it comes from is easy to pollute with a stray newline (a
+	// "lk_63d406cf\n" once shipped in production and matched nothing here, so
+	// every activation failed at the last step). Whitespace is not part of any
+	// key id we issue, so this only ever matches the key it was going to match -
+	// the signature check below is what actually decides.
+	const pem = publicKeys[header.kid.trim()];
 	if (!pem) return null;
 
 	try {
