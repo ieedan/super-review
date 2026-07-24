@@ -106,6 +106,12 @@
 	const isRoot = $derived(meta.kind === 'comment' && !meta.comment.inReplyTo);
 	const replyCount = $derived(Math.max(0, threadComments.length - 1));
 
+	// A locally-inserted placeholder shown while its GitHub post is still in flight.
+	// It has no real id/thread yet, so we render it read-only (a "Posting…" hint
+	// instead of the time, no edit/delete/resolve/reply actions) until the server
+	// comment replaces it.
+	const optimistic = $derived(meta.kind === 'comment' && !!meta.comment.optimistic);
+
 	// Whether this comment's thread renders collapsed. Collapse is thread-level:
 	// resolved/outdated threads default collapsed and the single toggle lives on the
 	// root. When collapsed the root shows just a header (no body) and the replies
@@ -225,7 +231,11 @@
 				<div class="body">
 					<header>
 						<span class="author">{c.author}</span>
-						<span class="time">{formatRelative(c.createdAt)}</span>
+						{#if optimistic}
+							<span class="time">Posting…</span>
+						{:else}
+							<span class="time">{formatRelative(c.createdAt)}</span>
+						{/if}
 						<!-- "Outdated" mirrors GitHub: the anchored line/file is gone from the
 					     current diff. It's independent of resolution — the resolved badge
 					     below stays driven solely by `isResolved`. Shown once per thread
@@ -248,7 +258,7 @@
 						     single thread collapse toggle lives on the root and stays at the
 						     far right in both states. -->
 						<div class="ml-auto flex shrink-0 items-center gap-0.5">
-							{#if !collapsed}
+							{#if !collapsed && !optimistic}
 								<!-- Edit is a first-class action on the viewer's own comment, so it
 								     gets its own button rather than living in the overflow menu.
 								     Hidden while already editing. -->
@@ -293,7 +303,7 @@
 									</DropdownMenu.Content>
 								</DropdownMenu.Root>
 							{/if}
-							{#if isRoot}
+							{#if isRoot && !optimistic}
 								<button
 									type="button"
 									class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -363,7 +373,7 @@
 					{/if}
 				</div>
 			</article>
-			{#if isThreadTail && !collapsed}
+			{#if isThreadTail && !collapsed && !optimistic}
 				<ReplyComposer
 					expanded={replyExpanded}
 					onexpand={() => actions.setOpenCommentEditor(replyKey)}
@@ -374,7 +384,7 @@
 					replyingToAvatar={threadRoot?.authorAvatarUrl}
 				/>
 			{/if}
-			{#if isThreadTail && !collapsed}
+			{#if isThreadTail && !collapsed && !optimistic}
 				<!-- Thread-level controls below the whole conversation. Copy-thread is
              always available; resolve needs a GraphQL thread id. -->
 				<CommentThreadActions

@@ -509,6 +509,13 @@ export interface PRReviewComment {
 	// GraphQL — the REST review-comment payload doesn't expose it — so it
 	// defaults to false when the thread lookup is unavailable.
 	isResolved: boolean;
+	// True while this is a locally-created placeholder shown optimistically the
+	// instant the user hits submit, before the GitHub round-trip returns. It
+	// carries a temporary negative `id`, no `url`/`threadId`, and can't yet be
+	// edited/deleted/resolved, so the renderer hides those actions until the real
+	// comment replaces it (or it's rolled back on failure). Never set on a
+	// server-sourced comment.
+	optimistic?: boolean;
 }
 
 export interface NewReviewCommentInput {
