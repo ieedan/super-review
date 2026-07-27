@@ -2322,6 +2322,19 @@ async function stageFileImpl(repoPath: string, filePath: string): Promise<void> 
 	try {
 		await git.add([filePath]);
 	} catch (err) {
+		if (isIgnoredPathAdd(err)) {
+			// Covered by .gitignore but explicitly staged (e.g. committed before its
+			// directory was ignored, so it still shows as a change). Force past the
+			// ignore check — see isIgnoredPathAdd. `-A` so a deletion of the tracked
+			// version stages too (plain `git add -f <path>` won't record a removal).
+			// A deletion still stages the removal but then reports the pathspec as
+			// unmatched (nothing left in the worktree), so tolerate that like the
+			// commit paths do.
+			await git.raw(['add', '-A', '-f', '--', filePath]).catch((e) => {
+				if (!isPathspecMismatch(e)) throw e;
+			});
+			return;
+		}
 		if (!isBeyondSymlink(err)) throw err;
 		// An ancestor became a symlink in the working tree, so `git add` refuses the
 		// pathspec. The stageable change is the deletion of the tracked HEAD
@@ -2836,6 +2849,19 @@ function isBeyondSymlink(err: unknown): boolean {
 	return /beyond a symbolic link/.test(msg);
 }
 
+// git aborts an explicit `git add <path>` when the path is covered by a
+// .gitignore rule ("The following paths are ignored by one of your .gitignore
+// files"). This bites files that were committed before their directory was
+// gitignored: they stay tracked and keep showing up as changes, but any plain
+// add of them fails. The fix is to re-run the add with -f. Forcing is safe here
+// because the path is one the user explicitly staged or selected to commit, and
+// for an already-tracked file "ignored" carries no meaning — this mirrors what
+// GitHub Desktop does when you stage a tracked-but-ignored file.
+function isIgnoredPathAdd(err: unknown): boolean {
+	const msg = err instanceof Error ? err.message : String(err);
+	return /ignored by one of your \.gitignore files/.test(msg);
+}
+
 // ─── Commit signing ─────────────────────────────────────────────────────────
 // SSH commit signing needs git >= 2.34 (the `gpg.format=ssh` backend) and an
 // ssh-keygen that supports `-Y sign` (OpenSSH >= 8.0). We detect this once and
@@ -2941,6 +2967,16 @@ async function commitImpl(
 				try {
 					await git.raw(['add', '-A', '--', p]);
 				} catch (err) {
+					// Covered by .gitignore but selected for commit (tracked before the
+					// ignore rule was added). Force past the ignore check — see
+					// isIgnoredPathAdd — tolerating a pathspec mismatch the same way the
+					// plain add below does (an already-staged rename's old side).
+					if (isIgnoredPathAdd(err)) {
+						await git.raw(['add', '-A', '-f', '--', p]).catch((e) => {
+							if (!isPathspecMismatch(e)) throw e;
+						});
+						continue;
+					}
 					// A path whose ancestor directory is now a symlink in the working
 					// tree (a tracked directory replaced by a symlink) can't be staged
 					// with a pathspec'd `git add`, and pinning `git commit -- <path>` to
@@ -3055,6 +3091,16 @@ async function commitPartial(
 				try {
 					await idxGit.raw(['add', '-A', '--', ...paths]);
 				} catch (err) {
+					// Covered by .gitignore but selected for commit (tracked before the
+					// ignore rule was added). Force past the ignore check into the
+					// scratch index — see isIgnoredPathAdd — tolerating a rename old
+					// side that no longer matches a pathspec.
+					if (isIgnoredPathAdd(err)) {
+						await idxGit.raw(['add', '-A', '-f', '--', ...paths]).catch((e) => {
+							if (!isPathspecMismatch(e)) throw e;
+						});
+						continue;
+					}
 					if (!isBeyondSymlink(err)) throw err;
 					// An ancestor of one of these paths is a symlink in the working
 					// tree, so `git add` refuses the pathspec. The change git surfaces
