@@ -164,6 +164,107 @@ export const getPlanForUser = internalQuery({
 	}
 });
 
+/**
+ * Admin preview (Convex dashboard only): how many licenses `resetTrials` would
+ * touch, broken down by current status, without changing anything. Run this
+ * before the mutation to sanity-check the blast radius.
+ */
+export const previewResetTrials = internalQuery({
+	args: {},
+	handler: async (ctx) => {
+		const licenses = await ctx.db.query('licenses').collect();
+		const summary = { trialing: 0, expired: 0, suspended: 0, willReset: 0 };
+		for (const license of licenses) {
+			if (license.plan !== 'trial') continue;
+			// Leave suspended trials alone: those were auto-suspended for abuse, and
+			// re-granting would resurrect a farmed account.
+			if (license.status === 'suspended') {
+				summary.suspended++;
+				continue;
+			}
+			if (license.status === 'trialing') summary.trialing++;
+			else if (license.status === 'expired') summary.expired++;
+			summary.willReset++;
+		}
+		return summary;
+	}
+});
+
+/**
+ * Admin (Convex dashboard only): grant every account that currently holds a
+ * trial a fresh TRIAL_DAYS window starting now. Only licenses on the `trial`
+ * plan are touched, so paid (`monthly`/`annual`/`lifetime`) and never-activated
+ * (`none`) accounts are left untouched, and suspended trials (auto-suspended for
+ * abuse) are skipped so a reset does not resurrect a farmed account.
+ *
+ * The matching `trials` ledger row is moved forward in step with the license.
+ * That consistency is the point: the ledger is the permanent per-GitHub-account
+ * record, and if it kept the old window, `startTrialIfEligible` would reattach
+ * that stale window on the next validation and silently undo the reset.
+ *
+ * Desktop devices need no action; each picks up the new `trialEndsAt` on its
+ * next validation, within the 72h signed-token budget.
+ *
+ * Guarded by a deployment-scoped confirmation phrase, like `adminReset:wipe`, so
+ * the same command cannot be replayed against the wrong deployment. Run
+ * `previewResetTrials` first to see how many rows it will touch.
+ */
+export const resetTrials = internalMutation({
+	args: { confirm: v.string() },
+	handler: async (ctx, args) => {
+		// The phrase embeds the deployment name so a stray `convex run` (or a
+		// command copied from another environment) cannot mass-reset the wrong one.
+		const deployment = (process.env.CONVEX_CLOUD_URL ?? '')
+			.replace(/^https?:\/\//, '')
+			.replace(/\.convex\.cloud$/, '');
+		const expected = `RESET ALL TRIALS ON ${deployment}`;
+		if (args.confirm !== expected) {
+			throw new Error(`Refusing to reset. To confirm, pass { "confirm": "${expected}" }`);
+		}
+
+		const now = Date.now();
+		const endsAt = now + env.TRIAL_DAYS * TRIAL_MS_PER_DAY;
+
+		const licenses = await ctx.db.query('licenses').collect();
+		let reset = 0;
+		let skippedSuspended = 0;
+		for (const license of licenses) {
+			if (license.plan !== 'trial') continue;
+			if (license.status === 'suspended') {
+				skippedSuspended++;
+				continue;
+			}
+
+			await ctx.db.patch(license._id, {
+				status: 'trialing',
+				trialStartedAt: now,
+				trialEndsAt: endsAt
+			});
+
+			const ledger = await ctx.db
+				.query('trials')
+				.withIndex('by_githubAccountId', (q) => q.eq('githubAccountId', license.githubAccountId))
+				.first();
+			if (ledger) {
+				await ctx.db.patch(ledger._id, { startedAt: now, endsAt });
+			} else {
+				// A trial-plan license with no ledger row shouldn't exist, but insert
+				// one rather than leave a gap the next validation would fill with a
+				// stale window.
+				await ctx.db.insert('trials', {
+					githubAccountId: license.githubAccountId,
+					userId: license.userId,
+					startedAt: now,
+					endsAt
+				});
+			}
+			reset++;
+		}
+
+		return { deployment, reset, skippedSuspended, trialEndsAt: endsAt };
+	}
+});
+
 /** Dashboard: the signed-in user's devices with active token counts.
  * Returns 'unauthenticated' while auth is settling; see getMine. */
 export const getMyDevices = query({
