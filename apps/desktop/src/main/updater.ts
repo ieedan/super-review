@@ -104,10 +104,18 @@ export function initAutoUpdates(): void {
 		if (app.isPackaged) void autoUpdater.checkForUpdates();
 	});
 	ipcMain.handle('updater:quitAndInstall', () => {
-		// isForceRunAfter=true so a manual "Restart" relaunches the app (the
-		// default only relaunches on Windows). isSilent=false keeps the platform
-		// installer's normal behavior.
-		if (app.isPackaged) autoUpdater.quitAndInstall(false, true);
+		// isSilent=true (1st arg): on Windows this runs the NSIS installer with its
+		// silent flags (/S). Our installer is the assisted (oneClick: false) kind so
+		// fresh installs still get the wizard, but a silent update reuses the install
+		// directory and per-user choice recorded on first install, swapping the
+		// binary in place with no wizard. Per-user (perMachine: false) means no UAC
+		// prompt either. On macOS electron-updater ignores isSilent (Squirrel.Mac has
+		// no such notion), so passing true is a no-op there and needs no platform
+		// branch.
+		//
+		// isForceRunAfter=true (2nd arg) so a manual "Restart" relaunches the app
+		// (the default only relaunches on Windows).
+		if (app.isPackaged) autoUpdater.quitAndInstall(true, true);
 	});
 
 	if (!app.isPackaged) {
