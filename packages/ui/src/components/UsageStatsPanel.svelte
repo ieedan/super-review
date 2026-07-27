@@ -13,7 +13,6 @@
 	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import BookOpen from '@lucide/svelte/icons/book-open';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
-	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import type { LucideIcon } from '@lucide/svelte';
 	import { Chart, Svg, Calendar } from 'layerchart/svg';
@@ -29,6 +28,7 @@
 	} from '@super-review/core/usage-stats';
 	import { actions, app } from '@super-review/ui/store.svelte';
 	import * as Popover from './ui/popover';
+	import * as Select from './ui/select';
 	import { Checkbox } from './ui/checkbox';
 
 	// 'all' is the Overview; otherwise a single metric.
@@ -270,21 +270,21 @@
 <div class="w-full">
 	<!-- View picker + (Overview) widget customizer -->
 	<div class="flex items-center justify-between gap-2">
-		<div class="relative inline-block">
-			<select
-				bind:value={view}
-				aria-label="Stats view"
-				class="h-8 w-auto appearance-none rounded-lg border border-input bg-transparent py-1 pr-8 pl-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-			>
-				<option value="all">Overview</option>
+		<Select.Root
+			type="single"
+			value={view}
+			onValueChange={(v) => (view = v as View)}
+		>
+			<Select.Trigger class="w-auto" aria-label="Stats view">
+				{isOverview ? 'Overview' : (meta?.label ?? '')}
+			</Select.Trigger>
+			<Select.Content>
+				<Select.Item value="all" label="Overview">Overview</Select.Item>
 				{#each METRICS as m (m.key)}
-					<option value={m.key}>{m.label}</option>
+					<Select.Item value={m.key} label={m.label}>{m.label}</Select.Item>
 				{/each}
-			</select>
-			<ChevronDown
-				class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-			/>
-		</div>
+			</Select.Content>
+		</Select.Root>
 
 		{#if isOverview}
 			<Popover.Root>

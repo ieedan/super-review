@@ -1,8 +1,8 @@
 <script lang="ts">
-	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Github from './icons/GithubIcon.svelte';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import * as Dialog from './ui/dialog';
+	import * as Select from './ui/select';
 	import { Button } from './ui/button';
 	import { Input } from './ui/input';
 	import { Checkbox } from './ui/checkbox';
@@ -60,9 +60,6 @@
 			busy = false;
 		}
 	}
-
-	const selectClass =
-		'h-8 w-full appearance-none rounded-lg border border-input bg-transparent px-2.5 py-1 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30';
 </script>
 
 <Dialog.Root
@@ -111,17 +108,22 @@
 			<div class="grid gap-1.5">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
 				<label class="text-sm font-medium">Organization</label>
-				<div class="relative">
-					<select bind:value={org} disabled={busy || !signedIn} class={selectClass}>
-						<option value={null}>None</option>
+				<Select.Root
+					type="single"
+					value={org ?? ''}
+					onValueChange={(v) => (org = v === '' ? null : v)}
+					disabled={busy || !signedIn}
+				>
+					<Select.Trigger class="w-full">
+						{org ?? 'None'}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="" label="None">None</Select.Item>
 						{#each orgs as o (o.login)}
-							<option value={o.login}>{o.login}</option>
+							<Select.Item value={o.login} label={o.login}>{o.login}</Select.Item>
 						{/each}
-					</select>
-					<ChevronDown
-						class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-					/>
-				</div>
+					</Select.Content>
+				</Select.Root>
 			</div>
 
 			<Dialog.Footer>

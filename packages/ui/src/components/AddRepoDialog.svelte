@@ -241,9 +241,6 @@
 			busy = false;
 		}
 	}
-
-	const selectClass =
-		'h-8 w-full appearance-none rounded-lg border border-input bg-transparent px-2.5 py-1 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30';
 </script>
 
 <Dialog.Root
@@ -534,33 +531,43 @@
 				<div class="grid gap-1.5">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
 					<label class="text-sm font-medium">Git ignore</label>
-					<div class="relative">
-						<select bind:value={gitignore} disabled={busy} class={selectClass}>
-							<option value={null}>None</option>
+					<Select.Root
+						type="single"
+						value={gitignore ?? ''}
+						onValueChange={(v) => (gitignore = v === '' ? null : v)}
+						disabled={busy}
+					>
+						<Select.Trigger class="w-full">
+							{gitignore ?? 'None'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="" label="None">None</Select.Item>
 							{#each gitignoreOptions as opt (opt)}
-								<option value={opt}>{opt}</option>
+								<Select.Item value={opt} label={opt}>{opt}</Select.Item>
 							{/each}
-						</select>
-						<ChevronDown
-							class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-						/>
-					</div>
+						</Select.Content>
+					</Select.Root>
 				</div>
 
 				<div class="grid gap-1.5">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
 					<label class="text-sm font-medium">License</label>
-					<div class="relative">
-						<select bind:value={license} disabled={busy} class={selectClass}>
-							<option value={null}>None</option>
+					<Select.Root
+						type="single"
+						value={license ?? ''}
+						onValueChange={(v) => (license = v === '' ? null : v)}
+						disabled={busy}
+					>
+						<Select.Trigger class="w-full">
+							{license ?? 'None'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="" label="None">None</Select.Item>
 							{#each licenseOptions as opt (opt)}
-								<option value={opt}>{opt}</option>
+								<Select.Item value={opt} label={opt}>{opt}</Select.Item>
 							{/each}
-						</select>
-						<ChevronDown
-							class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-						/>
-					</div>
+						</Select.Content>
+					</Select.Root>
 				</div>
 
 				<Dialog.Footer>
