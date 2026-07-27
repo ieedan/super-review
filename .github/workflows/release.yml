@@ -98,9 +98,48 @@ jobs:
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           fi
 
+  # Create the draft release ONCE, before the matrix builds fan out. Without
+  # this, the two `electron-builder --publish always` jobs race: each calls
+  # electron-publish's getOrCreateRelease, which reuses an existing *draft*
+  # whose tag matches but only if it already exists. The jobs start seconds
+  # apart and GitHub's `GET /releases` is eventually consistent, so neither sees
+  # the other's just-created draft and BOTH create their own draft for the same
+  # tag. publish-release then flips only one live, stranding the other
+  # platform's artifacts (mac auto-update 404s on latest-mac.yml). Pre-creating
+  # the single draft here (minutes before the builds list releases) makes both
+  # jobs find and reuse it, so all artifacts land on one release. A draft
+  # release doesn't create the git tag ref, so publish-release still tags +
+  # publishes exactly as before.
+  prepare-release:
+    name: Prepare release
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Create draft release (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="v${{ needs.version.outputs.version }}"
+          # Idempotent so a workflow_dispatch re-run against the same version
+          # reuses the draft instead of erroring on "release already exists".
+          if gh release view "$V" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $V already exists, reusing"
+          else
+            gh release create "$V" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --draft \
+              --title "Super Review Desktop@${{ needs.version.outputs.version }}" \
+              --notes "Build in progress..."
+          fi
+
   build:
     name: ${{ matrix.name }}
-    needs: version
+    needs: [version, prepare-release]
     if: needs.version.outputs.release == 'true'
     strategy:
       fail-fast: false
