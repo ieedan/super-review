@@ -1,5 +1,13 @@
 # @super-review/ui
 
+## 0.1.5-beta.5
+
+### Patch Changes
+
+- [#175](https://github.com/ieedan/super-review/pull/175) [`0a1ed73`](https://github.com/ieedan/super-review/commit/0a1ed73179a7be67d022eb109f22d44ecf208340) Thanks [@ieedan](https://github.com/ieedan)! - feat(desktop): GitHub Desktop-style Windows title bar menu
+- Updated dependencies [[`0a1ed73`](https://github.com/ieedan/super-review/commit/0a1ed73179a7be67d022eb109f22d44ecf208340)]:
+  - @super-review/core@0.2.3-beta.3
+
 ## 0.1.5-beta.4
 
 ### Patch Changes
