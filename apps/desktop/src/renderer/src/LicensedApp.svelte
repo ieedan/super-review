@@ -454,7 +454,7 @@
 <svelte:window onfocus={onFocus} onresize={syncWindowControls} onkeydown={onWindowKeydown} />
 <svelte:document onvisibilitychange={onVisibility} />
 
-<div class="flex h-screen w-full flex-col">
+<div class="flex h-full w-full flex-col">
 	<Sidebar.Provider
 		open={!app.sidebarCollapsed}
 		onOpenChange={(open) => {

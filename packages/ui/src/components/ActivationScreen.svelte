@@ -16,11 +16,6 @@
 	const userCode = $derived(app.license.activationUserCode);
 	const verificationUri = $derived(app.license.activationVerificationUri);
 
-	// The host shown in the "go here" hint, without the scheme.
-	const verificationHost = $derived(
-		verificationUri ? verificationUri.replace(/^https?:\/\//, '') : ''
-	);
-
 	function lockReason(state: LicenseState): string {
 		if (state.state !== 'locked') return '';
 		switch (state.reason) {
@@ -66,9 +61,12 @@
 	</svg>
 {/snippet}
 
-<div class="bg-background flex h-screen w-screen flex-col">
-	<!-- Draggable strip so the frameless window can still be moved. -->
-	<div class="h-11 shrink-0" style="-webkit-app-region: drag;"></div>
+<div class="bg-background flex h-full w-full flex-col">
+	<!-- Draggable strip so the frameless window can still be moved. On Windows
+	     the AppMenuBar above provides the drag region + window controls. -->
+	{#if app.platform !== 'win32'}
+		<div class="h-11 shrink-0" style="-webkit-app-region: drag;"></div>
+	{/if}
 
 	<div class="flex flex-1 flex-col items-center justify-center px-4 pb-16">
 		<div
@@ -81,14 +79,9 @@
 				code wherever they started from. -->
 			{#if activating}
 				<div class="flex flex-col gap-1.5">
-					<h1 class="text-xl font-semibold tracking-tight">Enter this code</h1>
+					<h1 class="text-xl font-semibold tracking-tight">Confirm this device</h1>
 					<p class="text-muted-foreground text-sm text-pretty">
-						{#if verificationHost}
-							In the browser we opened, go to
-							<span class="text-foreground font-medium">{verificationHost}</span> and enter:
-						{:else}
-							Enter this code in the browser we opened:
-						{/if}
+						In the browser we opened, confirm this code matches, then approve:
 					</p>
 				</div>
 

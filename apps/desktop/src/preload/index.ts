@@ -3,6 +3,7 @@ import type {
 	BranchContextMenuAction,
 	CommitContextMenuAction,
 	PRContextMenuAction,
+	AppMenuBarItem,
 	BranchInfo,
 	BranchMenuAction,
 	BranchMenuState,
@@ -564,7 +565,9 @@ const api: PreloadAPI = {
 			invoke('menu:showFileHeaderContextMenu', params) as Promise<FileHeaderContextMenuResult>,
 		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
 		setRepositoryState: (state: RepositoryMenuState) =>
-			ipcRenderer.send('menu:setRepositoryState', state)
+			ipcRenderer.send('menu:setRepositoryState', state),
+		getAppMenuBarItems: () => invoke('menu:getAppMenuBarItems') as Promise<AppMenuBarItem[]>,
+		popupAppMenu: (params) => invoke('menu:popupAppMenu', params) as Promise<void>
 	},
 	windowControls: {
 		// Ask the main process to re-center the macOS traffic lights for the

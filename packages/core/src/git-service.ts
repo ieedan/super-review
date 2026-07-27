@@ -923,34 +923,87 @@ async function readRepoDescription(repoPath: string): Promise<string | undefined
 
 export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
 	const git = openGit(repoPath);
-	// One `for-each-ref` call gives us the name, ref kind, and committer epoch
-	// for every branch — much cheaper than `branch -vv` + per-branch date probes
-	// and lets the picker show GitHub Desktop-style relative timestamps.
+	// One `for-each-ref` over both the local heads and the remote-tracking refs
+	// gives us the name, ref kind, committer epoch, and tracking ref for every
+	// branch in a single call, much cheaper than `branch -a -vv` + per-branch
+	// date probes, and lets the picker show GitHub Desktop-style relative
+	// timestamps. `%(refname)` (the full ref) classifies each row as local vs
+	// remote; `%(symref)` is non-empty only on a remote's HEAD pointer (e.g.
+	// `origin/HEAD -> origin/main`), which we skip.
 	const [currentRaw, raw] = await Promise.all([
 		git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
 		git.raw([
 			'for-each-ref',
-			'--format=%(refname:short)\t%(committerdate:unix)\t%(upstream:short)',
-			'refs/heads'
+			'--format=%(refname)\t%(committerdate:unix)\t%(upstream:short)\t%(symref)',
+			'refs/heads',
+			'refs/remotes'
 		])
 	]);
 	const current = currentRaw.trim();
 	const branches: BranchInfo[] = [];
+	// Names of every local branch, so a remote-tracking ref that already has a
+	// local counterpart is dropped (checking out that name lands on the local
+	// branch anyway, so the row would be a duplicate).
+	const localNames = new Set<string>();
+	// Remote-only branches, de-duped by branch name across remotes. `origin`
+	// wins a tie so `git checkout <name>`'s DWIM tracking-branch creation is
+	// unambiguous when the same branch lives on more than one remote.
+	const remoteOnly = new Map<string, { upstream: string; remote: string; lastCommitAt?: number }>();
+
 	for (const line of raw.split('\n').filter(Boolean)) {
-		const [name, tsRaw, upstreamRaw] = line.split('\t');
-		if (!name) continue;
+		const [refname, tsRaw, upstreamRaw, symref] = line.split('\t');
+		if (!refname) continue;
 		const ts = Number(tsRaw);
+		const lastCommitAt = Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined;
+
+		if (refname.startsWith('refs/heads/')) {
+			const name = refname.slice('refs/heads/'.length);
+			if (!name) continue;
+			localNames.add(name);
+			branches.push({
+				name,
+				current: name === current,
+				// `%(upstream:short)` is the configured tracking branch (e.g.
+				// "origin/feat") — its presence is how we tell a local branch also
+				// lives on a remote. Empty when the branch tracks nothing.
+				upstream: upstreamRaw ? upstreamRaw : undefined,
+				isRemote: false,
+				lastCommitAt
+			});
+		} else if (refname.startsWith('refs/remotes/')) {
+			// Skip a remote's symbolic HEAD (e.g. `origin/HEAD -> origin/main`);
+			// it's a pointer, not a branch of its own.
+			if (symref) continue;
+			// "origin/feat": split off the remote name (remote names can't contain
+			// slashes) to get the branch name, which may itself contain slashes.
+			const qualified = refname.slice('refs/remotes/'.length);
+			const slash = qualified.indexOf('/');
+			if (slash < 0) continue;
+			const remote = qualified.slice(0, slash);
+			const name = qualified.slice(slash + 1);
+			if (!name || name === 'HEAD') continue;
+			const existing = remoteOnly.get(name);
+			if (!existing || (existing.remote !== 'origin' && remote === 'origin')) {
+				remoteOnly.set(name, { upstream: qualified, remote, lastCommitAt });
+			}
+		}
+	}
+
+	// Append the remote-only branches (no local branch of the same name). Their
+	// `name` is the short branch name so `git checkout <name>` creates a local
+	// tracking branch; `upstream` carries the "origin/feat" ref for display and
+	// for read-only viewing of a branch that isn't checked out.
+	for (const [name, r] of remoteOnly) {
+		if (localNames.has(name)) continue;
 		branches.push({
 			name,
-			current: name === current,
-			// `%(upstream:short)` is the configured tracking branch (e.g.
-			// "origin/feat") — its presence is how we tell a branch also lives on a
-			// remote. Empty when the branch tracks nothing.
-			upstream: upstreamRaw ? upstreamRaw : undefined,
-			isRemote: false,
-			lastCommitAt: Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined
+			current: false,
+			upstream: r.upstream,
+			isRemote: true,
+			lastCommitAt: r.lastCommitAt
 		});
 	}
+
 	branches.sort((a, b) => {
 		if (a.current !== b.current) return a.current ? -1 : 1;
 		if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1;

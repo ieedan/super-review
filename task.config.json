@@ -32,7 +32,7 @@
 				},
 				"desktop": {
 					"color": "blue",
-					"command": "SUPER_REVIEW_API_URL=http://localhost:5173 pnpm dev:desktop"
+					"command": "pnpm exec cross-env SUPER_REVIEW_API_URL=http://localhost:5173 pnpm dev:desktop"
 				}
 			}
 		}

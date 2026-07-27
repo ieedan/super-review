@@ -48,10 +48,14 @@ export const POST: RequestHandler = async ({ request, url, locals, getClientAddr
 		});
 
 		if (res.isOk()) {
+			const formatted = formatUserCode(userCode);
 			return json({
 				deviceCode,
-				userCode: formatUserCode(userCode),
-				verificationUri: `${url.origin}/activate`,
+				userCode: formatted,
+				// The code rides along in the URL so the browser can show it for the
+				// user to compare against the device, no typing. The page never
+				// auto-approves off it; the user still presses Confirm.
+				verificationUri: `${url.origin}/activate?code=${encodeURIComponent(formatted)}`,
 				expiresAt: res.value.expiresAt,
 				// Desktop poll cadence; the server also caps it.
 				intervalMs: 3000

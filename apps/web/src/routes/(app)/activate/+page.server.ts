@@ -3,8 +3,9 @@ import { api } from '$lib/convex/_generated/api';
 import type { PageServerLoad } from './$types';
 
 // The device-authorization page. Requires a signed-in user; unauthenticated
-// visitors sign in and return here. An optional ?code= prefills the input (the
-// desktop just displays the code, so this is only a convenience).
+// visitors sign in and return here. The desktop opens this page with ?code= so
+// the browser can show the code for a visual match and a Confirm/Deny press; a
+// direct visit with no code falls back to manual entry.
 export const load: PageServerLoad = async ({ url, locals }) => {
 	const user = await locals.convex.safeQuery(api.auth.getCurrentUser, {}).unwrapOr(null);
 	if (!user) {

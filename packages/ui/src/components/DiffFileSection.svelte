@@ -172,14 +172,6 @@
 	// rather than raw JSON, mirroring the session manifest above. Skipped for a
 	// delete: the list is gone, so there is nothing to render.
 	const taskManifest = $derived(file.status !== 'deleted' && isTaskManifestPath(file.path));
-	// A pure rename (or copy) with no content change has nothing to diff — git
-	// reports zero additions/deletions. Mirror GitHub and show a one-liner
-	// instead of fetching/rendering an empty diff.
-	const renamedNoChanges = $derived(
-		(file.status === 'renamed' || file.status === 'copied') &&
-			file.additions === 0 &&
-			file.deletions === 0
-	);
 	// The pre-rename path, when this is a rename/copy that actually moved. Git
 	// occasionally reports a rename whose old and new paths match (e.g. a
 	// case-only change on a case-insensitive FS round-tripped) — guard against
@@ -192,16 +184,24 @@
 			: null
 	);
 	// Image files are rendered side by side (raster) or get a code/image toggle
-	// (SVG), so the usual "renamed" one-liner doesn't apply — we still want to
-	// show the old image of a deleted image, etc.
+	// (SVG), so the usual "no content changes" one-liner doesn't apply — we still
+	// want to show the old image of a deleted image, etc.
 	const isImage = $derived(isImagePath(file.path));
 	const isSvg = $derived(isSvgPath(file.path));
-	// Files where the diff body is pointless to render — show a one-liner. A
-	// deletion is NOT one of these: like GitHub, we render the old file as an
-	// all-removed diff (getDiff returns the old contents with an empty new side)
-	// rather than a "this file was deleted" placeholder.
+	// Files with a git change but no textual diff (mode-only, pure rename/copy,
+	// type-change, empty add) — skip the fetch and show a one-liner, matching
+	// GitHub Desktop. A deletion with real content is NOT one of these: like
+	// GitHub, we render the old file as an all-removed diff rather than a
+	// placeholder. Images keep their side-by-side view; binaries have their own
+	// message after load.
+	const noContentChanges = $derived(
+		!isImage && !file.isBinary && file.additions === 0 && file.deletions === 0
+	);
+	// Set when a fetched diff turns out to have identical sides despite non-zero
+	// stats (rare), so we still show the empty-state instead of a blank host.
+	let identicalSides = $state(false);
 	const placeholderMessage = $derived(
-		isImage ? null : renamedNoChanges ? 'File renamed without changes.' : null
+		noContentChanges || identicalSides ? 'No content changes found.' : null
 	);
 
 	// Partial (line/hunk) staging is offered only in the Unstaged working-tree
@@ -1481,17 +1481,20 @@
 		}
 
 		// Identical sides have nothing to diff — which includes a newly added empty
-		// file (both sides ''). parseDiffFromFile *throws* on this case ("if the
-		// files are the same maybe?"), but it isn't an error: we just render the
-		// empty diff host (nothing in it) and bail. Surfacing it as loadError would
-		// show a bogus banner and, because loadError persists across renders, leave
-		// that banner stuck once the file later gains content. Clearing fileDiffMeta
-		// keeps stale hunk metadata from a previous render from lingering.
+		// file (both sides '') and mode-only changes that somehow still fetched.
+		// parseDiffFromFile *throws* on this case ("if the files are the same
+		// maybe?"), but it isn't an error: show the same empty-state as a 0/0
+		// file list entry. Surfacing it as loadError would show a bogus banner
+		// and, because loadError persists across renders, leave that banner stuck
+		// once the file later gains content. Clearing fileDiffMeta keeps stale
+		// hunk metadata from a previous render from lingering.
 		if (oldFile.contents === newFile.contents) {
 			fileDiffMeta = null;
 			loadError = null;
+			identicalSides = true;
 			return;
 		}
+		identicalSides = false;
 
 		// Parse Pierre's own diff metadata up front: its hunks (not the git patch)
 		// are what the expansion targets, and we need them before the first render so
@@ -1590,6 +1593,7 @@
 		diffData = null;
 		loadedCtxKey = null;
 		indentStep = -1;
+		identicalSides = false;
 		cancelPendingRender?.();
 		cancelPendingRender = null;
 		disposeDiff();
@@ -1698,8 +1702,9 @@
 		// Don't fetch hidden diffs — wait until the user clicks "Load diff". When
 		// they do, `deferred` flips false and this effect re-runs to fetch.
 		if (deferred) return;
-		// Nothing useful to render for a pure rename with no content change.
-		if (placeholderMessage) return;
+		// Nothing useful to render when there's no textual change (mode-only,
+		// pure rename/copy, empty file, etc.).
+		if (noContentChanges) return;
 		const repo = app.activeRepo;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
 		const ctxKey = diffContextKey(ctx);
@@ -1995,6 +2000,7 @@
 			lastResetPath = file.path;
 			showPreview = false;
 			showRaw = false;
+			identicalSides = false;
 		}
 	});
 

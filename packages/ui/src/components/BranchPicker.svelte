@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Command as CommandPrimitive } from 'bits-ui';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Cloud from '@lucide/svelte/icons/cloud';
 	import Eye from '@lucide/svelte/icons/eye';
 	import GitBranch from '@lucide/svelte/icons/git-branch';
 	import GitFork from '@lucide/svelte/icons/git-fork';
@@ -84,13 +85,21 @@
 	// Right-click a branch row: pop the native OS context menu and dispatch the
 	// chosen action. Copy goes straight through; delete routes via the confirm
 	// dialog so the remote-delete checkbox/warning still applies.
+	// A remote-only branch has no local ref, so read-only viewing (and the
+	// trigger's "viewed" comparison) must go through its "origin/feat" tracking
+	// ref, which resolves; a local branch views by its own name.
+	function viewRef(b: BranchInfo): string {
+		return b.isRemote && b.upstream ? b.upstream : b.name;
+	}
+
 	async function showContextMenu(e: MouseEvent, b: BranchInfo): Promise<void> {
 		e.preventDefault();
 		const action = await window.api.menu.showBranchContextMenu({
 			name: b.name,
-			canDelete: !b.current,
+			// Delete acts on a local branch; a remote-only branch has none to remove.
+			canDelete: !b.current && !b.isRemote,
 			// Offer read-only viewing for any branch except the one already shown.
-			canView: b.name !== viewedBranch()
+			canView: viewRef(b) !== viewedBranch()
 		});
 		if (action === 'copy') {
 			await actions.copyToClipboard(b.name);
@@ -98,7 +107,7 @@
 			requestDelete(b);
 		} else if (action === 'view') {
 			app.branchPickerOpen = false;
-			await actions.viewBranchReadOnly(b.name);
+			await actions.viewBranchReadOnly(viewRef(b));
 		}
 	}
 
@@ -170,11 +179,12 @@
 			needle === '' || b.name.toLowerCase().includes(needle);
 		let defaultBranch: BranchInfo | null = null;
 		const recent: BranchInfo[] = [];
+		const remote: BranchInfo[] = [];
 		for (const b of app.branches) {
-			if (defaultName && b.name === defaultName && !defaultBranch) {
+			if (defaultName && b.name === defaultName && !b.isRemote && !defaultBranch) {
 				defaultBranch = matches(b) ? b : null;
 			} else if (matches(b)) {
-				recent.push(b);
+				(b.isRemote ? remote : recent).push(b);
 			}
 		}
 		const result: Row[] = [];
@@ -185,6 +195,12 @@
 		if (recent.length > 0) {
 			result.push({ kind: 'heading', label: 'Recent Branches' });
 			for (const b of recent) result.push({ kind: 'branch', branch: b });
+		}
+		// Branches that only live on a remote (no local checkout yet). Selecting
+		// one checks it out, which creates a local tracking branch.
+		if (remote.length > 0) {
+			result.push({ kind: 'heading', label: 'Remote Branches' });
+			for (const b of remote) result.push({ kind: 'branch', branch: b });
 		}
 		return result;
 	});
@@ -358,7 +374,7 @@
 										</div>
 									{:else}
 										{@const b = row.branch}
-										{@const isViewed = b.name === viewedBranch()}
+										{@const isViewed = viewRef(b) === viewedBranch()}
 										{@const drifted = isViewingOtherBranch()}
 										<Command.Item
 											value={b.name}
@@ -374,6 +390,8 @@
 											     branch glyph. With no drift these are the same row. -->
 											{#if drifted && isViewed}
 												<Eye class="size-3.5 text-foreground" aria-label="Viewing read-only" />
+											{:else if b.isRemote}
+												<Cloud class="size-3.5 text-muted-foreground" aria-label="Remote branch" />
 											{:else}
 												<GitBranch
 													class={cn(
