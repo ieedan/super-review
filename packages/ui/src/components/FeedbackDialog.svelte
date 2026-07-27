@@ -48,7 +48,9 @@
 			title = prefill?.title ?? '';
 			body = prefill?.body ?? '';
 			email = '';
-			context = prefill?.context;
+			context = prefill?.context
+				? ($state.snapshot(prefill.context) as ErrorContext)
+				: undefined;
 			errorMsg = null;
 			result = null;
 			submitting = false;

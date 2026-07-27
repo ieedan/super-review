@@ -1452,7 +1452,7 @@ function feedbackDraftFromError(toast: ErrorToast): FeedbackDraft {
 		// The captured context travels as its own field rather than as prose in
 		// the body: triage reads it as structured data, and the body stays
 		// whatever the user actually writes.
-		context: ctx
+		context: ctx ? ($state.snapshot(ctx) as ErrorContext) : undefined
 	};
 }
 
@@ -7782,7 +7782,9 @@ export const actions = {
 	// Send the feedback to the Super Review backend. Throws on failure so the
 	// dialog can show the error inline without losing the user's typed text.
 	async submitFeedback(input: FeedbackInput): Promise<FeedbackResult> {
-		return window.api.feedback.submit(input);
+		// Snapshot before IPC — `context` may be a $state proxy when the report
+		// came from an error toast ("object could not be cloned" on Windows).
+		return window.api.feedback.submit($state.snapshot(input) as FeedbackInput);
 	},
 
 	openRepoSettingsDialog(): void {

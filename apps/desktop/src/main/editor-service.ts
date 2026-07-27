@@ -73,9 +73,12 @@ async function which(cmd: string): Promise<string | null> {
 				.split(/\r?\n/)
 				.map((l) => l.trim())
 				.filter(Boolean);
-			// Prefer a real .exe when `where` lists both (e.g. a shim and the binary).
+			// Prefer a real .exe, then a .cmd/.bat shim. Avoid extensionless hits
+			// (VS Code's bash `bin\code` script) which CreateProcess cannot run.
 			const exe = lines.find((l) => /\.exe$/i.test(l));
-			resolve(exe || lines[0] || null);
+			const cmd = lines.find((l) => /\.(cmd|bat)$/i.test(l));
+			const withExt = lines.find((l) => path.extname(l) !== '');
+			resolve(exe || cmd || withExt || lines[0] || null);
 		});
 		child.on('error', () => resolve(null));
 	});
@@ -128,25 +131,45 @@ function winFallbacks(editor: EditorKind): string[] {
 	return out;
 }
 
-// `where` / PATH usually finds `code.cmd` / `cursor.cmd`. Map those shims to the
-// sibling GUI executable when it exists so we can spawn without a shell.
-async function preferWindowsExe(bin: string): Promise<string> {
+// Turn a PATH/`where` hit into something CreateProcess can actually run.
+// Windows VS Code ships `bin\code` (bash) and `bin\code.cmd` next to
+// `Code.exe`; `where code` may return the extensionless bash shim, which
+// spawn() reports as ENOENT. Prefer the GUI .exe, then the .cmd wrapper.
+async function normalizeWindowsEditorBin(bin: string): Promise<string | null> {
 	if (process.platform !== 'win32') return bin;
-	if (/\.exe$/i.test(bin)) return bin;
-	if (!/\.(cmd|bat)$/i.test(bin)) return bin;
+	if (/\.exe$/i.test(bin) && (await exists(bin))) return bin;
 
-	const binDir = path.dirname(bin);
-	const appDir = path.dirname(binDir);
-	const candidates = [
-		path.join(appDir, 'Code.exe'),
-		path.join(appDir, 'Cursor.exe'),
-		path.join(appDir, 'Zed.exe'),
-		path.join(binDir, path.basename(bin).replace(/\.(cmd|bat)$/i, '.exe'))
-	];
+	const ext = path.extname(bin);
+	const base = path.basename(bin, ext).toLowerCase();
+	const dir = path.dirname(bin);
+	// `...\Something\bin\code[.cmd]` → app root is the parent of `bin`.
+	// Cursor nests further: `...\cursor\resources\app\bin\cursor.cmd`.
+	let appDir = path.basename(dir).toLowerCase() === 'bin' ? path.dirname(dir) : dir;
+	if (base === 'cursor') {
+		if (path.basename(appDir).toLowerCase() === 'app') {
+			appDir = path.dirname(path.dirname(appDir));
+		}
+	}
+
+	const candidates: string[] = [];
+	if (base === 'code') {
+		candidates.push(path.join(appDir, 'Code.exe'), path.join(dir, 'code.cmd'));
+	} else if (base === 'cursor') {
+		candidates.push(path.join(appDir, 'Cursor.exe'), path.join(dir, 'cursor.cmd'));
+	} else if (base === 'zed') {
+		candidates.push(path.join(appDir, 'Zed.exe'));
+	}
+	// Extensionless PATH hits: try PATHEXT-style suffixes at the same path.
+	if (ext === '') {
+		candidates.push(`${bin}.exe`, `${bin}.cmd`, `${bin}.bat`);
+	} else if (/\.(cmd|bat)$/i.test(ext)) {
+		candidates.push(bin);
+	}
+
 	for (const c of candidates) {
 		if (await exists(c)) return c;
 	}
-	return bin;
+	return (await exists(bin)) ? bin : null;
 }
 
 async function resolveViaVswhere(): Promise<string | null> {
@@ -232,16 +255,32 @@ async function resolveBinary(editor: EditorKind): Promise<string | null> {
 	if (def.macAppBundle && process.platform === 'darwin') {
 		if (!(await exists(def.macAppBundle))) return null;
 	}
+
+	// On Windows, prefer known GUI .exe install paths before trusting `where`.
+	// PATH often points at `bin\code` (unrunnable bash shim) or `bin\code.cmd`.
+	if (process.platform === 'win32') {
+		for (const p of winFallbacks(editor)) {
+			if (/\.exe$/i.test(p) && (await exists(p))) return p;
+		}
+		const onPath = await which(def.cli);
+		if (onPath) {
+			const normalized = await normalizeWindowsEditorBin(onPath);
+			if (normalized) return normalized;
+		}
+		for (const p of winFallbacks(editor)) {
+			if (await exists(p)) {
+				const normalized = await normalizeWindowsEditorBin(p);
+				if (normalized) return normalized;
+			}
+		}
+		return null;
+	}
+
 	const onPath = await which(def.cli);
-	if (onPath) return preferWindowsExe(onPath);
+	if (onPath) return onPath;
 	if (process.platform === 'darwin') {
 		for (const p of def.macFallbacks) {
 			if (await exists(p)) return p;
-		}
-	}
-	if (process.platform === 'win32') {
-		for (const p of winFallbacks(editor)) {
-			if (await exists(p)) return preferWindowsExe(p);
 		}
 	}
 	return null;
