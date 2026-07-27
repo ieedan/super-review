@@ -84,8 +84,22 @@ win:
     - target: nsis
       arch: x64
 nsis:
+  # Assisted installer (not one-click) so a FRESH install still shows the wizard
+  # where the user picks the install directory. We deliberately keep this instead
+  # of oneClick: true, which would give silent updates for free but drop
+  # allowToChangeInstallationDirectory and remove that first-run folder choice.
+  #
+  # Seamless auto-updates are handled instead by passing isSilent=true to
+  # quitAndInstall on Windows (see updater.ts). electron-updater then runs this
+  # same installer with its silent flags (/S) on "Restart", reusing the recorded
+  # install directory and per-user choice, so the update swaps in place with no
+  # wizard.
   oneClick: false
+  # Per-user install (not per-machine). Silent auto-updates need this: a per-user
+  # install writes under the user profile and never triggers a UAC elevation
+  # prompt, so the silent /S update can complete without any dialog.
   perMachine: false
+  # Only affects the fresh assisted install above; ignored by the silent update.
   allowToChangeInstallationDirectory: true
   # Stable, version-less filename so the docs site can link directly to
   # github.com/.../releases/latest/download/Super-Review-win-x64.exe. electron
