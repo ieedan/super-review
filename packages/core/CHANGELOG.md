@@ -1,5 +1,13 @@
 # @super-review/core
 
+## 0.2.3-beta.2
+
+### Patch Changes
+
+- [`bfbacbd`](https://github.com/ieedan/super-review/commit/bfbacbd3d6410a69d21c325d02e8ceb7dd83319b) Thanks [@ieedan](https://github.com/ieedan)! - fix: ensure untracked files don't cause app errors
+
+- [`a3b7a66`](https://github.com/ieedan/super-review/commit/a3b7a66db896fffb9e16ed0b1cd3470d760e98d9) Thanks [@ieedan](https://github.com/ieedan)! - fix: authentication fixes
+
 ## 0.2.3-beta.1
 
 ### Patch Changes
