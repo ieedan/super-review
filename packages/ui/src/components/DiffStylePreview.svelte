@@ -136,10 +136,8 @@
 		min-height: 60px;
 	}
 	.diff-style-preview :global(pre) {
+		/* Font size/line-height come from the global `diffs-container` rules
+		   (12px / 1.5) so the settings preview matches the main diff view. */
 		margin: 0;
-		/* Default to the compact size; the previewable settings tabs override these
-		   vars to render the shared preview larger. */
-		font-size: var(--diff-preview-font-size, 10px);
-		line-height: var(--diff-preview-line-height, 14px);
 	}
 </style>

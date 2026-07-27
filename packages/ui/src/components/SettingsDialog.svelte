@@ -47,7 +47,7 @@
 	import LicenseCard from './LicenseCard.svelte';
 	import UpdateNotice from './UpdateNotice.svelte';
 	import DiffStylePreview from './DiffStylePreview.svelte';
-	import FileIcon from './FileIcon.svelte';
+	import DiffFileHeader from './DiffFileHeader.svelte';
 	import SettingSelect from './SettingSelect.svelte';
 	import AppChromePreview from './AppChromePreview.svelte';
 	import UsageStatsPanel from './UsageStatsPanel.svelte';
@@ -69,6 +69,7 @@
 		DEFAULT_HOTKEYS,
 		HOTKEY_ACTIONS,
 		HOTKEY_LABELS,
+		formatHotkeyParts,
 		hotkeysEqual,
 		reservedHotkeyLabel,
 		type Hotkey,
@@ -1565,23 +1566,29 @@
 			Preview
 		</div>
 		{#if kind === 'diff'}
-			<!-- Framed like a real diff card in the app: a file header (icon + path +
-				Diff/Raw toggle) above the live diff. -->
+			<!-- Framed like a real DiffFileSection card: shared header chrome above an
+				edge-to-edge DiffStylePreview (no extra padding around the diff). -->
 			<div
 				class="overflow-hidden rounded-lg border border-border bg-background"
 				style="--code-font: {codeFontCss(draftCodeFont)}; --code-font-features: {codeFontFeatures(
 					draftCodeFont
-				)}; --diff-preview-font-size: 13px; --diff-preview-line-height: 19px;"
+				)};"
 			>
-				<div class="flex items-center gap-2 border-b border-border bg-card/40 px-3 py-2">
-					<FileIcon path="cart.ts" class="size-4 shrink-0" />
-					<span class="font-mono text-xs text-muted-foreground">src/cart.ts</span>
-					<div class="ml-auto flex items-center gap-1 text-[10px] font-medium">
-						<span class="rounded bg-muted px-1.5 py-0.5 text-foreground">Diff</span>
-						<span class="px-1.5 py-0.5 text-muted-foreground">Raw</span>
-					</div>
-				</div>
-				<div class="p-3">
+				<DiffFileHeader
+					path="src/cart.ts"
+					expanded
+					sticky={false}
+					interactive={false}
+					additions={3}
+					deletions={5}
+					showViewToggle
+					showRaw={false}
+					markSeenHotkey={formatHotkeyParts(
+						app.hotkeys.markSeenNext,
+						app.platform === 'darwin'
+					)}
+				/>
+				<div class="bg-card/20">
 					<DiffStylePreview
 						mode={draftViewMode}
 						theme={draftDiffThemePair}

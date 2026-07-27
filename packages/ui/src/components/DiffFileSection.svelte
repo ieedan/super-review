@@ -1,25 +1,9 @@
 <script lang="ts">
-	import { mount, unmount, onDestroy, onMount, untrack } from 'svelte';
-	import Check from '@lucide/svelte/icons/check';
-	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import Code from '@lucide/svelte/icons/code';
-	import Code2 from '@lucide/svelte/icons/code-2';
-	import Eye from '@lucide/svelte/icons/eye';
-	import FileEdit from '@lucide/svelte/icons/file-edit';
-	import FileMinus from '@lucide/svelte/icons/file-minus';
-	import FileText from '@lucide/svelte/icons/file-text';
-	import ImageIcon from '@lucide/svelte/icons/image';
-	import CursorIcon from './icons/CursorIcon.svelte';
-	import VSCodeIcon from './icons/VSCodeIcon.svelte';
-	import XcodeIcon from './icons/XcodeIcon.svelte';
-	import ZedIcon from './icons/ZedIcon.svelte';
-	import VisualStudioIcon from './icons/VisualStudioIcon.svelte';
-	import FileIcon from './FileIcon.svelte';
-	import { truncatePathPrefix } from '@super-review/ui/path-truncate';
+	import { mount, unmount, onDestroy, untrack } from 'svelte';
 	import { isMarkdownPath, renderMarkdown } from '@super-review/ui/markdown';
 	import { isImagePath, isSvgPath } from '@super-review/core/media';
 	import ImageDiff from './ImageDiff.svelte';
+	import DiffFileHeader from './DiffFileHeader.svelte';
 	import '@super-review/ui/markdown.css';
 	import {
 		DIFFS_TAG_NAME,
@@ -35,14 +19,11 @@
 		type SelectedLineRange
 	} from '@pierre/diffs';
 	import { Button } from './ui/button';
-	import { Badge } from './ui/badge';
-	import { ShortcutHint } from './ui/shortcut-hint';
 	import { formatHotkeyParts } from '@super-review/core/hotkeys';
 	import {
 		actions,
 		app,
 		composerKey,
-		effectiveEditor,
 		getCachedDiff,
 		isReadOnlyView,
 		setCachedDiff
@@ -89,7 +70,6 @@
 		ChangedFile,
 		DiffContext,
 		DiffData,
-		EditorKind,
 		FileHeaderItemVisibility,
 		LocalComment,
 		PRReviewComment,
@@ -1947,51 +1927,6 @@
 	// image for an SVG. Reset whenever the section is reused for a different file
 	// (the {#each} recycles components).
 	let showPreview = $state(false);
-	const pathDir = $derived(
-		file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/') + 1) : ''
-	);
-	const pathBase = $derived(
-		file.path.includes('/') ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path
-	);
-	// Center-style path truncation for the sticky header label, matching the
-	// sidebar's changes list: keep the full filename and shrink only the
-	// directory prefix (so the most-significant part stays visible) instead of
-	// chopping the tail with a CSS ellipsis. We measure the label's available
-	// width (it's the sole flex-grow child of its wrapper, so its box width is
-	// decoupled from the truncated text — no measure/shrink feedback loop) and
-	// hand it to the same pretext-based helper the sidebar uses.
-	let pathEl = $state<HTMLElement | null>(null);
-	let pathWidth = $state(0);
-	let pathFont = $state('12px ui-monospace, monospace');
-	// The label is rendered unconditionally in the header, so its element exists
-	// for the whole life of the section: set the observer up once on mount and
-	// tear it down on destroy. The ResizeObserver handles width changes; we don't
-	// need an $effect to re-sync on reactive state.
-	onMount(() => {
-		const el = pathEl;
-		if (!el) return;
-		// Font (weight + family) comes from the label's CSS classes and never
-		// changes while the user resizes, so resolve it once up front. Keeping
-		// getComputedStyle out of the resize path matters: every visible section
-		// runs this observer, and a forced style recalc per file per resize pixel
-		// is what made dragging the panes lag.
-		const cs = window.getComputedStyle(el);
-		// text-xs is 12px in Tailwind; pair it with the label's resolved
-		// (monospace) family for a canvas-compatible font shorthand.
-		pathFont = `${cs.fontWeight} 12px ${cs.fontFamily}`;
-		// Seed the width synchronously so the first truncation pass has a real
-		// value instead of waiting for the observer's async initial callback.
-		pathWidth = el.clientWidth;
-		// The observer now only reads clientWidth, a cheap cached layout property.
-		const ro = new ResizeObserver(() => {
-			pathWidth = el.clientWidth;
-		});
-		ro.observe(el);
-		return () => ro.disconnect();
-	});
-	const displayPrefix = $derived(
-		pathDir ? truncatePathPrefix(pathDir, pathBase, pathWidth, pathFont) : ''
-	);
 	const isMarkdown = $derived(isMarkdownPath(file.path));
 	// Readable formats with a rendered view get a toggle button. Raster images
 	// have no source to toggle to, so they're excluded (they always show the
@@ -2092,24 +2027,6 @@
 		void actions.markSeenAndAdvance(file.path);
 	}
 
-	// Mirrors the toolbar's EditorButton, but opens this specific file rather
-	// than the repo root.
-	const editor = $derived<EditorKind | null>(effectiveEditor());
-	const anyEditorAvailable = $derived(
-		app.editors.cursor ||
-			app.editors.vscode ||
-			app.editors.zed ||
-			app.editors.xcode ||
-			app.editors.visualstudio
-	);
-	const editorLabels: Record<EditorKind, string> = {
-		cursor: 'Cursor',
-		vscode: 'Visual Studio Code',
-		zed: 'Zed',
-		xcode: 'Xcode',
-		visualstudio: 'Visual Studio'
-	};
-
 	// Each entry in a file header's right-click menu: the pref key it toggles and
 	// its label. Mirrors TopBar's header menu, but for the per-file controls.
 	const fileHeaderMenuItems: { key: keyof FileHeaderItemVisibility; label: string }[] = [
@@ -2203,161 +2120,30 @@
 	data-collapsed={!expanded}
 	class={['border-b border-border', isLast && 'min-h-full']}
 >
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<!-- The header is a structural row, not a control; the contextmenu handler is
-	     a supplementary right-click affordance for customizing the file header. -->
-	<header
-		class={[
-			'@container sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur'
-		]}
-		oncontextmenu={onFileHeaderContextMenu}
-	>
-		<!-- The visible chevron stays size-5, but a transparent ::before stretches the
-		     click target to the header's top/bottom edges, out to the left edge
-		     (through px-3) and into the gap toward the icon — easier to hit. -->
-		<button
-			type="button"
-			class="relative grid size-5 shrink-0 place-items-center rounded hover:bg-accent before:absolute before:-inset-y-3 before:-left-3 before:-right-2 before:content-['']"
-			onclick={() => actions.toggleFileCollapsed(file.path)}
-			aria-label={expanded ? 'Collapse' : 'Expand'}
-		>
-			{#if expanded}
-				<ChevronDown class="size-3.5" />
-			{:else}
-				<ChevronRight class="size-3.5" />
-			{/if}
-		</button>
-		<FileIcon path={file.path} class="size-3.5 shrink-0" />
-		<div class="flex min-w-0 flex-1 items-center gap-2">
-			<!-- Inline whitespace is intentional (see FileList.svelte): a newline
-			     between these flex children renders as a visible gap between the
-			     truncated prefix and the filename. `displayPrefix` is pre-fit by
-			     pretext, so the label only needs overflow-hidden as a guard. -->
-			<span
-				bind:this={pathEl}
-				class={[
-					'flex min-w-0 flex-1 items-center overflow-hidden text-xs whitespace-nowrap',
-					isSeen && 'text-muted-foreground'
-				]}
-				title={file.path}
-				>{#if displayPrefix}<span class={[!isSeen && 'text-muted-foreground']}>{displayPrefix}</span
-					>{/if}<span class="shrink-0">{pathBase}</span></span
-			>
-			{#if statusBadge === 'deleted'}
-				<span class="flex shrink-0 items-center" title="Deleted">
-					<FileMinus class="size-3.5 text-destructive" />
-				</span>
-			{:else if statusBadge === 'renamed'}
-				<span class="flex shrink-0 items-center" title="Renamed">
-					<FileEdit class="size-3.5 text-warning" />
-				</span>
-			{/if}
-			{#if file.isBinary}
-				<Badge variant="muted" class="@max-[440px]:hidden">binary</Badge>
-			{/if}
-			{#if isPRContext && commentCount > 0}
-				<Badge variant="muted" class="@max-[440px]:hidden">
-					{commentCount} comment{commentCount === 1 ? '' : 's'}
-				</Badge>
-			{/if}
-		</div>
-		<div class="flex items-center gap-2 text-[10px] tabular-nums">
-			{#if !file.isBinary && app.fileHeaderItems.changedLines}
-				{#if file.additions > 0}
-					<span class="text-success @max-[360px]:hidden">+{file.additions}</span>
-				{/if}
-				{#if file.deletions > 0}
-					<span class="text-destructive @max-[360px]:hidden">−{file.deletions}</span>
-				{/if}
-			{/if}
-			{#if anyEditorAvailable && app.fileHeaderItems.editor}
-				<!-- As the diff pane gets cramped (e.g. comments panel open), elements
-				     drop right-to-left so the file name keeps its room, widest first:
-				     Mark seen (<500, ⌘↵ still works) → badges (<440) → the Raw/Diff
-				     toggle (<460) → this editor button (<400) → the +/- counts (<360). -->
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					class="@max-[400px]:hidden"
-					onclick={() => actions.openInEditor(file.path)}
-					title={editor ? `Open in ${editorLabels[editor]}` : 'Open in editor'}
-				>
-					{#if editor === 'cursor'}
-						<CursorIcon class="size-3.5" />
-					{:else if editor === 'vscode'}
-						<VSCodeIcon class="size-3.5" />
-					{:else if editor === 'zed'}
-						<ZedIcon class="size-3.5" />
-					{:else if editor === 'xcode'}
-						<XcodeIcon class="size-3.5" />
-					{:else if editor === 'visualstudio'}
-						<VisualStudioIcon class="size-3.5" />
-					{:else}
-						<Code2 class="size-3.5" />
-					{/if}
-				</Button>
-			{/if}
-			{#if canPreview}
-				<Button
-					variant={showPreview ? 'secondary' : 'outline'}
-					size="sm"
-					onclick={() => (showPreview = !showPreview)}
-				>
-					{#if showPreview}
-						<Code class="size-3.5" /> Code
-					{:else if isSvg}
-						<ImageIcon class="size-3.5" /> Image
-					{:else}
-						<FileText class="size-3.5" /> Preview
-					{/if}
-				</Button>
-			{/if}
-			<!-- Diff/Raw view switcher: a two-segment toggle between the diff and the
-			     whole file. A bordered track (no fill) with the selected segment
-			     filled. Drops out below 460px (after Mark seen) to keep the filename
-			     room when the pane is cramped. -->
-			{#if canToggleRaw && app.fileHeaderItems.viewToggle}
-				<div
-					class="inline-flex h-7 items-stretch gap-0.5 rounded-md border border-border p-0.5 @max-[460px]:hidden"
-					role="group"
-					aria-label="View mode"
-					onpointerenter={primeRawHighlight}
-				>
-					{#each [{ raw: false, label: 'Diff' }, { raw: true, label: 'Raw' }] as opt (opt.label)}
-						{@const active = showRaw === opt.raw}
-						<button
-							type="button"
-							aria-pressed={active}
-							onclick={() => (showRaw = opt.raw)}
-							class={[
-								'flex items-center rounded-sm px-2 text-[0.8rem] font-medium transition-colors',
-								active
-									? 'bg-secondary text-secondary-foreground'
-									: 'text-muted-foreground hover:text-foreground'
-							]}
-						>
-							{opt.label}
-						</button>
-					{/each}
-				</div>
-			{/if}
-			{#if app.fileHeaderItems.markSeen}
-				<Button
-					variant={isSeen ? 'secondary' : 'outline'}
-					size="sm"
-					class="@max-[500px]:hidden"
-					onclick={handleMarkSeen}
-				>
-					{#if isSeen}
-						<Check class="size-3.5" /> Seen
-					{:else}
-						<Eye class="size-3.5" /> Mark seen
-						<ShortcutHint>{markSeenHotkey.join('')}</ShortcutHint>
-					{/if}
-				</Button>
-			{/if}
-		</div>
-	</header>
+	<DiffFileHeader
+		path={file.path}
+		{expanded}
+		onToggleExpanded={() => actions.toggleFileCollapsed(file.path)}
+		{isSeen}
+		{statusBadge}
+		{commentCount}
+		showCommentCount={isPRContext}
+		additions={file.additions}
+		deletions={file.deletions}
+		isBinary={file.isBinary}
+		showViewToggle={canToggleRaw}
+		{showRaw}
+		onShowRawChange={(raw) => (showRaw = raw)}
+		onPrimeRaw={primeRawHighlight}
+		{canPreview}
+		{showPreview}
+		{isSvg}
+		onTogglePreview={() => (showPreview = !showPreview)}
+		onOpenEditor={() => actions.openInEditor(file.path)}
+		{markSeenHotkey}
+		onMarkSeen={handleMarkSeen}
+		onContextMenu={onFileHeaderContextMenu}
+	/>
 
 	<div class="bg-card/20" hidden={!expanded}>
 		{#if renameFrom}

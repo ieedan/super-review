@@ -1605,11 +1605,19 @@ export const TERMINAL_LABELS: Record<TerminalKind, string> = {
 
 // Editor the user has configured, falling back to whichever is detected.
 // Returns null when nothing is available.
+const EDITOR_FALLBACK_ORDER: EditorKind[] = [
+	'cursor',
+	'vscode',
+	'zed',
+	'visualstudio',
+	'xcode'
+];
 export function effectiveEditor(): EditorKind | null {
 	const pref = app.prefs?.externalEditor ?? null;
 	if (pref && app.editors[pref]) return pref;
-	if (app.editors.cursor) return 'cursor';
-	if (app.editors.vscode) return 'vscode';
+	for (const editor of EDITOR_FALLBACK_ORDER) {
+		if (app.editors[editor]) return editor;
+	}
 	return null;
 }
 
@@ -7212,7 +7220,11 @@ export const actions = {
 			return;
 		}
 		const path = target ?? app.activeRepo.path;
-		const resolved = target && !target.startsWith('/') ? `${app.activeRepo.path}/${target}` : path;
+		// Absolute on POSIX (`/...`) or Windows (`C:\...`, `\\server\...`).
+		const isAbsolute =
+			target != null &&
+			(target.startsWith('/') || /^[A-Za-z]:[\\/]/.test(target) || target.startsWith('\\\\'));
+		const resolved = target && !isAbsolute ? `${app.activeRepo.path}/${target}` : path;
 		// When opening a changed file (a relative repo path) without an explicit
 		// line, jump to where its diff begins so the editor lands on the change
 		// instead of the top of the file.

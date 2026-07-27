@@ -13,6 +13,7 @@
 	import LicenseCard from '@super-review/ui/components/LicenseCard.svelte';
 	import DownloadButtons from '$lib/components/DownloadButtons.svelte';
 	import InvitePanel from '$lib/components/InvitePanel.svelte';
+	import OsIcon from '$lib/components/OsIcon.svelte';
 	import * as Avatar from '@super-review/ui/components/ui/avatar';
 	import { cn } from '@super-review/ui/utils';
 	import House from '@lucide/svelte/icons/house';
@@ -172,7 +173,7 @@
 			tab: 'devices',
 			id: 'settings-devices',
 			title: 'Your devices',
-			keywords: 'device revoke activate platform last seen machine logout'
+			keywords: 'device revoke activate platform last validated machine logout'
 		},
 		{
 			tab: 'billing',
@@ -494,12 +495,15 @@
 							<ul class="border-line divide-line divide-y rounded-xl border">
 								{#each devices as device (device._id)}
 									<li class="flex items-center justify-between gap-3 p-3">
-										<div class="min-w-0">
-											<div class="truncate font-medium">{device.name ?? 'Unknown device'}</div>
-											<div class="text-muted-foreground text-xs">
-												{device.platform} - last seen {new Date(
-													device.lastSeenAt
-												).toLocaleDateString()}
+										<div class="flex min-w-0 items-center gap-3">
+											<OsIcon platform={device.platform} class="size-5 shrink-0" />
+											<div class="min-w-0">
+												<div class="truncate font-medium">
+													{device.name ?? 'Unknown device'}
+												</div>
+												<div class="text-muted-foreground text-xs">
+													Last validated {new Date(device.lastSeenAt).toLocaleDateString()}
+												</div>
 											</div>
 										</div>
 										<Button
