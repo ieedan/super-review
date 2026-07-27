@@ -1,8 +1,10 @@
 import { BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron';
 import type {
+	AppMenuBarItem,
 	BranchMenuAction,
 	BranchMenuState,
 	HelpMenuAction,
+	PopupAppMenuParams,
 	RepositoryMenuAction,
 	RepositoryMenuState
 } from '../shared/types.js';
@@ -175,21 +177,52 @@ function buildBranchSubmenu(): MenuItemConstructorOptions[] {
 // Rebuild and install the application menu from the current branchState. Cheap
 // enough to call on every state change; the standard role-based submenus keep
 // editing/window/zoom shortcuts working now that we own the menu.
+//
+// Stable `id`s on each top-level item let the Windows custom AppMenuBar pop the
+// matching submenu via menu:popupAppMenu (titleBarStyle:hidden removes the
+// native menu strip, so we redraw the labels and call Menu.popup ourselves).
 function buildAppMenu(): void {
 	const isMac = process.platform === 'darwin';
 
 	const template: MenuItemConstructorOptions[] = [
 		...(isMac ? [{ role: 'appMenu' } as MenuItemConstructorOptions] : []),
-		{ role: 'fileMenu' },
-		{ role: 'editMenu' },
-		{ role: 'viewMenu' },
-		{ label: 'Repository', submenu: buildRepositorySubmenu() },
-		{ label: 'Branch', submenu: buildBranchSubmenu() },
-		{ role: 'windowMenu' },
-		{ role: 'help', submenu: buildHelpSubmenu() }
+		{ id: 'file', role: 'fileMenu' },
+		{ id: 'edit', role: 'editMenu' },
+		{ id: 'view', role: 'viewMenu' },
+		{ id: 'repository', label: 'Repository', submenu: buildRepositorySubmenu() },
+		{ id: 'branch', label: 'Branch', submenu: buildBranchSubmenu() },
+		{ id: 'window', role: 'windowMenu' },
+		{ id: 'help', role: 'help', submenu: buildHelpSubmenu() }
 	];
 
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// Top-level menu labels for the Windows AppMenuBar. Reads from the live
+// application menu so role-based labels stay localized.
+function getAppMenuBarItems(): AppMenuBarItem[] {
+	const menu = Menu.getApplicationMenu();
+	if (!menu) return [];
+	return menu.items
+		.filter((item) => Boolean(item.submenu) && item.visible)
+		.map((item) => ({ id: item.id || item.label, label: item.label }));
+}
+
+// Pop the submenu for a top-level application-menu item at (x, y) in the
+// window. Resolves when the popup closes (used to clear the open highlight).
+function popupAppMenu(win: BrowserWindow, params: PopupAppMenuParams): Promise<void> {
+	const menu = Menu.getApplicationMenu();
+	const item = menu?.items.find((i) => (i.id || i.label) === params.id);
+	const submenu = item?.submenu;
+	if (!submenu) return Promise.resolve();
+	return new Promise((resolve) => {
+		submenu.popup({
+			window: win,
+			x: Math.round(params.x),
+			y: Math.round(params.y),
+			callback: () => resolve()
+		});
+	});
 }
 
 // Install the application menu and start listening for renderer state pushes.
@@ -203,5 +236,14 @@ export function setupAppMenu(): void {
 		repoState = state;
 		buildAppMenu();
 	});
+	ipcMain.handle('menu:getAppMenuBarItems', (): AppMenuBarItem[] => getAppMenuBarItems());
+	ipcMain.handle(
+		'menu:popupAppMenu',
+		async (e, params: PopupAppMenuParams): Promise<void> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			if (!win || win.isDestroyed()) return;
+			await popupAppMenu(win, params);
+		}
+	);
 	buildAppMenu();
 }

@@ -66,9 +66,12 @@
 	</svg>
 {/snippet}
 
-<div class="bg-background flex h-screen w-screen flex-col">
-	<!-- Draggable strip so the frameless window can still be moved. -->
-	<div class="h-11 shrink-0" style="-webkit-app-region: drag;"></div>
+<div class="bg-background flex h-full w-full flex-col">
+	<!-- Draggable strip so the frameless window can still be moved. On Windows
+	     the AppMenuBar above provides the drag region + window controls. -->
+	{#if app.platform !== 'win32'}
+		<div class="h-11 shrink-0" style="-webkit-app-region: drag;"></div>
+	{/if}
 
 	<div class="flex flex-1 flex-col items-center justify-center px-4 pb-16">
 		<div

@@ -222,6 +222,7 @@ import {
 	upsertRepo
 } from './store.js';
 import { settingsFilePath, currentSettingsText, watchSettingsFile } from './settings-file.js';
+import { syncTitleBarOverlay } from './window-chrome.js';
 
 function repoOrThrow(id: string): RepoInfo {
 	const repo = getRepo(id);
@@ -2401,8 +2402,10 @@ export function registerIpc(): void {
 	// re-read it and push the new prefs to every window. Our own writes are
 	// suppressed inside the watcher, so only genuine external edits arrive here.
 	watchSettingsFile((parsed) => {
+		const prefs = getPrefs();
+		syncTitleBarOverlay(prefs.theme);
 		broadcast('state:prefsChanged', {
-			prefs: getPrefs(),
+			prefs,
 			reset: parsed.reset,
 			malformed: parsed.malformed
 		});

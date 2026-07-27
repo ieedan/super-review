@@ -18,6 +18,7 @@ import {
 	initSettingsFile,
 	type AppSettings
 } from './settings-file.js';
+import { syncTitleBarOverlay } from './window-chrome.js';
 
 // Records which PR a locally checked-out branch corresponds to, so the UI can
 // show "View PR" (and resolve the right repo) even for cross-repo PRs that a
@@ -487,7 +488,10 @@ export function setPrefs(patch: Partial<UserPrefs>): UserPrefs {
 		db().prefs = { ...db().prefs, ...(statePatch as Partial<UserPrefs>) };
 		flush();
 	}
-	return getPrefs();
+	const prefs = getPrefs();
+	// Windows titleBarOverlay colors follow the app theme.
+	if ('theme' in patch) syncTitleBarOverlay(prefs.theme);
+	return prefs;
 }
 
 // Apply an imported/replaced settings blob to the settings.json file (validated
@@ -495,14 +499,18 @@ export function setPrefs(patch: Partial<UserPrefs>): UserPrefs {
 // keys are ignored — importing settings never touches the open repo or layout.
 export function replacePrefsSettings(raw: unknown): { prefs: UserPrefs; reset: string[] } {
 	const { reset } = replaceSettingsFile(raw);
-	return { prefs: getPrefs(), reset };
+	const prefs = getPrefs();
+	syncTitleBarOverlay(prefs.theme);
+	return { prefs, reset };
 }
 
 // Reset every settings.json-owned preference to its default (leaving state
 // untouched). Returns the resulting full prefs.
 export function resetPrefsSettings(): UserPrefs {
 	replaceSettingsFile({});
-	return getPrefs();
+	const prefs = getPrefs();
+	syncTitleBarOverlay(prefs.theme);
+	return prefs;
 }
 
 // Coerce a stored seen entry into a path→signature map, migrating the legacy

@@ -11,6 +11,7 @@ import { registerGitCredentials } from './github-service.js';
 import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
 import { getPrefs, flushStore } from './store.js';
+import { titleBarOverlayFor } from './window-chrome.js';
 import { WINDOW_BOUNDS } from '@shared/types.js';
 import { installLicenseIpcGate } from './license/ipc-gate.js';
 import { initLicenseService, startLicenseBackgroundWork } from './license/service.js';
@@ -103,6 +104,10 @@ function createWindow(): void {
 		WINDOW_BOUNDS.minHeight,
 		WINDOW_BOUNDS.defaultHeight
 	);
+	// Windows: hide the system title bar and draw native min/max/close on the
+	// custom AppMenuBar row (GitHub Desktop style) via titleBarOverlay. macOS
+	// keeps hiddenInset + traffic lights. Linux keeps the default frame.
+	const isWin = process.platform === 'win32';
 	const win = new BrowserWindow({
 		width,
 		height,
@@ -112,10 +117,11 @@ function createWindow(): void {
 		// without this the OS could place it by cascade rather than centered).
 		center: true,
 		show: false,
-		titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+		titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : isWin ? 'hidden' : 'default',
 		// Baseline (zoom 1) so the buttons are centered on first paint; zoom changes
 		// recompute this via alignWindowButtons.
 		...(process.platform === 'darwin' ? { trafficLightPosition: trafficLightPositionFor(1) } : {}),
+		...(isWin ? { titleBarOverlay: titleBarOverlayFor(prefs.theme) } : {}),
 		backgroundColor: '#0a0a0a',
 		// macOS ignores the window icon (it uses the dock/bundle icon, set below);
 		// Windows/Linux pick up the window + taskbar icon from here in dev.
