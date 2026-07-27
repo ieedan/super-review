@@ -16,11 +16,6 @@
 	const userCode = $derived(app.license.activationUserCode);
 	const verificationUri = $derived(app.license.activationVerificationUri);
 
-	// The host shown in the "go here" hint, without the scheme.
-	const verificationHost = $derived(
-		verificationUri ? verificationUri.replace(/^https?:\/\//, '') : ''
-	);
-
 	function lockReason(state: LicenseState): string {
 		if (state.state !== 'locked') return '';
 		switch (state.reason) {
@@ -84,14 +79,9 @@
 				code wherever they started from. -->
 			{#if activating}
 				<div class="flex flex-col gap-1.5">
-					<h1 class="text-xl font-semibold tracking-tight">Enter this code</h1>
+					<h1 class="text-xl font-semibold tracking-tight">Confirm this device</h1>
 					<p class="text-muted-foreground text-sm text-pretty">
-						{#if verificationHost}
-							In the browser we opened, go to
-							<span class="text-foreground font-medium">{verificationHost}</span> and enter:
-						{:else}
-							Enter this code in the browser we opened:
-						{/if}
+						In the browser we opened, confirm this code matches, then approve:
 					</p>
 				</div>
 

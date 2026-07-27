@@ -4,17 +4,18 @@ import { BrowserWindow } from 'electron';
 // titleBarOverlay height so the native min/max/close buttons sit on that row.
 export const MENU_BAR_HEIGHT = 30;
 
-// Theme-matched Window Controls Overlay colors. Kept in sync with the
-// renderer's `--color-background` (light = white, dark = hsl(0 0% 6%)).
+// Theme-matched Window Controls Overlay. Color is transparent so the
+// AppMenuBar (styled like TopBar: bg-card/40) shows through under the native
+// buttons; only the glyph color changes with theme.
 export function titleBarOverlayFor(theme: 'light' | 'dark'): {
 	color: string;
 	symbolColor: string;
 	height: number;
 } {
 	if (theme === 'light') {
-		return { color: '#ffffff', symbolColor: '#1a1a1a', height: MENU_BAR_HEIGHT };
+		return { color: '#00000000', symbolColor: '#1a1a1a', height: MENU_BAR_HEIGHT };
 	}
-	return { color: '#0f0f0f', symbolColor: '#a3a3a3', height: MENU_BAR_HEIGHT };
+	return { color: '#00000000', symbolColor: '#c4c4c4', height: MENU_BAR_HEIGHT };
 }
 
 // Re-apply the overlay theme to every open window. No-op off Windows, where we

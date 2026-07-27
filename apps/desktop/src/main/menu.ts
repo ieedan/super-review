@@ -199,12 +199,14 @@ function buildAppMenu(): void {
 }
 
 // Top-level menu labels for the Windows AppMenuBar. Reads from the live
-// application menu so role-based labels stay localized.
+// application menu so role-based labels stay localized. Falls back to label
+// alone when Electron doesn't expose `submenu` on a role item (still poppable
+// later via the same id).
 function getAppMenuBarItems(): AppMenuBarItem[] {
 	const menu = Menu.getApplicationMenu();
 	if (!menu) return [];
 	return menu.items
-		.filter((item) => Boolean(item.submenu) && item.visible)
+		.filter((item) => item.type === 'submenu' || Boolean(item.submenu))
 		.map((item) => ({ id: item.id || item.label, label: item.label }));
 }
 
@@ -212,7 +214,11 @@ function getAppMenuBarItems(): AppMenuBarItem[] {
 // window. Resolves when the popup closes (used to clear the open highlight).
 function popupAppMenu(win: BrowserWindow, params: PopupAppMenuParams): Promise<void> {
 	const menu = Menu.getApplicationMenu();
-	const item = menu?.items.find((i) => (i.id || i.label) === params.id);
+	// Role menus sometimes drop the constructor `id`; fall back to a
+	// case-insensitive label match so the Windows AppMenuBar still works.
+	const item = menu?.items.find(
+		(i) => i.id === params.id || i.label.toLowerCase() === params.id.toLowerCase()
+	);
 	const submenu = item?.submenu;
 	if (!submenu) return Promise.resolve();
 	return new Promise((resolve) => {

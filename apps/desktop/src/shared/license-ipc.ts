@@ -16,7 +16,11 @@ export const LICENSE_ALLOWED_NAMESPACES = ['license:', 'window:', 'updater:'] as
 /** Exact channels usable while the app is NOT licensed. */
 export const LICENSE_ALLOWED_EXACT = new Set([
 	// Read-only pref fetch so the lock screen can honor theme/zoom.
-	'state:getPrefs'
+	'state:getPrefs',
+	// Windows AppMenuBar: the custom title-bar menu must work on the activation
+	// screen too (same chrome as the licensed app).
+	'menu:getAppMenuBarItems',
+	'menu:popupAppMenu'
 ]);
 
 export function isLicenseAllowedChannel(channel: string): boolean {
