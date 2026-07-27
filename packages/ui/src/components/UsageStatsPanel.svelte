@@ -28,8 +28,8 @@
 	} from '@super-review/core/usage-stats';
 	import { actions, app } from '@super-review/ui/store.svelte';
 	import * as Popover from './ui/popover';
-	import * as Select from './ui/select';
 	import { Checkbox } from './ui/checkbox';
+	import { Select } from './ui/select';
 
 	// 'all' is the Overview; otherwise a single metric.
 	type View = 'all' | StatMetric;
@@ -54,6 +54,11 @@
 		{ key: 'locReviewed', label: 'Lines reviewed', short: 'Lines', icon: Code },
 		{ key: 'sessionsReviewed', label: 'Sessions reviewed', short: 'Sessions', icon: BookOpen },
 		{ key: 'commentsWritten', label: 'Comments written', short: 'Comments', icon: MessageSquare }
+	];
+
+	const viewItems = [
+		{ value: 'all' as const, label: 'Overview' },
+		...METRICS.map((m) => ({ value: m.key, label: m.label }))
 	];
 
 	// Metrics that are discrete events (summable into one "activity" number).
@@ -270,21 +275,14 @@
 <div class="w-full">
 	<!-- View picker + (Overview) widget customizer -->
 	<div class="flex items-center justify-between gap-2">
-		<Select.Root
+		<Select
 			type="single"
-			value={view}
-			onValueChange={(v) => (view = v as View)}
-		>
-			<Select.Trigger class="w-auto" aria-label="Stats view">
-				{isOverview ? 'Overview' : (meta?.label ?? '')}
-			</Select.Trigger>
-			<Select.Content>
-				<Select.Item value="all" label="Overview">Overview</Select.Item>
-				{#each METRICS as m (m.key)}
-					<Select.Item value={m.key} label={m.label}>{m.label}</Select.Item>
-				{/each}
-			</Select.Content>
-		</Select.Root>
+			bind:value={view}
+			items={viewItems}
+			placeholder="Overview"
+			ariaLabel="Stats view"
+			class="w-auto"
+		/>
 
 		{#if isOverview}
 			<Popover.Root>

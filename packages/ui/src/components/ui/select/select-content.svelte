@@ -11,6 +11,7 @@
 		ref = $bindable(null),
 		class: className,
 		sideOffset = 4,
+		align = 'start',
 		portalProps,
 		children,
 		preventScroll = true,
@@ -24,6 +25,7 @@
 	<SelectPrimitive.Content
 		bind:ref
 		{sideOffset}
+		{align}
 		{preventScroll}
 		data-slot="select-content"
 		class={cn(

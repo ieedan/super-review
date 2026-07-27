@@ -2,7 +2,7 @@
 	import Github from './icons/GithubIcon.svelte';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import * as Dialog from './ui/dialog';
-	import * as Select from './ui/select';
+	import { Select } from './ui/select';
 	import { Button } from './ui/button';
 	import { Input } from './ui/input';
 	import { Checkbox } from './ui/checkbox';
@@ -20,6 +20,10 @@
 
 	const account = $derived(effectiveGithubAccount());
 	const signedIn = $derived(app.githubAccounts.length > 0);
+	const orgItems = $derived([
+		{ value: '', label: 'None' },
+		...orgs.map((o) => ({ value: o.login, label: o.login }))
+	]);
 
 	// Reset the form and (re)load orgs each time the dialog opens. Seeds the name
 	// and description from the local repo so the common case is one click.
@@ -108,22 +112,14 @@
 			<div class="grid gap-1.5">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
 				<label class="text-sm font-medium">Organization</label>
-				<Select.Root
+				<Select
 					type="single"
 					value={org ?? ''}
 					onValueChange={(v) => (org = v === '' ? null : v)}
+					items={orgItems}
+					placeholder="None"
 					disabled={busy || !signedIn}
-				>
-					<Select.Trigger class="w-full">
-						{org ?? 'None'}
-					</Select.Trigger>
-					<Select.Content>
-						<Select.Item value="" label="None">None</Select.Item>
-						{#each orgs as o (o.login)}
-							<Select.Item value={o.login} label={o.login}>{o.login}</Select.Item>
-						{/each}
-					</Select.Content>
-				</Select.Root>
+				/>
 			</div>
 
 			<Dialog.Footer>
