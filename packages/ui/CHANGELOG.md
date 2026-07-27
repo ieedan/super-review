@@ -1,5 +1,11 @@
 # @super-review/ui
 
+## 0.1.5-beta.4
+
+### Patch Changes
+
+- [`bfc78d7`](https://github.com/ieedan/super-review/commit/bfc78d7a9ff0c3b7b3e76c638088b59c7190d739) Thanks [@ieedan](https://github.com/ieedan)! - fix: Windows editors and sharp Diff settings preview
+
 ## 0.1.5-beta.3
 
 ### Patch Changes
