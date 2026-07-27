@@ -26,7 +26,12 @@
 	} = $props();
 
 	const items = $derived(
-		options.map((o) => ({ value: o.value, label: o.label, swatch: o.swatch }))
+		options.map((o) => ({
+			value: o.value,
+			label: o.label,
+			swatch: o.swatch,
+			disabled: o.disabled
+		}))
 	);
 </script>
 

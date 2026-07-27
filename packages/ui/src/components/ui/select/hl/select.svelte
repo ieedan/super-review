@@ -1,4 +1,4 @@
-<script lang="ts" generics="Item extends { label: string; value: string }">
+<script lang="ts" generics="Item extends { label: string; value: string; disabled?: boolean }">
 	// High-level Select: items in, ready-made trigger + padded content out.
 	// Prefer this over composing Root/Trigger/Content/Item by hand for ordinary
 	// single-choice fields. Custom item rendering goes through the `item` snippet.
@@ -124,7 +124,7 @@
 					<GroupHeading>{group.heading}</GroupHeading>
 				{/if}
 				{#each group.items as item (item.value)}
-					<Item value={item.value} label={item.label}>
+					<Item value={item.value} label={item.label} disabled={item.disabled}>
 						{#if itemSnippet}
 							{@render itemSnippet({ item: item as Item })}
 						{:else}
