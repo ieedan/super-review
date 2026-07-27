@@ -39,6 +39,7 @@ import {
 	getActiveGithubAccount,
 	getGithubAccount,
 	getLegacyGithubToken,
+	getRepoByPath,
 	getPrefs,
 	listGithubAccounts,
 	removeGithubAccount as storeRemoveAccount,
@@ -620,11 +621,17 @@ export async function getReleaseNotesRange(
 // HTTPS remotes through the OS credential helper, independent of the app's
 // sign-in, so a private repo otherwise fails with "Repository not found" even
 // though our token has access. For github.com HTTPS remotes we hand git the
-// active account's token as an `x-access-token` basic credential. Resolved per
-// call so sign-in/out is picked up live, and so the token is never cached
-// anywhere git could persist it. Call once after the app is ready.
+// account's token as an `x-access-token` basic credential. We authenticate as
+// the account the project is pinned to (`repo.githubAccountId`), matching the
+// account the app's GitHub API calls already use — otherwise a repo pinned to a
+// different account than the app-wide active one fails with "Repository not
+// found" on pull/push/fetch while the PR UI (pinned account) works. Falls back
+// to the active account when the operation has no repo (clone) or the repo isn't
+// registered yet. Resolved per call so sign-in/out and re-pinning are picked up
+// live, and so the token is never cached anywhere git could persist it. Call
+// once after the app is ready.
 export function registerGitCredentials(): void {
-	setGitCredentialProvider((remoteUrl: string): GitCredentials | null => {
+	setGitCredentialProvider((remoteUrl: string, repoPath?: string | null): GitCredentials | null => {
 		let host: string;
 		try {
 			host = new URL(remoteUrl).hostname.toLowerCase();
@@ -632,10 +639,26 @@ export function registerGitCredentials(): void {
 			return null;
 		}
 		if (host !== 'github.com') return null;
-		const account = getActiveGithubAccount();
+		const account = resolveAccountForRepoPath(repoPath);
 		if (!account?.token) return null;
 		return { username: 'x-access-token', password: account.token };
 	});
+}
+
+// The account git transport should authenticate as for an operation in
+// `repoPath`: the repo's pinned account when one is set and still exists,
+// otherwise the app-wide active account. Mirrors resolveAccount() for the API
+// path, but keyed on the working directory since the credential provider has no
+// repo id.
+function resolveAccountForRepoPath(repoPath?: string | null): StoredGithubAccount | null {
+	if (repoPath) {
+		const pinnedId = getRepoByPath(repoPath)?.githubAccountId;
+		if (pinnedId) {
+			const pinned = getGithubAccount(pinnedId);
+			if (pinned) return pinned;
+		}
+	}
+	return getActiveGithubAccount();
 }
 
 // The author/committer identity for commits made under a given account. Uses

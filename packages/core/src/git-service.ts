@@ -83,8 +83,14 @@ export interface GitCredentials {
 }
 
 // Resolve credentials for a remote URL, or return null to defer to the system
-// credential helper (the previous behaviour). Registered by the host app.
-export type GitCredentialProvider = (remoteUrl: string) => GitCredentials | null;
+// credential helper (the previous behaviour). `repoPath` is the working
+// directory the operation runs in (null for repo-less ops like clone), letting
+// the provider pick the account a specific project is pinned to rather than a
+// single global one. Registered by the host app.
+export type GitCredentialProvider = (
+	remoteUrl: string,
+	repoPath?: string | null
+) => GitCredentials | null;
 
 let credentialProvider: GitCredentialProvider | null = null;
 
@@ -96,7 +102,7 @@ export function setGitCredentialProvider(provider: GitCredentialProvider | null)
 // scoped to the remote's origin (e.g. https://github.com/). Empty when there's
 // no provider, the provider declines, or the remote isn't an HTTPS URL we can
 // scope to (e.g. scp-style `git@github.com:…`, which uses SSH keys anyway).
-function authConfig(remoteUrl: string | null | undefined): string[] {
+function authConfig(remoteUrl: string | null | undefined, repoPath?: string | null): string[] {
 	if (!remoteUrl || !credentialProvider) return [];
 	let origin: string;
 	try {
@@ -106,7 +112,7 @@ function authConfig(remoteUrl: string | null | undefined): string[] {
 	} catch {
 		return [];
 	}
-	const creds = credentialProvider(remoteUrl);
+	const creds = credentialProvider(remoteUrl, repoPath);
 	if (!creds) return [];
 	const basic = Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
 	// Everything after the first `=` is the header value, so the colons/spaces in
@@ -156,7 +162,7 @@ function stripEditorEnv(env: Record<string, string>): void {
 // `remoteUrl` when a provider supplies them; a plain instance otherwise. Pass a
 // null `repoPath` for repo-less operations like clone.
 function authedGit(repoPath: string | null, remoteUrl: string | null | undefined): SimpleGit {
-	const config = authConfig(remoteUrl);
+	const config = authConfig(remoteUrl, repoPath);
 	const options = config.length ? { config } : undefined;
 	return openGit(repoPath, options);
 }

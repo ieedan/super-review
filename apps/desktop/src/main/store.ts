@@ -1,3 +1,4 @@
+import path from 'node:path';
 import Store from 'electron-store';
 import { safeStorage } from 'electron';
 import {
@@ -334,6 +335,25 @@ export function removeRepo(id: string): void {
 
 export function getRepo(id: string): RepoInfo | null {
 	return db().repos[id] ?? null;
+}
+
+// Normalize a repo path for comparison: resolve to an absolute, separator-
+// canonical form, and lowercase on Windows where the filesystem is case-
+// insensitive (so a drive-letter or casing difference still matches).
+function normalizeRepoPath(p: string): string {
+	const resolved = path.resolve(p);
+	return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+// The registered repo whose working directory is `repoPath`, or null. Used to
+// resolve the account a git operation should authenticate as from just the
+// working directory (the git-transport credential provider has no repo id).
+export function getRepoByPath(repoPath: string): RepoInfo | null {
+	const target = normalizeRepoPath(repoPath);
+	for (const repo of Object.values(db().repos)) {
+		if (normalizeRepoPath(repo.path) === target) return repo;
+	}
+	return null;
 }
 
 // Pin (or unpin, when accountId is null) the GitHub account a project uses.
