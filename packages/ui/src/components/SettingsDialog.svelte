@@ -1583,10 +1583,7 @@
 					deletions={5}
 					showViewToggle
 					showRaw={false}
-					markSeenHotkey={formatHotkeyParts(
-						app.hotkeys.markSeenNext,
-						app.platform === 'darwin'
-					)}
+					markSeenHotkey={formatHotkeyParts(app.hotkeys.markSeenNext, app.platform === 'darwin')}
 				/>
 				<div class="bg-card/20">
 					<DiffStylePreview
