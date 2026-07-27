@@ -1605,13 +1605,7 @@ export const TERMINAL_LABELS: Record<TerminalKind, string> = {
 
 // Editor the user has configured, falling back to whichever is detected.
 // Returns null when nothing is available.
-const EDITOR_FALLBACK_ORDER: EditorKind[] = [
-	'cursor',
-	'vscode',
-	'zed',
-	'visualstudio',
-	'xcode'
-];
+const EDITOR_FALLBACK_ORDER: EditorKind[] = ['cursor', 'vscode', 'zed', 'visualstudio', 'xcode'];
 export function effectiveEditor(): EditorKind | null {
 	const pref = app.prefs?.externalEditor ?? null;
 	if (pref && app.editors[pref]) return pref;

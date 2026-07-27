@@ -1,5 +1,13 @@
 # @super-review/docs
 
+## 0.0.14-beta.3
+
+### Patch Changes
+
+- [`3741ff7`](https://github.com/ieedan/super-review/commit/3741ff78902c19e6d03e0d1a3cb7d9bcf6e607d5) Thanks [@ieedan](https://github.com/ieedan)! - fix: Windows editors and sharp Diff settings preview
+- Updated dependencies [[`3741ff7`](https://github.com/ieedan/super-review/commit/3741ff78902c19e6d03e0d1a3cb7d9bcf6e607d5)]:
+  - @super-review/ui@0.1.5-beta.2
+
 ## 0.0.14-beta.2
 
 ### Patch Changes
