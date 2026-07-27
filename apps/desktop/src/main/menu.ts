@@ -243,13 +243,10 @@ export function setupAppMenu(): void {
 		buildAppMenu();
 	});
 	ipcMain.handle('menu:getAppMenuBarItems', (): AppMenuBarItem[] => getAppMenuBarItems());
-	ipcMain.handle(
-		'menu:popupAppMenu',
-		async (e, params: PopupAppMenuParams): Promise<void> => {
-			const win = BrowserWindow.fromWebContents(e.sender);
-			if (!win || win.isDestroyed()) return;
-			await popupAppMenu(win, params);
-		}
-	);
+	ipcMain.handle('menu:popupAppMenu', async (e, params: PopupAppMenuParams): Promise<void> => {
+		const win = BrowserWindow.fromWebContents(e.sender);
+		if (!win || win.isDestroyed()) return;
+		await popupAppMenu(win, params);
+	});
 	buildAppMenu();
 }
