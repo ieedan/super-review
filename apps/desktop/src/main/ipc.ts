@@ -184,10 +184,7 @@ import {
 	watchTasksDir
 } from '@super-review/core';
 import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-service.js';
-import {
-	detectCommitMessageHarnesses,
-	generateCommitMessage
-} from './commit-message/index.js';
+import { detectCommitMessageHarnesses, generateCommitMessage } from './commit-message/index.js';
 import { listTemplates } from '@super-review/core';
 import {
 	addStat,

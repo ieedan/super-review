@@ -3963,10 +3963,7 @@ export const actions = {
 			}
 			return { subject: result.subject.trim(), body: (result.body ?? '').trim() };
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : String(err),
-				'Generate commit message'
-			);
+			setError(err instanceof Error ? err.message : String(err), 'Generate commit message');
 			return null;
 		} finally {
 			app.commitMessageGenerating = false;
@@ -6706,6 +6703,10 @@ export const actions = {
 		try {
 			const commit = await window.api.git.commit(repoId, message, selections);
 			if (!commit.ok) throw new Error(commit.error ?? 'Commit failed.');
+			// Publish the new HEAD before the refreshes below: they take a beat (one
+			// of them is a GitHub PR lookup) and the undo row would otherwise sit on
+			// the pre-commit state that whole time. refreshPushStatus confirms it.
+			if (commit.lastCommit !== undefined) app.lastCommit = commit.lastCommit;
 			app.push.stage = 'done';
 			// The selection was consumed; clear partial line exclusions so stale
 			// line numbers don't carry over onto the post-commit diff.
@@ -6747,6 +6748,9 @@ export const actions = {
 		try {
 			const result = await window.api.git.undoLastCommit(repoId);
 			if (!result.ok) throw new Error(result.error ?? 'Undo failed.');
+			// As in commit() above: show the commit the undo exposed straight away
+			// rather than after the refresh chain.
+			if (result.lastCommit !== undefined) app.lastCommit = result.lastCommit;
 			app.push.stage = 'done';
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);

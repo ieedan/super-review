@@ -20,10 +20,20 @@
 		effectiveGithubAccount
 	} from '@super-review/ui/store.svelte';
 	import { isChangesetPath, parseChangesetMessage } from '@super-review/ui/changeset';
-	import { harnessLabel } from '@super-review/core/types';
+	import { harnessLabel, type LastCommit } from '@super-review/core/types';
 
 	let summary = $state('');
 	let description = $state('');
+
+	// A commit or undo this box started is in flight. It writes the box up front
+	// (emptying it on commit, restoring the message on undo) so those feel
+	// instant, which means the auto-fills below must not treat what they see
+	// mid-flight as a box waiting to be filled. Covers the window before
+	// `app.push.inProgress` is set, too.
+	let boxBusy = $state(false);
+
+	// A commit is running (started here or elsewhere, e.g. the fork flow).
+	const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
 
 	// Provenance of an auto-filled message: the changeset it came from plus the
 	// exact text we wrote. Kept only while the box still matches that text — the
@@ -147,6 +157,10 @@
 		// applies to the current changes.
 		if (sessionSuggestion) return;
 
+		// A commit/undo in flight empties (or rewrites) the box before its changes
+		// land, so don't read that as an empty box waiting to be filled.
+		if (boxBusy || busy) return;
+
 		if (!repoId || changesetPaths.length !== 1) return;
 		const path = changesetPaths[0];
 		if (filledChangesets.has(path)) return;
@@ -164,8 +178,9 @@
 		} catch {
 			return;
 		}
-		// The repo switched or the user started typing while we were fetching.
-		if (app.activeRepo?.id !== repoId) return;
+		// The repo switched, a commit/undo took the box, or the user started typing
+		// while we were fetching.
+		if (app.activeRepo?.id !== repoId || boxBusy) return;
 		if (summary.trim() || description.trim()) return;
 		const parsed = parseChangesetMessage(diff.newContents);
 		if (!parsed) return;
@@ -235,6 +250,8 @@
 		}
 
 		// Fresh fill: only into an empty box, and only once per session revision.
+		// Same as above: an in-flight commit/undo owns the box until it settles.
+		if (boxBusy || busy) return;
 		if (!s || !title) return;
 		const key = `${s.id}:${s.updatedAt}`;
 		if (filledSessions.has(key)) return;
@@ -253,31 +270,36 @@
 		if (summary !== d.title) detectedSession = null;
 	});
 
+	// True while the box still holds exactly what we auto-filled into it (from a
+	// changeset or a session), i.e. nothing the user typed themselves. Checked
+	// against the text rather than just `detected* != null` because oninput fires
+	// before the divergence effects run, so an edit can look auto-filled for one
+	// tick. Such a message is re-derived live from the working tree, so it's never
+	// persisted, and it's safe to replace.
+	function isAutoFilled(): boolean {
+		const changesetAutoFilled =
+			detectedChangeset !== null &&
+			summary === detectedChangeset.summary &&
+			description === detectedChangeset.description;
+		// A session fill only ever wrote the Summary, so it counts as untouched only
+		// while no Description has been typed alongside it.
+		const sessionAutoFilled =
+			detectedSession !== null &&
+			summary === detectedSession.title &&
+			description.trim().length === 0;
+		return changesetAutoFilled || sessionAutoFilled;
+	}
+
 	// Debounce persistence so we're not writing the store on every keystroke.
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	function persistDraft(): void {
 		const repoId = app.activeRepo?.id;
 		if (!repoId) return;
 		clearTimeout(saveTimer);
-		// Never persist an untouched auto-filled message. While the box still matches
-		// exactly what we wrote from a changeset (provenance intact), the message is
-		// re-derived live from the working tree each session — persisting it would
-		// resurrect it even after the changeset is committed. Checked explicitly (not
-		// just `detectedChangeset != null`) because oninput fires before the divergence
-		// effect runs, so an edit could otherwise look auto-filled for one tick.
-		const changesetAutoFilled =
-			detectedChangeset !== null &&
-			summary === detectedChangeset.summary &&
-			description === detectedChangeset.description;
-		// A session-filled Summary is likewise re-derived live (from the session that
-		// still matches the working tree), so don't persist it either; only when it's
-		// untouched (Summary still the title, no extra Description typed).
-		const sessionAutoFilled =
-			detectedSession !== null &&
-			summary === detectedSession.title &&
-			description.trim().length === 0;
-		const autoFilled = changesetAutoFilled || sessionAutoFilled;
-		const snapshot = autoFilled ? { summary: '', description: '' } : { summary, description };
+		// Never persist an untouched auto-filled message: it's re-derived live from
+		// the working tree each session, so persisting it would resurrect it even
+		// after its changeset/session is committed.
+		const snapshot = isAutoFilled() ? { summary: '', description: '' } : { summary, description };
 		saveTimer = setTimeout(() => {
 			void window.api.state.setCommitDraft(repoId, snapshot);
 		}, 300);
@@ -290,7 +312,6 @@
 
 	onDestroy(() => clearTimeout(saveTimer));
 
-	const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
 	const generating = $derived(app.commitMessageGenerating);
 	const generateHarness = $derived(effectiveCommitMessageHarness());
 	// Only the checked files get committed (see the Unstaged tab checkboxes).
@@ -340,11 +361,23 @@
 			return;
 		}
 		const repoId = app.activeRepo?.id;
-		const ok = await actions.commit(finalSummary, description);
-		if (ok) {
-			summary = '';
-			description = '';
-			if (repoId) clearDraft(repoId);
+		// Empty the box up front rather than after the commit lands: the git work
+		// plus the refreshes behind it take long enough that waiting reads as lag.
+		const restore = { summary, description };
+		boxBusy = true;
+		summary = '';
+		description = '';
+		if (repoId) clearDraft(repoId);
+		try {
+			const ok = await actions.commit(finalSummary, restore.description);
+			// Nothing was committed — hand the message back so it isn't lost.
+			if (!ok) {
+				summary = restore.summary;
+				description = restore.description;
+				persistDraft();
+			}
+		} finally {
+			boxBusy = false;
 		}
 	}
 
@@ -391,12 +424,57 @@
 	// null = still resolving / unknown; true = pushable; false = will be rejected.
 	const pushAccess = $derived(app.branchPRPushAccess);
 
-	const lastCommit = $derived(app.lastCommit);
-	const canUndo = $derived(!busy && (lastCommit?.canUndo ?? false));
+	// The commit the undo row shows. A commit/undo of ours churns the store while
+	// it runs — `push.stage` flips to 'done' as soon as git returns, before the
+	// refreshes behind it land — so reading `app.lastCommit` straight through made
+	// the row vanish, flash the commit that was just undone, then vanish again.
+	// While an operation is in flight we therefore keep showing the commit we
+	// already had, and swap only once the store hands us a genuinely different
+	// one. That happens as soon as git reports the new HEAD (the store publishes
+	// it before its refreshes), so the row updates immediately and exactly once.
+	let heldCommit: LastCommit | null = null;
+	const undoTarget = $derived.by(() => {
+		const current = app.lastCommit;
+		// Settled: follow the store exactly, which keeps "Committed N minutes ago"
+		// ticking over as later refreshes re-read the same commit.
+		if ((!busy && !boxBusy) || current?.hash !== heldCommit?.hash) heldCommit = current;
+		return heldCommit;
+	});
+	// Row visibility: held, so it survives the in-flight churn.
+	const showUndo = $derived(undoTarget?.canUndo ?? false);
+	// The button itself is only live once nothing is in flight.
+	const canUndo = $derived(!busy && !boxBusy && showUndo);
 
 	async function undo(): Promise<void> {
-		if (!canUndo) return;
-		await actions.undoLastCommit();
+		const lastCommit = undoTarget;
+		if (!canUndo || !lastCommit) return;
+		// Put the undone commit's message straight back in the box (GitHub Desktop
+		// parity) — undoing is usually the first step of amending it. Done up front,
+		// off `lastCommit` (which already carries the message), so the box fills the
+		// instant the button is pressed rather than after the git round-trip. A
+		// message the user typed themselves is left alone; auto-filled text isn't.
+		const restore = { summary, description };
+		const userTyped =
+			!isAutoFilled() && (summary.trim().length > 0 || description.trim().length > 0);
+		boxBusy = true;
+		if (!userTyped) {
+			detectedChangeset = null;
+			detectedSession = null;
+			summary = lastCommit.subject;
+			description = lastCommit.body;
+			persistDraft();
+		}
+		try {
+			const ok = await actions.undoLastCommit();
+			// The undo failed and the commit is still there — put the box back.
+			if (!ok && !userTyped) {
+				summary = restore.summary;
+				description = restore.description;
+				persistDraft();
+			}
+		} finally {
+			boxBusy = false;
+		}
 	}
 
 	async function generateMessage(): Promise<void> {
@@ -576,17 +654,24 @@
 	</Button>
 </form>
 
-{#if canUndo && lastCommit}
+{#if showUndo && undoTarget}
 	<div
 		class="flex items-center gap-2 border-t border-border bg-card/75 px-2 py-1.5 backdrop-blur-md"
 	>
 		<div class="min-w-0 flex-1">
 			<p class="truncate text-[11px] text-muted-foreground">
-				Committed {lastCommit.relativeTime}
+				Committed {undoTarget.relativeTime}
 			</p>
-			<p class="truncate text-xs">{lastCommit.subject}</p>
+			<p class="truncate text-xs">{undoTarget.subject}</p>
 		</div>
-		<Button type="button" size="sm" variant="outline" class="h-7 shrink-0 text-xs" onclick={undo}>
+		<Button
+			type="button"
+			size="sm"
+			variant="outline"
+			class="h-7 shrink-0 text-xs"
+			disabled={!canUndo}
+			onclick={undo}
+		>
 			Undo
 		</Button>
 	</div>

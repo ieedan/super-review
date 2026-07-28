@@ -1342,6 +1342,11 @@ export interface CommitResult {
 	// used to record "files/lines committed" usage stats. Present only on success.
 	filesCommitted?: number;
 	linesCommitted?: number;
+	// HEAD as the operation left it — the new commit after a commit, the parent
+	// after an undo, null when that leaves HEAD unborn. Lets the caller update the
+	// "last commit" row right away instead of waiting on the refresh chain (which
+	// includes a GitHub round-trip). Present only on success.
+	lastCommit?: LastCommit | null;
 }
 
 // One file's contribution to a commit. For whole-file staging only `path`
@@ -1387,6 +1392,10 @@ export interface DiscardTarget {
 export interface LastCommit {
 	hash: string;
 	subject: string;
+	// The message below the subject, blank separator line already dropped.
+	// Empty for a subject-only commit. Lets undo restore the full message to the
+	// commit box with no round-trip.
+	body: string;
 	// Relative time string straight from git (e.g. "2 minutes ago").
 	relativeTime: string;
 	// True when the commit has not yet been pushed to any remote, so undoing it
