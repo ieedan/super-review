@@ -76,7 +76,9 @@ import type {
 	AiConfigApplyResult,
 	AiConfigInstallItem,
 	AiConfigRemoveResult,
+	CommitMessageHarness,
 	CommitMessageHarnessStatus,
+	CommitMessageModelOption,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResult,
 	SessionSummary,
@@ -184,7 +186,13 @@ import {
 	watchTasksDir
 } from '@super-review/core';
 import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-service.js';
-import { detectCommitMessageHarnesses, generateCommitMessage } from './commit-message/index.js';
+import {
+	cancelCommitMessageGeneration,
+	detectCommitMessageHarnesses,
+	generateCommitMessage,
+	listCommitMessageModels,
+	warmCommitMessageModels
+} from './commit-message/index.js';
 import { listTemplates } from '@super-review/core';
 import {
 	addStat,
@@ -2766,18 +2774,39 @@ export function registerIpc(): void {
 	);
 
 	// ─── Commit message generation via harness CLIs ──────────────────────────
-	ipcMain.handle(
-		'commitMessage:detect',
-		async (): Promise<CommitMessageHarnessStatus> => detectCommitMessageHarnesses()
-	);
+	ipcMain.handle('commitMessage:detect', async (): Promise<CommitMessageHarnessStatus> => {
+		const status = await detectCommitMessageHarnesses();
+		// Cache the model lists behind the user's back, so a harness installed
+		// since launch is ready before its picker is ever opened. A no-op when
+		// every installed harness already has a fresh list.
+		void warmCommitMessageModels(status);
+		return status;
+	});
 
 	ipcMain.handle(
 		'commitMessage:generate',
 		async (
-			_e,
+			e,
 			repoId: string,
 			request: GenerateCommitMessageRequest
-		): Promise<GenerateCommitMessageResult> =>
-			generateCommitMessage(repoOrThrow(repoId).path, request)
+		): Promise<GenerateCommitMessageResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			return generateCommitMessage(repoOrThrow(repoId).path, request, {
+				onProgress: (text) => {
+					if (win) sendToWindow(win, 'commitMessage:progress', { text });
+				}
+			});
+		}
+	);
+
+	ipcMain.handle(
+		'commitMessage:cancel',
+		async (): Promise<boolean> => cancelCommitMessageGeneration()
+	);
+
+	ipcMain.handle(
+		'commitMessage:listModels',
+		async (_e, harness: CommitMessageHarness): Promise<CommitMessageModelOption[]> =>
+			listCommitMessageModels(harness)
 	);
 }

@@ -8,7 +8,8 @@ import { which } from './which.js';
 // CLI names to probe for each harness. Cursor ships as both `cursor-agent`
 // (older/t3code) and `agent` (current docs); either counts as installed.
 const HARNESS_BINARIES: Record<CommitMessageHarness, readonly string[]> = {
-	cursor: ['cursor-agent', 'agent'],
+	// Prefer `agent` (current Cursor CLI); fall back to the older `cursor-agent`.
+	cursor: ['agent', 'cursor-agent'],
 	'claude-code': ['claude'],
 	codex: ['codex'],
 	copilot: ['copilot'],

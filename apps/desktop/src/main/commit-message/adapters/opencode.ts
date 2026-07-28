@@ -11,9 +11,28 @@ import {
 	listOpenCodeModels,
 	selectOpenCodeModelCandidates
 } from '../opencode-models.js';
+import {
+	createOpenCodeSession,
+	OpenCodeStream,
+	sendOpenCodeMessage,
+	startOpenCodeServer,
+	type OpenCodeServer
+} from '../opencode-server.js';
 import { parseCommitMessageOutput } from '../parse.js';
-import { spawnCapture } from '../spawn.js';
+import { GENERATION_TIMEOUT_MS, spawnCapture } from '../spawn.js';
+import { createStreamReporter, type StreamReporter } from '../stream.js';
 import type { AdapterInput, AdapterResult } from './types.js';
+
+interface Attempt {
+	/** The call itself completed (a model can still have returned nothing). */
+	ok: boolean;
+	text: string;
+	error?: string;
+	cancelled?: boolean;
+	timedOut?: boolean;
+	/** The headless server can't be used; retry this candidate one-shot. */
+	serverUnavailable?: boolean;
+}
 
 export async function generateWithOpenCode(input: AdapterInput): Promise<AdapterResult> {
 	let models;
@@ -44,10 +63,13 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 		};
 	}
 
-	// One-shot `opencode run` with a deny-all permission config so the agent
-	// cannot edit, shell, or fetch — the patch is already in the prompt.
+	// Deny-all permission config so the agent cannot edit, shell, or fetch — the
+	// patch is already in the prompt. Applies to both the server and `run`.
 	const dir = await mkdtemp(path.join(tmpdir(), 'sr-opencode-'));
 	const configPath = path.join(dir, 'opencode.json');
+	const reporter = createStreamReporter(input.onProgress);
+	let server: OpenCodeServer | null = null;
+	let stream: OpenCodeStream | null = null;
 	try {
 		await writeFile(
 			configPath,
@@ -71,33 +93,65 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 		const tried: string[] = [];
 		let lastFailure: AdapterResult | null = null;
 
-		for (const candidate of candidates) {
-			tried.push(candidate.slug);
-			const result = await spawnCapture(
-				input.binary,
-				['run', '--model', candidate.slug, '--format', 'default', input.prompt],
-				{
-					cwd: input.cwd,
-					env: {
-						OPENCODE_CONFIG: configPath
-					}
-				}
-			);
+		const preferred = input.model?.trim();
+		const ordered = preferred
+			? [
+					{ slug: preferred },
+					...candidates.filter((c) => c.slug !== preferred)
+				]
+			: candidates;
 
-			if (result.timedOut) {
-				return { ok: false, code: 'timeout', error: result.error ?? 'Timed out' };
+		// `opencode run` only prints when the whole turn is done, so prefer the
+		// headless server, which streams token deltas over SSE.
+		server = await startOpenCodeServer(
+			input.binary,
+			input.cwd,
+			{ OPENCODE_CONFIG: configPath },
+			input.signal
+		);
+		stream = server ? await OpenCodeStream.open(server) : null;
+		if (server && !stream) {
+			server.close();
+			server = null;
+		}
+
+		for (const candidate of ordered) {
+			if (input.signal?.aborted) {
+				return { ok: false, code: 'cancelled', error: 'Cancelled' };
+			}
+			tried.push(candidate.slug);
+			reporter.reset();
+
+			let attempt: Attempt;
+			if (server && stream) {
+				attempt = await runOnServer(server, stream, candidate.slug, input, reporter);
+				if (attempt.serverUnavailable) {
+					stream.close();
+					server.close();
+					stream = null;
+					server = null;
+					attempt = await runOneShot(configPath, candidate.slug, input, reporter);
+				}
+			} else {
+				attempt = await runOneShot(configPath, candidate.slug, input, reporter);
 			}
 
-			const parsed = parseCommitMessageOutput(result.stdout);
+			if (attempt.cancelled) {
+				return { ok: false, code: 'cancelled', error: 'Cancelled' };
+			}
+			if (attempt.timedOut) {
+				return { ok: false, code: 'timeout', error: attempt.error ?? 'Timed out' };
+			}
+
+			const parsed = parseCommitMessageOutput(attempt.text);
 			if (parsed) {
 				return { ok: true, subject: parsed.subject, body: parsed.body };
 			}
 
-			const combined = combineCliOutput(result.stdout, result.stderr);
 			const failure: AdapterResult = {
 				ok: false,
-				code: result.ok ? 'empty' : 'failed',
-				error: explainOpenCodeFailure(combined || result.error || '', {
+				code: attempt.ok ? 'empty' : 'failed',
+				error: explainOpenCodeFailure(attempt.error ?? '', {
 					model: candidate.slug,
 					modelCount: models.length,
 					triedModels: tried
@@ -105,9 +159,9 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 			};
 			lastFailure = failure;
 
-			// Successful CLI exit with unparseable output: don't burn more models.
-			if (result.ok) return failure;
-			if (!isRetryableOpenCodeModelFailure(combined || result.error || '')) {
+			// Successful call with unparseable output: don't burn more models.
+			if (attempt.ok) return failure;
+			if (!isRetryableOpenCodeModelFailure(attempt.error ?? '')) {
 				return failure;
 			}
 		}
@@ -120,6 +174,65 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 			}
 		);
 	} finally {
+		reporter.flush();
+		stream?.close();
+		server?.close();
 		await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 	}
+}
+
+async function runOnServer(
+	server: OpenCodeServer,
+	stream: OpenCodeStream,
+	model: string,
+	input: AdapterInput,
+	reporter: StreamReporter
+): Promise<Attempt> {
+	const sessionID = await createOpenCodeSession(server);
+	if (!sessionID) return { ok: false, text: '', serverUnavailable: true };
+
+	stream.watch(sessionID, reporter);
+	const reply = await sendOpenCodeMessage(
+		server,
+		sessionID,
+		model,
+		input.prompt,
+		GENERATION_TIMEOUT_MS,
+		input.signal
+	);
+	return {
+		ok: reply.ok,
+		text: reply.text ?? '',
+		error: reply.error,
+		cancelled: reply.cancelled,
+		timedOut: reply.timedOut
+	};
+}
+
+// Fallback for installs where the headless server won't start: one-shot run,
+// which can only report progress once the model is done.
+async function runOneShot(
+	configPath: string,
+	model: string,
+	input: AdapterInput,
+	reporter: StreamReporter
+): Promise<Attempt> {
+	const result = await spawnCapture(
+		input.binary,
+		['run', '--model', model, '--format', 'default', input.prompt],
+		{
+			cwd: input.cwd,
+			env: { OPENCODE_CONFIG: configPath },
+			signal: input.signal,
+			onStdout: (stdout) => reporter.setAnswer(stdout)
+		}
+	);
+
+	return {
+		ok: result.ok,
+		text: result.stdout,
+		error: combineCliOutput(result.stdout, result.stderr) || result.error || '',
+		cancelled: result.cancelled,
+		timedOut: result.timedOut
+	};
 }

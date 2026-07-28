@@ -8,12 +8,9 @@
 	import { Button } from './ui/button';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import AgentsConventionIcon from './AgentsConventionIcon.svelte';
+	import CommitMessageModelPicker from './CommitMessageModelPicker.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
-	import {
-		actions,
-		app,
-		effectiveCommitMessageHarness
-	} from '@super-review/ui/store.svelte';
+	import { actions, app, effectiveCommitMessageHarness } from '@super-review/ui/store.svelte';
 	import { cn } from '@super-review/ui/utils';
 	import {
 		AI_CONFIG_TARGETS,
@@ -175,29 +172,43 @@
 			{#each COMMIT_MESSAGE_HARNESS_PRIORITY as harness (harness)}
 				{@const installed = harnessStatus?.[harness] ?? false}
 				{@const selected = selectedHarness === harness}
-				<button
-					type="button"
-					disabled={!installed}
+				<div
 					class={cn(
-						'flex w-full items-center gap-3 border-b border-border/60 px-3 py-2.5 text-left transition-colors last:border-b-0',
-						!installed
-							? 'cursor-not-allowed opacity-50'
-							: selected
-								? 'bg-primary/5'
-								: 'hover:bg-muted/40'
+						'flex min-h-13 items-center gap-3 border-b border-border/60 px-3 py-2 last:border-b-0',
+						!installed && 'opacity-50'
 					)}
-					onclick={() => selectCommitMessageHarness(harness)}
 				>
 					<HarnessLogo {harness} size={20} class="shrink-0" />
-					<span class="flex-1 text-sm">{harnessLabel(harness)}</span>
+					<span class="flex-1 truncate text-sm">{harnessLabel(harness)}</span>
 					{#if harnessStatus === null}
 						<span class="text-xs text-muted-foreground">Detecting…</span>
 					{:else if !installed}
 						<span class="text-xs text-muted-foreground">Not installed</span>
-					{:else if selected}
-						<Check class="size-4 text-primary" />
+					{:else}
+						<!-- Fixed width so the model pickers stay aligned whether the row
+						     shows the badge or the button. -->
+						<div class="flex w-32 shrink-0 justify-end">
+							{#if selected}
+								<span
+									class="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success"
+								>
+									<Check class="size-3" /> Default
+								</span>
+							{:else}
+								<Button
+									variant="ghost"
+									size="sm"
+									onclick={() => selectCommitMessageHarness(harness)}
+								>
+									Set as default
+								</Button>
+							{/if}
+						</div>
+						<!-- Per-harness default model. Each row writes its own harness's
+						     pref, so switching the default CLI keeps its model. -->
+						<CommitMessageModelPicker {harness} align="end" class="w-40 shrink-0" />
 					{/if}
-				</button>
+				</div>
 			{/each}
 		</div>
 	</section>

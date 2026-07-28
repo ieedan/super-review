@@ -3,7 +3,6 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
-	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import User from '@lucide/svelte/icons/user';
 	import { Button } from './ui/button';
@@ -11,16 +10,15 @@
 	import { Input } from './ui/input';
 	import { Textarea } from './ui/textarea';
 	import AccountSwitcher from './AccountSwitcher.svelte';
-	import HarnessLogo from './HarnessLogo.svelte';
+	import GenerateCommitMessageButton from './GenerateCommitMessageButton.svelte';
 	import {
 		actions,
 		app,
 		effectiveAccountAuthError,
-		effectiveCommitMessageHarness,
 		effectiveGithubAccount
 	} from '@super-review/ui/store.svelte';
 	import { isChangesetPath, parseChangesetMessage } from '@super-review/ui/changeset';
-	import { harnessLabel, type LastCommit } from '@super-review/core/types';
+	import { type LastCommit } from '@super-review/core/types';
 
 	let summary = $state('');
 	let description = $state('');
@@ -313,7 +311,6 @@
 	onDestroy(() => clearTimeout(saveTimer));
 
 	const generating = $derived(app.commitMessageGenerating);
-	const generateHarness = $derived(effectiveCommitMessageHarness());
 	// Only the checked files get committed (see the Unstaged tab checkboxes).
 	// Everything is included unless explicitly excluded.
 	const includedFiles = $derived(
@@ -477,10 +474,7 @@
 		}
 	}
 
-	async function generateMessage(): Promise<void> {
-		if (!canGenerate) return;
-		const result = await actions.generateCommitMessage();
-		if (!result) return;
+	async function applyGeneratedMessage(result: { subject: string; body: string }): Promise<void> {
 		// Explicit generate always overwrites; clear session/changeset provenance
 		// so we don't treat the AI fill as re-derivable auto-fill.
 		detectedChangeset = null;
@@ -540,26 +534,10 @@
 				disabled={busy || generating}
 				class="h-7 min-w-0 pr-8 text-xs"
 			/>
-			<button
-				type="button"
-				class="absolute top-1/2 right-1 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-				disabled={!canGenerate}
-				title={generateHarness
-					? `Generate commit message with ${harnessLabel(generateHarness)}`
-					: 'Generate commit message'}
-				aria-label={generateHarness
-					? `Generate commit message with ${harnessLabel(generateHarness)}`
-					: 'Generate commit message'}
-				onclick={() => void generateMessage()}
-			>
-				{#if generating}
-					<Loader2 class="size-3.5 animate-spin" />
-				{:else if generateHarness}
-					<HarnessLogo harness={generateHarness} size={14} />
-				{:else}
-					<Sparkles class="size-3.5" />
-				{/if}
-			</button>
+			<GenerateCommitMessageButton
+				disabled={!canGenerate && !generating}
+				onGenerated={applyGeneratedMessage}
+			/>
 		</div>
 	</div>
 
@@ -568,7 +546,7 @@
 		oninput={persistDraft}
 		onkeydown={onKeydown}
 		placeholder="Description"
-		rows={3}
+		rows={5}
 		disabled={busy || generating}
 		class="min-h-0 resize-none px-2 py-1.5 text-xs"
 	/>

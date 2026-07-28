@@ -74,6 +74,8 @@ import type {
 	AiConfigApplyResult,
 	AiConfigRemoveResult,
 	CommitMessageHarnessStatus,
+	CommitMessageProgressEvent,
+	CommitMessageModelOption,
 	GenerateCommitMessageResult,
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
@@ -486,7 +488,10 @@ const api: PreloadAPI = {
 	commitMessage: {
 		detect: () => invoke('commitMessage:detect') as Promise<CommitMessageHarnessStatus>,
 		generate: (repoId, request) =>
-			invoke('commitMessage:generate', repoId, request) as Promise<GenerateCommitMessageResult>
+			invoke('commitMessage:generate', repoId, request) as Promise<GenerateCommitMessageResult>,
+		cancel: () => invoke('commitMessage:cancel') as Promise<boolean>,
+		listModels: (harness) =>
+			invoke('commitMessage:listModels', harness) as Promise<CommitMessageModelOption[]>
 	},
 	npm: {
 		getPackageInfo: (name) => invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>,
@@ -640,6 +645,12 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, change: PrefsChange) => handler(change);
 			ipcRenderer.on('state:prefsChanged', listener);
 			return () => ipcRenderer.off('state:prefsChanged', listener);
+		},
+		onCommitMessageProgress(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, event: CommitMessageProgressEvent) =>
+				handler(event);
+			ipcRenderer.on('commitMessage:progress', listener);
+			return () => ipcRenderer.off('commitMessage:progress', listener);
 		},
 		onUpdateStatus(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status);

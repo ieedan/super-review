@@ -12,6 +12,7 @@ import type {
 	CommitInfo,
 	CommitMessageHarness,
 	CommitMessageHarnessStatus,
+	CommitMessageModelOption,
 	ContextTab,
 	CreateRepoOptions,
 	DiffContext,
@@ -265,11 +266,18 @@ interface AppState {
 	// Which harness CLIs are installed for commit-message generation. null while
 	// the first detect is in flight.
 	commitMessageHarnesses: CommitMessageHarnessStatus | null;
+	// Model options per harness, prefetched on launch and kept for the session so
+	// the model picker paints from memory instead of an IPC round-trip. The main
+	// process backs this with an on-disk cache, so it survives restarts too.
+	commitMessageModels: Partial<Record<CommitMessageHarness, CommitMessageModelOption[]>>;
 	// Whether the user dismissed the "Set up commit message generation?" notice.
 	// In-memory only; reset on repo switch like the AI-files notice.
 	commitMessageNoticeDismissed: boolean;
 	// True while a harness CLI is generating a commit message.
 	commitMessageGenerating: boolean;
+	// Accumulated streaming text for the in-flight generation (shown in the
+	// generate popover). Cleared when generation ends or is cancelled.
+	commitMessageStream: string;
 	// Whether the "Configure AI files" dialog is open.
 	aiConfigDialogOpen: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
@@ -962,8 +970,10 @@ const initial: AppState = {
 	aiConfigNoticeDismissed: false,
 	aiConfigUpdateDismissed: false,
 	commitMessageHarnesses: null,
+	commitMessageModels: {},
 	commitMessageNoticeDismissed: false,
 	commitMessageGenerating: false,
+	commitMessageStream: '',
 	aiConfigDialogOpen: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
@@ -3701,6 +3711,23 @@ function subscribePrefsChanges(): void {
 	});
 }
 
+// Subscribe once to commit-message generation progress so the popover can show
+// streaming text even after the user dismisses and re-hovers the sparkle.
+let commitMessageProgressSubscribed = false;
+// Bumped on each generate start and on cancel so a stale run's finally can't
+// clear a newer generation's UI state.
+let commitMessageRunId = 0;
+function subscribeCommitMessageProgress(): void {
+	if (commitMessageProgressSubscribed) return;
+	const onProgress = window.api.events?.onCommitMessageProgress;
+	if (!onProgress) return;
+	commitMessageProgressSubscribed = true;
+	onProgress((event) => {
+		if (!app.commitMessageGenerating) return;
+		app.commitMessageStream = event.text;
+	});
+}
+
 export const actions = {
 	// --- Auto-updates ---
 	initUpdater(): Promise<void> {
@@ -3916,14 +3943,61 @@ export const actions = {
 	},
 	async refreshCommitMessageHarnesses(): Promise<void> {
 		app.commitMessageHarnesses = await window.api.commitMessage.detect();
+		void actions.prefetchCommitMessageModels();
 	},
 	async setCommitMessageHarness(harness: CommitMessageHarness | null): Promise<void> {
 		app.prefs = await window.api.state.setPrefs({ commitMessageHarness: harness });
 	},
+	async setCommitMessagePrompt(prompt: string): Promise<void> {
+		const trimmed = prompt.trim();
+		app.prefs = await window.api.state.setPrefs({
+			commitMessagePrompt: trimmed.length > 0 ? trimmed : null
+		});
+	},
+	async setCommitMessageModel(harness: CommitMessageHarness, model: string): Promise<void> {
+		const current = { ...(app.prefs?.commitMessageModels ?? {}) };
+		const trimmed = model.trim();
+		if (trimmed) current[harness] = trimmed;
+		else delete current[harness];
+		app.prefs = await window.api.state.setPrefs({ commitMessageModels: current });
+	},
+	// Cached model list for a harness, or null when it hasn't been fetched yet.
+	// Synchronous so the picker can render on the same frame it opens.
+	commitMessageModelsFor(harness: CommitMessageHarness): CommitMessageModelOption[] | null {
+		return app.commitMessageModels[harness] ?? null;
+	},
+	async listCommitMessageModels(
+		harness: CommitMessageHarness
+	): Promise<CommitMessageModelOption[]> {
+		const models = await window.api.commitMessage.listModels(harness);
+		app.commitMessageModels = { ...app.commitMessageModels, [harness]: models };
+		return models;
+	},
+	// Pull every installed harness's models into the store in the background so
+	// opening the picker never waits on IPC (let alone a CLI probe). The main
+	// process serves these from its own on-disk cache, so this is cheap.
+	async prefetchCommitMessageModels(
+		status: CommitMessageHarnessStatus | null = app.commitMessageHarnesses
+	): Promise<void> {
+		if (!status) return;
+		await Promise.all(
+			COMMIT_MESSAGE_HARNESS_PRIORITY.filter((h) => status[h]).map(async (harness) => {
+				try {
+					await actions.listCommitMessageModels(harness);
+				} catch {
+					// Leave this harness uncached; the picker will fetch on open.
+				}
+			})
+		);
+	},
 	// Generate a commit subject + body via the preferred harness CLI for the
 	// currently checked files. Returns the message on success, or null (and may
 	// open Agents settings when no harness is available).
-	async generateCommitMessage(): Promise<{ subject: string; body: string } | null> {
+	async generateCommitMessage(options?: {
+		preferredHarness?: CommitMessageHarness | null;
+		basePrompt?: string | null;
+		model?: string | null;
+	}): Promise<{ subject: string; body: string } | null> {
 		if (!app.activeRepo || app.commitMessageGenerating || app.push.inProgress) return null;
 		const included = app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path));
 		if (included.length === 0) {
@@ -3941,14 +4015,38 @@ export const actions = {
 			setError('Nothing to include in the commit message.', 'Generate commit message');
 			return null;
 		}
+		subscribeCommitMessageProgress();
+		const runId = ++commitMessageRunId;
 		app.commitMessageGenerating = true;
+		// Left empty on purpose: the UI shows its own shimmering placeholder until
+		// the harness emits its first token.
+		app.commitMessageStream = '';
 		try {
+			const preferredHarness =
+				options?.preferredHarness !== undefined
+					? options.preferredHarness
+					: (app.prefs?.commitMessageHarness ?? null);
+			const basePrompt =
+				options?.basePrompt !== undefined
+					? options.basePrompt
+					: (app.prefs?.commitMessagePrompt ?? null);
+			const model =
+				options?.model !== undefined
+					? options.model
+					: preferredHarness
+						? (app.prefs?.commitMessageModels?.[preferredHarness] ?? null)
+						: null;
 			const result = await window.api.commitMessage.generate(repoId, {
 				branch: app.currentBranch,
 				selections,
-				preferredHarness: app.prefs?.commitMessageHarness ?? null
+				preferredHarness,
+				basePrompt,
+				model
 			});
+			// Superseded by cancel or a newer run.
+			if (runId !== commitMessageRunId) return null;
 			if (!result.ok) {
+				if (result.code === 'cancelled') return null;
 				if (result.code === 'no-harness') {
 					await actions.refreshCommitMessageHarnesses();
 					actions.openCommitMessageSettings();
@@ -3963,11 +4061,23 @@ export const actions = {
 			}
 			return { subject: result.subject.trim(), body: (result.body ?? '').trim() };
 		} catch (err) {
+			if (runId !== commitMessageRunId) return null;
 			setError(err instanceof Error ? err.message : String(err), 'Generate commit message');
 			return null;
 		} finally {
-			app.commitMessageGenerating = false;
+			if (runId === commitMessageRunId) {
+				app.commitMessageGenerating = false;
+				app.commitMessageStream = '';
+			}
 		}
+	},
+	async cancelCommitMessageGeneration(): Promise<void> {
+		if (!app.commitMessageGenerating) return;
+		// Invalidate the in-flight run so its finally doesn't clear a newer one.
+		commitMessageRunId += 1;
+		app.commitMessageGenerating = false;
+		app.commitMessageStream = '';
+		await window.api.commitMessage.cancel();
 	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;
@@ -4089,6 +4199,9 @@ export const actions = {
 		void window.api.commitMessage.detect().then((harnesses) => {
 			if (gen !== licenseGeneration || !isLicensed()) return;
 			app.commitMessageHarnesses = harnesses;
+			// Warm the model lists now, while nothing is waiting on them, so the
+			// commit-message picker never shows a loading state.
+			void actions.prefetchCommitMessageModels(harnesses);
 		});
 		// The dirty dots need the repo list, so chain them rather than firing both.
 		void refreshRepos().then(() => {

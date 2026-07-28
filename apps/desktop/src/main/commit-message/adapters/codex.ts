@@ -1,19 +1,73 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { COMMIT_MESSAGE_JSON_SCHEMA } from '../prompt.js';
+import { cliSupportsFlag } from '../cli-probe.js';
+import { runCodexAppServerTurn } from '../codex-app-server.js';
 import { parseCommitMessageOutput } from '../parse.js';
-import { spawnCapture } from '../spawn.js';
+import { GENERATION_TIMEOUT_MS, spawnCapture } from '../spawn.js';
+import { createLineReader, createStreamReporter, type StreamReporter } from '../stream.js';
 import type { AdapterInput, AdapterResult } from './types.js';
 
-const MODEL = 'gpt-5.6-luna';
+const DEFAULT_MODEL = 'gpt-5.6-luna';
 
 export async function generateWithCodex(input: AdapterInput): Promise<AdapterResult> {
+	const model = input.model?.trim() || DEFAULT_MODEL;
+	const reporter = createStreamReporter(input.onProgress);
+
+	try {
+		// `codex exec` only prints the answer when the turn is over — its event
+		// stream has no deltas. The app-server does stream, so try it first.
+		const streamed = await runCodexAppServerTurn({
+			binary: input.binary,
+			cwd: input.cwd,
+			prompt: input.prompt,
+			model,
+			timeoutMs: GENERATION_TIMEOUT_MS,
+			signal: input.signal,
+			reporter
+		});
+
+		if (streamed.cancelled) return { ok: false, code: 'cancelled', error: 'Cancelled' };
+		if (streamed.timedOut) {
+			return { ok: false, code: 'timeout', error: streamed.error ?? 'Timed out' };
+		}
+		if (!streamed.unavailable) {
+			const parsed = parseCommitMessageOutput(streamed.text);
+			if (parsed) return { ok: true, subject: parsed.subject, body: parsed.body };
+			if (streamed.error) {
+				return { ok: false, code: 'failed', error: streamed.error };
+			}
+			// Turn finished but the answer wasn't usable — fall through and let
+			// `exec` have one go rather than failing outright.
+		}
+
+		return await generateWithCodexExec(input, model, reporter);
+	} finally {
+		reporter.flush();
+	}
+}
+
+// Fallback: one-shot run. Streams whatever the event feed gives us (reasoning
+// and message items as they complete), which is all `exec` offers.
+async function generateWithCodexExec(
+	input: AdapterInput,
+	model: string,
+	reporter: StreamReporter
+): Promise<AdapterResult> {
 	const dir = await mkdtemp(path.join(tmpdir(), 'sr-codex-'));
-	const schemaPath = path.join(dir, 'schema.json');
 	const outputPath = path.join(dir, 'last-message.txt');
 	try {
-		await writeFile(schemaPath, JSON.stringify(COMMIT_MESSAGE_JSON_SCHEMA), 'utf8');
+		const streaming = await cliSupportsFlag(input.binary, ['exec', '--help'], '--json', input.cwd);
+		const readLine = createLineReader((line) => {
+			let event: unknown;
+			try {
+				event = JSON.parse(line);
+			} catch {
+				return;
+			}
+			applyCodexEvent(event, reporter);
+		});
+
 		const result = await spawnCapture(
 			input.binary,
 			[
@@ -23,18 +77,27 @@ export async function generateWithCodex(input: AdapterInput): Promise<AdapterRes
 				'-s',
 				'read-only',
 				'--model',
-				MODEL,
+				model,
 				'--config',
 				'model_reasoning_effort="low"',
-				'--output-schema',
-				schemaPath,
 				'--output-last-message',
 				outputPath,
+				...(streaming ? ['--json'] : []),
 				'-'
 			],
-			{ cwd: input.cwd, stdin: input.prompt }
+			{
+				cwd: input.cwd,
+				stdin: input.prompt,
+				signal: input.signal,
+				...(streaming
+					? { onStdoutChunk: readLine }
+					: { onStdout: (stdout) => reporter.setAnswer(stdout) })
+			}
 		);
 
+		if (result.cancelled) {
+			return { ok: false, code: 'cancelled', error: 'Cancelled' };
+		}
 		if (result.timedOut) {
 			return { ok: false, code: 'timeout', error: result.error ?? 'Timed out' };
 		}
@@ -43,7 +106,8 @@ export async function generateWithCodex(input: AdapterInput): Promise<AdapterRes
 		try {
 			raw = await readFile(outputPath, 'utf8');
 		} catch {
-			raw = result.stdout;
+			// --json turns stdout into events, so the streamed answer is the fallback.
+			raw = streaming ? reporter.answerText() : result.stdout;
 		}
 
 		const parsed = parseCommitMessageOutput(raw);
@@ -57,5 +121,48 @@ export async function generateWithCodex(input: AdapterInput): Promise<AdapterRes
 		return { ok: true, subject: parsed.subject, body: parsed.body };
 	} finally {
 		await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+	}
+}
+
+// Codex has shipped a few event schemas: `{msg:{type:'agent_message_delta'}}`,
+// bare `{type:'agent_message_delta'}`, and thread items (`item.completed` with an
+// `agent_message`/`reasoning` item). Handle all of them and ignore the rest.
+function applyCodexEvent(event: unknown, reporter: StreamReporter): void {
+	if (!event || typeof event !== 'object') return;
+	const outer = event as Record<string, unknown>;
+
+	const item = outer.item as Record<string, unknown> | undefined;
+	if (item && typeof item === 'object') {
+		const kind = (item.item_type ?? item.type) as string | undefined;
+		const text = typeof item.text === 'string' ? item.text : undefined;
+		if (!text) return;
+		if (kind === 'reasoning') reporter.setThinking(text);
+		else if (kind === 'agent_message') reporter.setAnswer(text);
+		return;
+	}
+
+	const msg = (outer.msg && typeof outer.msg === 'object' ? outer.msg : outer) as Record<
+		string,
+		unknown
+	>;
+	const type = typeof msg.type === 'string' ? msg.type : '';
+	const delta = typeof msg.delta === 'string' ? msg.delta : '';
+
+	switch (type) {
+		case 'agent_message_delta':
+			reporter.addAnswer(delta);
+			return;
+		case 'agent_reasoning_delta':
+		case 'agent_reasoning_raw_content_delta':
+			reporter.addThinking(delta);
+			return;
+		case 'agent_message':
+			if (typeof msg.message === 'string') reporter.setAnswer(msg.message);
+			return;
+		case 'agent_reasoning':
+			if (typeof msg.text === 'string') reporter.setThinking(msg.text);
+			return;
+		default:
+			return;
 	}
 }

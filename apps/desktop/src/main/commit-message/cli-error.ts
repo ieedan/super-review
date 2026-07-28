@@ -2,10 +2,23 @@
 // commit-message toast. CLIs often dump ANSI-colored JSON; we strip that and
 // map known shapes (especially OpenCode's UnknownError) to plain English.
 
-const ANSI_RE = /\u001b\[[0-9;]*m/g;
+// CLIs emit more than color. `cursor-agent models` draws its "Loading models…"
+// spinner with erase-line and cursor-move sequences (ESC[2K, ESC[G, ESC[1A) —
+// none of which end in `m`, so matching only SGR left them riding along on the
+// text. Match the general CSI form (parameters, then intermediates, then a final
+// byte in @-~), OSC strings, and the two-character escapes.
+const ANSI_RE =
+	// eslint-disable-next-line no-control-regex
+	/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b\[[0-9;?]*[ -\/]*[@-~]|\u001b[@-Z\\-_]/g;
+
+// A CLI killed mid-write can leave a half-finished escape at the end of a line,
+// which no complete-sequence pattern matches. Drop those too, rather than letting
+// an `ESC[22` ride along on the last value parsed out of the output.
+// eslint-disable-next-line no-control-regex
+const PARTIAL_ANSI_RE = /\u001b(?:\][^\u0007\u001b]*|\[[0-9;?]*[ -\/]*)?$/gm;
 
 export function stripAnsi(text: string): string {
-	return text.replace(ANSI_RE, '');
+	return text.replace(ANSI_RE, '').replace(PARTIAL_ANSI_RE, '');
 }
 
 export function combineCliOutput(stdout: string, stderr: string): string {

@@ -2,13 +2,20 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import readline from 'node:readline';
 import { parseCommitMessageOutput } from '../parse.js';
 import { GENERATION_TIMEOUT_MS } from '../spawn.js';
+import { createStreamReporter } from '../stream.js';
 import type { AdapterInput, AdapterResult } from './types.js';
 
-const MODEL = 'composer-2';
+const MODEL = 'composer-2.5-fast';
 
 // Minimal Agent Client Protocol client for Cursor's `agent acp` / `cursor-agent acp`.
-// Ask mode + no FS/terminal capabilities; we only collect agent_message_chunk text.
+// Ask mode + no FS/terminal capabilities; we collect thought + message chunk text.
 export async function generateWithCursor(input: AdapterInput): Promise<AdapterResult> {
+	if (input.signal?.aborted) {
+		return { ok: false, code: 'cancelled', error: 'Cancelled' };
+	}
+
+	const model = input.model?.trim() || MODEL;
+
 	let child: ChildProcessWithoutNullStreams;
 	try {
 		child = spawn(input.binary, ['acp'], {
@@ -30,8 +37,8 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		number,
 		{ resolve: (v: unknown) => void; reject: (e: unknown) => void }
 	>();
-	let chunks = '';
 	let settled = false;
+	const reporter = createStreamReporter(input.onProgress);
 
 	const cleanup = () => {
 		try {
@@ -48,13 +55,19 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 	const finish = (result: AdapterResult) => {
 		if (settled) return;
 		settled = true;
+		reporter.flush();
 		clearTimeout(timer);
+		input.signal?.removeEventListener('abort', onAbort);
 		cleanup();
 		for (const [, waiter] of pending) waiter.reject(new Error('Cancelled'));
 		pending.clear();
-		// resolve via the outer promise below
 		settle(result);
 	};
+
+	const onAbort = () => {
+		finish({ ok: false, code: 'cancelled', error: 'Cancelled' });
+	};
+	input.signal?.addEventListener('abort', onAbort, { once: true });
 
 	let settle: (result: AdapterResult) => void = () => undefined;
 	const outcome = new Promise<AdapterResult>((resolve) => {
@@ -78,8 +91,8 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		if (!settled) {
 			finish({
 				ok: false,
-				code: 'failed',
-				error: 'Cursor ACP process exited early.'
+				code: input.signal?.aborted ? 'cancelled' : 'failed',
+				error: input.signal?.aborted ? 'Cancelled' : 'Cursor ACP process exited early.'
 			});
 		}
 	});
@@ -116,11 +129,16 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 
 		if (msg.method === 'session/update') {
 			const update = msg.params?.update;
-			if (
-				update?.sessionUpdate === 'agent_message_chunk' &&
-				typeof update.content?.text === 'string'
-			) {
-				chunks += update.content.text;
+			const kind = update?.sessionUpdate;
+			const text =
+				typeof update?.content?.text === 'string' ? update.content.text : undefined;
+			if (!text) return;
+			if (kind === 'agent_thought_chunk') {
+				reporter.addThinking(text);
+				return;
+			}
+			if (kind === 'agent_message_chunk') {
+				reporter.addAnswer(text);
 			}
 			return;
 		}
@@ -173,7 +191,7 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		}
 
 		try {
-			await send('session/set_model', { sessionId, modelId: MODEL });
+			await send('session/set_model', { sessionId, modelId: model });
 		} catch {
 			// Model selection is best-effort; cheap default may be unavailable.
 		}
@@ -183,7 +201,7 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 			prompt: [{ type: 'text', text: input.prompt }]
 		});
 
-		const parsed = parseCommitMessageOutput(chunks);
+		const parsed = parseCommitMessageOutput(reporter.answerText());
 		if (!parsed) {
 			finish({
 				ok: false,
@@ -194,11 +212,15 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 			finish({ ok: true, subject: parsed.subject, body: parsed.body });
 		}
 	} catch (err) {
-		finish({
-			ok: false,
-			code: 'failed',
-			error: err instanceof Error ? err.message : String(err)
-		});
+		if (input.signal?.aborted) {
+			finish({ ok: false, code: 'cancelled', error: 'Cancelled' });
+		} else {
+			finish({
+				ok: false,
+				code: 'failed',
+				error: err instanceof Error ? err.message : String(err)
+			});
+		}
 	}
 
 	return outcome;

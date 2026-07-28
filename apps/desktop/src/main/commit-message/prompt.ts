@@ -1,33 +1,35 @@
 import type { CommitFileSelection } from '@super-review/core/types';
+import { DEFAULT_COMMIT_MESSAGE_BASE_PROMPT } from '@super-review/core/commit-message-prompt';
 
 const SUMMARY_LIMIT = 6_000;
 const PATCH_LIMIT = 40_000;
 
-export const COMMIT_MESSAGE_JSON_SCHEMA = {
-	type: 'object',
-	additionalProperties: false,
-	required: ['subject', 'body'],
-	properties: {
-		subject: { type: 'string' },
-		body: { type: 'string' }
-	}
-} as const;
+export { DEFAULT_COMMIT_MESSAGE_BASE_PROMPT };
+
+// A commit message already has a wire format: subject, blank line, body. Asking
+// for that instead of JSON means no harness needs a schema flag, and the reply
+// reads as a commit message while it streams. This block is app-controlled and
+// appended after the user's instructions and the change context.
+const OUTPUT_FORMAT_SECTION = [
+	'Reply with the commit message itself and nothing else:',
+	'- first line: the subject, at most 72 characters, no trailing period',
+	'- then one blank line, then the body (leave it out when the subject says it all)',
+	'No code fences, no "Subject:"/"Body:" labels, no commentary around it.'
+].join('\n');
 
 export interface CommitMessagePromptInput {
 	branch: string | null;
 	fileSummary: string;
 	patch: string;
+	// Editable instructions without the change context. Empty/whitespace falls
+	// back to DEFAULT_COMMIT_MESSAGE_BASE_PROMPT.
+	basePrompt?: string | null;
 }
 
 export function buildCommitMessagePrompt(input: CommitMessagePromptInput): string {
+	const base = input.basePrompt?.trim() || DEFAULT_COMMIT_MESSAGE_BASE_PROMPT;
 	return [
-		'You write concise git commit messages.',
-		'Return a JSON object with keys: subject, body.',
-		'Rules:',
-		'- subject must be imperative, <= 72 chars, and no trailing period',
-		'- body can be empty string or short bullet points',
-		'- capture the primary user-visible or developer-visible change',
-		'- return ONLY the JSON object, no markdown fences or commentary',
+		base,
 		'',
 		`Branch: ${input.branch ?? '(detached)'}`,
 		'',
@@ -35,7 +37,9 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput): strin
 		limitSection(input.fileSummary, SUMMARY_LIMIT),
 		'',
 		'Staged patch:',
-		limitSection(input.patch, PATCH_LIMIT)
+		limitSection(input.patch, PATCH_LIMIT),
+		'',
+		OUTPUT_FORMAT_SECTION
 	].join('\n');
 }
 

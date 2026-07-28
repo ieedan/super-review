@@ -8,6 +8,7 @@ export interface SpawnCaptureResult {
 	stderr: string;
 	code: number | null;
 	timedOut: boolean;
+	cancelled?: boolean;
 	error?: string;
 }
 
@@ -16,6 +17,13 @@ export interface SpawnCaptureOptions {
 	env?: NodeJS.ProcessEnv;
 	stdin?: string;
 	timeoutMs?: number;
+	signal?: AbortSignal;
+	// Called with cumulative stdout as chunks arrive (for streaming UIs).
+	onStdout?: (stdout: string) => void;
+	// Called with each raw stdout chunk (for NDJSON event parsers).
+	onStdoutChunk?: (chunk: string) => void;
+	// Called with each raw stderr chunk (some CLIs stream progress there).
+	onStderrChunk?: (chunk: string) => void;
 	// Kill signal / cleanup hook for callers that hold the child (ACP).
 	onSpawn?: (child: ChildProcessWithoutNullStreams) => void;
 }
@@ -33,8 +41,37 @@ export function spawnCapture(
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			opts.signal?.removeEventListener('abort', onAbort);
 			resolve(result);
 		};
+
+		const killChild = (child: ChildProcessWithoutNullStreams) => {
+			try {
+				child.kill('SIGTERM');
+			} catch {
+				// ignore
+			}
+			setTimeout(() => {
+				try {
+					child.kill('SIGKILL');
+				} catch {
+					// ignore
+				}
+			}, 2_000);
+		};
+
+		if (opts.signal?.aborted) {
+			finish({
+				ok: false,
+				stdout: '',
+				stderr: '',
+				code: null,
+				timedOut: false,
+				cancelled: true,
+				error: 'Cancelled'
+			});
+			return;
+		}
 
 		let child: ChildProcessWithoutNullStreams;
 		try {
@@ -62,22 +99,32 @@ export function spawnCapture(
 		let stderr = '';
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', (chunk) => (stdout += chunk));
-		child.stderr.on('data', (chunk) => (stderr += chunk));
+		child.stdout.on('data', (chunk) => {
+			stdout += chunk;
+			opts.onStdoutChunk?.(chunk);
+			opts.onStdout?.(stdout);
+		});
+		child.stderr.on('data', (chunk: string) => {
+			stderr += chunk;
+			opts.onStderrChunk?.(chunk);
+		});
+
+		const onAbort = () => {
+			killChild(child);
+			finish({
+				ok: false,
+				stdout,
+				stderr,
+				code: null,
+				timedOut: false,
+				cancelled: true,
+				error: 'Cancelled'
+			});
+		};
+		opts.signal?.addEventListener('abort', onAbort, { once: true });
 
 		const timer = setTimeout(() => {
-			try {
-				child.kill('SIGTERM');
-			} catch {
-				// ignore
-			}
-			setTimeout(() => {
-				try {
-					child.kill('SIGKILL');
-				} catch {
-					// ignore
-				}
-			}, 2_000);
+			killChild(child);
 			finish({
 				ok: false,
 				stdout,
@@ -100,6 +147,18 @@ export function spawnCapture(
 		});
 
 		child.on('close', (code) => {
+			if (opts.signal?.aborted) {
+				finish({
+					ok: false,
+					stdout,
+					stderr,
+					code: null,
+					timedOut: false,
+					cancelled: true,
+					error: 'Cancelled'
+				});
+				return;
+			}
 			finish({
 				ok: code === 0,
 				stdout,

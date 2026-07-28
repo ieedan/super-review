@@ -1,63 +1,123 @@
-import { COMMIT_MESSAGE_JSON_SCHEMA } from '../prompt.js';
 import { parseCommitMessageOutput } from '../parse.js';
 import { spawnCapture } from '../spawn.js';
+import { createLineReader, createStreamReporter } from '../stream.js';
 import type { AdapterInput, AdapterResult } from './types.js';
 
-const MODEL = 'claude-haiku-4-5';
+// Tier alias: the CLI resolves it to the newest Haiku, so it never needs bumping.
+const DEFAULT_MODEL = 'haiku';
 
-export async function generateWithClaude(input: AdapterInput): Promise<AdapterResult> {
-	const result = await spawnCapture(
-		input.binary,
-		[
-			'-p',
-			'--output-format',
-			'json',
-			'--json-schema',
-			JSON.stringify(COMMIT_MESSAGE_JSON_SCHEMA),
-			'--model',
-			MODEL,
-			'--dangerously-skip-permissions'
-		],
-		{ cwd: input.cwd, stdin: input.prompt }
-	);
-
-	if (result.timedOut) {
-		return { ok: false, code: 'timeout', error: result.error ?? 'Timed out' };
-	}
-
-	// `claude -p --output-format json` wraps structured_output in a result object.
-	const fromStructured = parseStructuredClaudeOutput(result.stdout);
-	const parsed = fromStructured ?? parseCommitMessageOutput(result.stdout);
-	if (!parsed) {
-		return {
-			ok: false,
-			code: result.ok ? 'empty' : 'failed',
-			error: result.error ?? 'Claude returned no usable commit message.'
-		};
-	}
-	return { ok: true, subject: parsed.subject, body: parsed.body };
+interface ClaudeResultEvent {
+	is_error?: boolean;
+	result?: string;
 }
 
-function parseStructuredClaudeOutput(stdout: string): { subject: string; body: string } | null {
+export async function generateWithClaude(input: AdapterInput): Promise<AdapterResult> {
+	const model = input.model?.trim() || DEFAULT_MODEL;
+	const reporter = createStreamReporter(input.onProgress);
+
+	// `--output-format json` only prints once the run is over. stream-json plus
+	// --include-partial-messages gives us thinking/answer token deltas instead.
+	// Held in an object so TypeScript keeps the type across the stream callback.
+	const state: { result: ClaudeResultEvent | null } = { result: null };
+	let sawDelta = false;
+
+	const readLine = createLineReader((line) => {
+		let event: Record<string, unknown>;
+		try {
+			event = JSON.parse(line) as Record<string, unknown>;
+		} catch {
+			return;
+		}
+
+		if (event.type === 'result') {
+			state.result = event as ClaudeResultEvent;
+			return;
+		}
+
+		if (event.type === 'assistant' && !sawDelta) {
+			// Older CLIs (or a run without partial messages) only emit whole blocks.
+			const text = collectAssistantText(event);
+			if (text) reporter.setAnswer(text);
+			return;
+		}
+
+		if (event.type !== 'stream_event') return;
+		const inner = event.event as
+			| {
+					type?: string;
+					delta?: { type?: string; text?: string; thinking?: string };
+			  }
+			| undefined;
+		if (inner?.type !== 'content_block_delta') return;
+		const delta = inner.delta;
+		if (!delta) return;
+
+		if (delta.type === 'thinking_delta' && delta.thinking) {
+			sawDelta = true;
+			reporter.addThinking(delta.thinking);
+			return;
+		}
+		if (delta.type === 'text_delta' && delta.text) {
+			sawDelta = true;
+			reporter.addAnswer(delta.text);
+		}
+	});
+
 	try {
-		const wrapper = JSON.parse(stdout) as {
-			structured_output?: { subject?: unknown; body?: unknown };
-			result?: string;
-		};
-		const structured = wrapper.structured_output;
-		if (structured && typeof structured.subject === 'string') {
-			return parseCommitMessageOutput(
-				JSON.stringify({
-					subject: structured.subject,
-					body: typeof structured.body === 'string' ? structured.body : ''
-				})
-			);
+		const result = await spawnCapture(
+			input.binary,
+			[
+				'-p',
+				'--output-format',
+				'stream-json',
+				'--include-partial-messages',
+				// stream-json output requires --verbose in print mode.
+				'--verbose',
+				'--model',
+				model,
+				'--dangerously-skip-permissions'
+			],
+			{
+				cwd: input.cwd,
+				stdin: input.prompt,
+				signal: input.signal,
+				onStdoutChunk: readLine
+			}
+		);
+
+		if (result.cancelled) {
+			return { ok: false, code: 'cancelled', error: 'Cancelled' };
 		}
-		if (typeof wrapper.result === 'string') {
-			return parseCommitMessageOutput(wrapper.result);
+		if (result.timedOut) {
+			return { ok: false, code: 'timeout', error: result.error ?? 'Timed out' };
 		}
-	} catch {
-		// fall through
+
+		const answer = state.result?.result ?? reporter.answerText();
+		const parsed = parseCommitMessageOutput(answer);
+		if (!parsed) {
+			const failed = state.result?.is_error === true;
+			return {
+				ok: false,
+				code: result.ok && !failed ? 'empty' : 'failed',
+				error:
+					(failed ? state.result?.result : undefined) ??
+					result.error ??
+					'Claude returned no usable commit message.'
+			};
+		}
+		return { ok: true, subject: parsed.subject, body: parsed.body };
+	} finally {
+		reporter.flush();
 	}
-	return null;
+}
+
+function collectAssistantText(event: Record<string, unknown>): string {
+	const message = event.message as { content?: unknown } | undefined;
+	const content = message?.content;
+	if (!Array.isArray(content)) return '';
+	const parts: string[] = [];
+	for (const block of content as Array<Record<string, unknown>>) {
+		if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+	}
+	return parts.join('\n');
 }

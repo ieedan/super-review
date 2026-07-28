@@ -42,6 +42,8 @@
 		ariaLabel?: string;
 		/** Forwarded to the trigger button (e.g. disabled-state hint). */
 		title?: string;
+		/** Fired when the menu opens/closes. Does not take ownership of `open`. */
+		onOpenChange?: (open: boolean) => void;
 	} & (
 		| {
 				type: 'single';
@@ -70,6 +72,7 @@
 		sideOffset = 4,
 		ariaLabel,
 		title,
+		onOpenChange,
 		onValueChange
 	}: Props = $props();
 
@@ -101,6 +104,7 @@
 <Root
 	{type}
 	bind:value={value as never}
+	onOpenChange={onOpenChange}
 	onValueChange={onValueChange as never}
 	items={flatItems}
 	{disabled}

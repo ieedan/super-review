@@ -1371,6 +1371,10 @@ export interface GenerateCommitMessageRequest {
 	selections: CommitFileSelection[];
 	// Preferred harness from prefs; main process falls back if missing/uninstalled.
 	preferredHarness?: CommitMessageHarness | null;
+	// Editable base instructions (no files/patch). Empty/omitted uses the default.
+	basePrompt?: string | null;
+	// Model id for the chosen harness. Empty/omitted uses that harness's default.
+	model?: string | null;
 }
 
 export interface GenerateCommitMessageResult {
@@ -1379,7 +1383,18 @@ export interface GenerateCommitMessageResult {
 	body?: string;
 	harness?: CommitMessageHarness;
 	error?: string;
-	code?: 'no-harness' | 'timeout' | 'failed' | 'empty';
+	code?: 'no-harness' | 'timeout' | 'failed' | 'empty' | 'cancelled';
+}
+
+// A model option for the commit-message generate popover.
+export interface CommitMessageModelOption {
+	id: string;
+	label: string;
+}
+
+// Progress event while a commit message is generating (streamed to the renderer).
+export interface CommitMessageProgressEvent {
+	text: string;
 }
 
 // One file to discard. `oldPath` is the pre-rename path, so discarding a rename
@@ -1652,6 +1667,11 @@ export interface UserPrefs {
 	// Preferred coding-harness CLI for generating commit messages. Null means
 	// auto-pick the first installed harness. Excludes `other` (no CLI to spawn).
 	commitMessageHarness?: CommitMessageHarness | null;
+	// Editable base prompt for commit-message generation (no files/patch). Null
+	// or empty means the built-in default. Persisted so the popover remembers it.
+	commitMessagePrompt?: string | null;
+	// Preferred model id per harness for commit-message generation.
+	commitMessageModels?: Partial<Record<CommitMessageHarness, string>>;
 	// File list layout is tracked per sidebar tab so the user can keep, say, a
 	// tree in Unstaged and a flat list in Branch.
 	unstagedFileListLayout: FileListLayout;
@@ -2656,11 +2676,15 @@ export interface PreloadAPI {
 		detect(): Promise<CommitMessageHarnessStatus>;
 		// Generate a commit subject + body via the preferred (or first available)
 		// harness CLI, locked down to text-only. Uses the checked-file selections
-		// the commit box would include.
+		// the commit box would include. Progress streams via events.onCommitMessageProgress.
 		generate(
 			repoId: string,
 			request: GenerateCommitMessageRequest
 		): Promise<GenerateCommitMessageResult>;
+		// Abort the in-flight generation, if any.
+		cancel(): Promise<boolean>;
+		// Models available for a harness (CLI listing when possible, curated fallback).
+		listModels(harness: CommitMessageHarness): Promise<CommitMessageModelOption[]>;
 	};
 	npm: {
 		// Fetch trimmed npm-registry metadata for a package, for the package.json
@@ -2819,6 +2843,8 @@ export interface PreloadAPI {
 		// Live prefs changes pushed by the main process: settings.json edited
 		// externally, or a settings file imported/reset. Returns an unsubscribe fn.
 		onPrefsChanged(handler: (change: PrefsChange) => void): () => void;
+		// Streaming text while commit-message generation runs. Returns an unsubscribe fn.
+		onCommitMessageProgress(handler: (event: CommitMessageProgressEvent) => void): () => void;
 		// Background auto-update progress pushed by the main process (checking →
 		// downloading → downloaded, or error). Returns an unsubscribe fn.
 		onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
