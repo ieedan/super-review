@@ -9,7 +9,7 @@
 	import User from '@lucide/svelte/icons/user';
 	import type { GithubOrg, RemoteRepoRef } from '@super-review/core/types';
 	import * as Dialog from './ui/dialog';
-	import * as Select from './ui/select';
+	import { Select } from './ui/select';
 	import * as Avatar from './ui/avatar';
 	import AccountSwitcher from './AccountSwitcher.svelte';
 	import { Button } from './ui/button';
@@ -61,6 +61,26 @@
 			? orgs.find((o) => o.login === ownerOrg)?.avatarUrl
 			: (selectedAccount?.avatarUrl ?? undefined)
 	);
+	const ownerItems = $derived([
+		...(selectedAccount
+			? [
+					{
+						value: selectedAccount.login,
+						label: selectedAccount.login,
+						avatarUrl: selectedAccount.avatarUrl
+					}
+				]
+			: []),
+		...orgs.map((o) => ({ value: o.login, label: o.login, avatarUrl: o.avatarUrl }))
+	]);
+	const gitignoreItems = $derived([
+		{ value: '', label: 'None' },
+		...gitignoreOptions.map((o) => ({ value: o, label: o }))
+	]);
+	const licenseItems = $derived([
+		{ value: '', label: 'None' },
+		...licenseOptions.map((o) => ({ value: o, label: o }))
+	]);
 
 	// The existing remote repo (if any) whose name collides with the one being
 	// typed under the selected owner. Blocks creation until name/owner change.
@@ -241,9 +261,6 @@
 			busy = false;
 		}
 	}
-
-	const selectClass =
-		'h-8 w-full appearance-none rounded-lg border border-input bg-transparent px-2.5 py-1 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30';
 </script>
 
 <Dialog.Root
@@ -384,61 +401,29 @@
 						<div class="grid gap-1.5">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
 							<label class="text-sm font-medium">Owner</label>
-							<Select.Root
+							<Select
 								type="single"
-								value={owner ?? undefined}
+								value={owner ?? ''}
 								onValueChange={(v) => (ownerOrg = v === selectedAccount?.login ? null : v)}
+								items={ownerItems}
+								placeholder="Select an owner"
 								disabled={busy || orgs.length === 0}
+								title={orgs.length === 0
+									? 'This account has no organizations to publish under'
+									: 'Choose the owner for this repository'}
 							>
-								<Select.Trigger
-									class="w-full"
-									title={orgs.length === 0
-										? 'This account has no organizations to publish under'
-										: 'Choose the owner for this repository'}
-								>
+								{#snippet item({ item })}
 									<Avatar.Root class="size-5 shrink-0">
-										{#if ownerAvatarUrl}
-											<Avatar.Image src={ownerAvatarUrl} alt={owner ?? ''} />
+										{#if item.avatarUrl}
+											<Avatar.Image src={item.avatarUrl} alt={item.label} />
 										{/if}
 										<Avatar.Fallback class="text-[9px]">
-											{owner ? owner.slice(0, 2).toUpperCase() : ''}
+											{item.label.slice(0, 2).toUpperCase()}
 										</Avatar.Fallback>
 									</Avatar.Root>
-									<span class="min-w-0 flex-1 truncate text-left">{owner ?? 'Select an owner'}</span
-									>
-								</Select.Trigger>
-								<Select.Content>
-									{#if selectedAccount}
-										<Select.Item value={selectedAccount.login} label={selectedAccount.login}>
-											<Avatar.Root class="size-5 shrink-0">
-												{#if selectedAccount.avatarUrl}
-													<Avatar.Image
-														src={selectedAccount.avatarUrl}
-														alt={selectedAccount.login}
-													/>
-												{/if}
-												<Avatar.Fallback class="text-[9px]">
-													{selectedAccount.login.slice(0, 2).toUpperCase()}
-												</Avatar.Fallback>
-											</Avatar.Root>
-											{selectedAccount.login}
-										</Select.Item>
-									{/if}
-									{#each orgs as o (o.login)}
-										<Select.Item value={o.login} label={o.login}>
-											<Avatar.Root class="size-5 shrink-0">
-												{#if o.avatarUrl}
-													<Avatar.Image src={o.avatarUrl} alt={o.login} />
-												{/if}
-												<Avatar.Fallback class="text-[9px]">
-													{o.login.slice(0, 2).toUpperCase()}
-												</Avatar.Fallback>
-											</Avatar.Root>
-											{o.login}
-										</Select.Item>
-									{/each}
-								</Select.Content>
-							</Select.Root>
+									{item.label}
+								{/snippet}
+							</Select>
 						</div>
 					</div>
 				{/if}
@@ -534,33 +519,27 @@
 				<div class="grid gap-1.5">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
 					<label class="text-sm font-medium">Git ignore</label>
-					<div class="relative">
-						<select bind:value={gitignore} disabled={busy} class={selectClass}>
-							<option value={null}>None</option>
-							{#each gitignoreOptions as opt (opt)}
-								<option value={opt}>{opt}</option>
-							{/each}
-						</select>
-						<ChevronDown
-							class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-						/>
-					</div>
+					<Select
+						type="single"
+						value={gitignore ?? ''}
+						onValueChange={(v) => (gitignore = v === '' ? null : v)}
+						items={gitignoreItems}
+						placeholder="None"
+						disabled={busy}
+					/>
 				</div>
 
 				<div class="grid gap-1.5">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
 					<label class="text-sm font-medium">License</label>
-					<div class="relative">
-						<select bind:value={license} disabled={busy} class={selectClass}>
-							<option value={null}>None</option>
-							{#each licenseOptions as opt (opt)}
-								<option value={opt}>{opt}</option>
-							{/each}
-						</select>
-						<ChevronDown
-							class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-						/>
-					</div>
+					<Select
+						type="single"
+						value={license ?? ''}
+						onValueChange={(v) => (license = v === '' ? null : v)}
+						items={licenseItems}
+						placeholder="None"
+						disabled={busy}
+					/>
 				</div>
 
 				<Dialog.Footer>

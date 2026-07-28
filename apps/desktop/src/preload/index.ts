@@ -3,7 +3,6 @@ import type {
 	BranchContextMenuAction,
 	CommitContextMenuAction,
 	PRContextMenuAction,
-	AppMenuBarItem,
 	BranchInfo,
 	BranchMenuAction,
 	BranchMenuState,
@@ -78,7 +77,8 @@ import type {
 	SidebarControlsContextMenuResult,
 	TerminalKind,
 	UpdateStatus,
-	UserPrefs
+	UserPrefs,
+	WindowChromeAction
 } from '@shared/types.js';
 import { isLicenseAllowedChannel, LicenseGateError } from '@shared/license-ipc.js';
 
@@ -565,15 +565,15 @@ const api: PreloadAPI = {
 			invoke('menu:showFileHeaderContextMenu', params) as Promise<FileHeaderContextMenuResult>,
 		setBranchState: (state: BranchMenuState) => ipcRenderer.send('menu:setBranchState', state),
 		setRepositoryState: (state: RepositoryMenuState) =>
-			ipcRenderer.send('menu:setRepositoryState', state),
-		getAppMenuBarItems: () => invoke('menu:getAppMenuBarItems') as Promise<AppMenuBarItem[]>,
-		popupAppMenu: (params) => invoke('menu:popupAppMenu', params) as Promise<void>
+			ipcRenderer.send('menu:setRepositoryState', state)
 	},
 	windowControls: {
 		// Ask the main process to re-center the macOS traffic lights for the
 		// current zoom factor. The renderer fires this on zoom changes (which the
 		// main 'zoom-changed' event misses for keyboard/menu zoom).
-		sync: () => ipcRenderer.send('window:syncControls')
+		sync: () => ipcRenderer.send('window:syncControls'),
+		// Role-menu / window-chrome actions for the Windows HTML AppMenuBar.
+		perform: (action: WindowChromeAction) => invoke('window:perform', action) as Promise<void>
 	},
 	events: {
 		onRepoChanged(handler) {

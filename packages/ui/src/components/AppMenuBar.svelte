@@ -1,72 +1,31 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import type { AppMenuBarItem } from '@super-review/core/types';
+	// Windows-only application menu strip that shares a row with the native
+	// titleBarOverlay window controls. Renders a shadcn Menubar (HTML) so menus
+	// match the rest of the app; macOS keeps the system menu bar and does not
+	// mount this component. Accelerators still come from Menu.setApplicationMenu
+	// in the main process.
+	import { MENU_ACCELERATORS as A, formatAcceleratorLabel } from '@super-review/core/hotkeys';
+	import type { WindowChromeAction } from '@super-review/core/types';
+	import {
+		branchMenuState,
+		handleBranchMenuAction,
+		handleRepositoryMenuAction,
+		repositoryMenuState
+	} from '@super-review/ui/app-menu-actions';
+	import { actions, licenseBlocked } from '@super-review/ui/store.svelte';
+	import * as Menubar from './ui/menubar';
 	import iconUrl from '../assets/super-review-icon.png';
 
-	// Windows-only application menu strip that shares a row with the native
-	// titleBarOverlay window controls (GitHub Desktop style). Top-level labels
-	// are drawn here; clicking pops the real native submenu via IPC. macOS keeps
-	// the system menu bar; this component is not mounted there.
+	const shortcut = (accelerator: string) => formatAcceleratorLabel(accelerator, false);
 
-	// Seeded immediately so the bar never paints empty while IPC resolves (or if
-	// localization fetch fails). Ids match the main-process menu template.
-	const DEFAULT_ITEMS: AppMenuBarItem[] = [
-		{ id: 'file', label: 'File' },
-		{ id: 'edit', label: 'Edit' },
-		{ id: 'view', label: 'View' },
-		{ id: 'repository', label: 'Repository' },
-		{ id: 'branch', label: 'Branch' },
-		{ id: 'window', label: 'Window' },
-		{ id: 'help', label: 'Help' }
-	];
+	const branch = $derived(branchMenuState());
+	const repo = $derived(repositoryMenuState());
+	// Custom Branch / Repository / Help flows need the licensed app shell
+	// (dialogs + store init). Role menus still work on the activation screen.
+	const customMenusEnabled = $derived(!licenseBlocked());
 
-	let items = $state<AppMenuBarItem[]>(DEFAULT_ITEMS);
-	let openId = $state<string | null>(null);
-	// While a submenu is open, hovering another label switches to it (Windows
-	// menu-bar convention). Cleared when the popup closes.
-	let armed = $state(false);
-
-	onMount(() => {
-		void window.api.menu
-			.getAppMenuBarItems()
-			.then((list) => {
-				if (list && list.length > 0) items = list;
-			})
-			.catch(() => {
-				/* keep DEFAULT_ITEMS */
-			});
-	});
-
-	async function openMenu(item: AppMenuBarItem, el: HTMLElement): Promise<void> {
-		const rect = el.getBoundingClientRect();
-		openId = item.id;
-		armed = true;
-		try {
-			await window.api.menu.popupAppMenu({
-				id: item.id,
-				x: rect.left,
-				y: rect.bottom
-			});
-		} finally {
-			// Only clear if this popup is still the active one (a hover-switch may
-			// have opened a different menu while we were awaiting).
-			if (openId === item.id) {
-				openId = null;
-				armed = false;
-			}
-		}
-	}
-
-	function onButtonClick(item: AppMenuBarItem, e: MouseEvent): void {
-		const el = e.currentTarget as HTMLElement;
-		if (openId === item.id) return;
-		void openMenu(item, el);
-	}
-
-	function onButtonEnter(item: AppMenuBarItem, e: MouseEvent): void {
-		if (!armed || openId === item.id) return;
-		const el = e.currentTarget as HTMLElement;
-		void openMenu(item, el);
+	function chrome(action: WindowChromeAction): void {
+		void window.api.windowControls.perform(action);
 	}
 </script>
 
@@ -78,27 +37,277 @@
 <div
 	class="flex h-[30px] w-full shrink-0 items-center gap-0.5 border-b border-border bg-card/40 backdrop-blur"
 	style="-webkit-app-region: drag; padding-left: env(titlebar-area-x, 0px); padding-right: calc(100% - env(titlebar-area-width, 100%) - env(titlebar-area-x, 0px));"
-	role="menubar"
 >
 	<img src={iconUrl} alt="" class="ml-2 mr-1 size-4 shrink-0 rounded-sm" aria-hidden="true" />
-	<nav class="flex h-full items-stretch" style="-webkit-app-region: no-drag">
-		{#each items as item (item.id)}
-			<button
-				type="button"
-				role="menuitem"
-				aria-haspopup="true"
-				aria-expanded={openId === item.id}
-				class={[
-					'px-2.5 text-[13px] leading-none text-foreground/90 hover:bg-accent',
-					openId === item.id && 'bg-accent'
-				]}
-				onclick={(e) => onButtonClick(item, e)}
-				onmouseenter={(e) => onButtonEnter(item, e)}
-			>
-				{item.label}
-			</button>
-		{/each}
-	</nav>
+	<div class="flex h-full min-w-0 items-stretch" style="-webkit-app-region: no-drag">
+		<Menubar.Root class="h-full">
+			<Menubar.Menu>
+				<Menubar.Trigger>File</Menubar.Trigger>
+				<Menubar.Content>
+					<Menubar.Item onSelect={() => chrome('close')}>
+						Close Window
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+W')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item onSelect={() => chrome('quit')}>
+						Quit
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+Q')}</Menubar.Shortcut>
+					</Menubar.Item>
+				</Menubar.Content>
+			</Menubar.Menu>
+
+			<Menubar.Menu>
+				<Menubar.Trigger>Edit</Menubar.Trigger>
+				<Menubar.Content>
+					<Menubar.Item onSelect={() => chrome('undo')}>
+						Undo
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+Z')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('redo')}>
+						Redo
+						<Menubar.Shortcut>{shortcut('Shift+CmdOrCtrl+Z')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item onSelect={() => chrome('cut')}>
+						Cut
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+X')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('copy')}>
+						Copy
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+C')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('paste')}>
+						Paste
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+V')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('selectAll')}>
+						Select All
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+A')}</Menubar.Shortcut>
+					</Menubar.Item>
+				</Menubar.Content>
+			</Menubar.Menu>
+
+			<Menubar.Menu>
+				<Menubar.Trigger>View</Menubar.Trigger>
+				<Menubar.Content>
+					<Menubar.Item onSelect={() => chrome('reload')}>
+						Reload
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+R')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('forceReload')}>
+						Force Reload
+						<Menubar.Shortcut>{shortcut('Shift+CmdOrCtrl+R')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('toggleDevTools')}>
+						Toggle Developer Tools
+						<Menubar.Shortcut>{shortcut('Alt+CmdOrCtrl+I')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item onSelect={() => chrome('resetZoom')}>
+						Actual Size
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+0')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('zoomIn')}>
+						Zoom In
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+=')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('zoomOut')}>
+						Zoom Out
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+-')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item onSelect={() => chrome('toggleFullscreen')}>
+						Toggle Full Screen
+						<Menubar.Shortcut>{shortcut('F11')}</Menubar.Shortcut>
+					</Menubar.Item>
+				</Menubar.Content>
+			</Menubar.Menu>
+
+			<Menubar.Menu>
+				<Menubar.Trigger>Repository</Menubar.Trigger>
+				<Menubar.Content>
+					<!-- Push also needs commits to push, so it greys out on an up-to-date
+					branch instead of running a no-op fetch/push. Pull/Fetch stay on
+					hasRemote: how far behind the branch is isn't known until a fetch. -->
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo || !repo.hasRemote || !repo.canPush}
+						onSelect={() => handleRepositoryMenuAction('push')}
+					>
+						Push
+						<Menubar.Shortcut>{shortcut(A.push.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo || !repo.hasRemote}
+						onSelect={() => handleRepositoryMenuAction('pull')}
+					>
+						Pull
+						<Menubar.Shortcut>{shortcut(A.pull.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo || !repo.hasRemote}
+						onSelect={() => handleRepositoryMenuAction('fetch')}
+					>
+						Fetch
+						<Menubar.Shortcut>{shortcut(A.fetch.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo}
+						onSelect={() => handleRepositoryMenuAction('remove')}
+					>
+						Remove…
+						<Menubar.Shortcut>{shortcut(A.removeRepo.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo || !repo.hasGithub}
+						onSelect={() => handleRepositoryMenuAction('viewOnGithub')}
+					>
+						View on GitHub
+						<Menubar.Shortcut>{shortcut(A.viewOnGithub.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					{#if repo.terminalLabel}
+						<Menubar.Item
+							disabled={!customMenusEnabled || !repo.hasRepo}
+							onSelect={() => handleRepositoryMenuAction('openInTerminal')}
+						>
+							Open in {repo.terminalLabel}
+							<Menubar.Shortcut>{shortcut(A.openInTerminal.accelerator)}</Menubar.Shortcut>
+						</Menubar.Item>
+					{/if}
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo}
+						onSelect={() => handleRepositoryMenuAction('showInFinder')}
+					>
+						{repo.revealLabel}
+						<Menubar.Shortcut>{shortcut(A.showInFinder.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					{#if repo.editorLabel}
+						<Menubar.Item
+							disabled={!customMenusEnabled || !repo.hasRepo}
+							onSelect={() => handleRepositoryMenuAction('openInEditor')}
+						>
+							Open in {repo.editorLabel}
+							<Menubar.Shortcut>{shortcut(A.openInEditor.accelerator)}</Menubar.Shortcut>
+						</Menubar.Item>
+					{/if}
+					<Menubar.Separator />
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo || !repo.hasGithub}
+						onSelect={() => handleRepositoryMenuAction('createIssue')}
+					>
+						Create Issue on GitHub
+						<Menubar.Shortcut>{shortcut(A.createIssue.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo}
+						onSelect={() => handleRepositoryMenuAction('cleanupBranches')}
+					>
+						Clean Up Local Branches…
+					</Menubar.Item>
+					<Menubar.Item
+						disabled={!customMenusEnabled || !repo.hasRepo}
+						onSelect={() => handleRepositoryMenuAction('settings')}
+					>
+						Repository Settings…
+					</Menubar.Item>
+				</Menubar.Content>
+			</Menubar.Menu>
+
+			<Menubar.Menu>
+				<Menubar.Trigger>Branch</Menubar.Trigger>
+				<Menubar.Content>
+					<Menubar.Item
+						disabled={!customMenusEnabled || !branch.hasRepo}
+						onSelect={() => handleBranchMenuAction('newBranch')}
+					>
+						New Branch…
+						<Menubar.Shortcut>{shortcut(A.newBranch.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item
+						disabled={!customMenusEnabled || !branch.hasRepo || branch.onDefaultBranch}
+						onSelect={() => handleBranchMenuAction('updateFromDefault')}
+					>
+						Update from {branch.defaultBranch}
+						<Menubar.Shortcut>{shortcut(A.updateFromDefault.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					{#if branch.hasUpstream}
+						<Menubar.Item
+							disabled={!customMenusEnabled || !branch.hasRepo}
+							onSelect={() => handleBranchMenuAction('updateFromUpstream')}
+						>
+							Update from upstream/{branch.defaultBranch}
+						</Menubar.Item>
+					{/if}
+					<Menubar.Item
+						disabled={!customMenusEnabled || !branch.hasRepo || branch.onDefaultBranch}
+						onSelect={() => handleBranchMenuAction('deleteBranch')}
+					>
+						Delete Branch…
+						<Menubar.Shortcut>{shortcut(A.deleteBranch.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item
+						disabled={!customMenusEnabled || !branch.hasRepo || !branch.hasChanges}
+						onSelect={() => handleBranchMenuAction('discardAll')}
+					>
+						Discard All Changes…
+						<Menubar.Shortcut>{shortcut(A.discardAll.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item
+						disabled={!customMenusEnabled || !branch.hasRepo || branch.onDefaultBranch}
+						onSelect={() => handleBranchMenuAction('previewPR')}
+					>
+						Preview Pull Request
+						<Menubar.Shortcut>{shortcut(A.previewPR.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item
+						disabled={!customMenusEnabled ||
+							!branch.hasRepo ||
+							!branch.hasGithub ||
+							branch.onDefaultBranch}
+						onSelect={() => handleBranchMenuAction('createPR')}
+					>
+						{branch.branchPRNumber
+							? `View Pull Request #${branch.branchPRNumber}`
+							: 'Create Pull Request'}
+					</Menubar.Item>
+				</Menubar.Content>
+			</Menubar.Menu>
+
+			<Menubar.Menu>
+				<Menubar.Trigger>Window</Menubar.Trigger>
+				<Menubar.Content>
+					<Menubar.Item onSelect={() => chrome('minimize')}>
+						Minimize
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+M')}</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onSelect={() => chrome('maximize')}>Maximize</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item onSelect={() => chrome('close')}>
+						Close
+						<Menubar.Shortcut>{shortcut('CmdOrCtrl+W')}</Menubar.Shortcut>
+					</Menubar.Item>
+				</Menubar.Content>
+			</Menubar.Menu>
+
+			<Menubar.Menu>
+				<Menubar.Trigger>Help</Menubar.Trigger>
+				<Menubar.Content>
+					<Menubar.Item
+						disabled={!customMenusEnabled}
+						onSelect={() => actions.openFeedbackDialog()}
+					>
+						Send Feedback…
+						<Menubar.Shortcut>{shortcut(A.sendFeedback.accelerator)}</Menubar.Shortcut>
+					</Menubar.Item>
+				</Menubar.Content>
+			</Menubar.Menu>
+		</Menubar.Root>
+	</div>
 	<!-- Remaining title-bar area stays draggable for moving the window. -->
 	<div class="min-w-0 flex-1"></div>
 </div>

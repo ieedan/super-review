@@ -13,7 +13,6 @@
 	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import BookOpen from '@lucide/svelte/icons/book-open';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
-	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import type { LucideIcon } from '@lucide/svelte';
 	import { Chart, Svg, Calendar } from 'layerchart/svg';
@@ -30,6 +29,7 @@
 	import { actions, app } from '@super-review/ui/store.svelte';
 	import * as Popover from './ui/popover';
 	import { Checkbox } from './ui/checkbox';
+	import { Select } from './ui/select';
 
 	// 'all' is the Overview; otherwise a single metric.
 	type View = 'all' | StatMetric;
@@ -54,6 +54,11 @@
 		{ key: 'locReviewed', label: 'Lines reviewed', short: 'Lines', icon: Code },
 		{ key: 'sessionsReviewed', label: 'Sessions reviewed', short: 'Sessions', icon: BookOpen },
 		{ key: 'commentsWritten', label: 'Comments written', short: 'Comments', icon: MessageSquare }
+	];
+
+	const viewItems = [
+		{ value: 'all' as const, label: 'Overview' },
+		...METRICS.map((m) => ({ value: m.key, label: m.label }))
 	];
 
 	// Metrics that are discrete events (summable into one "activity" number).
@@ -270,21 +275,14 @@
 <div class="w-full">
 	<!-- View picker + (Overview) widget customizer -->
 	<div class="flex items-center justify-between gap-2">
-		<div class="relative inline-block">
-			<select
-				bind:value={view}
-				aria-label="Stats view"
-				class="h-8 w-auto appearance-none rounded-lg border border-input bg-transparent py-1 pr-8 pl-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-			>
-				<option value="all">Overview</option>
-				{#each METRICS as m (m.key)}
-					<option value={m.key}>{m.label}</option>
-				{/each}
-			</select>
-			<ChevronDown
-				class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-			/>
-		</div>
+		<Select
+			type="single"
+			bind:value={view}
+			items={viewItems}
+			placeholder="Overview"
+			ariaLabel="Stats view"
+			class="w-auto"
+		/>
 
 		{#if isOverview}
 			<Popover.Root>
