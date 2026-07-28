@@ -10,6 +10,7 @@
 		"@super-review/ui": "0.1.4"
 	},
 	"changesets": [
+		"brave-badgers-jump",
 		"brave-otters-jump",
 		"gentle-pandas-sing",
 		"lucky-clouds-wave",
@@ -17,6 +18,7 @@
 		"proud-tigers-dream",
 		"shy-lions-sing",
 		"shy-lions-smile",
+		"tidy-pugs-refuse",
 		"witty-badgers-travel"
 	]
 }

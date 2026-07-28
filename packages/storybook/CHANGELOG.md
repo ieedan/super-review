@@ -1,5 +1,13 @@
 # @super-review/storybook
 
+## 0.0.13-beta.6
+
+### Patch Changes
+
+- Updated dependencies [[`6f617ac`](https://github.com/ieedan/super-review/commit/6f617acd35cb0321e2c0ec5a21ec496cc9bead1a), [`74a067b`](https://github.com/ieedan/super-review/commit/74a067b04eae624c6389955a899258f71e656af2)]:
+  - @super-review/core@0.2.3-beta.4
+  - @super-review/ui@0.1.5-beta.6
+
 ## 0.0.13-beta.5
 
 ### Patch Changes

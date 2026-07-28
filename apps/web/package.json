@@ -2,7 +2,7 @@
 	"name": "@super-review/web",
 	"description": "Marketing site, licensing backend, and account dashboard for Super Review",
 	"private": true,
-	"version": "0.0.14-beta.6",
+	"version": "0.0.14-beta.7",
 	"type": "module",
 	"scripts": {
 		"dev": "dotenvx run -f .env.local -- concurrently -n convex,app -c blue,green \"pnpm dev:convex\" \"pnpm dev:vite\"",
