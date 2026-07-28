@@ -99,7 +99,7 @@
 </script>
 
 <Root
-	type={type}
+	{type}
 	bind:value={value as never}
 	onValueChange={onValueChange as never}
 	items={flatItems}

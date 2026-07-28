@@ -262,7 +262,10 @@
 						<Menubar.Shortcut>{shortcut(A.previewPR.accelerator)}</Menubar.Shortcut>
 					</Menubar.Item>
 					<Menubar.Item
-						disabled={!customMenusEnabled || !branch.hasRepo || !branch.hasGithub || branch.onDefaultBranch}
+						disabled={!customMenusEnabled ||
+							!branch.hasRepo ||
+							!branch.hasGithub ||
+							branch.onDefaultBranch}
 						onSelect={() => handleBranchMenuAction('createPR')}
 					>
 						{branch.branchPRNumber
