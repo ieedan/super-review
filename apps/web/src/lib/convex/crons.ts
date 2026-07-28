@@ -14,6 +14,9 @@ const crons = cronJobs();
 crons.interval('abuse ip sweep', { hours: 1 }, internal.crons.ipSpraySweep, {});
 // Daily: prune old validation events.
 crons.interval('prune validation events', { hours: 24 }, internal.crons.pruneValidationEvents, {});
+// Hourly: re-deliver feedback that never reached Discord. Lives in notify.ts
+// next to the delivery it retries.
+crons.interval('retry undelivered feedback', { hours: 1 }, internal.notify.sweepUndelivered, {});
 
 export default crons;
 

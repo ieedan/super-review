@@ -1,6 +1,18 @@
 import { v } from 'convex/values';
-import { internalAction } from './_generated/server';
+import { internalAction, type ActionCtx } from './_generated/server';
+import { internalMutation } from './utils';
+import { internal } from './_generated/api';
 import { env } from '../env.convex';
+import type { Id } from './_generated/dataModel';
+import {
+	AUTO_ARCHIVE_MINUTES,
+	MAX_ATTEMPTS,
+	buildFeedbackEmbed,
+	isRetryable,
+	retryAfterSeconds,
+	retryDelayMs,
+	threadName
+} from './notifyShared';
 
 /**
  * Outbound notifications to Discord.
@@ -22,164 +34,166 @@ import { env } from '../env.convex';
  * needed for the thread anyway, having it post the message too means one
  * credential instead of two, and no second thing to keep alive.
  *
- * The thread is best effort: if it fails, the report is already in the channel
- * and already in the database, so a missing thread is a cosmetic loss.
+ * Neither call is fire and forget any more. Each outcome is written back to the
+ * feedback row (`discordMessageId`, `discordThreadId`, `notifiedAt`,
+ * `notifyError`), because "the report is in the database but there is no thread
+ * in Discord" used to be indistinguishable from "it posted fine", and answering
+ * which one it was meant reading Convex logs before they aged out. Transient
+ * failures reschedule themselves; permanent ones (a bad token, a channel the
+ * bot cannot see, a missing Create Public Threads permission) sit on the row
+ * with their reason until the Discord side is fixed, and the hourly sweep then
+ * delivers them.
  */
 
-// Embed accent per category, so a bug report is recognizable in the channel
-// before you have read a word of it.
-const CATEGORIES = {
-	bug: { label: '🐛 Bug', color: 0xef4444 },
-	idea: { label: '💡 Idea', color: 0xeab308 },
-	other: { label: '💬 Feedback', color: 0x6366f1 }
-} as const;
-
-// Discord's own limits. Exceeding any of them rejects the entire message, so
-// everything is clipped short of the real ceiling rather than at it.
-const MAX_THREAD_NAME = 100; // hard limit 100 (Discord channel/thread name)
-const MAX_TITLE = 200; // hard limit 256
-const MAX_DESCRIPTION = 3800; // hard limit 4096
-const MAX_FIELD_VALUE = 900; // hard limit 1024
-
-function clip(text: string, max: number): string {
-	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
-const contextValidator = v.object({
-	action: v.optional(v.string()),
-	tab: v.optional(v.string()),
-	repo: v.optional(v.string()),
-	branch: v.optional(v.string()),
-	location: v.optional(v.string())
-});
-
 export const postFeedback = internalAction({
-	args: {
-		feedbackId: v.id('feedback'),
-		category: v.union(v.literal('bug'), v.literal('idea'), v.literal('other')),
-		title: v.string(),
-		body: v.string(),
-		email: v.optional(v.string()),
-		context: v.optional(contextValidator),
-		appVersion: v.string(),
-		platform: v.string(),
-		osRelease: v.string(),
-		arch: v.optional(v.string()),
-		electronVersion: v.optional(v.string()),
-		reporterName: v.optional(v.string()),
-		reporterEmail: v.optional(v.string()),
-		reporterImage: v.optional(v.string()),
-		plan: v.optional(v.string()),
-		status: v.optional(v.string())
-	},
-	handler: async (_ctx, args) => {
-		const { label, color } = CATEGORIES[args.category];
-
-		const fields: { name: string; value: string; inline?: boolean }[] = [
-			{ name: 'Category', value: label, inline: true },
-			{
-				name: 'Plan',
-				// An anonymous report has no license to describe, and saying so is
-				// more useful than an empty field.
-				value: args.plan ? `${args.plan} (${args.status})` : 'not signed in',
-				inline: true
-			},
-			{ name: 'App', value: clip(args.appVersion, MAX_FIELD_VALUE), inline: true },
-			{
-				name: 'System',
-				value: clip(
-					[
-						args.arch ? `${args.platform}/${args.arch}` : args.platform,
-						`OS ${args.osRelease}`,
-						args.electronVersion ? `Electron ${args.electronVersion}` : null
-					]
-						.filter(Boolean)
-						.join(' · '),
-					MAX_FIELD_VALUE
-				),
-				inline: false
-			}
-		];
-
-		// What the user was doing, when the report came from an error toast. This
-		// is the part that turns "it broke" into something reproducible.
-		const ctx = args.context;
-		if (ctx) {
-			const lines = [
-				ctx.action ? `Action:   ${ctx.action}` : null,
-				ctx.tab ? `Tab:      ${ctx.tab}` : null,
-				ctx.repo ? `Repo:     ${ctx.repo}` : null,
-				ctx.branch ? `Branch:   ${ctx.branch}` : null,
-				ctx.location ? `Location: ${ctx.location}` : null
-			].filter(Boolean);
-			if (lines.length > 0) {
-				fields.push({
-					name: 'Context',
-					value: clip(`\`\`\`\n${lines.join('\n')}\n\`\`\``, MAX_FIELD_VALUE),
-					inline: false
-				});
-			}
-		}
-
-		// The reply-to the reporter typed, which may differ from their account
-		// email, so both can be worth having.
-		if (args.email && args.email !== args.reporterEmail) {
-			fields.push({ name: 'Reply to', value: clip(args.email, MAX_FIELD_VALUE), inline: false });
-		}
-
-		const embed = {
-			author: {
-				name: clip(args.reporterName ?? args.reporterEmail ?? 'Anonymous', 250),
-				...(args.reporterImage ? { icon_url: args.reporterImage } : {})
-			},
-			title: clip(args.title, MAX_TITLE),
-			description: clip(args.body, MAX_DESCRIPTION),
-			color,
-			fields,
-			// The row id is what you search Convex by when you need the untruncated
-			// body or the reporter's license.
-			footer: { text: args.feedbackId }
-		};
+	args: { feedbackId: v.id('feedback'), attempt: v.optional(v.number()) },
+	handler: async (ctx, args) => {
+		const attempt = args.attempt ?? 1;
+		// Read the report back rather than carrying it through the scheduler:
+		// a retry an hour later then needs nothing but the id, and cannot post a
+		// stale copy of a row that has since been edited or deleted.
+		const report = await ctx.runQuery(internal.feedback.loadForNotify, {
+			feedbackId: args.feedbackId
+		});
+		if (!report) return; // deleted between scheduling and running
+		if (report.notifiedAt) return; // a retry and the sweep raced; first one won
 
 		const token = env.FEEDBACK_BOT_TOKEN;
 		const channelId = env.FEEDBACK_CHANNEL_ID;
 		if (!token || !channelId) {
 			console.warn(
 				`[notify] no FEEDBACK_BOT_TOKEN/FEEDBACK_CHANNEL_ID; feedback not posted:\n` +
-					JSON.stringify(embed, null, 2)
+					JSON.stringify(buildFeedbackEmbed(report), null, 2)
 			);
+			// Recorded rather than only logged: on a deployment that is supposed to
+			// have a bot, an unset variable is the single most likely reason a
+			// report never showed up, and this puts that on the row where it is
+			// visible next to the report itself.
+			await record(ctx, args.feedbackId, {
+				error: 'FEEDBACK_BOT_TOKEN/FEEDBACK_CHANNEL_ID not set on this deployment'
+			});
 			return;
 		}
 
-		const message = await discord(token, `/channels/${channelId}/messages`, { embeds: [embed] });
-		if (!message.ok) {
-			console.error(
-				`[notify] feedback ${args.feedbackId} NOT delivered: ${message.status} ${message.detail}`
-			);
-			return;
-		}
-
-		const messageId = (message.body as { id?: string }).id;
+		// Skipped when a previous attempt already posted: the message id on the
+		// row is what stops a retry from double posting the report.
+		let messageId = report.discordMessageId;
 		if (!messageId) {
-			// Posted. There is just nothing to hang a thread from.
-			console.warn(`[notify] feedback ${args.feedbackId} posted, but had no message id; no thread`);
-			return;
+			const posted = await discord(token, `/channels/${channelId}/messages`, {
+				embeds: [buildFeedbackEmbed(report)]
+			});
+			if (!posted.ok) {
+				await fail(ctx, args.feedbackId, attempt, 'posting the report failed', posted);
+				return;
+			}
+			messageId = (posted.body as { id?: string }).id;
+			if (!messageId) {
+				// Posted. There is just nothing to hang a thread from, and no amount
+				// of retrying will produce an id Discord did not send.
+				await record(ctx, args.feedbackId, {
+					delivered: true,
+					error: 'posted, but Discord returned no message id; no thread'
+				});
+				console.warn(`[notify] feedback ${args.feedbackId} posted without a message id; no thread`);
+				return;
+			}
+			await record(ctx, args.feedbackId, { discordMessageId: messageId });
 		}
 
 		const thread = await discord(token, `/channels/${channelId}/messages/${messageId}/threads`, {
-			name: clip(`${label} ${args.title}`, MAX_THREAD_NAME),
-			// 10080 minutes = 7 days, the longest Discord allows, so a thread stays
-			// in the channel list for a working week before it archives.
-			auto_archive_duration: 10080
+			name: threadName(report.category, report.title),
+			auto_archive_duration: AUTO_ARCHIVE_MINUTES
 		});
 		if (!thread.ok) {
-			console.error(
-				`[notify] feedback ${args.feedbackId} posted, but opening its thread failed: ` +
-					`${thread.status} ${thread.detail}`
-			);
+			await fail(ctx, args.feedbackId, attempt, 'opening its thread failed', thread);
+			return;
+		}
+
+		await record(ctx, args.feedbackId, {
+			// A thread started from a message carries the message's own id, so the
+			// fallback is the right answer rather than a guess.
+			discordThreadId: (thread.body as { id?: string }).id ?? messageId,
+			delivered: true
+		});
+	}
+});
+
+/**
+ * Hourly backstop for reports that never made it to Discord.
+ *
+ * The in-action retries only cover a transient failure over the following few
+ * minutes. This covers the rest: a scheduled action that never ran, a bot token
+ * that was wrong until someone fixed it, a permission that was missing until
+ * someone granted it. Reports age out of the window rather than being retried
+ * forever, and the batch is small because feedback volume is measured in
+ * reports per day.
+ */
+const SWEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const SWEEP_BATCH = 10;
+
+export const sweepUndelivered = internalMutation({
+	args: {},
+	handler: async (ctx) => {
+		// Nothing to re-deliver to. Without this a deployment with no bot (local
+		// dev, which is a supported state) would re-log every report it has ever
+		// stored, once an hour, for a week.
+		if (!env.FEEDBACK_BOT_TOKEN || !env.FEEDBACK_CHANNEL_ID) return;
+
+		const since = Date.now() - SWEEP_WINDOW_MS;
+		const undelivered = await ctx.db
+			.query('feedback')
+			.withIndex('by_notifiedAt', (q) => q.eq('notifiedAt', undefined).gte('createdAt', since))
+			.take(SWEEP_BATCH);
+
+		for (const row of undelivered) {
+			await ctx.scheduler.runAfter(0, internal.notify.postFeedback, { feedbackId: row._id });
+		}
+		if (undelivered.length > 0) {
+			console.warn(`[notify] retrying ${undelivered.length} undelivered feedback report(s)`);
 		}
 	}
 });
+
+/** Writes an outcome back to the report. Never the reason a delivery fails. */
+async function record(
+	ctx: ActionCtx,
+	feedbackId: Id<'feedback'>,
+	outcome: {
+		discordMessageId?: string;
+		discordThreadId?: string;
+		delivered?: boolean;
+		error?: string;
+	}
+): Promise<void> {
+	try {
+		await ctx.runMutation(internal.feedback.recordDelivery, { feedbackId, ...outcome });
+	} catch (err) {
+		console.error(`[notify] could not record delivery state for ${feedbackId}`, err);
+	}
+}
+
+/** Logs a failed step, records it on the row, and reschedules if it is worth it. */
+async function fail(
+	ctx: ActionCtx,
+	feedbackId: Id<'feedback'>,
+	attempt: number,
+	what: string,
+	res: DiscordResult
+): Promise<void> {
+	const reason = `${what}: ${res.status} ${res.detail}`.trim();
+	const retrying = attempt < MAX_ATTEMPTS && isRetryable(res.status);
+	console.error(
+		`[notify] feedback ${feedbackId} attempt ${attempt}/${MAX_ATTEMPTS} ${reason}` +
+			(retrying ? '; retrying' : '; giving up until the next sweep')
+	);
+	await record(ctx, feedbackId, { error: reason });
+	if (!retrying) return;
+	await ctx.scheduler.runAfter(
+		retryDelayMs(attempt, retryAfterSeconds(res.body)),
+		internal.notify.postFeedback,
+		{ feedbackId, attempt: attempt + 1 }
+	);
+}
 
 interface DiscordResult {
 	ok: boolean;
@@ -200,12 +214,10 @@ async function discord(token: string, path: string, payload: unknown): Promise<D
 			body: JSON.stringify(payload)
 		});
 		if (!res.ok) {
-			return {
-				ok: false,
-				status: res.status,
-				detail: await res.text().catch(() => ''),
-				body: null
-			};
+			// Read the body once, then reuse it: the text is what goes on the row,
+			// and the JSON of the same text is where a 429 keeps its retry_after.
+			const detail = await res.text().catch(() => '');
+			return { ok: false, status: res.status, detail, body: parseJson(detail) };
 		}
 		return { ok: true, status: res.status, detail: '', body: await res.json().catch(() => ({})) };
 	} catch (err) {
@@ -215,5 +227,13 @@ async function discord(token: string, path: string, payload: unknown): Promise<D
 			detail: err instanceof Error ? err.message : String(err),
 			body: null
 		};
+	}
+}
+
+function parseJson(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return null;
 	}
 }

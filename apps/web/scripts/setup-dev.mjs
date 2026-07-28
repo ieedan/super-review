@@ -52,6 +52,7 @@ import {
 	setConvexEnv,
 	upsertEnvLocal,
 	verifyDiscordBot,
+	verifyDiscordChannel,
 	verifyLoopsKey,
 	verifyReleasesToken,
 	writeDesktopPublicKeys
@@ -529,6 +530,7 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 				console.log(dim('  Skipped. Feedback will be logged to the Convex console instead.'));
 				return;
 			}
+			await verifyDiscordChannel(botToken, channelId);
 
 			setConvexEnv(projectRoot, {
 				FEEDBACK_BOT_TOKEN: botToken,

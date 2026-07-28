@@ -62,6 +62,7 @@ import {
 	readEnvValue,
 	setConvexEnv,
 	verifyDiscordBot,
+	verifyDiscordChannel,
 	verifyLoopsKey,
 	verifyReleasesToken,
 	verifyStripeKey,
@@ -1019,6 +1020,10 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 				console.log(dim('  Skipped. Feedback will be logged to the Convex console instead.'));
 				return;
 			}
+			// Matters most here: reusing the dev bot is offered above, and a bot that
+			// was only ever added to the dev server cannot post in the production
+			// channel.
+			await verifyDiscordChannel(botToken, channelId);
 			setConvexEnv(
 				projectRoot,
 				{ FEEDBACK_BOT_TOKEN: botToken, FEEDBACK_CHANNEL_ID: channelId },

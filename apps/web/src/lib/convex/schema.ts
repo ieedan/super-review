@@ -245,8 +245,29 @@ export default defineSchema({
 		// Salted hash, same scheme as validationEvents: enough to correlate a spam
 		// burst without storing an address.
 		ipHash: v.optional(v.string()),
-		createdAt: v.number()
-	}).index('by_createdAt', ['createdAt']),
+		createdAt: v.number(),
+		// Discord delivery, written back by notify.postFeedback once it knows.
+		// Without these the row said nothing about whether the report ever
+		// reached the channel, so one that silently failed to post looked exactly
+		// like one that arrived, and the only evidence was a Convex log line that
+		// ages out. The message id also makes a retry safe: it is how a second
+		// attempt knows to open the missing thread rather than post the report
+		// again.
+		discordMessageId: v.optional(v.string()),
+		discordThreadId: v.optional(v.string()),
+		// Set only once the report is posted *and* its thread is open. Anything
+		// still unset is what the hourly sweep retries.
+		notifiedAt: v.optional(v.number()),
+		// Attempts so far, and the last failure verbatim (HTTP status plus
+		// Discord's own error body), so "why is there no thread" is answerable
+		// from the data instead of from logs.
+		notifyAttempts: v.optional(v.number()),
+		notifyError: v.optional(v.string())
+	})
+		.index('by_createdAt', ['createdAt'])
+		// Undelivered reports, newest window first: `notifiedAt` is undefined
+		// until delivery completes, which is exactly what the sweep looks for.
+		.index('by_notifiedAt', ['notifiedAt', 'createdAt']),
 
 	abuseFlags: defineTable({
 		licenseId: v.id('licenses'),

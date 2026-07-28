@@ -24,6 +24,7 @@ import type * as licensing from "../licensing.js";
 import type * as licensingShared from "../licensingShared.js";
 import type * as migrations from "../migrations.js";
 import type * as notify from "../notify.js";
+import type * as notifyShared from "../notifyShared.js";
 import type * as rateLimiter from "../rateLimiter.js";
 import type * as settings from "../settings.js";
 import type * as settingsShared from "../settingsShared.js";
@@ -54,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   licensingShared: typeof licensingShared;
   migrations: typeof migrations;
   notify: typeof notify;
+  notifyShared: typeof notifyShared;
   rateLimiter: typeof rateLimiter;
   settings: typeof settings;
   settingsShared: typeof settingsShared;

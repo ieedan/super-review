@@ -518,6 +518,71 @@ export async function verifyDiscordBot(token) {
 	}
 }
 
+/**
+ * Checks that the bot can actually reach the channel it is about to be pointed
+ * at, and that it may open threads there.
+ *
+ * A valid token says nothing about access: the usual way feedback goes missing
+ * is a bot that was never added to the server, a channel id copied from the
+ * wrong place, or a private channel whose permission overwrites grant the bot
+ * View Channel and Send Messages but not Create Public Threads. All three look
+ * identical from here (reports stored, nothing in Discord) unless somebody
+ * reads the Convex logs, so they are worth catching while you are still sat in
+ * the setup script.
+ *
+ * Warns rather than blocks: the permission bits Discord reports are the ones
+ * the bot has right now, and granting the missing one is a change you make in
+ * Discord afterwards, not a reason to abandon the step.
+ */
+// CREATE_PUBLIC_THREADS. `2n ** 35n` because the permissions field is a
+// stringified 64-bit integer, well past what Number can mask precisely.
+const CREATE_PUBLIC_THREADS_BIT = 2n ** 35n;
+
+export async function verifyDiscordChannel(token, channelId) {
+	try {
+		const res = await fetch(`https://discord.com/api/v10/channels/${channelId}`, {
+			headers: { authorization: `Bot ${token}` }
+		});
+		if (res.status === 403 || res.status === 404) {
+			console.log(
+				dim(
+					`  Warning: the bot cannot see channel ${channelId} (${res.status}). Add it to the\n` +
+						'  server, and make sure it can view that channel, or feedback will be stored\n' +
+						'  but never posted.'
+				)
+			);
+			return false;
+		}
+		if (!res.ok) {
+			console.log(dim(`  Warning: Discord returned ${res.status} when checking the channel.`));
+			return false;
+		}
+		const channel = await res.json().catch(() => ({}));
+		console.log(
+			green(`  Verified: the bot can see the channel${channel.name ? ` (#${channel.name})` : ''}.`)
+		);
+
+		// permissions is only present when Discord resolved them for this bot; a
+		// missing field is not evidence of anything either way.
+		if (typeof channel.permissions === 'string') {
+			const granted = BigInt(channel.permissions);
+			if ((granted & CREATE_PUBLIC_THREADS_BIT) === 0n) {
+				console.log(
+					dim(
+						'  Warning: the bot lacks Create Public Threads in that channel. Reports will\n' +
+							'  post, but each one will arrive without its thread.'
+					)
+				);
+				return false;
+			}
+		}
+		return true;
+	} catch {
+		console.log(dim('  Could not reach Discord to verify the channel; skipping the check.'));
+		return false;
+	}
+}
+
 // Checks a Stripe secret key by asking Stripe for the account behind it, and
 // reports whether it is a live or test key so a test key can't quietly end up
 // on production. Returns 'live' | 'test' | null.
