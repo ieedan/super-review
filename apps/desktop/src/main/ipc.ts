@@ -2792,8 +2792,8 @@ export function registerIpc(): void {
 		): Promise<GenerateCommitMessageResult> => {
 			const win = BrowserWindow.fromWebContents(e.sender);
 			return generateCommitMessage(repoOrThrow(repoId).path, request, {
-				onProgress: (text) => {
-					if (win) sendToWindow(win, 'commitMessage:progress', { text });
+				onProgress: (event) => {
+					if (win) sendToWindow(win, 'commitMessage:progress', event);
 				}
 			});
 		}

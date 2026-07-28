@@ -1,6 +1,7 @@
 import type {
 	CommitFileSelection,
 	CommitMessageHarness,
+	CommitMessageProgressEvent,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResult
 } from '@super-review/core/types';
@@ -20,7 +21,7 @@ import { buildCommitMessagePrompt, concatenatePatches, summarizeSelections } fro
 import { resolveCommitMessageModel } from './list-models.js';
 
 export interface GenerateCommitMessageOptions {
-	onProgress?: (text: string) => void;
+	onProgress?: (event: CommitMessageProgressEvent) => void;
 }
 
 let activeAbort: AbortController | null = null;

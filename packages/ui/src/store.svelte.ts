@@ -277,7 +277,10 @@ interface AppState {
 	commitMessageGenerating: boolean;
 	// Accumulated streaming text for the in-flight generation (shown in the
 	// generate popover). Cleared when generation ends or is cancelled.
-	commitMessageStream: string;
+	// Two channels: the answer is the commit message itself (streamed into the
+	// commit box), the reasoning is the model thinking out loud.
+	commitMessageReasoning: string;
+	commitMessageAnswer: string;
 	// Whether the "Configure AI files" dialog is open.
 	aiConfigDialogOpen: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
@@ -973,7 +976,8 @@ const initial: AppState = {
 	commitMessageModels: {},
 	commitMessageNoticeDismissed: false,
 	commitMessageGenerating: false,
-	commitMessageStream: '',
+	commitMessageReasoning: '',
+	commitMessageAnswer: '',
 	aiConfigDialogOpen: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
@@ -3724,7 +3728,8 @@ function subscribeCommitMessageProgress(): void {
 	commitMessageProgressSubscribed = true;
 	onProgress((event) => {
 		if (!app.commitMessageGenerating) return;
-		app.commitMessageStream = event.text;
+		app.commitMessageReasoning = event.reasoning;
+		app.commitMessageAnswer = event.answer;
 	});
 }
 
@@ -4018,9 +4023,10 @@ export const actions = {
 		subscribeCommitMessageProgress();
 		const runId = ++commitMessageRunId;
 		app.commitMessageGenerating = true;
-		// Left empty on purpose: the UI shows its own shimmering placeholder until
-		// the harness emits its first token.
-		app.commitMessageStream = '';
+		// Left empty on purpose: the commit box shows its own shimmering placeholder
+		// until the harness emits its first token.
+		app.commitMessageReasoning = '';
+		app.commitMessageAnswer = '';
 		try {
 			const preferredHarness =
 				options?.preferredHarness !== undefined
@@ -4067,7 +4073,8 @@ export const actions = {
 		} finally {
 			if (runId === commitMessageRunId) {
 				app.commitMessageGenerating = false;
-				app.commitMessageStream = '';
+				app.commitMessageReasoning = '';
+				app.commitMessageAnswer = '';
 			}
 		}
 	},
@@ -4076,7 +4083,8 @@ export const actions = {
 		// Invalidate the in-flight run so its finally doesn't clear a newer one.
 		commitMessageRunId += 1;
 		app.commitMessageGenerating = false;
-		app.commitMessageStream = '';
+		app.commitMessageReasoning = '';
+		app.commitMessageAnswer = '';
 		await window.api.commitMessage.cancel();
 	},
 	openChangesetReview(): void {

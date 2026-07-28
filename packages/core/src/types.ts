@@ -1392,9 +1392,13 @@ export interface CommitMessageModelOption {
 	label: string;
 }
 
-// Progress event while a commit message is generating (streamed to the renderer).
+// Progress while a commit message is generating. The two channels are kept
+// apart because they land in different places: the answer is the commit message
+// itself and streams straight into the commit box, while the reasoning is just
+// the model thinking out loud.
 export interface CommitMessageProgressEvent {
-	text: string;
+	reasoning: string;
+	answer: string;
 }
 
 // One file to discard. `oldPath` is the pre-rename path, so discarding a rename

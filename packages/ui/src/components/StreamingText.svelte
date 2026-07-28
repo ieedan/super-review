@@ -14,8 +14,9 @@
 
 	// Split on whitespace but keep it: the separators stay plain text nodes so
 	// wrapping and blank lines behave exactly as they would without the spans
-	// (an inline-block cannot be broken across lines).
-	const tokens = $derived(text.split(/(\s+)/));
+	// (an inline-block cannot be broken across lines). Empty text renders nothing
+	// rather than one empty span.
+	const tokens = $derived(text ? text.split(/(\s+)/) : []);
 </script>
 
 <span class={cn('whitespace-pre-wrap', className)}

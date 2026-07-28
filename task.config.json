@@ -33,6 +33,11 @@
 				"desktop": {
 					"color": "blue",
 					"command": "pnpm exec cross-env SUPER_REVIEW_API_URL=http://localhost:5173 pnpm dev:desktop"
+				},
+				"storybook": {
+					"color": "magenta",
+					"command": "pnpm --filter @super-review/storybook dev",
+					"optional": true
 				}
 			}
 		}
