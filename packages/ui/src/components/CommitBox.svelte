@@ -3,6 +3,7 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import GitPullRequest from '@lucide/svelte/icons/git-pull-request';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import User from '@lucide/svelte/icons/user';
 	import { Button } from './ui/button';
@@ -10,13 +11,16 @@
 	import { Input } from './ui/input';
 	import { Textarea } from './ui/textarea';
 	import AccountSwitcher from './AccountSwitcher.svelte';
+	import HarnessLogo from './HarnessLogo.svelte';
 	import {
 		actions,
 		app,
 		effectiveAccountAuthError,
+		effectiveCommitMessageHarness,
 		effectiveGithubAccount
 	} from '@super-review/ui/store.svelte';
 	import { isChangesetPath, parseChangesetMessage } from '@super-review/ui/changeset';
+	import { harnessLabel } from '@super-review/core/types';
 
 	let summary = $state('');
 	let description = $state('');
@@ -287,6 +291,8 @@
 	onDestroy(() => clearTimeout(saveTimer));
 
 	const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
+	const generating = $derived(app.commitMessageGenerating);
+	const generateHarness = $derived(effectiveCommitMessageHarness());
 	// Only the checked files get committed (see the Unstaged tab checkboxes).
 	// Everything is included unless explicitly excluded.
 	const includedFiles = $derived(
@@ -294,6 +300,7 @@
 	);
 	const fileCount = $derived(includedFiles.length);
 	const branch = $derived(app.currentBranch ?? 'detached HEAD');
+	const canGenerate = $derived(!busy && !generating && fileCount > 0);
 
 	// GitHub Desktop parity: for a single-file change, suggest a commit message
 	// ("Create/Update/Delete <file>") so the user can commit without typing one.
@@ -315,7 +322,7 @@
 	// What the commit actually uses: the typed Summary, or the suggestion when the
 	// user left Summary blank.
 	const effectiveSummary = $derived(summary.trim() || suggestedSummary);
-	const canCommit = $derived(!busy && fileCount > 0 && effectiveSummary.length > 0);
+	const canCommit = $derived(!busy && !generating && fileCount > 0 && effectiveSummary.length > 0);
 
 	// No write access to origin — committing/pushing has to go through a fork
 	// first (GitHub Desktop parity). false only on a definitive "no" from the API.
@@ -391,6 +398,19 @@
 		if (!canUndo) return;
 		await actions.undoLastCommit();
 	}
+
+	async function generateMessage(): Promise<void> {
+		if (!canGenerate) return;
+		const result = await actions.generateCommitMessage();
+		if (!result) return;
+		// Explicit generate always overwrites; clear session/changeset provenance
+		// so we don't treat the AI fill as re-derivable auto-fill.
+		detectedChangeset = null;
+		detectedSession = null;
+		summary = result.subject;
+		description = result.body;
+		persistDraft();
+	}
 </script>
 
 <form
@@ -432,15 +452,37 @@
 				</span>
 			{/snippet}
 		</AccountSwitcher>
-		<Input
-			type="text"
-			bind:value={summary}
-			oninput={persistDraft}
-			onkeydown={onKeydown}
-			placeholder={suggestedSummary || 'Summary (required)'}
-			disabled={busy}
-			class="h-7 min-w-0 flex-1 text-xs"
-		/>
+		<div class="relative min-w-0 flex-1">
+			<Input
+				type="text"
+				bind:value={summary}
+				oninput={persistDraft}
+				onkeydown={onKeydown}
+				placeholder={suggestedSummary || 'Summary (required)'}
+				disabled={busy || generating}
+				class="h-7 min-w-0 pr-8 text-xs"
+			/>
+			<button
+				type="button"
+				class="absolute top-1/2 right-1 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+				disabled={!canGenerate}
+				title={generateHarness
+					? `Generate commit message with ${harnessLabel(generateHarness)}`
+					: 'Generate commit message'}
+				aria-label={generateHarness
+					? `Generate commit message with ${harnessLabel(generateHarness)}`
+					: 'Generate commit message'}
+				onclick={() => void generateMessage()}
+			>
+				{#if generating}
+					<Loader2 class="size-3.5 animate-spin" />
+				{:else if generateHarness}
+					<HarnessLogo harness={generateHarness} size={14} />
+				{:else}
+					<Sparkles class="size-3.5" />
+				{/if}
+			</button>
+		</div>
 	</div>
 
 	<Textarea
@@ -449,7 +491,7 @@
 		onkeydown={onKeydown}
 		placeholder="Description"
 		rows={3}
-		disabled={busy}
+		disabled={busy || generating}
 		class="min-h-0 resize-none px-2 py-1.5 text-xs"
 	/>
 

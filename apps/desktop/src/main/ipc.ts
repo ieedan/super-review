@@ -76,6 +76,9 @@ import type {
 	AiConfigApplyResult,
 	AiConfigInstallItem,
 	AiConfigRemoveResult,
+	CommitMessageHarnessStatus,
+	GenerateCommitMessageRequest,
+	GenerateCommitMessageResult,
 	SessionSummary,
 	Task,
 	NewTaskInput,
@@ -181,6 +184,10 @@ import {
 	watchTasksDir
 } from '@super-review/core';
 import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-service.js';
+import {
+	detectCommitMessageHarnesses,
+	generateCommitMessage
+} from './commit-message/index.js';
 import { listTemplates } from '@super-review/core';
 import {
 	addStat,
@@ -2759,5 +2766,21 @@ export function registerIpc(): void {
 		'aiConfig:remove',
 		async (_e, repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult> =>
 			removeAiConfig(repoOrThrow(repoId).path, item)
+	);
+
+	// ─── Commit message generation via harness CLIs ──────────────────────────
+	ipcMain.handle(
+		'commitMessage:detect',
+		async (): Promise<CommitMessageHarnessStatus> => detectCommitMessageHarnesses()
+	);
+
+	ipcMain.handle(
+		'commitMessage:generate',
+		async (
+			_e,
+			repoId: string,
+			request: GenerateCommitMessageRequest
+		): Promise<GenerateCommitMessageResult> =>
+			generateCommitMessage(repoOrThrow(repoId).path, request)
 	);
 }

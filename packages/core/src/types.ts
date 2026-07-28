@@ -333,6 +333,20 @@ export interface CreateChangesetInput {
 // session card; "other" falls back to a generic icon + `harnessLabel`.
 export type HarnessKind = 'claude-code' | 'cursor' | 'codex' | 'opencode' | 'copilot' | 'other';
 
+// Harnesses that can generate commit messages via a local CLI. Same set as the
+// big coding agents we detect for install, minus freeform `other`.
+export type CommitMessageHarness = Exclude<HarnessKind, 'other'>;
+
+// Fixed detection / fallback order when the user hasn't picked a preferred
+// harness (or their pick isn't installed).
+export const COMMIT_MESSAGE_HARNESS_PRIORITY: readonly CommitMessageHarness[] = [
+	'cursor',
+	'claude-code',
+	'codex',
+	'copilot',
+	'opencode'
+] as const;
+
 // Human display labels for each harness. The matching logos live in the UI's
 // HarnessLogo component; this map is the browser-safe source of truth for the
 // names (used by the CLI's PR attribution footers and the renderer alike).
@@ -1341,6 +1355,28 @@ export interface CommitFileSelection {
 	patch?: string;
 }
 
+// Which harness CLIs are installed and on PATH. Drives the Agents settings
+// picker and the "set up commit message generation" notice.
+export type CommitMessageHarnessStatus = Record<CommitMessageHarness, boolean>;
+
+// What the renderer sends when the user clicks Generate in the commit box.
+// Selections match what Commit would include (checked files + filtered patches).
+export interface GenerateCommitMessageRequest {
+	branch: string | null;
+	selections: CommitFileSelection[];
+	// Preferred harness from prefs; main process falls back if missing/uninstalled.
+	preferredHarness?: CommitMessageHarness | null;
+}
+
+export interface GenerateCommitMessageResult {
+	ok: boolean;
+	subject?: string;
+	body?: string;
+	harness?: CommitMessageHarness;
+	error?: string;
+	code?: 'no-harness' | 'timeout' | 'failed' | 'empty';
+}
+
 // One file to discard. `oldPath` is the pre-rename path, so discarding a rename
 // also restores the original. Shared by the single- and bulk-discard APIs.
 export interface DiscardTarget {
@@ -1604,6 +1640,9 @@ export interface UserPrefs {
 	contextTab?: ContextTab;
 	externalEditor?: EditorKind | null;
 	externalTerminal?: TerminalKind | null;
+	// Preferred coding-harness CLI for generating commit messages. Null means
+	// auto-pick the first installed harness. Excludes `other` (no CLI to spawn).
+	commitMessageHarness?: CommitMessageHarness | null;
 	// File list layout is tracked per sidebar tab so the user can keep, say, a
 	// tree in Unstaged and a flat list in Branch.
 	unstagedFileListLayout: FileListLayout;
@@ -2602,6 +2641,17 @@ export interface PreloadAPI {
 		// target/artifact/scope resolves to a known location in the main process, so
 		// the renderer can never ask to delete an arbitrary path.
 		remove(repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult>;
+	};
+	commitMessage: {
+		// Which supported harness CLIs are installed and on PATH.
+		detect(): Promise<CommitMessageHarnessStatus>;
+		// Generate a commit subject + body via the preferred (or first available)
+		// harness CLI, locked down to text-only. Uses the checked-file selections
+		// the commit box would include.
+		generate(
+			repoId: string,
+			request: GenerateCommitMessageRequest
+		): Promise<GenerateCommitMessageResult>;
 	};
 	npm: {
 		// Fetch trimmed npm-registry metadata for a package, for the package.json

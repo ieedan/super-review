@@ -48,6 +48,15 @@
 		app.aiConfigStatus?.anyUpdateAvailable === true && !app.aiConfigUpdateDismissed
 	);
 
+	// Prompt to pick/install a harness CLI for the commit-message generate button.
+	// Null status (still detecting) stays hidden; only show once we know none are
+	// installed.
+	const showCommitMessageSetup = $derived.by(() => {
+		const status = app.commitMessageHarnesses;
+		if (!status || app.commitMessageNoticeDismissed) return false;
+		return !Object.values(status).some(Boolean);
+	});
+
 	// Trial nudge — rides the same stack. Reappears once per calendar day
 	// (dismissing hides it for the rest of the day) until the license stops being
 	// a trial (subscribe or buy), after which it never shows.
@@ -80,12 +89,22 @@
 		update.state === 'downloading' || (update.state === 'downloaded' && !app.updateDismissed)
 	);
 
-	type Notice = { id: 'warning' | 'add' | 'ai-config' | 'ai-config-update' | 'trial' | 'update' };
+	type Notice = {
+		id:
+			| 'warning'
+			| 'add'
+			| 'ai-config'
+			| 'ai-config-update'
+			| 'commit-message'
+			| 'trial'
+			| 'update';
+	};
 
 	// Front-first (index 0 is the fully-visible front card; later ones peek behind
 	// it). An app update leads (it's the most consequential prompt and the user
 	// asked for it up front), then the trial nudge, "Add a changeset?", the
-	// AI-config nudge, and the unnecessary-changeset warning at the back.
+	// AI-config nudge, commit-message setup, and the unnecessary-changeset warning
+	// at the back.
 	const notices = $derived.by(() => {
 		const list: Notice[] = [];
 		if (showUpdate) list.push({ id: 'update' });
@@ -93,6 +112,7 @@
 		if (showAdd) list.push({ id: 'add' });
 		if (showConfigure) list.push({ id: 'ai-config' });
 		if (showConfigUpdate) list.push({ id: 'ai-config-update' });
+		if (showCommitMessageSetup) list.push({ id: 'commit-message' });
 		if (showWarning) list.push({ id: 'warning' });
 		return list;
 	});
@@ -111,6 +131,7 @@
 		} else if (n.id === 'warning') actions.dismissChangesetWarning();
 		else if (n.id === 'add') actions.dismissChangesetPrompt();
 		else if (n.id === 'ai-config-update') actions.dismissAiConfigUpdate();
+		else if (n.id === 'commit-message') actions.dismissCommitMessageNotice();
 		else actions.dismissAiConfigNotice();
 	}
 </script>
@@ -205,6 +226,28 @@
 						Update AI files?
 						{#snippet action()}
 							<ConfigureAiButton size="xs" variant="outline" label="Update" />
+						{/snippet}
+					</NoticeCard>
+				{:else if n.id === 'commit-message'}
+					<NoticeCard
+						onDismiss={dismiss}
+						dismissTitle="Dismiss"
+						tooltip="Install a coding agent CLI (Cursor, Claude Code, Codex, Copilot, or OpenCode) so Super Review can generate commit messages with it."
+					>
+						{#snippet logo()}
+							<OfflineIcon icon={SUPER_REVIEW_ICON} class="size-4 shrink-0" />
+						{/snippet}
+						Set up commit message generation?
+						{#snippet action()}
+							<Button
+								type="button"
+								size="xs"
+								variant="outline"
+								class="h-6 text-[11px]"
+								onclick={() => actions.openCommitMessageSettings()}
+							>
+								Set up
+							</Button>
 						{/snippet}
 					</NoticeCard>
 				{:else}

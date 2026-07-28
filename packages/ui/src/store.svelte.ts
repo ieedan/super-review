@@ -10,6 +10,8 @@ import type {
 	ChangesetStatus,
 	CommitFileSelection,
 	CommitInfo,
+	CommitMessageHarness,
+	CommitMessageHarnessStatus,
 	ContextTab,
 	CreateRepoOptions,
 	DiffContext,
@@ -64,6 +66,7 @@ import {
 	DEFAULT_HEADER_ITEMS,
 	DEFAULT_SIDEBAR_TABS,
 	DEFAULT_SIDEBAR_CONTROLS,
+	COMMIT_MESSAGE_HARNESS_PRIORITY,
 	WINDOW_BOUNDS
 } from '@super-review/core/types';
 import { diffContextKey, reviewContextKey } from '@super-review/core/diff-context';
@@ -101,7 +104,7 @@ export type SettingsTab =
 	| 'hotkeys'
 	| 'updates'
 	| 'stats';
-export type SettingsScrollTarget = 'hidden-files';
+export type SettingsScrollTarget = 'hidden-files' | 'commit-messages';
 import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
 import { tourFileOrder, tourGroups } from '@super-review/ui/session-tour';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
@@ -259,6 +262,14 @@ interface AppState {
 	// Whether the user dismissed the "Update AI files?" notice. Same in-memory,
 	// reset-per-repo-switch lifetime as aiConfigNoticeDismissed.
 	aiConfigUpdateDismissed: boolean;
+	// Which harness CLIs are installed for commit-message generation. null while
+	// the first detect is in flight.
+	commitMessageHarnesses: CommitMessageHarnessStatus | null;
+	// Whether the user dismissed the "Set up commit message generation?" notice.
+	// In-memory only; reset on repo switch like the AI-files notice.
+	commitMessageNoticeDismissed: boolean;
+	// True while a harness CLI is generating a commit message.
+	commitMessageGenerating: boolean;
 	// Whether the "Configure AI files" dialog is open.
 	aiConfigDialogOpen: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
@@ -950,6 +961,9 @@ const initial: AppState = {
 	aiConfigStatus: null,
 	aiConfigNoticeDismissed: false,
 	aiConfigUpdateDismissed: false,
+	commitMessageHarnesses: null,
+	commitMessageNoticeDismissed: false,
+	commitMessageGenerating: false,
 	aiConfigDialogOpen: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
@@ -1642,6 +1656,25 @@ export function effectiveTerminal(): TerminalKind | null {
 		if (app.terminals[t]) return t;
 	}
 	return null;
+}
+
+// Preferred harness for commit-message generation, falling back to the first
+// installed CLI in COMMIT_MESSAGE_HARNESS_PRIORITY.
+export function effectiveCommitMessageHarness(): CommitMessageHarness | null {
+	const status = app.commitMessageHarnesses;
+	if (!status) return null;
+	const pref = app.prefs?.commitMessageHarness ?? null;
+	if (pref && status[pref]) return pref;
+	for (const harness of COMMIT_MESSAGE_HARNESS_PRIORITY) {
+		if (status[harness]) return harness;
+	}
+	return null;
+}
+
+export function anyCommitMessageHarnessInstalled(): boolean {
+	const status = app.commitMessageHarnesses;
+	if (!status) return false;
+	return COMMIT_MESSAGE_HARNESS_PRIORITY.some((h) => status[h]);
 }
 
 // The GitHub account the active project authenticates as: its pinned account
@@ -3875,6 +3908,70 @@ export const actions = {
 	dismissAiConfigUpdate(): void {
 		app.aiConfigUpdateDismissed = true;
 	},
+	dismissCommitMessageNotice(): void {
+		app.commitMessageNoticeDismissed = true;
+	},
+	openCommitMessageSettings(): void {
+		actions.openSettingsDialog('agents', 'commit-messages');
+	},
+	async refreshCommitMessageHarnesses(): Promise<void> {
+		app.commitMessageHarnesses = await window.api.commitMessage.detect();
+	},
+	async setCommitMessageHarness(harness: CommitMessageHarness | null): Promise<void> {
+		app.prefs = await window.api.state.setPrefs({ commitMessageHarness: harness });
+	},
+	// Generate a commit subject + body via the preferred harness CLI for the
+	// currently checked files. Returns the message on success, or null (and may
+	// open Agents settings when no harness is available).
+	async generateCommitMessage(): Promise<{ subject: string; body: string } | null> {
+		if (!app.activeRepo || app.commitMessageGenerating || app.push.inProgress) return null;
+		const included = app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path));
+		if (included.length === 0) {
+			setError('Select at least one file to generate a commit message.', 'Generate commit message');
+			return null;
+		}
+		if (app.commitMessageHarnesses && !anyCommitMessageHarnessInstalled()) {
+			actions.openCommitMessageSettings();
+			return null;
+		}
+		const repoId = app.activeRepo.id;
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		const selections = await buildCommitSelections(repoId, ctx, included);
+		if (selections.length === 0) {
+			setError('Nothing to include in the commit message.', 'Generate commit message');
+			return null;
+		}
+		app.commitMessageGenerating = true;
+		try {
+			const result = await window.api.commitMessage.generate(repoId, {
+				branch: app.currentBranch,
+				selections,
+				preferredHarness: app.prefs?.commitMessageHarness ?? null
+			});
+			if (!result.ok) {
+				if (result.code === 'no-harness') {
+					await actions.refreshCommitMessageHarnesses();
+					actions.openCommitMessageSettings();
+					return null;
+				}
+				setError(result.error ?? 'Failed to generate a commit message.', 'Generate commit message');
+				return null;
+			}
+			if (!result.subject?.trim()) {
+				setError('The agent returned an empty commit message.', 'Generate commit message');
+				return null;
+			}
+			return { subject: result.subject.trim(), body: (result.body ?? '').trim() };
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : String(err),
+				'Generate commit message'
+			);
+			return null;
+		} finally {
+			app.commitMessageGenerating = false;
+		}
+	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;
 	},
@@ -3991,6 +4088,10 @@ export const actions = {
 		void window.api.terminal.detect().then((terminals) => {
 			if (gen !== licenseGeneration || !isLicensed()) return;
 			app.terminals = terminals;
+		});
+		void window.api.commitMessage.detect().then((harnesses) => {
+			if (gen !== licenseGeneration || !isLicensed()) return;
+			app.commitMessageHarnesses = harnesses;
 		});
 		// The dirty dots need the repo list, so chain them rather than firing both.
 		void refreshRepos().then(() => {
@@ -4137,6 +4238,7 @@ export const actions = {
 			app.aiConfigStatus = null;
 			app.aiConfigNoticeDismissed = false;
 			app.aiConfigUpdateDismissed = false;
+			app.commitMessageNoticeDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
 			app.prs = [];

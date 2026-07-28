@@ -374,6 +374,15 @@
 			description: 'Commit autofill for repos using Changesets.',
 			keywords: 'changesets integration changelog version additional'
 		},
+		// Search-only: markup lives inside AgentsSettingsPanel (under settings-agents)
+		// with id="settings-commit-messages" so scroll/flash land on the real section.
+		{
+			tab: 'agents',
+			id: 'settings-commit-messages',
+			label: 'Commit messages',
+			keywords:
+				'commit message generate ai harness cursor claude codex copilot opencode agent'
+		},
 		{
 			tab: 'agents',
 			id: 'settings-agents',
@@ -404,8 +413,12 @@
 		}
 	];
 
+	// Sections whose DOM lives nested inside another section (search still finds
+	// them via SECTIONS; layout skips so we don't render an empty duplicate wrapper).
+	const NESTED_SECTION_IDS = new Set(['settings-commit-messages']);
+
 	function sectionsForTab(tab: SettingsTab): SettingsSection[] {
-		return SECTIONS.filter((s) => s.tab === tab);
+		return SECTIONS.filter((s) => s.tab === tab && !NESTED_SECTION_IDS.has(s.id));
 	}
 
 	// Lay a tab out in declared order, grouping each run of consecutive `row`

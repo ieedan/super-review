@@ -73,6 +73,8 @@ import type {
 	AiConfigStatus,
 	AiConfigApplyResult,
 	AiConfigRemoveResult,
+	CommitMessageHarnessStatus,
+	GenerateCommitMessageResult,
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
 	TerminalKind,
@@ -480,6 +482,15 @@ const api: PreloadAPI = {
 			invoke('aiConfig:apply', repoId, request) as Promise<AiConfigApplyResult>,
 		remove: (repoId, item) =>
 			invoke('aiConfig:remove', repoId, item) as Promise<AiConfigRemoveResult>
+	},
+	commitMessage: {
+		detect: () => invoke('commitMessage:detect') as Promise<CommitMessageHarnessStatus>,
+		generate: (repoId, request) =>
+			invoke(
+				'commitMessage:generate',
+				repoId,
+				request
+			) as Promise<GenerateCommitMessageResult>
 	},
 	npm: {
 		getPackageInfo: (name) => invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>,
