@@ -519,6 +519,30 @@ export async function verifyDiscordBot(token) {
 }
 
 /**
+ * Prompts for a Discord channel id until it looks like one, or until the step
+ * is skipped with Enter.
+ *
+ * Worth the loop because the wrong answer here is silent and permanent: a
+ * channel *name* typed in place of the id is accepted by every layer we own,
+ * and only Discord objects, with a 400 buried in a Convex log ("Value
+ * \\"feedback\\" is not snowflake"). Feedback then stores fine and never posts.
+ * A snowflake is 17 to 20 digits, so the typo is trivial to catch here.
+ */
+export async function askChannelId(rl, question) {
+	for (;;) {
+		const answer = await ask(rl, question);
+		if (!answer) return '';
+		if (/^\d{17,20}$/.test(answer)) return answer;
+		console.log(
+			dim(
+				`  "${answer}" is not a channel id. It is a long number, not the channel name:\n` +
+					'  right-click the channel > Copy Channel ID (needs Developer Mode on).'
+			)
+		);
+	}
+}
+
+/**
  * Checks that the bot can actually reach the channel it is about to be pointed
  * at, and that it may open threads there.
  *

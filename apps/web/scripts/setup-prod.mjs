@@ -38,6 +38,7 @@ import {
 	RELEASES_REPO,
 	STRIPE_WEBHOOK_EVENTS,
 	ask,
+	askChannelId,
 	askSecret,
 	askYesNo,
 	bold,
@@ -1015,7 +1016,7 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 					'Add the bot to your server'
 				);
 			}
-			const channelId = await ask(rl, 'FEEDBACK_CHANNEL_ID (or Enter to skip)');
+			const channelId = await askChannelId(rl, 'FEEDBACK_CHANNEL_ID (or Enter to skip)');
 			if (!channelId) {
 				console.log(dim('  Skipped. Feedback will be logged to the Convex console instead.'));
 				return;
