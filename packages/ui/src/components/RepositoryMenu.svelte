@@ -14,6 +14,7 @@
 		EDITOR_LABELS,
 		TERMINAL_LABELS
 	} from '@super-review/ui/store.svelte';
+	import { hasCommitsToPush } from '@super-review/core/push-status';
 	import type { RepositoryMenuAction, RepositoryMenuState } from '@super-review/core/types';
 
 	function revealLabel(): string {
@@ -34,6 +35,7 @@
 		const state: RepositoryMenuState = {
 			hasRepo: !!repo,
 			hasRemote: !!app.pushStatus?.hasRemote,
+			canPush: hasCommitsToPush(app.pushStatus),
 			hasGithub: !!repo?.githubOwner && !!repo?.githubRepo,
 			editorLabel: editor ? EDITOR_LABELS[editor] : null,
 			terminalLabel: terminal ? TERMINAL_LABELS[terminal] : null,

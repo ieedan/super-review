@@ -13,6 +13,7 @@
 	import GithubSpinner from './GithubSpinner.svelte';
 	import { actions, app, isReadOnlyView, uiPR } from '@super-review/ui/store.svelte';
 	import { cn } from '@super-review/ui/utils';
+	import { hasCommitsToPush } from '@super-review/core/push-status';
 	import type { PRCheck } from '@super-review/core/types';
 
 	const status = $derived(app.pushStatus);
@@ -45,7 +46,7 @@
 		// No remote yet → offer to publish to GitHub (GitHub-Desktop style). This
 		// also resolves the "I committed but there's no push button" dead end.
 		if (status && !status.hasRemote) return 'publish';
-		if (status?.hasRemote && (status.ahead > 0 || !status.hasUpstream)) return 'push';
+		if (hasCommitsToPush(status)) return 'push';
 		if (pr) return 'go-pr';
 		if (branchHasChanges) return 'create-pr';
 		return 'none';

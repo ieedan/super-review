@@ -1175,6 +1175,10 @@ export interface RepositoryMenuState {
 	hasRepo: boolean;
 	// Whether `origin` exists — gates Push/Pull/Fetch.
 	hasRemote: boolean;
+	// Whether the branch actually has something to push (commits the remote
+	// lacks, or no upstream yet). Keeps Push (and its ⌘P accelerator) greyed out
+	// on an up-to-date branch instead of running a no-op fetch/push.
+	canPush: boolean;
 	// Whether the repo has a GitHub remote — gates View on GitHub / Create Issue.
 	hasGithub: boolean;
 	// "Open in <editor>" / "Open in <terminal>" labels (null → item hidden).

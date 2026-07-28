@@ -80,6 +80,7 @@ import {
 } from '@super-review/core/diff-staging';
 import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@super-review/core/diff-defer';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@super-review/core/hotkeys';
+import { canSync } from '@super-review/core/push-status';
 import { comparePathsVSCodeStyle } from '@super-review/ui/utils';
 import { DEFAULT_DIFF_THEME, diffThemePair } from '@super-review/ui/diff-themes';
 import { setMarkdownCodeThemes } from '@super-review/ui/markdown';
@@ -6977,6 +6978,12 @@ export const actions = {
 	// conflicts for the user to reconcile), then push.
 	async push(): Promise<void> {
 		if (!app.activeRepo || app.push.inProgress) return;
+		// Nothing to push or pull: bail before starting the fetch/push cycle, which
+		// would otherwise spin the header button through "Fetching…/Pushing…" for a
+		// no-op. Hit most often from the Push hotkey on an up-to-date branch. A
+		// status we haven't loaded yet (null) still goes through, since the flow
+		// refreshes it anyway.
+		if (app.pushStatus && !canSync(app.pushStatus)) return;
 		const repoId = app.activeRepo.id;
 		app.push = {
 			inProgress: true,
