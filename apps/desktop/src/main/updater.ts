@@ -101,7 +101,14 @@ export function initAutoUpdates(): void {
 		// In dev with the simulation flag, `check` replays the fake cycle so you
 		// can re-watch the toast from the devtools console.
 		if (SIMULATE_UPDATE && !app.isPackaged) return runUpdateSimulation();
-		if (app.isPackaged) void autoUpdater.checkForUpdates();
+		if (app.isPackaged) {
+			void autoUpdater.checkForUpdates();
+			return;
+		}
+		// Unpackaged: no feed to hit, but still drive the Updates tab through a
+		// brief checking → idle cycle so the auto-check on tab open feels real.
+		pushStatus({ state: 'checking' });
+		setTimeout(() => pushStatus({ state: 'idle' }), 500);
 	});
 	ipcMain.handle('updater:quitAndInstall', () => {
 		// isSilent=true (1st arg): on Windows this runs the NSIS installer with its
@@ -134,6 +141,9 @@ export function initAutoUpdates(): void {
 	// Download in the background and swap the binary on the next quit. macOS
 	// updates require a signed build; an unsigned app logs an error here and
 	// keeps running rather than crashing.
+	// Beta: automatic updates stay on (UserPrefs.automaticUpdates is forced true
+	// in the renderer). When we unlock the Settings toggle post-beta, gate these
+	// on that pref.
 	autoUpdater.autoDownload = true;
 	autoUpdater.autoInstallOnAppQuit = true;
 

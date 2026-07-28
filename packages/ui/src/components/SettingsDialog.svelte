@@ -14,15 +14,16 @@
 	import FileJson from '@lucide/svelte/icons/file-json';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
-	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import Palette from '@lucide/svelte/icons/palette';
 	import Plus from '@lucide/svelte/icons/plus';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
-	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import CloudCheck from '@lucide/svelte/icons/cloud-check';
+	import Loader from '@lucide/svelte/icons/loader';
 	import Upload from '@lucide/svelte/icons/upload';
 	import User from '@lucide/svelte/icons/user';
 	import X from '@lucide/svelte/icons/x';
@@ -32,6 +33,7 @@
 	import { Button } from './ui/button';
 	import { Switch } from './ui/switch';
 	import { Input } from './ui/input';
+	import { Spinner } from './ui/spinner';
 	import CursorIcon from './icons/CursorIcon.svelte';
 	import VSCodeIcon from './icons/VSCodeIcon.svelte';
 	import XcodeIcon from './icons/XcodeIcon.svelte';
@@ -45,7 +47,6 @@
 	import ZshIcon from './icons/ZshIcon.svelte';
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import LicenseCard from './LicenseCard.svelte';
-	import UpdateNotice from './UpdateNotice.svelte';
 	import DiffStylePreview from './DiffStylePreview.svelte';
 	import DiffFileHeader from './DiffFileHeader.svelte';
 	import SettingSelect from './SettingSelect.svelte';
@@ -399,7 +400,7 @@
 			id: 'settings-updates',
 			title: 'Updates',
 			keywords:
-				'update updates upgrade version release new latest check download install restart relaunch changelog auto automatic'
+				'update updates upgrade version release new latest check download install restart relaunch changelog auto automatic updates installed'
 		}
 	];
 
@@ -632,6 +633,20 @@
 			});
 		}
 	});
+
+	// When the Updates tab is shown, kick off a check if we haven't asked recently
+	// (once per session, or again after 5 minutes). The store throttles the call.
+	$effect(() => {
+		if (!dialogOpen || activeTab !== 'updates') return;
+		actions.maybeCheckForUpdates();
+	});
+
+	function formatUpdateCheckedAt(ms: number): string {
+		return new Date(ms).toLocaleTimeString(undefined, {
+			hour: 'numeric',
+			minute: '2-digit'
+		});
+	}
 
 	$effect(() => {
 		if (dialogOpen) {
@@ -1213,59 +1228,78 @@
 			Super Review updates in the background and installs when you quit.
 		</p>
 
-		<!-- 58px is the measured height of the two-line (version + status) case, so
-			the row keeps one height across every state and the button never hops. -->
-		<div
-			class="mt-3 flex min-h-[58px] items-center justify-between gap-3 rounded-xl border border-border bg-card/30 px-3 py-2.5"
-		>
-			<div class="min-w-0">
-				<div class="text-sm font-medium">
-					{app.appVersion ? `Version ${app.appVersion}` : 'Super Review'}
-				</div>
-				<!-- Collapses when there's no status, so a lone version line stays
-					centered against the button. The row's min-height (not this) is what
-					keeps the button from hopping as the status comes and goes. -->
-				<div class="truncate text-xs text-muted-foreground empty:hidden">
-					{#if u.state === 'checking'}
-						Checking for updates
-					{:else if u.state === 'available' || u.state === 'downloading'}
-						Downloading update{u.version ? ` ${u.version}` : ''}
-					{:else if u.state === 'downloaded'}
-						{u.version ? `Version ${u.version} ready to install` : 'Ready to install'}
-					{:else if u.state === 'error'}
-						<span title={u.message}>Couldn't check for updates</span>
-					{:else if app.updateCheckedAt !== null}
-						Up to date
+		<!-- Apple-style stacked inset groups: status flow on top, then installed
+			version and the (beta-locked) automatic-updates toggle. Fixed min-height
+			on each row so the Restart button appearing doesn't hop the layout. -->
+		<div class="mt-3 space-y-2">
+			<div
+				class="flex min-h-[44px] items-center gap-2.5 rounded-xl border border-border bg-card/30 px-3 py-2.5"
+			>
+				{#if u.state === 'checking'}
+					<Spinner class="size-4 shrink-0 text-muted-foreground">
+						{#snippet child({ props })}
+							<Loader {...props} />
+						{/snippet}
+					</Spinner>
+					<span class="text-sm">Checking for updates...</span>
+				{:else if u.state === 'available' || u.state === 'downloading'}
+					<Spinner class="size-4 shrink-0 text-muted-foreground">
+						{#snippet child({ props })}
+							<Loader {...props} />
+						{/snippet}
+					</Spinner>
+					<span class="min-w-0 flex-1 truncate text-sm">
+						Installing {u.version ? `${u.version}` : 'update'}...
+					</span>
+					{#if u.state === 'downloading'}
+						<span class="shrink-0 text-xs tabular-nums text-muted-foreground">{u.percent}%</span>
 					{/if}
-				</div>
+				{:else if u.state === 'downloaded'}
+					<TriangleAlert class="size-4 shrink-0 text-warning" />
+					<span class="min-w-0 flex-1 truncate text-sm">
+						Version {u.version} available
+					</span>
+					<Button size="sm" class="shrink-0" onclick={() => actions.restartToUpdate()}>
+						Restart
+					</Button>
+				{:else if u.state === 'error'}
+					<TriangleAlert class="size-4 shrink-0 text-destructive" />
+					<span class="min-w-0 flex-1 truncate text-sm" title={u.message}>
+						Couldn't check for updates
+					</span>
+				{:else if app.updateCheckedAt !== null}
+					<CloudCheck class="size-4 shrink-0 text-muted-foreground" />
+					<span class="text-sm">
+						Up to date. Checked at {formatUpdateCheckedAt(app.updateCheckedAt)}
+					</span>
+				{:else}
+					<Spinner class="size-4 shrink-0 text-muted-foreground">
+						{#snippet child({ props })}
+							<Loader {...props} />
+						{/snippet}
+					</Spinner>
+					<span class="text-sm">Checking for updates...</span>
+				{/if}
 			</div>
 
-			{#if u.state === 'downloaded'}
-				<Button size="sm" class="shrink-0" onclick={() => actions.restartToUpdate()}>
-					<RotateCw class="size-3.5" /> Restart to install
-				</Button>
-			{:else if u.state === 'checking' || u.state === 'available' || u.state === 'downloading'}
-				<Button variant="outline" size="sm" class="shrink-0" disabled>
-					<Loader2 class="size-3.5 animate-spin" />
-					{u.state === 'checking' ? 'Checking' : 'Downloading'}
-				</Button>
-			{:else}
-				<Button
-					variant="outline"
-					size="sm"
-					class="shrink-0"
-					onclick={() => actions.checkForUpdates()}
-				>
-					<RefreshCw class="size-3.5" /> Check for updates
-				</Button>
-			{/if}
+			<div
+				class="flex min-h-[44px] items-center justify-between gap-3 rounded-xl border border-border bg-card/30 px-3 py-2.5"
+			>
+				<span class="text-sm">Installed</span>
+				<span class="text-sm tabular-nums text-muted-foreground">
+					{app.appVersion ? `v${app.appVersion}` : ''}
+				</span>
+			</div>
+
+			<div
+				class="flex min-h-[44px] items-center justify-between gap-3 rounded-xl border border-border bg-card/30 px-3 py-2.5"
+			>
+				<span class="text-sm">Automatic Updates</span>
+				<!-- Beta: locked on. Pref is wired (app.automaticUpdates) but the
+					control stays disabled so users can't opt out yet. -->
+				<Switch checked={true} disabled aria-label="Automatic Updates" />
+			</div>
 		</div>
-
-		{#if u.state === 'downloading'}
-			<div class="mt-2">
-				<UpdateNotice status={u} onRestart={() => actions.restartToUpdate()} />
-			</div>
-		{/if}
 	{:else if id === 'settings-external-editor'}
 		<p class="mt-1 text-xs text-muted-foreground">Used by the "Open in editor" button.</p>
 

@@ -1690,6 +1690,10 @@ export interface UserPrefs {
 	// ssh-keygen is too old (see checkSshSigningSupported), and any signing
 	// failure falls back to an unsigned commit. Turn off to commit unsigned.
 	signCommits: boolean;
+	// Check for and download app updates in the background. On by default. During
+	// beta the Updates settings toggle is locked on so users can't opt out; the
+	// pref is still persisted so post-beta we can honor it without a migration.
+	automaticUpdates: boolean;
 	// Which optional header controls are shown. Toggled from the header's
 	// right-click menu. Missing keys fall back to DEFAULT_HEADER_ITEMS so older
 	// persisted prefs (and any future additions) default to visible.

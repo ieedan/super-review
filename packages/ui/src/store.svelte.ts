@@ -279,6 +279,9 @@ interface AppState {
 	changesetsEnabled: boolean;
 	// User pref: SSH-sign every commit (on by default). See UserPrefs.signCommits.
 	signCommits: boolean;
+	// User pref: background app updates (on by default). During beta the Updates
+	// tab locks this on; the value is still mirrored so post-beta we can honor it.
+	automaticUpdates: boolean;
 	changedFiles: ChangedFile[];
 	// Free-text filter applied to the changed-files list. Shared between the
 	// sidebar (where it's typed) and the diff view (which hides sections for
@@ -676,6 +679,11 @@ interface AppState {
 	// tab can say "Up to date" instead of sitting on a bare version number. Null
 	// until a check completes in this session.
 	updateCheckedAt: number | null;
+	// When we last asked the main process to check for updates (ms epoch). Used to
+	// throttle the Updates-tab auto-check (every 5 minutes, and once per session
+	// since this starts null). Distinct from updateCheckedAt, which only stamps
+	// "found nothing" completions.
+	updateCheckRequestedAt: number | null;
 }
 
 export function composerKey(filePath: string, side: 'LEFT' | 'RIGHT', line: number): string {
@@ -949,6 +957,7 @@ const initial: AppState = {
 	changesetWarningDismissed: false,
 	changesetsEnabled: true,
 	signCommits: true,
+	automaticUpdates: true,
 	changesetReviewOpen: false,
 	changedFiles: [],
 	fileSearchQuery: '',
@@ -1104,7 +1113,8 @@ const initial: AppState = {
 	update: { state: 'idle' },
 	updateDismissed: false,
 	appVersion: '',
-	updateCheckedAt: null
+	updateCheckedAt: null,
+	updateCheckRequestedAt: null
 };
 
 export const app = $state<AppState>(initial);
@@ -3594,6 +3604,9 @@ function applyPrefsSettings(prefs: UserPrefs): void {
 	app.unmarkSeenOnChange = prefs.unmarkSeenOnChange ?? true;
 	app.changesetsEnabled = prefs.changesetsEnabled ?? true;
 	app.signCommits = prefs.signCommits ?? true;
+	// Beta: force automatic updates on regardless of the persisted value. The
+	// pref stays wired so we can honor opt-out later without a migration.
+	app.automaticUpdates = true;
 	app.recentRepoCount = prefs.recentRepoCount ?? 5;
 	app.windowWidth = prefs.windowWidth ?? WINDOW_BOUNDS.defaultWidth;
 	app.windowHeight = prefs.windowHeight ?? WINDOW_BOUNDS.defaultHeight;
@@ -3669,6 +3682,26 @@ export const actions = {
 	// Manual "Check for updates" from the Updates settings tab. Progress arrives
 	// over updater:status like an automatic check, so there's nothing to await.
 	checkForUpdates(): void {
+		app.updateCheckRequestedAt = Date.now();
+		void window.api.updater.check();
+	},
+	// Auto-check when the Updates tab opens: once per session, and again if the
+	// last request was more than 5 minutes ago. Skips when a check/download is
+	// already in flight or an update is ready to install.
+	maybeCheckForUpdates(): void {
+		const state = app.update.state;
+		if (
+			state === 'checking' ||
+			state === 'available' ||
+			state === 'downloading' ||
+			state === 'downloaded'
+		) {
+			return;
+		}
+		const last = app.updateCheckRequestedAt ?? app.updateCheckedAt;
+		const STALE_MS = 5 * 60 * 1000;
+		if (last !== null && Date.now() - last < STALE_MS) return;
+		app.updateCheckRequestedAt = Date.now();
 		void window.api.updater.check();
 	},
 	// --- Licensing ---

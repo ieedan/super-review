@@ -5,21 +5,26 @@
 	import { seedStore } from '../../lib/store-harness';
 	import type { UpdateStatus } from '@super-review/core/types';
 
-	// The Settings > Updates tab, driven straight off the seeded store. The panel
-	// is one row whose left side gains a status line as the update progresses, so
-	// the thing to watch across these stories is that the version text and the
-	// action button stay centered on the same axis and the button never moves.
+	// The Settings > Updates tab: Apple-style stacked inset groups for the status
+	// flow, installed version, and automatic-updates toggle. Stories cover each
+	// status-row state so the icons, copy, and Restart action stay consistent.
 	const MB = 1024 * 1024;
 
 	// The dialog portals out of any wrapper, so no frame — it centers on the canvas.
-	function seed(update: UpdateStatus, updateCheckedAt: number | null = null) {
+	function seed(
+		update: UpdateStatus,
+		opts: { updateCheckedAt?: number | null; updateCheckRequestedAt?: number | null } = {}
+	) {
 		return () =>
 			seedStore({
 				settingsDialogOpen: true,
 				settingsDialogTab: 'updates',
 				appVersion: '0.1.27',
 				update,
-				updateCheckedAt
+				// Stamp both timestamps so the tab's auto-check effect doesn't fire
+				// and overwrite the seeded status while the story is being viewed.
+				updateCheckedAt: opts.updateCheckedAt ?? null,
+				updateCheckRequestedAt: opts.updateCheckRequestedAt ?? Date.now()
 			});
 	}
 
@@ -30,26 +35,8 @@
 	});
 </script>
 
-<!-- Launch state: nothing has been checked yet, so there's no status line and the
-     version has to sit centered against the button on its own. -->
-<Story name="Idle">
-	{#snippet template()}
-		<StoreScope frame={false} setup={seed({ state: 'idle' })}>
-			<SettingsDialog />
-		</StoreScope>
-	{/snippet}
-</Story>
-
-<!-- A manual check came back empty: the status line appears, and the row must not
-     grow or shunt the button. -->
-<Story name="Up to date">
-	{#snippet template()}
-		<StoreScope frame={false} setup={seed({ state: 'idle' }, 1_780_000_000_000)}>
-			<SettingsDialog />
-		</StoreScope>
-	{/snippet}
-</Story>
-
+<!-- Fresh session before a check has finished: spinner + "Checking for updates..."
+     (the tab also auto-checks on open when the throttle allows). -->
 <Story name="Checking">
 	{#snippet template()}
 		<StoreScope frame={false} setup={seed({ state: 'checking' })}>
@@ -58,7 +45,22 @@
 	{/snippet}
 </Story>
 
-<Story name="Downloading">
+<!-- A check came back empty: cloud-check + "Up to date. Checked at …". -->
+<Story name="Up to date">
+	{#snippet template()}
+		<StoreScope
+			frame={false}
+			setup={seed(
+				{ state: 'idle' },
+				{ updateCheckedAt: Date.now() - 60_000, updateCheckRequestedAt: Date.now() }
+			)}
+		>
+			<SettingsDialog />
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<Story name="Installing">
 	{#snippet template()}
 		<StoreScope
 			frame={false}
@@ -76,8 +78,7 @@
 	{/snippet}
 </Story>
 
-<!-- Also the dot-indicator case: the Updates tab in the left nav should carry a
-     dot whenever an update is pending. -->
+<!-- Dot on the Updates nav item + Restart in the status row. -->
 <Story name="Ready to install">
 	{#snippet template()}
 		<StoreScope frame={false} setup={seed({ state: 'downloaded', version: '0.1.28' })}>
