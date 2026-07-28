@@ -7,6 +7,7 @@
 	import { Button } from './ui/button';
 	import { actions, app } from '@super-review/ui/store.svelte';
 	import { cn } from '@super-review/ui/utils';
+	import { canSync } from '@super-review/core/push-status';
 
 	const status = $derived(app.pushStatus);
 	const busy = $derived(app.push.inProgress);
@@ -53,12 +54,10 @@
 		return parts.join(' · ');
 	});
 
-	const disabled = $derived.by(() => {
-		if (busy) return true;
-		if (!status?.hasRemote) return true;
-		if (!status.hasUpstream) return false; // first push needs to work
-		return status.ahead === 0 && status.behind === 0;
-	});
+	// Same predicate the store guards `push()` with, so the button is never
+	// clickable into a no-op. A branch with no upstream stays enabled: its first
+	// push is what publishes it.
+	const disabled = $derived(busy || !canSync(status));
 
 	const Icon = $derived.by(() => {
 		if (busy) return Loader2;

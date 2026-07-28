@@ -126,8 +126,11 @@
 			<Menubar.Menu>
 				<Menubar.Trigger>Repository</Menubar.Trigger>
 				<Menubar.Content>
+					<!-- Push also needs commits to push, so it greys out on an up-to-date
+					branch instead of running a no-op fetch/push. Pull/Fetch stay on
+					hasRemote: how far behind the branch is isn't known until a fetch. -->
 					<Menubar.Item
-						disabled={!customMenusEnabled || !repo.hasRepo || !repo.hasRemote}
+						disabled={!customMenusEnabled || !repo.hasRepo || !repo.hasRemote || !repo.canPush}
 						onSelect={() => handleRepositoryMenuAction('push')}
 					>
 						Push

@@ -27,6 +27,7 @@ let branchState: BranchMenuState = {
 let repoState: RepositoryMenuState = {
 	hasRepo: false,
 	hasRemote: false,
+	canPush: false,
 	hasGithub: false,
 	editorLabel: null,
 	terminalLabel: null,
@@ -82,7 +83,10 @@ function buildRepositorySubmenu(): MenuItemConstructorOptions[] {
 	});
 
 	return [
-		item('Push', 'push', s.hasRepo && s.hasRemote, A.push.accelerator),
+		// Push is gated on there actually being commits to push so ⌘P is inert on an
+		// up-to-date branch. Pull/Fetch stay on `hasRemote`: how far behind the
+		// branch is isn't known until a fetch, so gating them would be wrong.
+		item('Push', 'push', s.hasRepo && s.hasRemote && s.canPush, A.push.accelerator),
 		item('Pull', 'pull', s.hasRepo && s.hasRemote, A.pull.accelerator),
 		item('Fetch', 'fetch', s.hasRepo && s.hasRemote, A.fetch.accelerator),
 		{ type: 'separator' },

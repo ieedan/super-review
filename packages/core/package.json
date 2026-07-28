@@ -12,6 +12,7 @@
 		"./subagent-convert": "./src/subagent-convert.ts",
 		"./media": "./src/media.ts",
 		"./hotkeys": "./src/hotkeys.ts",
+		"./push-status": "./src/push-status.ts",
 		"./diff-context": "./src/diff-context.ts",
 		"./diff-defer": "./src/diff-defer.ts",
 		"./diff-staging": "./src/diff-staging.ts",
