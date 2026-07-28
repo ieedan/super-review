@@ -1,4 +1,7 @@
-import type { GenerateCommitMessageResult } from '@super-review/core/types';
+import type {
+	CommitMessageProgressEvent,
+	GenerateCommitMessageResult
+} from '@super-review/core/types';
 
 export interface AdapterInput {
 	binary: string;
@@ -6,8 +9,8 @@ export interface AdapterInput {
 	prompt: string;
 	model?: string;
 	signal?: AbortSignal;
-	// Fired with accumulated output so the UI can stream progress.
-	onProgress?: (text: string) => void;
+	// Fired with the accumulated reasoning and answer so the UI can stream both.
+	onProgress?: (event: CommitMessageProgressEvent) => void;
 }
 
 export type AdapterResult = Pick<

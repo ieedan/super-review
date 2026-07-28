@@ -6,6 +6,7 @@
 // throttling and keeping the partial answer readable while it streams.
 
 import { stripAnsi } from './cli-error.js';
+import type { CommitMessageProgressEvent } from '@super-review/core/types';
 
 // Coalesce bursts of token deltas into one IPC message per frame-ish.
 const EMIT_INTERVAL_MS = 50;
@@ -26,10 +27,9 @@ export interface StreamReporter {
 }
 
 // Progress is only ever real model output: nothing is reported until the
-// harness produces reasoning or answer text, so the UI owns the waiting state
-// (it shows the harness logo and a shimmering "Thinking…" until then).
+// harness produces reasoning or answer text, so the UI owns the waiting state.
 export function createStreamReporter(
-	onProgress: ((text: string) => void) | undefined
+	onProgress: ((event: CommitMessageProgressEvent) => void) | undefined
 ): StreamReporter {
 	let thinking = '';
 	let answer = '';
@@ -37,18 +37,18 @@ export function createStreamReporter(
 	let lastEmitAt = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
-	const render = (): string => {
-		const answerText = formatCommitMessageStream(answer);
-		const thinkingText = stripAnsi(thinking).trim();
-		return [thinkingText, answerText].filter(Boolean).join('\n\n');
-	};
+	const render = (): CommitMessageProgressEvent => ({
+		reasoning: stripAnsi(thinking).trim(),
+		answer: formatCommitMessageStream(answer)
+	});
 
 	const emit = (): void => {
 		timer = undefined;
 		lastEmitAt = Date.now();
 		const next = render();
-		if (next === lastEmitted) return;
-		lastEmitted = next;
+		const key = `${next.reasoning}\u0000${next.answer}`;
+		if (key === lastEmitted) return;
+		lastEmitted = key;
 		onProgress?.(next);
 	};
 

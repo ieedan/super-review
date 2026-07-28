@@ -41,7 +41,8 @@
 				currentBranch: 'feat/harness-commit-messages',
 				changedFiles: FILES,
 				commitMessageGenerating: false,
-				commitMessageStream: '',
+				commitMessageReasoning: '',
+				commitMessageAnswer: '',
 				commitMessageHarnesses: {
 					cursor: true,
 					'claude-code': true,
@@ -82,7 +83,8 @@
 				currentBranch: 'feat/harness-commit-messages',
 				changedFiles: FILES,
 				commitMessageGenerating: false,
-				commitMessageStream: '',
+				commitMessageReasoning: '',
+				commitMessageAnswer: '',
 				commitMessageHarnesses: {
 					cursor: false,
 					'claude-code': false,
@@ -109,20 +111,21 @@
 		argTypes: {
 			harness: {
 				name: 'Harness',
-				description: 'Which CLI the popover targets (logo, label, model list).',
+				description: 'Which CLI the run uses (its default model comes from settings).',
 				control: 'select',
 				options: ['claude-code', 'cursor', 'codex', 'copilot', 'opencode']
 			},
 			reasoning: {
 				name: 'Model reasoning',
-				description: 'Streamed before the answer. Empty to skip straight to the message.',
+				description:
+					'Streamed before the answer and deliberately never shown in the box. Empty to skip straight to the message.',
 				control: 'text'
 			},
 			subject: { name: 'Model subject', control: 'text' },
 			body: { name: 'Model body', control: 'text' },
 			startupMs: {
 				name: 'Silence before first token (ms)',
-				description: 'How long the "Thinking…" state is on screen.',
+				description: 'How long the waiting state is on screen.',
 				control: { type: 'range', min: 0, max: 15000, step: 250 }
 			},
 			chunkMs: {
@@ -133,8 +136,8 @@
 	});
 </script>
 
-<!-- Drive it yourself: click through the popover and watch the mocked CLI stream
-     back on a delay. Cancel works too. -->
+<!-- Drive it yourself: click the sparkle and watch the mocked CLI write the
+     message into the box. Stopping it works too. -->
 <Story name="Run The Flow">
 	{#snippet template(args)}
 		<StoreScope frame={false} setup={seed(args.harness)}>
@@ -146,7 +149,7 @@
 	{/snippet}
 </Story>
 
-<!-- Same flow frozen into steps: forwards, backwards, or jump to any state. -->
+<!-- The same flow frozen into steps: forwards, backwards, or jump to any state. -->
 <Story name="Step Through">
 	{#snippet template(args)}
 		<StoreScope frame={false} setup={seed(args.harness)}>

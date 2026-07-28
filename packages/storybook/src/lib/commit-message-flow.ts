@@ -1,14 +1,15 @@
 /**
  * Harness for the "generate a commit message" flow.
  *
- * The real flow is: the sparkle button opens the popover, the popover calls
- * `actions.generateCommitMessage()`, that calls `window.api.commitMessage.generate()`
- * in the main process, and the harness CLI streams reasoning/answer tokens back
- * as `commitMessage:progress` events until it resolves with a subject and body.
+ * The real flow is: the sparkle button calls `actions.generateCommitMessage()`,
+ * that calls `window.api.commitMessage.generate()` in the main process, and the
+ * harness CLI streams reasoning and answer tokens back as
+ * `commitMessage:progress` events until it resolves with a subject and body. The
+ * answer is painted into the commit box as it arrives.
  *
  * Storybook has no main process, so this module stands in for it: it installs a
  * `window.api.commitMessage` that replays a scripted response with real delays,
- * so the popover goes through exactly the states it does against a live CLI —
+ * so the box goes through exactly the states it does against a live CLI —
  * including the long silence before the first token.
  */
 import { app } from '@super-review/ui/store.svelte';
@@ -22,7 +23,7 @@ export interface MockResponse {
 }
 
 export interface MockTiming {
-	/** Silence before the first token — what the "Thinking…" state covers. */
+	/** Silence before the first token — what the waiting state covers. */
 	startupMs: number;
 	/** Delay between streamed chunks. */
 	chunkMs: number;
@@ -57,11 +58,6 @@ export const OPENCODE_MODELS: { id: string; label: string }[] = [
 	'openai/gpt-5.1-codex'
 ].map((id) => ({ id, label: id }));
 
-/** The full text the popover shows at the end of a run. */
-export function fullStream(response: MockResponse): string {
-	return [response.reasoning, message(response)].filter(Boolean).join('\n\n');
-}
-
 function message(response: MockResponse): string {
 	return [response.subject, response.body].filter(Boolean).join('\n\n');
 }
@@ -74,81 +70,84 @@ export interface FlowStep {
 	label: string;
 	/** What to look at while this step is on screen. */
 	note: string;
-	popoverOpen: boolean;
 	generating: boolean;
-	stream: string;
+	/** What the model has said so far, split the way the box splits it. */
+	reasoning: string;
+	answer: string;
 	/** The commit box contents once the message has been applied. */
 	applied: { subject: string; body: string } | null;
 }
 
 export function buildFlowSteps(response: MockResponse): FlowStep[] {
-	const reasoningHalf = clipWords(response.reasoning, 0.45);
 	const subjectHalf = clipWords(response.subject, 0.6);
+	const bodyHalf = clipWords(response.body, 0.5);
+	const answer = message(response);
 
 	return [
 		{
 			label: 'Idle',
-			note: 'The sparkle sits in the Summary field. One click starts a run — there is nothing to configure here, that lives in settings. With no agent CLI installed the button is not rendered at all.',
-			popoverOpen: false,
+			note: 'The sparkle sits in the Summary field. One click runs it — there is nothing to configure here, that lives in Settings → Agents. With no agent CLI installed the button is not rendered at all.',
 			generating: false,
-			stream: '',
+			reasoning: '',
+			answer: '',
 			applied: null
 		},
 		{
 			label: 'Waiting on the CLI',
-			note: 'The run started and the sparkle is shimmering. Keeping the pointer on it opens this peek: the harness logo and a shimmering "Thinking…". CLIs can sit silent here for many seconds.',
-			popoverOpen: true,
+			note: 'The run started: the sparkle shimmers and Summary says what is happening. The agent has not said anything yet — CLIs can sit silent here for many seconds.',
 			generating: true,
-			stream: '',
+			reasoning: '',
+			answer: '',
 			applied: null
 		},
 		{
-			label: 'Reasoning starts',
-			note: 'First tokens. Reasoning streams before the answer and the box scrolls to follow it.',
-			popoverOpen: true,
+			label: 'Reasoning (not shown)',
+			note: 'The model thinks out loud first. That channel is kept apart from the answer and deliberately never reaches the box — Summary still shows the waiting state.',
 			generating: true,
-			stream: reasoningHalf,
-			applied: null
-		},
-		{
-			label: 'Reasoning done',
-			note: 'The model has finished thinking; the answer has not started.',
-			popoverOpen: true,
-			generating: true,
-			stream: response.reasoning,
+			reasoning: response.reasoning,
+			answer: '',
 			applied: null
 		},
 		{
 			label: 'Subject streams',
-			note: 'The answer is the commit message itself — subject first, no JSON to decode.',
-			popoverOpen: true,
+			note: 'The answer starts, word by word, straight into Summary. The field is read-only while it writes, so nothing collides.',
 			generating: true,
-			stream: `${response.reasoning}\n\n${subjectHalf}`,
+			reasoning: response.reasoning,
+			answer: subjectHalf,
+			applied: null
+		},
+		{
+			label: 'Body starts',
+			note: 'A blank line ends the subject; everything after it goes to Description.',
+			generating: true,
+			reasoning: response.reasoning,
+			answer: `${response.subject}\n\n${bodyHalf}`,
 			applied: null
 		},
 		{
 			label: 'Body streams',
-			note: 'Blank line, then the body. This is the last frame before the run resolves.',
-			popoverOpen: true,
+			note: 'The last frame before the run resolves. What is painted here is exactly what will be committed.',
 			generating: true,
-			stream: fullStream(response),
+			reasoning: response.reasoning,
+			answer,
 			applied: null
 		},
 		{
 			label: 'Applied',
-			note: 'The run resolves, the popover closes, and subject/body land in the commit box.',
-			popoverOpen: false,
+			note: 'The run resolves: the painted text becomes the real field values and focus moves to Commit. A cancel instead would leave the box exactly as it was.',
 			generating: false,
-			stream: '',
+			reasoning: '',
+			answer: '',
 			applied: { subject: response.subject, body: response.body }
 		}
 	];
 }
 
-/** Push a step's snapshot into the store fields the popover reads. */
+/** Push a step's snapshot into the store fields the commit box reads. */
 export function applyFlowStep(step: FlowStep): void {
 	app.commitMessageGenerating = step.generating;
-	app.commitMessageStream = step.stream;
+	app.commitMessageReasoning = step.reasoning;
+	app.commitMessageAnswer = step.answer;
 }
 
 function clipWords(text: string, fraction: number): string {
@@ -159,7 +158,7 @@ function clipWords(text: string, fraction: number): string {
 
 // ─── Mock main process ──────────────────────────────────────────────────────
 
-type ProgressListener = (event: { text: string }) => void;
+type ProgressListener = (event: { reasoning: string; answer: string }) => void;
 
 const listeners = new Set<ProgressListener>();
 let installed = false;
@@ -235,14 +234,15 @@ const commitMessageMock = {
 	},
 	async generate() {
 		cancelled = false;
+		channels.reasoning = '';
+		channels.answer = '';
 		const { response, timing } = script;
 
-		// The silence the "Thinking…" state exists for.
+		// The silence the waiting state exists for.
 		if (await sleep(timing.startupMs)) return CANCELLED;
 
-		if (await streamText(response.reasoning, '', timing.chunkMs)) return CANCELLED;
-		const afterReasoning = response.reasoning ? `${response.reasoning}\n\n` : '';
-		if (await streamText(message(response), afterReasoning, timing.chunkMs)) return CANCELLED;
+		if (await streamChannel('reasoning', response.reasoning, timing.chunkMs)) return CANCELLED;
+		if (await streamChannel('answer', message(response), timing.chunkMs)) return CANCELLED;
 
 		return { ok: true, harness: 'claude-code', subject: response.subject, body: response.body };
 	}
@@ -250,25 +250,33 @@ const commitMessageMock = {
 
 const CANCELLED = { ok: false, code: 'cancelled', error: 'Cancelled' };
 
-// Emit progress the way the main process does: cumulative text, chunk by chunk.
-async function streamText(text: string, prefix: string, chunkMs: number): Promise<boolean> {
-	let sent = '';
+// Emit progress the way the main process does: each channel accumulates and the
+// whole pair is sent every time, chunk by chunk.
+const channels = { reasoning: '', answer: '' };
+
+async function streamChannel(
+	channel: 'reasoning' | 'answer',
+	text: string,
+	chunkMs: number
+): Promise<boolean> {
 	for (const chunk of text.match(/\S+\s*/g) ?? []) {
-		sent += chunk;
-		emit(prefix + sent);
+		channels[channel] += chunk;
+		emit();
 		if (await sleep(chunkMs)) return true;
 	}
 	return false;
 }
 
-function emit(text: string): void {
+function emit(): void {
+	const event = { reasoning: channels.reasoning.trim(), answer: channels.answer.trim() };
 	if (listeners.size > 0) {
-		for (const listener of listeners) listener({ text });
+		for (const listener of listeners) listener(event);
 		return;
 	}
 	// The store subscribes once per session; if something subscribed before this
-	// mock was installed, write the field the listener would have written.
-	app.commitMessageStream = text;
+	// mock was installed, write the fields the listener would have written.
+	app.commitMessageReasoning = event.reasoning;
+	app.commitMessageAnswer = event.answer;
 }
 
 /** Resolves true when the run was cancelled while waiting. */

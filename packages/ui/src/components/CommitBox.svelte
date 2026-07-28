@@ -11,6 +11,8 @@
 	import { Textarea } from './ui/textarea';
 	import AccountSwitcher from './AccountSwitcher.svelte';
 	import GenerateCommitMessageButton from './GenerateCommitMessageButton.svelte';
+	import CommitMessageWaiting from './CommitMessageWaiting.svelte';
+	import StreamingText from './StreamingText.svelte';
 	import {
 		actions,
 		app,
@@ -18,6 +20,8 @@
 		effectiveGithubAccount
 	} from '@super-review/ui/store.svelte';
 	import { isChangesetPath, parseChangesetMessage } from '@super-review/ui/changeset';
+	import { cn } from '@super-review/ui/utils';
+	import { splitStreamingMessage } from '@super-review/ui/commit-message-stream';
 	import { type LastCommit } from '@super-review/core/types';
 
 	let summary = $state('');
@@ -312,6 +316,65 @@
 	onDestroy(() => clearTimeout(saveTimer));
 
 	const generating = $derived(app.commitMessageGenerating);
+
+	// The overlay paints inside the field's own box, so both take their padding
+	// and type scale from one place. A mismatch shows up as the text changing
+	// size the moment the real value replaces the painted one — which is exactly
+	// what the Input's base `md:text-sm` did to a bare `text-xs`.
+	const SUMMARY_METRICS = 'px-2.5 py-1 pr-8 text-xs md:text-sm';
+	const BODY_METRICS = 'px-2 py-1.5 text-xs';
+
+	// How a painted-over field hides its own text. Not `text-transparent`: `color`
+	// is in the field's `transition-colors`, so when the overlay comes down the
+	// real value would fade in from transparent over 150ms while the painted words
+	// vanish instantly — the message blinking out and back at the very end of the
+	// run. `-webkit-text-fill-color` isn't transitioned, so the handoff is a single
+	// frame, which is the whole point of latching the paint in the first place.
+	const HIDE_FIELD_TEXT = '[-webkit-text-fill-color:transparent]';
+
+	// While a run is streaming, the message is painted over the two fields rather
+	// than written into them: the box keeps whatever the user had until the run
+	// actually lands, so a cancel or a failure costs them nothing. The overlays
+	// mirror each field's box metrics exactly (see the markup below).
+	//
+	// The painted text is latched rather than read live, and the paint outlives
+	// `generating` on purpose. The store drops the run (generating false, stream
+	// cleared) one update *before* the finished message reaches this component,
+	// so a paint tied to `generating` would leave the box showing its old, empty
+	// self for a frame — the message vanishing and reappearing. Instead the paint
+	// ends where the values are written, in the same update (applyGeneratedMessage),
+	// or a tick after the run stops when nothing was written (cancel, failure).
+	let painting = $state(false);
+	let painted = $state<{ subject: string; body: string }>({ subject: '', body: '' });
+	let paintRun = 0;
+
+	$effect(() => {
+		const live = splitStreamingMessage(app.commitMessageAnswer);
+		if (generating) {
+			untrack(() => {
+				if (!painting) {
+					painting = true;
+					painted = { subject: '', body: '' };
+					paintRun++;
+				}
+				if (live.subject || live.body) painted = live;
+			});
+			return;
+		}
+		if (!untrack(() => painting)) return;
+		const run = ++paintRun;
+		queueMicrotask(() => {
+			if (run === paintRun) endPaint();
+		});
+	});
+
+	function endPaint(): void {
+		painting = false;
+		painted = { subject: '', body: '' };
+	}
+
+	// Nothing back from the CLI yet — the field says so instead of sitting blank.
+	const awaitingFirstToken = $derived(painting && !painted.subject && !painted.body);
 	// Only the checked files get committed (see the Unstaged tab checkboxes).
 	// Everything is included unless explicitly excluded.
 	const includedFiles = $derived(
@@ -482,6 +545,10 @@
 		detectedSession = null;
 		summary = result.subject;
 		description = result.body;
+		// Same update as the values: the overlay comes down and the real text
+		// appears together, so there is no frame showing neither.
+		paintRun++;
+		endPaint();
 		persistDraft();
 	}
 </script>
@@ -531,10 +598,30 @@
 				bind:value={summary}
 				oninput={persistDraft}
 				onkeydown={onKeydown}
-				placeholder={suggestedSummary || 'Summary (required)'}
-				disabled={busy || generating}
-				class="h-7 min-w-0 pr-8 text-xs"
+				placeholder={painting ? '' : suggestedSummary || 'Summary (required)'}
+				readonly={painting}
+				disabled={busy}
+				class={cn('h-7 min-w-0', SUMMARY_METRICS, painting && HIDE_FIELD_TEXT)}
 			/>
+			{#if painting}
+				<!-- Same box as the Input (pr-8 clears the sparkle), so the words land
+				     exactly where the real value will sit. `inset-0` covers the field's
+				     border box, so the overlay needs the field's own 1px border back —
+				     without it the padding starts a pixel early and the text nudges
+				     sideways the moment the real value lands. -->
+				<div
+					class={cn(
+						'pointer-events-none absolute inset-0 flex items-center overflow-hidden border border-transparent',
+						SUMMARY_METRICS
+					)}
+				>
+					{#if awaitingFirstToken}
+						<CommitMessageWaiting />
+					{:else}
+						<StreamingText text={painted.subject} class="truncate" />
+					{/if}
+				</div>
+			{/if}
 			<GenerateCommitMessageButton
 				disabled={!canGenerate && !generating}
 				onGenerated={applyGeneratedMessage}
@@ -543,15 +630,31 @@
 		</div>
 	</div>
 
-	<Textarea
-		bind:value={description}
-		oninput={persistDraft}
-		onkeydown={onKeydown}
-		placeholder="Description"
-		rows={5}
-		disabled={busy || generating}
-		class="min-h-0 resize-none px-2 py-1.5 text-xs"
-	/>
+	<div class="relative">
+		<Textarea
+			bind:value={description}
+			oninput={persistDraft}
+			onkeydown={onKeydown}
+			placeholder={painting ? '' : 'Description'}
+			rows={5}
+			readonly={painting}
+			disabled={busy}
+			class={cn('min-h-0 resize-none', BODY_METRICS, painting && HIDE_FIELD_TEXT)}
+		/>
+		{#if painting}
+			<!-- Mirrors the Textarea's box, border included (see the Summary overlay).
+			     no-scrollbar because it follows the stream itself; nobody scrolls back
+			     through a body still being written. -->
+			<div
+				class={cn(
+					'no-scrollbar pointer-events-none absolute inset-0 overflow-y-auto border border-transparent',
+					BODY_METRICS
+				)}
+			>
+				<StreamingText text={painted.body} />
+			</div>
+		{/if}
+	</div>
 
 	{#if authError}
 		<div

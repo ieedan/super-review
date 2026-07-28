@@ -11,7 +11,6 @@
 	const steps = $derived(buildFlowSteps(response));
 	let index = $state(0);
 
-	let open = $state(false);
 	let subject = $state('');
 	let body = $state('');
 
@@ -24,13 +23,6 @@
 		applyFlowStep(step);
 		subject = step.applied?.subject ?? '';
 		body = step.applied?.body ?? '';
-	});
-
-	// The click that advances a step lands outside the popover, so the popover
-	// dismisses itself on the way. Reading `open` here means that dismissal
-	// re-runs this and puts it back: while a step says open, it stays open.
-	$effect(() => {
-		if (step && open !== step.popoverOpen) open = step.popoverOpen;
 	});
 
 	function go(delta: number): void {
@@ -46,7 +38,7 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="flex w-[420px] flex-col gap-3">
-	<CommitMessageFlowBox bind:open bind:subject bind:body />
+	<CommitMessageFlowBox bind:subject bind:body />
 
 	<div class="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
 		<div class="flex items-center gap-2">
