@@ -198,7 +198,7 @@ const RESERVED_ACCELERATORS: MenuAccelerator[] = [
 // can't express. A literal `Control` maps onto `mod`, which is deliberately
 // over-broad on macOS (⌃ and ⌘ are distinct there) — reserving slightly more
 // than we must is the safe direction.
-function parseAccelerator(accelerator: string): Hotkey | null {
+export function parseAccelerator(accelerator: string): Hotkey | null {
 	const parts = accelerator.split('+');
 	const key = parts.pop();
 	if (!key) return null;
@@ -253,4 +253,13 @@ export function formatHotkeyParts(hk: Hotkey, isMac: boolean): string[] {
 	if (hk.shift) parts.push(isMac ? '⇧' : 'Shift');
 	parts.push(keyLabel(hk.key));
 	return parts;
+}
+
+// Compact accelerator label for menu shortcuts (e.g. "Ctrl+Shift+P" on Windows,
+// "⇧⌘P" on macOS). Returns the raw accelerator string when it can't be parsed.
+export function formatAcceleratorLabel(accelerator: string, isMac: boolean): string {
+	const hk = parseAccelerator(accelerator);
+	if (!hk) return accelerator;
+	const parts = formatHotkeyParts(hk, isMac);
+	return isMac ? parts.join('') : parts.join('+');
 }

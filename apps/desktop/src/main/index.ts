@@ -11,7 +11,7 @@ import { registerGitCredentials } from './github-service.js';
 import { setupAppMenu } from './menu.js';
 import { initAutoUpdates } from './updater.js';
 import { getPrefs, flushStore } from './store.js';
-import { titleBarOverlayFor } from './window-chrome.js';
+import { setupWindowChromeIpc, titleBarOverlayFor } from './window-chrome.js';
 import { WINDOW_BOUNDS } from '@shared/types.js';
 import { installLicenseIpcGate } from './license/ipc-gate.js';
 import { initLicenseService, startLicenseBackgroundWork } from './license/service.js';
@@ -220,6 +220,7 @@ if (!gotSingleInstanceLock) {
 		registerGitCredentials();
 		registerIpc();
 		setupAppMenu();
+		setupWindowChromeIpc();
 		createWindow();
 		// Windows cold-start deep link arrives in argv.
 		const coldLink = process.argv.find((a) => a.startsWith(`${PROTOCOL}://`));

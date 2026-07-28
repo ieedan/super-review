@@ -946,20 +946,27 @@ export type HeaderContextMenuResult = {
 	checked: boolean;
 } | null;
 
-// Top-level application-menu entry for the Windows custom AppMenuBar. `id` is
-// the stable MenuItem id from the main-process template; `label` is localized.
-export interface AppMenuBarItem {
-	id: string;
-	label: string;
-}
-
-// Where to pop a top-level application submenu on Windows (DIP coords relative
-// to the window, typically the bottom-left of the menu-bar button).
-export interface PopupAppMenuParams {
-	id: string;
-	x: number;
-	y: number;
-}
+// Role-menu / window-chrome actions the Windows HTML AppMenuBar can invoke.
+// Electron still owns the same actions via Menu.setApplicationMenu accelerators;
+// these cover clicks on the in-renderer Menubar.
+export type WindowChromeAction =
+	| 'undo'
+	| 'redo'
+	| 'cut'
+	| 'copy'
+	| 'paste'
+	| 'selectAll'
+	| 'reload'
+	| 'forceReload'
+	| 'toggleDevTools'
+	| 'resetZoom'
+	| 'zoomIn'
+	| 'zoomOut'
+	| 'toggleFullscreen'
+	| 'minimize'
+	| 'maximize'
+	| 'close'
+	| 'quit';
 
 // A single toggle in the empty view's right-click native context menu. `key` is
 // the EmptyViewItemVisibility field it controls; `checked` is its current state.
@@ -2705,16 +2712,13 @@ export interface PreloadAPI {
 		setBranchState(state: BranchMenuState): void;
 		// Push the latest Repository-menu enablement/labels to the main process.
 		setRepositoryState(state: RepositoryMenuState): void;
-		// Windows custom AppMenuBar: top-level labels (localized) for the redrawn
-		// menu strip that sits beside the titleBarOverlay window controls.
-		getAppMenuBarItems(): Promise<AppMenuBarItem[]>;
-		// Windows custom AppMenuBar: pop the native submenu for a top-level item
-		// at (x, y). Resolves when the popup closes.
-		popupAppMenu(params: PopupAppMenuParams): Promise<void>;
 	};
 	windowControls: {
 		// Re-center the macOS traffic lights for the renderer's current zoom factor.
 		sync(): void;
+		// Run a role-menu / window-chrome action (edit, view, window, quit). Used by
+		// the Windows HTML AppMenuBar; macOS keeps the native menu bar.
+		perform(action: WindowChromeAction): Promise<void>;
 	};
 	events: {
 		onRepoChanged(handler: (repo: RepoInfo | null) => void): () => void;
