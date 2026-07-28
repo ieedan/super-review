@@ -9,8 +9,6 @@ import Item from './select-item.svelte';
 import Content from './select-content.svelte';
 import Trigger from './select-trigger.svelte';
 import Separator from './select-separator.svelte';
-import ScrollDownButton from './select-scroll-down-button.svelte';
-import ScrollUpButton from './select-scroll-up-button.svelte';
 import GroupHeading from './select-group-heading.svelte';
 import Portal from './select-portal.svelte';
 
@@ -25,8 +23,6 @@ export {
 	Content,
 	Trigger,
 	Separator,
-	ScrollDownButton,
-	ScrollUpButton,
 	GroupHeading,
 	Portal,
 	//
@@ -38,8 +34,6 @@ export {
 	Content as SelectContent,
 	Trigger as SelectTrigger,
 	Separator as SelectSeparator,
-	ScrollDownButton as SelectScrollDownButton,
-	ScrollUpButton as SelectScrollUpButton,
 	GroupHeading as SelectGroupHeading,
 	Portal as SelectPortal,
 	// High-level (items → ready-made field). Prefer this for ordinary selects.
