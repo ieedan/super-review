@@ -37,6 +37,26 @@ export const DEFAULT_RESPONSE: MockResponse = {
 
 export const DEFAULT_TIMING: MockTiming = { startupMs: 2500, chunkMs: 45 };
 
+/**
+ * OpenCode's listing, in the shape the CLI returns it: `<provider>/<model>` for
+ * a direct provider and `<provider>/<lab>/<model>` through a router, ranked
+ * cheapest-first. Exported so stories seed the same list the picker groups.
+ */
+export const OPENCODE_MODELS: { id: string; label: string }[] = [
+	'opencode/deepseek-v4-flash-free',
+	'opencode/ling-3.0-flash-free',
+	'opencode/north-mini-code-free',
+	'opencode/big-pickle',
+	'opencode/laguna-s-2.1-free',
+	'openrouter/google/lyria-3-clip-preview',
+	'openrouter/qwen/qwen3-coder',
+	'openrouter/deepseek/deepseek-v3.2',
+	'anthropic/claude-haiku-4-5',
+	'anthropic/claude-sonnet-4-5',
+	'openai/gpt-5-mini',
+	'openai/gpt-5.1-codex'
+].map((id) => ({ id, label: id }));
+
 /** The full text the popover shows at the end of a run. */
 export function fullStream(response: MockResponse): string {
 	return [response.reasoning, message(response)].filter(Boolean).join('\n\n');
@@ -68,23 +88,15 @@ export function buildFlowSteps(response: MockResponse): FlowStep[] {
 	return [
 		{
 			label: 'Idle',
-			note: 'The sparkle sits in the Summary field. Hovering it opens the popover after 200ms; shift-clicking skips straight to generating.',
+			note: 'The sparkle sits in the Summary field. One click starts a run — there is nothing to configure here, that lives in settings. With no agent CLI installed the button is not rendered at all.',
 			popoverOpen: false,
 			generating: false,
 			stream: '',
 			applied: null
 		},
 		{
-			label: 'Popover open',
-			note: 'Harness split button (the chevron switches CLI), model picker, and the editable prompt. Enter in the prompt generates.',
-			popoverOpen: true,
-			generating: false,
-			stream: '',
-			applied: null
-		},
-		{
 			label: 'Waiting on the CLI',
-			note: 'No output yet: the harness logo with a shimmering "Thinking…". CLIs can sit silent here for many seconds.',
+			note: 'The run started and the sparkle is shimmering. Keeping the pointer on it opens this peek: the harness logo and a shimmering "Thinking…". CLIs can sit silent here for many seconds.',
 			popoverOpen: true,
 			generating: true,
 			stream: '',
@@ -184,10 +196,27 @@ export function installCommitMessageMock(): void {
 		}
 	);
 
+	// Storybook's blanket api stub resolves setPrefs to undefined, which the store
+	// then writes over `app.prefs` — wiping the seeded harness the moment the model
+	// picker saves a default. Merge instead, the way main does.
+	const state = new Proxy(
+		{},
+		{
+			get(_t, prop) {
+				if (prop !== 'setPrefs') return base?.state?.[prop];
+				return async (patch: Record<string, unknown>) => {
+					app.prefs = { ...(app.prefs ?? {}), ...patch };
+					return app.prefs;
+				};
+			}
+		}
+	);
+
 	w.api = new Proxy(base ?? {}, {
 		get(target, prop) {
 			if (prop === 'commitMessage') return commitMessageMock;
 			if (prop === 'events') return events;
+			if (prop === 'state') return state;
 			return Reflect.get(target, prop);
 		}
 	});
@@ -265,5 +294,7 @@ const MODELS: Record<CommitMessageHarness, { id: string; label: string }[]> = {
 		{ id: 'claude-haiku-4.5', label: 'Haiku 4.5' },
 		{ id: 'gpt-5-mini', label: 'GPT-5 mini' }
 	],
-	opencode: [{ id: 'opencode/grok-code', label: 'opencode/grok-code' }]
+	// OpenCode lists every authenticated provider at once, so the fixture keeps
+	// that shape (free zero-cost models first, then routers, then paid providers).
+	opencode: OPENCODE_MODELS
 };

@@ -22,6 +22,7 @@
 
 	let summary = $state('');
 	let description = $state('');
+	let commitButtonRef = $state<HTMLButtonElement | null>(null);
 
 	// A commit or undo this box started is in flight. It writes the box up front
 	// (emptying it on commit, restoring the message on undo) so those feel
@@ -537,6 +538,7 @@
 			<GenerateCommitMessageButton
 				disabled={!canGenerate && !generating}
 				onGenerated={applyGeneratedMessage}
+				onFocusAfterGenerate={() => commitButtonRef?.focus()}
 			/>
 		</div>
 	</div>
@@ -616,7 +618,7 @@
 		</div>
 	{/if}
 
-	<Button type="submit" size="sm" class="w-full" disabled={!canCommit}>
+	<Button bind:ref={commitButtonRef} type="submit" size="sm" class="w-full" disabled={!canCommit}>
 		{#if busy}
 			<Loader2 class="size-3.5 animate-spin" />
 			<span class="text-xs">Committing…</span>

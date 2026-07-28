@@ -6,12 +6,14 @@
 	import Settings2 from '@lucide/svelte/icons/settings-2';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Button } from './ui/button';
+	import { Textarea } from './ui/textarea';
 	import { confirmDelete } from './ui/confirm-delete-dialog';
 	import AgentsConventionIcon from './AgentsConventionIcon.svelte';
 	import CommitMessageModelPicker from './CommitMessageModelPicker.svelte';
 	import HarnessLogo from './HarnessLogo.svelte';
 	import { actions, app, effectiveCommitMessageHarness } from '@super-review/ui/store.svelte';
 	import { cn } from '@super-review/ui/utils';
+	import { DEFAULT_COMMIT_MESSAGE_BASE_PROMPT } from '@super-review/core/commit-message-prompt';
 	import {
 		AI_CONFIG_TARGETS,
 		BUNDLED_SKILLS,
@@ -38,6 +40,26 @@
 	const harnessStatus = $derived(app.commitMessageHarnesses);
 	// Pref when set and installed; otherwise the first installed CLI (auto-fallback).
 	const selectedHarness = $derived(effectiveCommitMessageHarness());
+
+	// The instructions half of the prompt — the app appends the branch, file list,
+	// patch, and output format to whatever is in here. Held as a draft and written
+	// on blur so every keystroke isn't a disk write; an empty box means "default".
+	let promptDraft = $state(
+		app.prefs?.commitMessagePrompt?.trim() || DEFAULT_COMMIT_MESSAGE_BASE_PROMPT
+	);
+	const promptIsDefault = $derived(promptDraft.trim() === DEFAULT_COMMIT_MESSAGE_BASE_PROMPT);
+
+	async function persistPrompt(): Promise<void> {
+		const next = promptDraft.trim();
+		const current = app.prefs?.commitMessagePrompt?.trim() || DEFAULT_COMMIT_MESSAGE_BASE_PROMPT;
+		if (next === current) return;
+		await actions.setCommitMessagePrompt(next === DEFAULT_COMMIT_MESSAGE_BASE_PROMPT ? '' : next);
+	}
+
+	function resetPrompt(): void {
+		promptDraft = DEFAULT_COMMIT_MESSAGE_BASE_PROMPT;
+		void persistPrompt();
+	}
 
 	function selectCommitMessageHarness(harness: CommitMessageHarness): void {
 		if (!harnessStatus?.[harness]) return;
@@ -210,6 +232,28 @@
 					{/if}
 				</div>
 			{/each}
+		</div>
+
+		<div class="mt-4 space-y-2">
+			<div class="flex items-end justify-between gap-3">
+				<div>
+					<h4 class="text-sm font-medium">Prompt</h4>
+					<p class="mt-0.5 text-xs text-muted-foreground">
+						Your instructions. The branch, the staged files, the patch, and the output format are
+						added automatically.
+					</p>
+				</div>
+				{#if !promptIsDefault}
+					<Button variant="ghost" size="sm" class="shrink-0" onclick={resetPrompt}>Reset</Button>
+				{/if}
+			</div>
+			<Textarea
+				bind:value={promptDraft}
+				onblur={() => void persistPrompt()}
+				rows={4}
+				class="resize-none text-xs leading-snug"
+				placeholder={DEFAULT_COMMIT_MESSAGE_BASE_PROMPT}
+			/>
 		</div>
 	</section>
 

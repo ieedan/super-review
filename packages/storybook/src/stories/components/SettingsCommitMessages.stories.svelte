@@ -3,6 +3,8 @@
 	import SettingsDialog from '@super-review/ui/components/SettingsDialog.svelte';
 	import StoreScope from '../../lib/StoreScope.svelte';
 	import { seedStore } from '../../lib/store-harness';
+	import { app } from '@super-review/ui/store.svelte';
+	import { OPENCODE_MODELS } from '../../lib/commit-message-flow';
 	import type { CommitMessageHarness } from '@super-review/core/types';
 
 	// Settings > Agents > Commit messages: one row per supported harness CLI, each
@@ -18,12 +20,14 @@
 			{ id: 'composer-1', label: 'Composer 1' },
 			{ id: 'gpt-5', label: 'GPT-5' }
 		],
-		opencode: [{ id: 'openai/gpt-5-mini', label: 'GPT-5 mini' }]
+		// OpenCode's own picker groups this by provider, so keep the real slug shape.
+		opencode: OPENCODE_MODELS
 	};
 
 	// The panel re-detects on mount, and Storybook's blanket api stub resolves
 	// every call to `undefined` — which would wipe the seeded state. Wrap the
-	// stub so only `commitMessage` answers from the story's fixtures.
+	// stub so `commitMessage` answers from the story's fixtures and `setPrefs`
+	// merges instead of resolving undefined (picking a model has to stick).
 	let detected: Record<string, boolean> = {};
 
 	function installCommitMessageStub(): void {
@@ -36,9 +40,27 @@
 			listModels: async (harness: CommitMessageHarness) =>
 				MODELS[harness as keyof typeof MODELS] ?? []
 		};
+		const state = new Proxy(
+			{},
+			{
+				get: (_t, prop) =>
+					prop === 'setPrefs'
+						? async (patch: Record<string, unknown>) => {
+								app.prefs = { ...(app.prefs ?? {}), ...patch };
+								return app.prefs;
+							}
+						: base?.state?.[prop]
+			}
+		);
 		w.api = new Proxy(
 			{},
-			{ get: (_t, prop) => (prop === 'commitMessage' ? commitMessage : base[prop]) }
+			{
+				get: (_t, prop) => {
+					if (prop === 'commitMessage') return commitMessage;
+					if (prop === 'state') return state;
+					return base[prop];
+				}
+			}
 		);
 		w.__commitMessageStub = true;
 	}

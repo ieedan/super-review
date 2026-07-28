@@ -7,6 +7,7 @@
 	import {
 		DEFAULT_RESPONSE,
 		DEFAULT_TIMING,
+		OPENCODE_MODELS,
 		installCommitMessageMock
 	} from '../../lib/commit-message-flow';
 	import type { ChangedFile, CommitMessageHarness } from '@super-review/core/types';
@@ -66,9 +67,31 @@
 						{ id: 'claude-haiku-4.5', label: 'Haiku 4.5' },
 						{ id: 'gpt-5-mini', label: 'GPT-5 mini' }
 					],
-					opencode: [{ id: 'opencode/grok-code', label: 'opencode/grok-code' }]
+					opencode: OPENCODE_MODELS
 				},
 				prefs: { commitMessageHarness: harness }
+			});
+	}
+
+	// Nothing installed: effectiveCommitMessageHarness() is null and the sparkle is
+	// not rendered at all.
+	function seedNoAgents() {
+		return () =>
+			seedStore({
+				activeRepo: { id: 'repo-1', name: 'super-review', path: '/tmp/super-review' },
+				currentBranch: 'feat/harness-commit-messages',
+				changedFiles: FILES,
+				commitMessageGenerating: false,
+				commitMessageStream: '',
+				commitMessageHarnesses: {
+					cursor: false,
+					'claude-code': false,
+					codex: false,
+					copilot: false,
+					opencode: false
+				},
+				commitMessageModels: {},
+				prefs: {}
 			});
 	}
 
@@ -130,6 +153,16 @@
 			<CommitMessageStepper
 				response={{ reasoning: args.reasoning, subject: args.subject, body: args.body }}
 			/>
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<!-- No agent CLI on the machine: the Summary field has no sparkle in it, and
+     there is nothing to configure until one is installed. -->
+<Story name="No Agents Installed">
+	{#snippet template()}
+		<StoreScope frame={false} setup={seedNoAgents()}>
+			<CommitMessageFlowRunner response={DEFAULT_RESPONSE} timing={DEFAULT_TIMING} />
 		</StoreScope>
 	{/snippet}
 </Story>
