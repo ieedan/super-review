@@ -8,7 +8,6 @@
 	//    agents can't document their changes here for review.
 	// They render through Stack, which arranges them like a Sonner stack (hover to
 	// expand, dismiss one by one with a smooth exit).
-	import CircleStop from '@lucide/svelte/icons/circle-stop';
 	import OfflineIcon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { actions, app, effectiveCommitMessageHarness } from '@super-review/ui/store.svelte';
 	import { SUPER_REVIEW_ICON } from '@super-review/ui/file-icons';
@@ -242,7 +241,16 @@
 									title="Stop generating"
 									onclick={() => void actions.cancelChangesetGeneration()}
 								>
-									<CircleStop class="size-3.5" />
+									<!-- A glyph, not an icon component: the shimmer paints through
+									     `background-clip: text`, so it only sweeps across text. This
+									     is the same trick the commit box's sparkle uses, with the
+									     same small spread — the default (3ch + 40px) is tuned for a
+									     line of prose and would fade the whole glyph instead of
+									     sweeping it. -->
+									<span
+										class="shimmer shimmer-color-primary shimmer-spread-[7px] shimmer-duration-1000 text-[11px] leading-none"
+										aria-hidden="true">■</span
+									>
 									<span class="sr-only">Stop generating</span>
 								</Button>
 							{/snippet}
