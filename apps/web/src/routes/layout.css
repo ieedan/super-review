@@ -141,6 +141,16 @@ body {
 	overflow-x: hidden;
 }
 
+/* Every enabled button gets a pointer cursor. Same selector shadcn uses for its
+   `pointer` option, and it lives in @layer base so a component that sets its own
+   `cursor-*` utility (cursor-default, cursor-not-allowed) still wins. */
+@layer base {
+	button:not(:disabled),
+	[role='button']:not(:disabled) {
+		cursor: pointer;
+	}
+}
+
 ::selection {
 	background: var(--color-flame);
 	color: hsl(20 8% 6%);

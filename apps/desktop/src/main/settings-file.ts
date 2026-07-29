@@ -56,6 +56,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	accent: 'super',
 	externalEditor: null,
 	externalTerminal: null,
+	commitMessageHarness: null,
+	commitMessagePrompt: null,
+	commitMessageModels: {},
+	changesetPrompt: null,
 	unstagedFileListLayout: 'tree',
 	branchFileListLayout: 'tree',
 	showFileIcons: true,
@@ -93,6 +97,7 @@ export const SETTINGS_KEYS = new Set(Object.keys(DEFAULT_SETTINGS)) as ReadonlyS
 
 const editorEnum = z.enum(['cursor', 'vscode', 'zed', 'xcode', 'visualstudio']);
 const terminalEnum = z.enum(['terminal', 'iterm', 'warp', 'ghostty', 'cmd', 'powershell']);
+const commitMessageHarnessEnum = z.enum(['claude-code', 'cursor', 'codex', 'opencode', 'copilot']);
 const statMetricEnum = z.enum([...STAT_METRICS] as [StatMetric, ...StatMetric[]]);
 // A visibility map (headerItems, sidebarTabs, ...): a record of booleans. Kept
 // loose on purpose — store.ts merges it over the typed defaults, so a partial or
@@ -111,6 +116,10 @@ const FIELD_SCHEMAS: { [K in keyof AppSettings]-?: z.ZodType } = {
 	accent: z.enum(['super', 'mono']),
 	externalEditor: editorEnum.nullable(),
 	externalTerminal: terminalEnum.nullable(),
+	commitMessageHarness: commitMessageHarnessEnum.nullable(),
+	commitMessagePrompt: z.string().nullable(),
+	commitMessageModels: z.record(z.string(), z.string()),
+	changesetPrompt: z.string().nullable(),
 	unstagedFileListLayout: z.enum(['tree', 'list']),
 	branchFileListLayout: z.enum(['tree', 'list']),
 	showFileIcons: z.boolean(),

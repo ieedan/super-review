@@ -20,7 +20,10 @@
 		"./session-manifest": "./src/session-manifest.ts",
 		"./usage-stats": "./src/usage-stats.ts",
 		"./license-claims": "./src/license-claims.ts",
-		"./license-verify": "./src/license-verify.ts"
+		"./license-verify": "./src/license-verify.ts",
+		"./commit-message-prompt": "./src/commit-message-prompt.ts",
+		"./changeset-prompt": "./src/changeset-prompt.ts",
+		"./model-label": "./src/model-label.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",

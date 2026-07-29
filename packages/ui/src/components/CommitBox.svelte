@@ -10,6 +10,9 @@
 	import { Input } from './ui/input';
 	import { Textarea } from './ui/textarea';
 	import AccountSwitcher from './AccountSwitcher.svelte';
+	import GenerateCommitMessageButton from './GenerateCommitMessageButton.svelte';
+	import CommitMessageWaiting from './CommitMessageWaiting.svelte';
+	import StreamingText from './StreamingText.svelte';
 	import {
 		actions,
 		app,
@@ -17,9 +20,27 @@
 		effectiveGithubAccount
 	} from '@super-review/ui/store.svelte';
 	import { isChangesetPath, parseChangesetMessage } from '@super-review/ui/changeset';
+	import { useAnimations } from '@super-review/ui/hooks/use-animations.svelte';
+	import { useStreamReveal } from '@super-review/ui/hooks/use-stream-reveal.svelte';
+	import { cn } from '@super-review/ui/utils';
+	import { splitStreamingMessage } from '@super-review/ui/commit-message-stream';
+	import { type LastCommit } from '@super-review/core/types';
 
 	let summary = $state('');
 	let description = $state('');
+	let commitButtonRef = $state<HTMLButtonElement | null>(null);
+
+	const animations = useAnimations();
+
+	// A commit or undo this box started is in flight. It writes the box up front
+	// (emptying it on commit, restoring the message on undo) so those feel
+	// instant, which means the auto-fills below must not treat what they see
+	// mid-flight as a box waiting to be filled. Covers the window before
+	// `app.push.inProgress` is set, too.
+	let boxBusy = $state(false);
+
+	// A commit is running (started here or elsewhere, e.g. the fork flow).
+	const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
 
 	// Provenance of an auto-filled message: the changeset it came from plus the
 	// exact text we wrote. Kept only while the box still matches that text — the
@@ -143,6 +164,10 @@
 		// applies to the current changes.
 		if (sessionSuggestion) return;
 
+		// A commit/undo in flight empties (or rewrites) the box before its changes
+		// land, so don't read that as an empty box waiting to be filled.
+		if (boxBusy || busy) return;
+
 		if (!repoId || changesetPaths.length !== 1) return;
 		const path = changesetPaths[0];
 		if (filledChangesets.has(path)) return;
@@ -160,8 +185,9 @@
 		} catch {
 			return;
 		}
-		// The repo switched or the user started typing while we were fetching.
-		if (app.activeRepo?.id !== repoId) return;
+		// The repo switched, a commit/undo took the box, or the user started typing
+		// while we were fetching.
+		if (app.activeRepo?.id !== repoId || boxBusy) return;
 		if (summary.trim() || description.trim()) return;
 		const parsed = parseChangesetMessage(diff.newContents);
 		if (!parsed) return;
@@ -231,6 +257,8 @@
 		}
 
 		// Fresh fill: only into an empty box, and only once per session revision.
+		// Same as above: an in-flight commit/undo owns the box until it settles.
+		if (boxBusy || busy) return;
 		if (!s || !title) return;
 		const key = `${s.id}:${s.updatedAt}`;
 		if (filledSessions.has(key)) return;
@@ -249,31 +277,36 @@
 		if (summary !== d.title) detectedSession = null;
 	});
 
+	// True while the box still holds exactly what we auto-filled into it (from a
+	// changeset or a session), i.e. nothing the user typed themselves. Checked
+	// against the text rather than just `detected* != null` because oninput fires
+	// before the divergence effects run, so an edit can look auto-filled for one
+	// tick. Such a message is re-derived live from the working tree, so it's never
+	// persisted, and it's safe to replace.
+	function isAutoFilled(): boolean {
+		const changesetAutoFilled =
+			detectedChangeset !== null &&
+			summary === detectedChangeset.summary &&
+			description === detectedChangeset.description;
+		// A session fill only ever wrote the Summary, so it counts as untouched only
+		// while no Description has been typed alongside it.
+		const sessionAutoFilled =
+			detectedSession !== null &&
+			summary === detectedSession.title &&
+			description.trim().length === 0;
+		return changesetAutoFilled || sessionAutoFilled;
+	}
+
 	// Debounce persistence so we're not writing the store on every keystroke.
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	function persistDraft(): void {
 		const repoId = app.activeRepo?.id;
 		if (!repoId) return;
 		clearTimeout(saveTimer);
-		// Never persist an untouched auto-filled message. While the box still matches
-		// exactly what we wrote from a changeset (provenance intact), the message is
-		// re-derived live from the working tree each session — persisting it would
-		// resurrect it even after the changeset is committed. Checked explicitly (not
-		// just `detectedChangeset != null`) because oninput fires before the divergence
-		// effect runs, so an edit could otherwise look auto-filled for one tick.
-		const changesetAutoFilled =
-			detectedChangeset !== null &&
-			summary === detectedChangeset.summary &&
-			description === detectedChangeset.description;
-		// A session-filled Summary is likewise re-derived live (from the session that
-		// still matches the working tree), so don't persist it either; only when it's
-		// untouched (Summary still the title, no extra Description typed).
-		const sessionAutoFilled =
-			detectedSession !== null &&
-			summary === detectedSession.title &&
-			description.trim().length === 0;
-		const autoFilled = changesetAutoFilled || sessionAutoFilled;
-		const snapshot = autoFilled ? { summary: '', description: '' } : { summary, description };
+		// Never persist an untouched auto-filled message: it's re-derived live from
+		// the working tree each session, so persisting it would resurrect it even
+		// after its changeset/session is committed.
+		const snapshot = isAutoFilled() ? { summary: '', description: '' } : { summary, description };
 		saveTimer = setTimeout(() => {
 			void window.api.state.setCommitDraft(repoId, snapshot);
 		}, 300);
@@ -286,7 +319,116 @@
 
 	onDestroy(() => clearTimeout(saveTimer));
 
-	const busy = $derived(app.push.inProgress && app.push.stage === 'committing');
+	const generating = $derived(app.commitMessageGenerating);
+
+	// The overlay paints inside the field's own box, so both take their padding
+	// and type scale from one place. A mismatch shows up as the text changing
+	// size the moment the real value replaces the painted one — which is exactly
+	// what the Input's base `md:text-sm` did to a bare `text-xs`.
+	//
+	// The Summary's padding is a pixel light on top on purpose. A field centers
+	// its value on the font's em box, descent and all, and this font reserves more
+	// descent than a commit subject uses: measured in the box, the ink of one runs
+	// 8.8px below the top and 6.3px above the bottom, which reads as the message
+	// sitting low in a field this short. Taking a pixel off the top and giving it
+	// back at the bottom centers what you actually see. The overlay shares the
+	// metrics, so the painted words move with it.
+	const SUMMARY_METRICS = 'px-2.5 pt-[3px] pb-[5px] pr-8 text-xs md:text-sm';
+	const BODY_METRICS = 'px-2 py-1.5 text-xs';
+
+	// Nothing corrects the overlay onto the pixel grid, and nothing should: an
+	// Input puts its value at a fixed offset from its own border box wherever that
+	// box lands, fractional pixels and all, so a correction read off the field's
+	// subpixel position is an offset the field itself never had. `items-center` on
+	// the overlay lands on the same offset: identical at the xs scale, a quarter
+	// pixel high at sm, which is where the browser rounds a line box's leading and
+	// the field does not.
+	//
+	// The roll that hands the field over from the waiting row to the message (see
+	// the markup) moves `top` rather than `transform`, which is what everything
+	// else here animates. A transform transition puts the message on its own
+	// compositing layer, and a layer rounds its own position to whole pixels, which
+	// is enough to leave the painted words a pixel off the value that replaces
+	// them. Chrome keeps that layer well after the transition ends, so the message
+	// was still off when the run landed seconds later, and it only ever showed on a
+	// real run: stepping through by hand never runs the transition. Offsetting a
+	// relatively positioned box composites nothing, so the words stay put.
+	//
+	// Once the roll has played the status row is dropped, which stops its shimmer
+	// and its phase timer running on off-screen work for the rest of the run. On a
+	// timer rather than `transitionend`, which never arrives when the run is cut
+	// short, the window is in the background, or motion is reduced.
+	const ROLL_MS = 400; // keep in step with `duration-400` in the markup
+	let rolled = $state(false);
+
+	$effect(() => {
+		if (!painting || awaitingFirstToken || rolled) return;
+		const timer = setTimeout(() => (rolled = true), ROLL_MS);
+		return () => clearTimeout(timer);
+	});
+
+	// How a painted-over field hides its own text. Not `text-transparent`: `color`
+	// is in the field's `transition-colors`, so when the overlay comes down the
+	// real value would fade in from transparent over 150ms while the painted words
+	// vanish instantly — the message blinking out and back at the very end of the
+	// run. `-webkit-text-fill-color` isn't transitioned, so the handoff is a single
+	// frame, which is the whole point of latching the paint in the first place.
+	const HIDE_FIELD_TEXT = '[-webkit-text-fill-color:transparent]';
+
+	// While a run is streaming, the message is painted over the two fields rather
+	// than written into them: the box keeps whatever the user had until the run
+	// actually lands, so a cancel or a failure costs them nothing. The overlays
+	// mirror each field's box metrics exactly (see the markup below).
+	//
+	// The painted text is latched rather than read live, and the paint outlives
+	// `generating` on purpose. The store drops the run (generating false, stream
+	// cleared) one update *before* the finished message reaches this component,
+	// so a paint tied to `generating` would leave the box showing its old, empty
+	// self for a frame — the message vanishing and reappearing. Instead the paint
+	// ends where the values are written, in the same update (applyGeneratedMessage),
+	// or a tick after the run stops when nothing was written (cancel, failure).
+	let painting = $state(false);
+	let painted = $state<{ subject: string; body: string }>({ subject: '', body: '' });
+	let paintRun = 0;
+
+	// What has arrived is not what gets painted: no harness streams a token at a
+	// time, so the answer lands in slabs big enough to hold the whole subject, and
+	// painting it raw is the message appearing in one frame. The reveal walks
+	// through the raw answer instead, before the split below, so Summary fills and
+	// then Description does — in the order the model wrote them.
+	const reveal = useStreamReveal(
+		() => app.commitMessageAnswer,
+		() => animations.accentsEnabled
+	);
+
+	$effect(() => {
+		const live = splitStreamingMessage(reveal.text);
+		if (generating) {
+			untrack(() => {
+				if (!painting) {
+					painting = true;
+					painted = { subject: '', body: '' };
+					paintRun++;
+					rolled = false;
+				}
+				if (live.subject || live.body) painted = live;
+			});
+			return;
+		}
+		if (!untrack(() => painting)) return;
+		const run = ++paintRun;
+		queueMicrotask(() => {
+			if (run === paintRun) endPaint();
+		});
+	});
+
+	function endPaint(): void {
+		painting = false;
+		painted = { subject: '', body: '' };
+	}
+
+	// Nothing back from the CLI yet — the field says so instead of sitting blank.
+	const awaitingFirstToken = $derived(painting && !painted.subject && !painted.body);
 	// Only the checked files get committed (see the Unstaged tab checkboxes).
 	// Everything is included unless explicitly excluded.
 	const includedFiles = $derived(
@@ -294,6 +436,7 @@
 	);
 	const fileCount = $derived(includedFiles.length);
 	const branch = $derived(app.currentBranch ?? 'detached HEAD');
+	const canGenerate = $derived(!busy && !generating && fileCount > 0);
 
 	// GitHub Desktop parity: for a single-file change, suggest a commit message
 	// ("Create/Update/Delete <file>") so the user can commit without typing one.
@@ -315,7 +458,7 @@
 	// What the commit actually uses: the typed Summary, or the suggestion when the
 	// user left Summary blank.
 	const effectiveSummary = $derived(summary.trim() || suggestedSummary);
-	const canCommit = $derived(!busy && fileCount > 0 && effectiveSummary.length > 0);
+	const canCommit = $derived(!busy && !generating && fileCount > 0 && effectiveSummary.length > 0);
 
 	// No write access to origin — committing/pushing has to go through a fork
 	// first (GitHub Desktop parity). false only on a definitive "no" from the API.
@@ -333,11 +476,23 @@
 			return;
 		}
 		const repoId = app.activeRepo?.id;
-		const ok = await actions.commit(finalSummary, description);
-		if (ok) {
-			summary = '';
-			description = '';
-			if (repoId) clearDraft(repoId);
+		// Empty the box up front rather than after the commit lands: the git work
+		// plus the refreshes behind it take long enough that waiting reads as lag.
+		const restore = { summary, description };
+		boxBusy = true;
+		summary = '';
+		description = '';
+		if (repoId) clearDraft(repoId);
+		try {
+			const ok = await actions.commit(finalSummary, restore.description);
+			// Nothing was committed — hand the message back so it isn't lost.
+			if (!ok) {
+				summary = restore.summary;
+				description = restore.description;
+				persistDraft();
+			}
+		} finally {
+			boxBusy = false;
 		}
 	}
 
@@ -384,12 +539,71 @@
 	// null = still resolving / unknown; true = pushable; false = will be rejected.
 	const pushAccess = $derived(app.branchPRPushAccess);
 
-	const lastCommit = $derived(app.lastCommit);
-	const canUndo = $derived(!busy && (lastCommit?.canUndo ?? false));
+	// The commit the undo row shows. A commit/undo of ours churns the store while
+	// it runs — `push.stage` flips to 'done' as soon as git returns, before the
+	// refreshes behind it land — so reading `app.lastCommit` straight through made
+	// the row vanish, flash the commit that was just undone, then vanish again.
+	// While an operation is in flight we therefore keep showing the commit we
+	// already had, and swap only once the store hands us a genuinely different
+	// one. That happens as soon as git reports the new HEAD (the store publishes
+	// it before its refreshes), so the row updates immediately and exactly once.
+	let heldCommit: LastCommit | null = null;
+	const undoTarget = $derived.by(() => {
+		const current = app.lastCommit;
+		// Settled: follow the store exactly, which keeps "Committed N minutes ago"
+		// ticking over as later refreshes re-read the same commit.
+		if ((!busy && !boxBusy) || current?.hash !== heldCommit?.hash) heldCommit = current;
+		return heldCommit;
+	});
+	// Row visibility: held, so it survives the in-flight churn.
+	const showUndo = $derived(undoTarget?.canUndo ?? false);
+	// The button itself is only live once nothing is in flight.
+	const canUndo = $derived(!busy && !boxBusy && showUndo);
 
 	async function undo(): Promise<void> {
-		if (!canUndo) return;
-		await actions.undoLastCommit();
+		const lastCommit = undoTarget;
+		if (!canUndo || !lastCommit) return;
+		// Put the undone commit's message straight back in the box (GitHub Desktop
+		// parity) — undoing is usually the first step of amending it. Done up front,
+		// off `lastCommit` (which already carries the message), so the box fills the
+		// instant the button is pressed rather than after the git round-trip. A
+		// message the user typed themselves is left alone; auto-filled text isn't.
+		const restore = { summary, description };
+		const userTyped =
+			!isAutoFilled() && (summary.trim().length > 0 || description.trim().length > 0);
+		boxBusy = true;
+		if (!userTyped) {
+			detectedChangeset = null;
+			detectedSession = null;
+			summary = lastCommit.subject;
+			description = lastCommit.body;
+			persistDraft();
+		}
+		try {
+			const ok = await actions.undoLastCommit();
+			// The undo failed and the commit is still there — put the box back.
+			if (!ok && !userTyped) {
+				summary = restore.summary;
+				description = restore.description;
+				persistDraft();
+			}
+		} finally {
+			boxBusy = false;
+		}
+	}
+
+	async function applyGeneratedMessage(result: { subject: string; body: string }): Promise<void> {
+		// Explicit generate always overwrites; clear session/changeset provenance
+		// so we don't treat the AI fill as re-derivable auto-fill.
+		detectedChangeset = null;
+		detectedSession = null;
+		summary = result.subject;
+		description = result.body;
+		// Same update as the values: the overlay comes down and the real text
+		// appears together, so there is no frame showing neither.
+		paintRun++;
+		endPaint();
+		persistDraft();
 	}
 </script>
 
@@ -432,26 +646,97 @@
 				</span>
 			{/snippet}
 		</AccountSwitcher>
-		<Input
-			type="text"
-			bind:value={summary}
-			oninput={persistDraft}
-			onkeydown={onKeydown}
-			placeholder={suggestedSummary || 'Summary (required)'}
-			disabled={busy}
-			class="h-7 min-w-0 flex-1 text-xs"
-		/>
+		<div class="relative min-w-0 flex-1">
+			<Input
+				type="text"
+				bind:value={summary}
+				oninput={persistDraft}
+				onkeydown={onKeydown}
+				placeholder={painting ? '' : suggestedSummary || 'Summary (required)'}
+				readonly={painting}
+				disabled={busy}
+				class={cn('h-7 min-w-0', SUMMARY_METRICS, painting && HIDE_FIELD_TEXT)}
+			/>
+			{#if painting}
+				<!-- Same box as the Input (pr-8 clears the sparkle), so the words land
+				     exactly where the real value will sit. `inset-0` covers the field's
+				     border box, so the overlay needs the field's own 1px border back —
+				     without it the padding starts a pixel early and the text nudges
+				     sideways the moment the real value lands. Vertically, `items-center`
+				     over the same padding is all it takes (see the note above). -->
+				<div
+					class={cn(
+						'pointer-events-none absolute inset-0 flex items-center overflow-hidden border border-transparent',
+						SUMMARY_METRICS
+					)}
+				>
+					<!-- The waiting row and the message it gives way to share one
+					     line-tall window, stacked: when the first token lands the stack
+					     rolls up a line, so the status leaves the same way the phases
+					     inside it move on rather than being cut. Once it lands, the status
+					     row and the transform both go (see `rolled`) — the message keeps
+					     its DOM, so dropping them moves nothing and replays nothing. -->
+					<span class="block h-[1lh] min-w-0 flex-1 overflow-hidden">
+						<span
+							class={cn(
+								'relative block',
+								!rolled &&
+									animations.accentsEnabled &&
+									'transition-[top] duration-400 ease-[cubic-bezier(0.19,1,0.22,1)] motion-reduce:transition-none'
+							)}
+							style={rolled ? undefined : `top: calc(${awaitingFirstToken ? 0 : -1} * 1lh)`}
+						>
+							{#if !rolled}
+								<span class="block mt-[0.5px] h-[1lh]">
+									<CommitMessageWaiting />
+								</span>
+							{/if}
+							<!-- A subject longer than the field clips at the same edge the Input
+							     clips its own value at: one line, no ellipsis, so nothing moves
+							     when the real value lands. `whitespace-nowrap` is explicit because
+							     `truncate` alone loses to StreamingText's `whitespace-pre-wrap` —
+							     they are separate merge groups, so both survive and the subject
+							     wraps mid-run. -->
+							<span class="block h-[1lh] mt-[0.5px] overflow-hidden">
+								<StreamingText text={painted.subject} class="whitespace-nowrap" />
+							</span>
+						</span>
+					</span>
+				</div>
+			{/if}
+			<GenerateCommitMessageButton
+				disabled={!canGenerate && !generating}
+				onGenerated={applyGeneratedMessage}
+				onFocusAfterGenerate={() => commitButtonRef?.focus()}
+			/>
+		</div>
 	</div>
 
-	<Textarea
-		bind:value={description}
-		oninput={persistDraft}
-		onkeydown={onKeydown}
-		placeholder="Description"
-		rows={3}
-		disabled={busy}
-		class="min-h-0 resize-none px-2 py-1.5 text-xs"
-	/>
+	<div class="relative">
+		<Textarea
+			bind:value={description}
+			oninput={persistDraft}
+			onkeydown={onKeydown}
+			placeholder={painting ? '' : 'Description'}
+			rows={3}
+			readonly={painting}
+			disabled={busy}
+			class={cn('min-h-0 resize-none', BODY_METRICS, painting && HIDE_FIELD_TEXT)}
+		/>
+		{#if painting}
+			<!-- Mirrors the Textarea's box, border included (see the Summary overlay).
+			     no-scrollbar because it follows the stream itself; nobody scrolls back
+			     through a body still being written. -->
+			<div
+				class={cn(
+					'no-scrollbar pointer-events-none absolute inset-0 overflow-y-auto border border-transparent',
+					BODY_METRICS
+				)}
+			>
+				<StreamingText text={painted.body} />
+			</div>
+		{/if}
+	</div>
 
 	{#if authError}
 		<div
@@ -518,7 +803,7 @@
 		</div>
 	{/if}
 
-	<Button type="submit" size="sm" class="w-full" disabled={!canCommit}>
+	<Button bind:ref={commitButtonRef} type="submit" size="sm" class="w-full" disabled={!canCommit}>
 		{#if busy}
 			<Loader2 class="size-3.5 animate-spin" />
 			<span class="text-xs">Committing…</span>
@@ -534,17 +819,24 @@
 	</Button>
 </form>
 
-{#if canUndo && lastCommit}
+{#if showUndo && undoTarget}
 	<div
 		class="flex items-center gap-2 border-t border-border bg-card/75 px-2 py-1.5 backdrop-blur-md"
 	>
 		<div class="min-w-0 flex-1">
 			<p class="truncate text-[11px] text-muted-foreground">
-				Committed {lastCommit.relativeTime}
+				Committed {undoTarget.relativeTime}
 			</p>
-			<p class="truncate text-xs">{lastCommit.subject}</p>
+			<p class="truncate text-xs">{undoTarget.subject}</p>
 		</div>
-		<Button type="button" size="sm" variant="outline" class="h-7 shrink-0 text-xs" onclick={undo}>
+		<Button
+			type="button"
+			size="sm"
+			variant="outline"
+			class="h-7 shrink-0 text-xs"
+			disabled={!canUndo}
+			onclick={undo}
+		>
 			Undo
 		</Button>
 	</div>

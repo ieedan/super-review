@@ -317,11 +317,14 @@ export interface ChangesetStatus {
 	branchChangesets: { path: string; packages: string[]; added: boolean }[];
 }
 
+// How much a changeset bumps a package.
+export type ChangesetBump = 'patch' | 'minor' | 'major';
+
 // Input for writing a new changeset: one bump type applied to every selected
 // package, plus a markdown description that becomes the file body.
 export interface CreateChangesetInput {
 	packages: string[];
-	bump: 'patch' | 'minor' | 'major';
+	bump: ChangesetBump;
 	description: string;
 	// Optional filename slug (no extension); used as `.changeset/<name>.md` when it
 	// is a safe slug and not already taken, else a random one is generated. Lets the
@@ -329,9 +332,71 @@ export interface CreateChangesetInput {
 	name?: string;
 }
 
+// A changeset file an agent wrote, read back off disk after its run. The agent
+// writes the files itself (it has the whole repo to look at, and one file per
+// distinct change is its call), so this is what we found, not what it promised.
+export interface GeneratedChangesetFile {
+	// Repo-relative path, e.g. `.changeset/brave-otters-jog.md`.
+	path: string;
+	// Packages its frontmatter bumps.
+	packages: string[];
+	// First line of the body, for reporting what landed.
+	summary: string;
+}
+
+// What the renderer sends when the user clicks the sparkle on the "Add a
+// changeset?" notice. No diff rides along: a changeset describes the whole
+// branch, and the agent explores it with its own tools.
+export interface GenerateChangesetRequest {
+	branch: string | null;
+	// Preferred harness from prefs; main process falls back if missing/uninstalled.
+	preferredHarness?: CommitMessageHarness | null;
+	// Editable base instructions (style only). Empty/omitted uses the default.
+	basePrompt?: string | null;
+	// Model id for the chosen harness. Empty/omitted uses that harness's default.
+	model?: string | null;
+}
+
+export interface GenerateChangesetResult {
+	ok: boolean;
+	harness?: CommitMessageHarness;
+	// The changeset files the run added or rewrote. Present only on success.
+	written?: GeneratedChangesetFile[];
+	// Packages the written changesets reference that this workspace doesn't
+	// release — `changeset version` would fail on them, so the UI warns.
+	unknownPackages?: string[];
+	// Files outside `.changeset/` the run touched despite being told not to.
+	// Nothing is reverted; the user is told so they can look.
+	strayPaths?: string[];
+	error?: string;
+	code?: 'no-harness' | 'not-installed' | 'timeout' | 'failed' | 'empty' | 'cancelled';
+}
+
+// Progress while an agent works on a branch's changesets. Unlike commit-message
+// generation there is no answer to stream — the output is files on disk — so the
+// only channel is a short line about what the agent is doing right now
+// ("Reading store.svelte.ts", "Running git diff"), for the shimmering notice.
+export interface ChangesetProgressEvent {
+	status: string;
+}
+
 // Which coding-agent harness produced a session. Drives the logo shown on the
 // session card; "other" falls back to a generic icon + `harnessLabel`.
 export type HarnessKind = 'claude-code' | 'cursor' | 'codex' | 'opencode' | 'copilot' | 'other';
+
+// Harnesses that can generate commit messages via a local CLI. Same set as the
+// big coding agents we detect for install, minus freeform `other`.
+export type CommitMessageHarness = Exclude<HarnessKind, 'other'>;
+
+// Fixed detection / fallback order when the user hasn't picked a preferred
+// harness (or their pick isn't installed).
+export const COMMIT_MESSAGE_HARNESS_PRIORITY: readonly CommitMessageHarness[] = [
+	'cursor',
+	'claude-code',
+	'codex',
+	'copilot',
+	'opencode'
+] as const;
 
 // Human display labels for each harness. The matching logos live in the UI's
 // HarnessLogo component; this map is the browser-safe source of truth for the
@@ -1328,6 +1393,11 @@ export interface CommitResult {
 	// used to record "files/lines committed" usage stats. Present only on success.
 	filesCommitted?: number;
 	linesCommitted?: number;
+	// HEAD as the operation left it — the new commit after a commit, the parent
+	// after an undo, null when that leaves HEAD unborn. Lets the caller update the
+	// "last commit" row right away instead of waiting on the refresh chain (which
+	// includes a GitHub round-trip). Present only on success.
+	lastCommit?: LastCommit | null;
 }
 
 // One file's contribution to a commit. For whole-file staging only `path`
@@ -1341,6 +1411,47 @@ export interface CommitFileSelection {
 	patch?: string;
 }
 
+// Which harness CLIs are installed and on PATH. Drives the Agents settings
+// picker and the "set up commit message generation" notice.
+export type CommitMessageHarnessStatus = Record<CommitMessageHarness, boolean>;
+
+// What the renderer sends when the user clicks Generate in the commit box.
+// Selections match what Commit would include (checked files + filtered patches).
+export interface GenerateCommitMessageRequest {
+	branch: string | null;
+	selections: CommitFileSelection[];
+	// Preferred harness from prefs; main process falls back if missing/uninstalled.
+	preferredHarness?: CommitMessageHarness | null;
+	// Editable base instructions (no files/patch). Empty/omitted uses the default.
+	basePrompt?: string | null;
+	// Model id for the chosen harness. Empty/omitted uses that harness's default.
+	model?: string | null;
+}
+
+export interface GenerateCommitMessageResult {
+	ok: boolean;
+	subject?: string;
+	body?: string;
+	harness?: CommitMessageHarness;
+	error?: string;
+	code?: 'no-harness' | 'timeout' | 'failed' | 'empty' | 'cancelled';
+}
+
+// A model option for the commit-message generate popover.
+export interface CommitMessageModelOption {
+	id: string;
+	label: string;
+}
+
+// Progress while a commit message is generating. The two channels are kept
+// apart because they land in different places: the answer is the commit message
+// itself and streams straight into the commit box, while the reasoning is just
+// the model thinking out loud.
+export interface CommitMessageProgressEvent {
+	reasoning: string;
+	answer: string;
+}
+
 // One file to discard. `oldPath` is the pre-rename path, so discarding a rename
 // also restores the original. Shared by the single- and bulk-discard APIs.
 export interface DiscardTarget {
@@ -1351,6 +1462,10 @@ export interface DiscardTarget {
 export interface LastCommit {
 	hash: string;
 	subject: string;
+	// The message below the subject, blank separator line already dropped.
+	// Empty for a subject-only commit. Lets undo restore the full message to the
+	// commit box with no round-trip.
+	body: string;
 	// Relative time string straight from git (e.g. "2 minutes ago").
 	relativeTime: string;
 	// True when the commit has not yet been pushed to any remote, so undoing it
@@ -1604,6 +1719,18 @@ export interface UserPrefs {
 	contextTab?: ContextTab;
 	externalEditor?: EditorKind | null;
 	externalTerminal?: TerminalKind | null;
+	// Preferred coding-harness CLI for generating commit messages. Null means
+	// auto-pick the first installed harness. Excludes `other` (no CLI to spawn).
+	commitMessageHarness?: CommitMessageHarness | null;
+	// Editable base prompt for commit-message generation (no files/patch). Null
+	// or empty means the built-in default. Persisted so the popover remembers it.
+	commitMessagePrompt?: string | null;
+	// Preferred model id per harness for commit-message generation.
+	commitMessageModels?: Partial<Record<CommitMessageHarness, string>>;
+	// Editable base prompt for changeset generation (no packages/patch). Null or
+	// empty means the built-in default. Shares the harness/model prefs above;
+	// only the instructions differ between the two kinds of generation.
+	changesetPrompt?: string | null;
 	// File list layout is tracked per sidebar tab so the user can keep, say, a
 	// tree in Unstaged and a flat list in Branch.
 	unstagedFileListLayout: FileListLayout;
@@ -2217,6 +2344,14 @@ export interface PreloadAPI {
 		create(repoId: string, input: CreateChangesetInput): Promise<string>;
 		// Delete a changeset file by its repo-relative path (e.g. an unnecessary one).
 		remove(repoId: string, path: string): Promise<void>;
+		// Turn the preferred harness CLI loose on the branch to write its changesets:
+		// it explores the diff with its own tools and writes the `.changeset/*.md`
+		// files, restricted to that directory. Resolves once the run is over, with
+		// what it wrote read back off disk. Progress streams via
+		// events.onChangesetProgress.
+		generate(repoId: string, request: GenerateChangesetRequest): Promise<GenerateChangesetResult>;
+		// Abort an in-flight generate (returns false when nothing was running).
+		cancelGenerate(): Promise<boolean>;
 	};
 	editor: {
 		detect(): Promise<Record<EditorKind, boolean>>;
@@ -2603,6 +2738,21 @@ export interface PreloadAPI {
 		// the renderer can never ask to delete an arbitrary path.
 		remove(repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult>;
 	};
+	commitMessage: {
+		// Which supported harness CLIs are installed and on PATH.
+		detect(): Promise<CommitMessageHarnessStatus>;
+		// Generate a commit subject + body via the preferred (or first available)
+		// harness CLI, locked down to text-only. Uses the checked-file selections
+		// the commit box would include. Progress streams via events.onCommitMessageProgress.
+		generate(
+			repoId: string,
+			request: GenerateCommitMessageRequest
+		): Promise<GenerateCommitMessageResult>;
+		// Abort the in-flight generation, if any.
+		cancel(): Promise<boolean>;
+		// Models available for a harness (CLI listing when possible, curated fallback).
+		listModels(harness: CommitMessageHarness): Promise<CommitMessageModelOption[]>;
+	};
 	npm: {
 		// Fetch trimmed npm-registry metadata for a package, for the package.json
 		// hover cards. Cached in the main process; resolves to an error variant
@@ -2760,6 +2910,11 @@ export interface PreloadAPI {
 		// Live prefs changes pushed by the main process: settings.json edited
 		// externally, or a settings file imported/reset. Returns an unsubscribe fn.
 		onPrefsChanged(handler: (change: PrefsChange) => void): () => void;
+		// Streaming text while commit-message generation runs. Returns an unsubscribe fn.
+		onCommitMessageProgress(handler: (event: CommitMessageProgressEvent) => void): () => void;
+		// What the agent is doing while it writes the branch's changesets. Returns an
+		// unsubscribe fn.
+		onChangesetProgress(handler: (event: ChangesetProgressEvent) => void): () => void;
 		// Background auto-update progress pushed by the main process (checking →
 		// downloading → downloaded, or error). Returns an unsubscribe fn.
 		onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;

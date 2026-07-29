@@ -13,6 +13,7 @@ import { initAutoUpdates } from './updater.js';
 import { getPrefs, flushStore } from './store.js';
 import { setupWindowChromeIpc, titleBarOverlayFor } from './window-chrome.js';
 import { WINDOW_BOUNDS } from '@shared/types.js';
+import { warmCommitMessageModels } from './commit-message/index.js';
 import { installLicenseIpcGate } from './license/ipc-gate.js';
 import { initLicenseService, startLicenseBackgroundWork } from './license/service.js';
 
@@ -229,6 +230,10 @@ if (!gotSingleInstanceLock) {
 		// Updates stay ungated: a lapsed user must still be able to receive the
 		// build that lets them resubscribe (and security patches).
 		initAutoUpdates();
+		// Probe the harness CLIs for their model lists off the critical path, so the
+		// commit-message model picker is already populated by the time it's opened.
+		// The list is cached on disk, so this only ever refreshes what's shown.
+		setTimeout(() => void warmCommitMessageModels(), 3_000);
 		app.on('activate', () => {
 			if (BrowserWindow.getAllWindows().length === 0) createWindow();
 		});

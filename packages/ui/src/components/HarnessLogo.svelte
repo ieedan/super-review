@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Bot from '@lucide/svelte/icons/bot';
 	import type { HarnessKind } from '@super-review/core/types';
+	import { cn } from '@super-review/ui/utils';
 	import CursorIcon from './icons/CursorIcon.svelte';
 
 	let {
@@ -35,7 +36,7 @@
 	</svg>
 {:else if harness === 'cursor'}
 	<span
-		class={`inline-flex text-foreground ${className}`}
+		class={cn('inline-flex text-foreground', className)}
 		style={`width:${size}px;height:${size}px`}
 	>
 		<CursorIcon class="size-full" />
@@ -48,7 +49,7 @@
 		viewBox="0 0 24 24"
 		fill="currentColor"
 		fill-rule="evenodd"
-		class={`text-foreground ${className}`}
+		class={cn('text-foreground', className)}
 		aria-hidden="true"
 	>
 		<path
@@ -66,7 +67,7 @@
 		height={size}
 		viewBox="0 0 512 512"
 		fill="none"
-		class={`text-foreground ${className}`}
+		class={cn('text-foreground', className)}
 		aria-hidden="true"
 	>
 		<path d="M320 224V352H192V224H320Z" fill="currentColor" opacity="0.35" />
@@ -88,7 +89,7 @@
 		viewBox="0 0 256 208"
 		preserveAspectRatio="xMidYMid"
 		fill="currentColor"
-		class={`text-foreground ${className}`}
+		class={cn('text-foreground', className)}
 		aria-hidden="true"
 	>
 		<path

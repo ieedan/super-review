@@ -29,6 +29,9 @@ import type {
 	EditorKind,
 	FeedbackInput,
 	FeedbackResult,
+	ChangesetProgressEvent,
+	GenerateChangesetRequest,
+	GenerateChangesetResult,
 	FileContextMenuResult,
 	HeaderContextMenuResult,
 	EmptyViewContextMenuResult,
@@ -73,6 +76,10 @@ import type {
 	AiConfigStatus,
 	AiConfigApplyResult,
 	AiConfigRemoveResult,
+	CommitMessageHarnessStatus,
+	CommitMessageProgressEvent,
+	CommitMessageModelOption,
+	GenerateCommitMessageResult,
 	TabsContextMenuResult,
 	SidebarControlsContextMenuResult,
 	TerminalKind,
@@ -256,7 +263,10 @@ const api: PreloadAPI = {
 		getStatus: (repoId) => invoke('changesets:getStatus', repoId) as Promise<ChangesetStatus>,
 		create: (repoId, input: CreateChangesetInput) =>
 			invoke('changesets:create', repoId, input) as Promise<string>,
-		remove: (repoId, path: string) => invoke('changesets:remove', repoId, path) as Promise<void>
+		remove: (repoId, path: string) => invoke('changesets:remove', repoId, path) as Promise<void>,
+		generate: (repoId, request: GenerateChangesetRequest) =>
+			invoke('changesets:generate', repoId, request) as Promise<GenerateChangesetResult>,
+		cancelGenerate: () => invoke('changesets:cancelGenerate') as Promise<boolean>
 	},
 	editor: {
 		detect: () => invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,
@@ -481,6 +491,14 @@ const api: PreloadAPI = {
 		remove: (repoId, item) =>
 			invoke('aiConfig:remove', repoId, item) as Promise<AiConfigRemoveResult>
 	},
+	commitMessage: {
+		detect: () => invoke('commitMessage:detect') as Promise<CommitMessageHarnessStatus>,
+		generate: (repoId, request) =>
+			invoke('commitMessage:generate', repoId, request) as Promise<GenerateCommitMessageResult>,
+		cancel: () => invoke('commitMessage:cancel') as Promise<boolean>,
+		listModels: (harness) =>
+			invoke('commitMessage:listModels', harness) as Promise<CommitMessageModelOption[]>
+	},
 	npm: {
 		getPackageInfo: (name) => invoke('npm:getPackageInfo', name) as Promise<NpmPackageResult>,
 		getReleaseNotes: (repositoryUrl, packageName, version) =>
@@ -633,6 +651,18 @@ const api: PreloadAPI = {
 			const listener = (_e: Electron.IpcRendererEvent, change: PrefsChange) => handler(change);
 			ipcRenderer.on('state:prefsChanged', listener);
 			return () => ipcRenderer.off('state:prefsChanged', listener);
+		},
+		onCommitMessageProgress(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, event: CommitMessageProgressEvent) =>
+				handler(event);
+			ipcRenderer.on('commitMessage:progress', listener);
+			return () => ipcRenderer.off('commitMessage:progress', listener);
+		},
+		onChangesetProgress(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, event: ChangesetProgressEvent) =>
+				handler(event);
+			ipcRenderer.on('changesets:progress', listener);
+			return () => ipcRenderer.off('changesets:progress', listener);
 		},
 		onUpdateStatus(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status);

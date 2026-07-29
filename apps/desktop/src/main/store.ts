@@ -4,6 +4,7 @@ import { safeStorage } from 'electron';
 import {
 	type ChangedFile,
 	type CommitDraft,
+	type CommitMessageModelOption,
 	type GithubAccount,
 	type PRSource,
 	type RepoInfo,
@@ -94,11 +95,26 @@ interface Schema {
 	githubToken: string | null;
 	// Local usage statistics keyed by repoId. Purely on-disk; never sent anywhere.
 	stats: Record<string, StoredRepoStats>;
+	// Model lists per commit-message harness, cached across launches so the model
+	// picker paints instantly instead of waiting on a CLI probe. Revalidated in
+	// the background; entries are only replaced by a successful listing.
+	commitMessageModels: Record<string, CachedModelList>;
 	// Licensing. The device token is the long-lived, revocable credential the app
 	// exchanges for short-lived signed license tokens; it's safeStorage-encrypted
 	// where available. The cached license token carries its own signature, so its
 	// integrity does not depend on secrecy.
 	license: LicenseSlice;
+}
+
+interface CachedModelList {
+	models: CommitMessageModelOption[];
+	// When the list was last successfully probed (ms). Drives the background
+	// revalidation, never the decision to serve — a stale list still paints.
+	fetchedAt: number;
+	// Which build of the list-building code produced this. Ages out on its own,
+	// so without it a change to how lists are built stays invisible behind a
+	// cached entry until the revalidation window elapses.
+	version?: number;
 }
 
 interface LicenseSlice {
@@ -142,6 +158,7 @@ const defaults: Schema = {
 	activeGithubAccountId: null,
 	githubToken: null,
 	stats: {},
+	commitMessageModels: {},
 	license: {
 		deviceToken: null,
 		deviceTokenEncrypted: false,
@@ -714,6 +731,39 @@ export function setCommitDraft(repoId: string, draft: CommitDraft): void {
 		all[repoId] = draft;
 	}
 	flush();
+}
+
+// Last known model list for a commit-message harness, however old. Serving a
+// stale list beats making the user watch a CLI probe, so the age is only used to
+// decide whether to revalidate in the background.
+// Entries written by an older `version` are discarded rather than served: the
+// caller decides what a usable list looks like, and a stale entry would
+// otherwise mask that change for as long as it stays inside the revalidation
+// window.
+export function getCachedCommitMessageModels(
+	harness: string,
+	version: number
+): {
+	models: CommitMessageModelOption[];
+	fetchedAt: number;
+} | null {
+	const hit = db().commitMessageModels?.[harness];
+	if (!hit || !Array.isArray(hit.models) || hit.models.length === 0) return null;
+	if (hit.version !== version) return null;
+	return hit;
+}
+
+export function setCachedCommitMessageModels(
+	harness: string,
+	models: CommitMessageModelOption[],
+	fetchedAt: number,
+	version: number
+): void {
+	if (models.length === 0) return;
+	const all = (db().commitMessageModels ??= {});
+	all[harness] = { models, fetchedAt, version };
+	// Debounced: written from background revalidation, never on a user-visible path.
+	flushSoon();
 }
 
 export function getLegacyGithubToken(): string | null {

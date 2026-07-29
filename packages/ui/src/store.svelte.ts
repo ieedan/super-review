@@ -10,6 +10,9 @@ import type {
 	ChangesetStatus,
 	CommitFileSelection,
 	CommitInfo,
+	CommitMessageHarness,
+	CommitMessageHarnessStatus,
+	CommitMessageModelOption,
 	ContextTab,
 	CreateRepoOptions,
 	DiffContext,
@@ -64,6 +67,7 @@ import {
 	DEFAULT_HEADER_ITEMS,
 	DEFAULT_SIDEBAR_TABS,
 	DEFAULT_SIDEBAR_CONTROLS,
+	COMMIT_MESSAGE_HARNESS_PRIORITY,
 	WINDOW_BOUNDS
 } from '@super-review/core/types';
 import { diffContextKey, reviewContextKey } from '@super-review/core/diff-context';
@@ -98,10 +102,12 @@ export type SettingsTab =
 	| 'app'
 	| 'editor'
 	| 'agents'
+	| 'prompts'
+	| 'skills'
 	| 'hotkeys'
 	| 'updates'
 	| 'stats';
-export type SettingsScrollTarget = 'hidden-files';
+export type SettingsScrollTarget = 'hidden-files' | 'commit-messages' | 'changeset-prompt';
 import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
 import { tourFileOrder, tourGroups } from '@super-review/ui/session-tour';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
@@ -259,6 +265,24 @@ interface AppState {
 	// Whether the user dismissed the "Update AI files?" notice. Same in-memory,
 	// reset-per-repo-switch lifetime as aiConfigNoticeDismissed.
 	aiConfigUpdateDismissed: boolean;
+	// Which harness CLIs are installed for commit-message generation. null while
+	// the first detect is in flight.
+	commitMessageHarnesses: CommitMessageHarnessStatus | null;
+	// Model options per harness, prefetched on launch and kept for the session so
+	// the model picker paints from memory instead of an IPC round-trip. The main
+	// process backs this with an on-disk cache, so it survives restarts too.
+	commitMessageModels: Partial<Record<CommitMessageHarness, CommitMessageModelOption[]>>;
+	// Whether the user dismissed the "Set up commit message generation?" notice.
+	// In-memory only; reset on repo switch like the AI-files notice.
+	commitMessageNoticeDismissed: boolean;
+	// True while a harness CLI is generating a commit message.
+	commitMessageGenerating: boolean;
+	// Accumulated streaming text for the in-flight generation (shown in the
+	// generate popover). Cleared when generation ends or is cancelled.
+	// Two channels: the answer is the commit message itself (streamed into the
+	// commit box), the reasoning is the model thinking out loud.
+	commitMessageReasoning: string;
+	commitMessageAnswer: string;
 	// Whether the "Configure AI files" dialog is open.
 	aiConfigDialogOpen: boolean;
 	// Changeset situation for the active repo's current branch (drives the "Add a
@@ -267,6 +291,13 @@ interface AppState {
 	changesetStatus: ChangesetStatus | null;
 	// Whether the create-changeset dialog is open.
 	changesetDialogOpen: boolean;
+	// True while a harness CLI is writing this branch's changesets (the "Add a
+	// changeset?" notice turns into a shimmering status row).
+	changesetGenerating: boolean;
+	// What that agent is doing right now ("Reading store.svelte.ts"), streamed from
+	// its tool calls. Empty until the first one lands, which is when the notice
+	// falls back to a generic line.
+	changesetActivity: string;
 	// Whether the user dismissed the "Add a changeset?" prompt / the "Some
 	// changesets may be unnecessary" warning for the current branch. In-memory only
 	// and cleared on every branch switch, so a dismissal lasts only while you stay
@@ -950,9 +981,17 @@ const initial: AppState = {
 	aiConfigStatus: null,
 	aiConfigNoticeDismissed: false,
 	aiConfigUpdateDismissed: false,
+	commitMessageHarnesses: null,
+	commitMessageModels: {},
+	commitMessageNoticeDismissed: false,
+	commitMessageGenerating: false,
+	commitMessageReasoning: '',
+	commitMessageAnswer: '',
 	aiConfigDialogOpen: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
+	changesetGenerating: false,
+	changesetActivity: '',
 	changesetPromptDismissed: false,
 	changesetWarningDismissed: false,
 	changesetsEnabled: true,
@@ -1644,6 +1683,25 @@ export function effectiveTerminal(): TerminalKind | null {
 	return null;
 }
 
+// Preferred harness for commit-message generation, falling back to the first
+// installed CLI in COMMIT_MESSAGE_HARNESS_PRIORITY.
+export function effectiveCommitMessageHarness(): CommitMessageHarness | null {
+	const status = app.commitMessageHarnesses;
+	if (!status) return null;
+	const pref = app.prefs?.commitMessageHarness ?? null;
+	if (pref && status[pref]) return pref;
+	for (const harness of COMMIT_MESSAGE_HARNESS_PRIORITY) {
+		if (status[harness]) return harness;
+	}
+	return null;
+}
+
+export function anyCommitMessageHarnessInstalled(): boolean {
+	const status = app.commitMessageHarnesses;
+	if (!status) return false;
+	return COMMIT_MESSAGE_HARNESS_PRIORITY.some((h) => status[h]);
+}
+
 // The GitHub account the active project authenticates as: its pinned account
 // when set, otherwise the app-wide default. Both account switchers and all
 // project-scoped GitHub calls resolve through this.
@@ -1994,6 +2052,9 @@ async function refreshBranches(): Promise<void> {
 		if (app.currentBranch !== prevBranch) {
 			app.changesetPromptDismissed = false;
 			app.changesetWarningDismissed = false;
+			// A changeset run describes the branch it started on, so drop it rather than
+			// writing files for the branch the user just left.
+			if (app.changesetGenerating) void actions.cancelChangesetGeneration();
 			// New checked-out branch → re-seed its remembered Branch base so the diff
 			// targets the right PR base without waiting on the network PR lookup.
 			void hydrateRememberedBranchBase();
@@ -3668,6 +3729,37 @@ function subscribePrefsChanges(): void {
 	});
 }
 
+// Subscribe once to commit-message generation progress so the popover can show
+// streaming text even after the user dismisses and re-hovers the sparkle.
+let commitMessageProgressSubscribed = false;
+// Bumped on each generate start and on cancel so a stale run's finally can't
+// clear a newer generation's UI state.
+let commitMessageRunId = 0;
+// Same idea for changeset generation, which has its own run in the main process.
+let changesetRunId = 0;
+// Subscribe once (like the commit-message one) so a run's activity keeps landing
+// even across notice remounts.
+let changesetProgressSubscribed = false;
+function subscribeChangesetProgress(): void {
+	if (changesetProgressSubscribed) return;
+	changesetProgressSubscribed = true;
+	window.api.events.onChangesetProgress((event) => {
+		if (!app.changesetGenerating) return;
+		app.changesetActivity = event.status;
+	});
+}
+function subscribeCommitMessageProgress(): void {
+	if (commitMessageProgressSubscribed) return;
+	const onProgress = window.api.events?.onCommitMessageProgress;
+	if (!onProgress) return;
+	commitMessageProgressSubscribed = true;
+	onProgress((event) => {
+		if (!app.commitMessageGenerating) return;
+		app.commitMessageReasoning = event.reasoning;
+		app.commitMessageAnswer = event.answer;
+	});
+}
+
 export const actions = {
 	// --- Auto-updates ---
 	initUpdater(): Promise<void> {
@@ -3875,6 +3967,162 @@ export const actions = {
 	dismissAiConfigUpdate(): void {
 		app.aiConfigUpdateDismissed = true;
 	},
+	dismissCommitMessageNotice(): void {
+		app.commitMessageNoticeDismissed = true;
+	},
+	openCommitMessageSettings(): void {
+		actions.openSettingsDialog('agents', 'commit-messages');
+	},
+	async refreshCommitMessageHarnesses(): Promise<void> {
+		app.commitMessageHarnesses = await window.api.commitMessage.detect();
+		void actions.prefetchCommitMessageModels();
+	},
+	async setCommitMessageHarness(harness: CommitMessageHarness | null): Promise<void> {
+		app.prefs = await window.api.state.setPrefs({ commitMessageHarness: harness });
+	},
+	async setCommitMessagePrompt(prompt: string): Promise<void> {
+		const trimmed = prompt.trim();
+		app.prefs = await window.api.state.setPrefs({
+			commitMessagePrompt: trimmed.length > 0 ? trimmed : null
+		});
+	},
+	async setChangesetPrompt(prompt: string): Promise<void> {
+		const trimmed = prompt.trim();
+		app.prefs = await window.api.state.setPrefs({
+			changesetPrompt: trimmed.length > 0 ? trimmed : null
+		});
+	},
+	openChangesetPromptSettings(): void {
+		actions.openSettingsDialog('prompts', 'changeset-prompt');
+	},
+	async setCommitMessageModel(harness: CommitMessageHarness, model: string): Promise<void> {
+		const current = { ...(app.prefs?.commitMessageModels ?? {}) };
+		const trimmed = model.trim();
+		if (trimmed) current[harness] = trimmed;
+		else delete current[harness];
+		app.prefs = await window.api.state.setPrefs({ commitMessageModels: current });
+	},
+	// Cached model list for a harness, or null when it hasn't been fetched yet.
+	// Synchronous so the picker can render on the same frame it opens.
+	commitMessageModelsFor(harness: CommitMessageHarness): CommitMessageModelOption[] | null {
+		return app.commitMessageModels[harness] ?? null;
+	},
+	async listCommitMessageModels(
+		harness: CommitMessageHarness
+	): Promise<CommitMessageModelOption[]> {
+		const models = await window.api.commitMessage.listModels(harness);
+		app.commitMessageModels = { ...app.commitMessageModels, [harness]: models };
+		return models;
+	},
+	// Pull every installed harness's models into the store in the background so
+	// opening the picker never waits on IPC (let alone a CLI probe). The main
+	// process serves these from its own on-disk cache, so this is cheap.
+	async prefetchCommitMessageModels(
+		status: CommitMessageHarnessStatus | null = app.commitMessageHarnesses
+	): Promise<void> {
+		if (!status) return;
+		await Promise.all(
+			COMMIT_MESSAGE_HARNESS_PRIORITY.filter((h) => status[h]).map(async (harness) => {
+				try {
+					await actions.listCommitMessageModels(harness);
+				} catch {
+					// Leave this harness uncached; the picker will fetch on open.
+				}
+			})
+		);
+	},
+	// Generate a commit subject + body via the preferred harness CLI for the
+	// currently checked files. Returns the message on success, or null (and may
+	// open Agents settings when no harness is available).
+	async generateCommitMessage(options?: {
+		preferredHarness?: CommitMessageHarness | null;
+		basePrompt?: string | null;
+		model?: string | null;
+	}): Promise<{ subject: string; body: string } | null> {
+		if (!app.activeRepo || app.commitMessageGenerating || app.push.inProgress) return null;
+		const included = app.changedFiles.filter((f) => !app.excludedFromCommit.has(f.path));
+		if (included.length === 0) {
+			setError('Select at least one file to generate a commit message.', 'Generate commit message');
+			return null;
+		}
+		if (app.commitMessageHarnesses && !anyCommitMessageHarnessInstalled()) {
+			actions.openCommitMessageSettings();
+			return null;
+		}
+		const repoId = app.activeRepo.id;
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		const selections = await buildCommitSelections(repoId, ctx, included);
+		if (selections.length === 0) {
+			setError('Nothing to include in the commit message.', 'Generate commit message');
+			return null;
+		}
+		subscribeCommitMessageProgress();
+		const runId = ++commitMessageRunId;
+		app.commitMessageGenerating = true;
+		// Left empty on purpose: the commit box shows its own shimmering placeholder
+		// until the harness emits its first token.
+		app.commitMessageReasoning = '';
+		app.commitMessageAnswer = '';
+		try {
+			const preferredHarness =
+				options?.preferredHarness !== undefined
+					? options.preferredHarness
+					: (app.prefs?.commitMessageHarness ?? null);
+			const basePrompt =
+				options?.basePrompt !== undefined
+					? options.basePrompt
+					: (app.prefs?.commitMessagePrompt ?? null);
+			const model =
+				options?.model !== undefined
+					? options.model
+					: preferredHarness
+						? (app.prefs?.commitMessageModels?.[preferredHarness] ?? null)
+						: null;
+			const result = await window.api.commitMessage.generate(repoId, {
+				branch: app.currentBranch,
+				selections,
+				preferredHarness,
+				basePrompt,
+				model
+			});
+			// Superseded by cancel or a newer run.
+			if (runId !== commitMessageRunId) return null;
+			if (!result.ok) {
+				if (result.code === 'cancelled') return null;
+				if (result.code === 'no-harness') {
+					await actions.refreshCommitMessageHarnesses();
+					actions.openCommitMessageSettings();
+					return null;
+				}
+				setError(result.error ?? 'Failed to generate a commit message.', 'Generate commit message');
+				return null;
+			}
+			if (!result.subject?.trim()) {
+				setError('The agent returned an empty commit message.', 'Generate commit message');
+				return null;
+			}
+			return { subject: result.subject.trim(), body: (result.body ?? '').trim() };
+		} catch (err) {
+			if (runId !== commitMessageRunId) return null;
+			setError(err instanceof Error ? err.message : String(err), 'Generate commit message');
+			return null;
+		} finally {
+			if (runId === commitMessageRunId) {
+				app.commitMessageGenerating = false;
+				app.commitMessageReasoning = '';
+				app.commitMessageAnswer = '';
+			}
+		}
+	},
+	async cancelCommitMessageGeneration(): Promise<void> {
+		if (!app.commitMessageGenerating) return;
+		// Invalidate the in-flight run so its finally doesn't clear a newer one.
+		commitMessageRunId += 1;
+		app.commitMessageGenerating = false;
+		app.commitMessageReasoning = '';
+		app.commitMessageAnswer = '';
+		await window.api.commitMessage.cancel();
+	},
 	openChangesetReview(): void {
 		app.changesetReviewOpen = true;
 	},
@@ -3892,6 +4140,95 @@ export const actions = {
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
+	},
+	// Turn the preferred harness CLI loose on the branch: it reads the work with
+	// its own tools and writes the `.changeset/*.md` files itself. Returns the
+	// repo-relative paths it wrote, or null when nothing landed (cancelled, no CLI,
+	// or a run that finished empty-handed; the last two are surfaced to the user).
+	async generateChangeset(): Promise<string[] | null> {
+		if (!app.activeRepo || app.changesetGenerating) return null;
+		// Nothing installed to generate with: point the user at the CLI list rather
+		// than shimmering for minutes and failing.
+		if (app.commitMessageHarnesses && !anyCommitMessageHarnessInstalled()) {
+			actions.openCommitMessageSettings();
+			return null;
+		}
+		const repoId = app.activeRepo.id;
+		const preferredHarness = app.prefs?.commitMessageHarness ?? null;
+		const runId = ++changesetRunId;
+		subscribeChangesetProgress();
+		app.changesetGenerating = true;
+		// Left empty on purpose: the notice shows a generic line until the agent's
+		// first tool call says something more specific.
+		app.changesetActivity = '';
+		try {
+			const result = await window.api.changesets.generate(repoId, {
+				branch: app.currentBranch,
+				preferredHarness,
+				basePrompt: app.prefs?.changesetPrompt ?? null,
+				model: preferredHarness
+					? (app.prefs?.commitMessageModels?.[preferredHarness] ?? null)
+					: null
+			});
+			// Superseded by a cancel or a newer run.
+			if (runId !== changesetRunId) return null;
+			if (!result.ok) {
+				if (result.code === 'cancelled') return null;
+				if (result.code === 'no-harness') {
+					await actions.refreshCommitMessageHarnesses();
+					actions.openCommitMessageSettings();
+					return null;
+				}
+				setError(result.error ?? 'Failed to generate a changeset.', 'Generate changeset');
+				return null;
+			}
+			// The files are already on disk: refresh so the new `.changeset/*.md` show
+			// up in the sidebar (and the commit-box auto-fill picks up the description)
+			// and the "Add a changeset?" prompt clears. Deliberately inside the try, so
+			// `changesetGenerating` only drops once the sidebar has caught up — the
+			// notice shimmers straight through the refresh instead of flashing back to
+			// "Add a changeset?" between the write and the repaint. A refresh failure
+			// is its own problem: the changesets did land, so don't report the run as
+			// failed.
+			try {
+				await refreshFiles();
+			} catch (err) {
+				setError(err instanceof Error ? err.message : String(err), 'Generate changeset');
+			}
+			// The run stayed inside `.changeset/` or it didn't; either way the files
+			// are on disk now, so this is a warning about what to go and look at, not
+			// a failure.
+			if (result.strayPaths?.length) {
+				setError(
+					`The agent also changed ${result.strayPaths.join(', ')}. Review those before committing.`,
+					'Generate changeset'
+				);
+			}
+			if (result.unknownPackages?.length) {
+				setError(
+					`The changesets reference packages this workspace doesn't release: ${result.unknownPackages.join(', ')}.`,
+					'Generate changeset'
+				);
+			}
+			return (result.written ?? []).map((f) => f.path);
+		} catch (err) {
+			if (runId !== changesetRunId) return null;
+			setError(err instanceof Error ? err.message : String(err), 'Generate changeset');
+			return null;
+		} finally {
+			if (runId === changesetRunId) {
+				app.changesetGenerating = false;
+				app.changesetActivity = '';
+			}
+		}
+	},
+	// Stop an in-flight run. Bumping the id first means the run's own result is
+	// ignored when it lands, so the shimmer clears immediately.
+	async cancelChangesetGeneration(): Promise<void> {
+		changesetRunId++;
+		app.changesetGenerating = false;
+		app.changesetActivity = '';
+		await window.api.changesets.cancelGenerate();
 	},
 	// Write a new changeset for the selected packages, then refresh: the new
 	// `.changeset/*.md` shows up in the working tree (and the commit-box auto-fill
@@ -3991,6 +4328,13 @@ export const actions = {
 		void window.api.terminal.detect().then((terminals) => {
 			if (gen !== licenseGeneration || !isLicensed()) return;
 			app.terminals = terminals;
+		});
+		void window.api.commitMessage.detect().then((harnesses) => {
+			if (gen !== licenseGeneration || !isLicensed()) return;
+			app.commitMessageHarnesses = harnesses;
+			// Warm the model lists now, while nothing is waiting on them, so the
+			// commit-message picker never shows a loading state.
+			void actions.prefetchCommitMessageModels(harnesses);
 		});
 		// The dirty dots need the repo list, so chain them rather than firing both.
 		void refreshRepos().then(() => {
@@ -4137,6 +4481,7 @@ export const actions = {
 			app.aiConfigStatus = null;
 			app.aiConfigNoticeDismissed = false;
 			app.aiConfigUpdateDismissed = false;
+			app.commitMessageNoticeDismissed = false;
 			app.excludedFromCommit = new SvelteSet();
 			app.stagingLineExclusions = new SvelteSet();
 			app.prs = [];
@@ -6604,6 +6949,10 @@ export const actions = {
 		try {
 			const commit = await window.api.git.commit(repoId, message, selections);
 			if (!commit.ok) throw new Error(commit.error ?? 'Commit failed.');
+			// Publish the new HEAD before the refreshes below: they take a beat (one
+			// of them is a GitHub PR lookup) and the undo row would otherwise sit on
+			// the pre-commit state that whole time. refreshPushStatus confirms it.
+			if (commit.lastCommit !== undefined) app.lastCommit = commit.lastCommit;
 			app.push.stage = 'done';
 			// The selection was consumed; clear partial line exclusions so stale
 			// line numbers don't carry over onto the post-commit diff.
@@ -6645,6 +6994,9 @@ export const actions = {
 		try {
 			const result = await window.api.git.undoLastCommit(repoId);
 			if (!result.ok) throw new Error(result.error ?? 'Undo failed.');
+			// As in commit() above: show the commit the undo exposed straight away
+			// rather than after the refresh chain.
+			if (result.lastCommit !== undefined) app.lastCommit = result.lastCommit;
 			app.push.stage = 'done';
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);

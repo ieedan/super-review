@@ -3045,7 +3045,7 @@ async function commitImpl(
 					// without a pathspec. See commitPartial's whole-file branch.
 					if (isBeyondSymlink(err)) {
 						await commitPartial(repoPath, trimmed, files, identity, signing);
-						return { ok: true, ...(await headCommitStats(git)) };
+						return { ok: true, ...(await headCommitStats(git, repoPath)) };
 					}
 					if (!isPathspecMismatch(err)) throw err;
 				}
@@ -3060,11 +3060,11 @@ async function commitImpl(
 			await runSignedOrFallback(signing, (cfg, sign) =>
 				git.raw([...cfg, ...identityArgs, 'commit', ...sign, '-m', trimmed, '--', ...paths])
 			);
-			return { ok: true, ...(await headCommitStats(git)) };
+			return { ok: true, ...(await headCommitStats(git, repoPath)) };
 		}
 
 		await commitPartial(repoPath, trimmed, files, identity, signing);
-		return { ok: true, ...(await headCommitStats(git)) };
+		return { ok: true, ...(await headCommitStats(git, repoPath)) };
 	} catch (err) {
 		return {
 			ok: false,
@@ -3074,11 +3074,14 @@ async function commitImpl(
 }
 
 // File + line counts for the commit now at HEAD (vs its parent, or the empty
-// tree for a root commit). Drives the "files/lines committed" usage stats.
+// tree for a root commit), plus the commit itself. Drives the "files/lines
+// committed" usage stats and lets the renderer show the new head straight away
+// instead of waiting on the refresh chain behind the commit.
 // Best-effort: any failure yields zeros rather than failing the commit.
 async function headCommitStats(
-	git: SimpleGit
-): Promise<{ filesCommitted: number; linesCommitted: number }> {
+	git: SimpleGit,
+	repoPath: string
+): Promise<{ filesCommitted: number; linesCommitted: number; lastCommit: LastCommit | null }> {
 	try {
 		const hasParent = await git
 			.raw(['rev-parse', '--verify', '--quiet', 'HEAD^'])
@@ -3092,9 +3095,9 @@ async function headCommitStats(
 			filesCommitted++;
 			linesCommitted += row.additions + row.deletions;
 		}
-		return { filesCommitted, linesCommitted };
+		return { filesCommitted, linesCommitted, lastCommit: await getLastCommit(repoPath) };
 	} catch {
-		return { filesCommitted: 0, linesCommitted: 0 };
+		return { filesCommitted: 0, linesCommitted: 0, lastCommit: null };
 	}
 }
 
@@ -3213,6 +3216,10 @@ async function commitPartial(
 export interface LastCommit {
 	hash: string;
 	subject: string;
+	// The message below the subject, blank separator line already dropped (`%b`).
+	// Empty for a subject-only commit. Carried so undoing a commit can restore its
+	// full message to the commit box without another round-trip.
+	body: string;
 	// Relative time string straight from git (e.g. "2 minutes ago").
 	relativeTime: string;
 	// True when the commit has not yet been pushed to any remote, so undoing it
@@ -3221,13 +3228,16 @@ export interface LastCommit {
 }
 
 // Returns the tip commit of HEAD plus whether it is safe to undo. `null` when
-// the branch has no commits yet.
+// the branch has no commits yet. The body comes last in the format so its
+// newlines can't be mistaken for the end of the record.
 export async function getLastCommit(repoPath: string): Promise<LastCommit | null> {
 	const git = openGit(repoPath);
 	try {
-		const raw = (await git.raw(['log', '-1', '--pretty=format:%H%x1f%s%x1f%cr'])).trim();
+		const raw = (await git.raw(['log', '-1', '--pretty=format:%H%x1f%s%x1f%cr%x1f%b'])).trim();
 		if (!raw) return null;
-		const [hash, subject, relativeTime] = raw.split('');
+		const [hash, subject, relativeTime, ...rest] = raw.split('');
+		// Rejoin: a body containing the separator would otherwise be truncated.
+		const body = rest.join('').trim();
 		// Count commits reachable from HEAD but not from any remote-tracking
 		// branch. >0 means the tip is local-only and can be undone. With no remotes
 		// at all this counts every commit, which is the behavior we want.
@@ -3239,7 +3249,7 @@ export async function getLastCommit(repoPath: string): Promise<LastCommit | null
 		} catch {
 			canUndo = true;
 		}
-		return { hash, subject, relativeTime, canUndo };
+		return { hash, subject, body, relativeTime, canUndo };
 	} catch {
 		return null;
 	}
@@ -3312,7 +3322,9 @@ async function undoLastCommitImpl(repoPath: string): Promise<CommitResult> {
 		} else {
 			await git.raw(['reset', '--soft', 'HEAD~1']);
 		}
-		return { ok: true };
+		// Hand back the commit undoing exposed (null once HEAD is unborn again) so
+		// the caller can update its "last commit" row immediately.
+		return { ok: true, lastCommit: await getLastCommit(repoPath) };
 	} catch (err) {
 		return {
 			ok: false,

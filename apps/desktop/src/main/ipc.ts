@@ -76,6 +76,13 @@ import type {
 	AiConfigApplyResult,
 	AiConfigInstallItem,
 	AiConfigRemoveResult,
+	CommitMessageHarness,
+	CommitMessageHarnessStatus,
+	CommitMessageModelOption,
+	GenerateChangesetRequest,
+	GenerateChangesetResult,
+	GenerateCommitMessageRequest,
+	GenerateCommitMessageResult,
 	SessionSummary,
 	Task,
 	NewTaskInput,
@@ -181,6 +188,15 @@ import {
 	watchTasksDir
 } from '@super-review/core';
 import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-service.js';
+import {
+	cancelChangesetGeneration,
+	cancelCommitMessageGeneration,
+	detectCommitMessageHarnesses,
+	generateChangeset,
+	generateCommitMessage,
+	listCommitMessageModels,
+	warmCommitMessageModels
+} from './commit-message/index.js';
 import { listTemplates } from '@super-review/core';
 import {
 	addStat,
@@ -1182,6 +1198,27 @@ export function registerIpc(): void {
 		async (_e, repoId: string, filePath: string): Promise<void> => {
 			await removeChangeset(repoOrThrow(repoId).path, filePath);
 		}
+	);
+
+	ipcMain.handle(
+		'changesets:generate',
+		async (
+			e,
+			repoId: string,
+			request: GenerateChangesetRequest
+		): Promise<GenerateChangesetResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			return generateChangeset(repoOrThrow(repoId).path, request, {
+				onActivity: (status) => {
+					if (win) sendToWindow(win, 'changesets:progress', { status });
+				}
+			});
+		}
+	);
+
+	ipcMain.handle(
+		'changesets:cancelGenerate',
+		async (): Promise<boolean> => cancelChangesetGeneration()
 	);
 
 	ipcMain.handle('git:cloneRepo', async (_e, url: string): Promise<CloneResult> => {
@@ -2759,5 +2796,42 @@ export function registerIpc(): void {
 		'aiConfig:remove',
 		async (_e, repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult> =>
 			removeAiConfig(repoOrThrow(repoId).path, item)
+	);
+
+	// ─── Commit message generation via harness CLIs ──────────────────────────
+	ipcMain.handle('commitMessage:detect', async (): Promise<CommitMessageHarnessStatus> => {
+		const status = await detectCommitMessageHarnesses();
+		// Cache the model lists behind the user's back, so a harness installed
+		// since launch is ready before its picker is ever opened. A no-op when
+		// every installed harness already has a fresh list.
+		void warmCommitMessageModels(status);
+		return status;
+	});
+
+	ipcMain.handle(
+		'commitMessage:generate',
+		async (
+			e,
+			repoId: string,
+			request: GenerateCommitMessageRequest
+		): Promise<GenerateCommitMessageResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			return generateCommitMessage(repoOrThrow(repoId).path, request, {
+				onProgress: (event) => {
+					if (win) sendToWindow(win, 'commitMessage:progress', event);
+				}
+			});
+		}
+	);
+
+	ipcMain.handle(
+		'commitMessage:cancel',
+		async (): Promise<boolean> => cancelCommitMessageGeneration()
+	);
+
+	ipcMain.handle(
+		'commitMessage:listModels',
+		async (_e, harness: CommitMessageHarness): Promise<CommitMessageModelOption[]> =>
+			listCommitMessageModels(harness)
 	);
 }
