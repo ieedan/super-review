@@ -3607,8 +3607,15 @@ export interface CheckoutPROptions {
 	// duplicate remote when the head repo is the fork itself.
 	originUrl?: string;
 	// Remote (name or URL) to read the PR head snapshot from in the fallback
-	// path, when the head repo is unknown.
+	// path, when the head repo is unknown or its branch is gone.
 	fallbackRemote?: string;
+}
+
+// `git fetch <remote> <branch>` when the remote no longer has that branch —
+// the usual case for a merged PR whose head branch was deleted afterwards.
+function isMissingRemoteRef(err: unknown): boolean {
+	const message = err instanceof Error ? err.message : String(err);
+	return /couldn't find remote ref/i.test(message);
 }
 
 // Check out the branch a PR was opened from so it can be reviewed — and so
@@ -3619,13 +3626,16 @@ export interface CheckoutPROptions {
 // "View PR"/"Push" instead of "Publish", and routes `git push` to the PR's
 // branch (which fails cleanly when you lack write access).
 //
-// When the head repo is unknown (deleted fork), we fall back to fetching a
-// read-only `pull/<n>/head` snapshot with no tracking.
+// When the head branch can't be fetched — the head repo is unknown (deleted
+// fork), or the branch itself has been deleted (the usual post-merge cleanup) —
+// we fall back to a read-only `pull/<n>/head` snapshot with no tracking. GitHub
+// keeps that ref on the *base* repo forever, which is why the PR still reviews
+// fine even when nothing is left to push to.
 async function checkoutPRImpl(repoPath: string, opts: CheckoutPROptions): Promise<void> {
 	const git = openGit(repoPath);
 	const { prNumber, headRef, headRepoUrl, headRepoOwner } = opts;
 
-	if (!headRepoUrl || !headRepoOwner) {
+	const checkoutSnapshot = async () => {
 		const local = await git.branchLocal();
 		if (!local.all.includes(headRef)) {
 			const fallback = opts.fallbackRemote ?? 'origin';
@@ -3633,11 +3643,23 @@ async function checkoutPRImpl(repoPath: string, opts: CheckoutPROptions): Promis
 			await authedGit(repoPath, fallbackUrl).fetch([fallback, `pull/${prNumber}/head:${headRef}`]);
 		}
 		await git.checkout(headRef);
+	};
+
+	if (!headRepoUrl || !headRepoOwner) {
+		await checkoutSnapshot();
 		return;
 	}
 
 	const remote = await ensureRemoteForUrl(git, headRepoOwner, headRepoUrl, opts.originUrl);
-	await authedGit(repoPath, headRepoUrl).fetch([remote, headRef]);
+	try {
+		await authedGit(repoPath, headRepoUrl).fetch([remote, headRef]);
+	} catch (err) {
+		// Anything other than a vanished branch (auth, network) should surface as
+		// itself rather than be masked by a second failing fetch.
+		if (!isMissingRemoteRef(err)) throw err;
+		await checkoutSnapshot();
+		return;
+	}
 
 	const local = await git.branchLocal();
 	if (local.all.includes(headRef)) {
