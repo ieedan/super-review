@@ -162,7 +162,13 @@
 <header
 	class={[
 		'@container flex h-11 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur',
-		sticky && 'sticky top-0 z-10'
+		// -top-px, not top-0: backdrop-blur puts the stuck header on its own
+		// compositor layer, which snaps to whole pixels while the diff behind it
+		// scrolls at fractional offsets, so a 1px sliver of code used to bleed
+		// through above it. Sticking it 1px into the scroll container's clipped
+		// area covers that seam. `top` only applies while stuck, so unstuck
+		// headers still sit flush under the previous file's bottom border.
+		sticky && 'sticky -top-px z-10'
 	]}
 	oncontextmenu={handleContextMenu}
 >
