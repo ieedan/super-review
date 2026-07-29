@@ -130,6 +130,8 @@
 			},
 			chunkMs: {
 				name: 'Delay per streamed chunk (ms)',
+				description:
+					'A chunk is a ~60 character slab, which is what the CLIs actually report — not a word and not a token. The box paces it back out itself.',
 				control: { type: 'range', min: 0, max: 300, step: 5 }
 			}
 		}

@@ -11,7 +11,16 @@
 	import { useAnimations } from '@super-review/ui/hooks/use-animations.svelte';
 	import { cn } from '@super-review/ui/utils';
 
-	const PHASES = ['Looking everything over...', 'Summarizing...', 'Writing...'];
+	const PHASES = [
+		'Looking everything over...',
+		'Reading the changes...',
+		'Finding what matters...',
+		'Summarizing...',
+		'Checking the details...',
+		'Verifying...',
+		'Drafting the message...',
+		'Writing your commit...'
+	];
 	// Long enough to read the line before it moves on.
 	const HOLD_MS = 1800;
 
@@ -56,7 +65,7 @@
 		>
 			{#each PHASES as message (message)}
 				<span
-					class="shimmer shimmer-color-foreground shimmer-spread-[24px] shimmer-duration-1500 block h-[1lh] truncate text-muted-foreground"
+					class="shimmer shimmer-color-foreground shimmer-spread-[24px] shimmer-duration-1000 block h-[1lh] truncate text-muted-foreground"
 				>
 					{message}
 				</span>

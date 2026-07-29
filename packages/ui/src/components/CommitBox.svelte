@@ -21,6 +21,7 @@
 	} from '@super-review/ui/store.svelte';
 	import { isChangesetPath, parseChangesetMessage } from '@super-review/ui/changeset';
 	import { useAnimations } from '@super-review/ui/hooks/use-animations.svelte';
+	import { useStreamReveal } from '@super-review/ui/hooks/use-stream-reveal.svelte';
 	import { cn } from '@super-review/ui/utils';
 	import { splitStreamingMessage } from '@super-review/ui/commit-message-stream';
 	import { type LastCommit } from '@super-review/core/types';
@@ -390,8 +391,18 @@
 	let painted = $state<{ subject: string; body: string }>({ subject: '', body: '' });
 	let paintRun = 0;
 
+	// What has arrived is not what gets painted: no harness streams a token at a
+	// time, so the answer lands in slabs big enough to hold the whole subject, and
+	// painting it raw is the message appearing in one frame. The reveal walks
+	// through the raw answer instead, before the split below, so Summary fills and
+	// then Description does — in the order the model wrote them.
+	const reveal = useStreamReveal(
+		() => app.commitMessageAnswer,
+		() => animations.accentsEnabled
+	);
+
 	$effect(() => {
-		const live = splitStreamingMessage(app.commitMessageAnswer);
+		const live = splitStreamingMessage(reveal.text);
 		if (generating) {
 			untrack(() => {
 				if (!painting) {

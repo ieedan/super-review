@@ -24,8 +24,9 @@
 			happening while the sparkle shimmers.
 		</li>
 		<li>
-			The message then writes itself into the fields a word at a time: subject into Summary, body
-			into Description. The reasoning channel is kept out of the box entirely.
+			The message then writes itself into the fields: subject into Summary, body into Description.
+			The reasoning channel is kept out of the box entirely. The mock reports it in ~60 character
+			slabs, which is what the CLIs really do — the box is what paces it back out.
 		</li>
 		<li>
 			Click the shimmering sparkle again to stop. Nothing is written — the box goes back to whatever

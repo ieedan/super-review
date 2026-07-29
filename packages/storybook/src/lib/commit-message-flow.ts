@@ -10,7 +10,9 @@
  * Storybook has no main process, so this module stands in for it: it installs a
  * `window.api.commitMessage` that replays a scripted response with real delays,
  * so the box goes through exactly the states it does against a live CLI —
- * including the long silence before the first token.
+ * including the long silence before the first token, and the size of the chunks
+ * that break it (see CHUNK_CHARS, which is the whole reason the box paces the
+ * answer back out rather than painting what arrives).
  */
 import { app } from '@super-review/ui/store.svelte';
 import type { CommitMessageHarness } from '@super-review/core/types';
@@ -29,6 +31,19 @@ export interface MockTiming {
 	chunkMs: number;
 }
 
+/**
+ * How much text a chunk carries.
+ *
+ * Not a token, and not a word: no harness CLI reports at that granularity. A
+ * measured `claude -p --include-partial-messages` run answered a 434 character
+ * message in six deltas ~140ms apart, the first of which already held the whole
+ * subject line, and the reporter in main coalesces further still. Streaming this
+ * word by word made the box look like it typed when it does not — the commit box
+ * paces the answer back out itself (see `stepReveal`), and this is the input
+ * that has to be realistic for that to be worth anything.
+ */
+const CHUNK_CHARS = 60;
+
 export const DEFAULT_RESPONSE: MockResponse = {
 	reasoning:
 		'Reading the staged patch. It adds createStreamReporter, a throttled progress emitter shared by every harness adapter, so the commit box can show tokens as they arrive.',
@@ -36,7 +51,7 @@ export const DEFAULT_RESPONSE: MockResponse = {
 	body: '- share a throttled progress reporter across adapters\n- render partial output while the model is still writing'
 };
 
-export const DEFAULT_TIMING: MockTiming = { startupMs: 2500, chunkMs: 45 };
+export const DEFAULT_TIMING: MockTiming = { startupMs: 2500, chunkMs: 140 };
 
 /**
  * OpenCode's listing, in the shape the CLI returns it: `<provider>/<model>` for
@@ -110,7 +125,7 @@ export function buildFlowSteps(response: MockResponse): FlowStep[] {
 		},
 		{
 			label: 'Subject streams',
-			note: 'The answer starts, word by word, straight into Summary. The field is read-only while it writes, so nothing collides.',
+			note: 'The answer starts writing into Summary. What arrived was a whole slab of text — the box walks through it rather than painting it — and the field is read-only while it does, so nothing collides.',
 			generating: true,
 			reasoning: response.reasoning,
 			answer: subjectHalf,
@@ -259,12 +274,27 @@ async function streamChannel(
 	text: string,
 	chunkMs: number
 ): Promise<boolean> {
-	for (const chunk of text.match(/\S+\s*/g) ?? []) {
+	for (const chunk of slabs(text)) {
 		channels[channel] += chunk;
 		emit();
 		if (await sleep(chunkMs)) return true;
 	}
 	return false;
+}
+
+/** Cut text into CLI-sized chunks, breaking on a word so the seams look real. */
+function slabs(text: string): string[] {
+	const out: string[] = [];
+	let rest = text;
+	while (rest.length > CHUNK_CHARS) {
+		const window = rest.slice(0, CHUNK_CHARS);
+		// No space in the window means one very long word — send it whole.
+		const cut = window.lastIndexOf(' ') + 1 || CHUNK_CHARS;
+		out.push(rest.slice(0, cut));
+		rest = rest.slice(cut);
+	}
+	if (rest) out.push(rest);
+	return out;
 }
 
 function emit(): void {
