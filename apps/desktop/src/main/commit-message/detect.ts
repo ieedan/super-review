@@ -1,7 +1,4 @@
-import type {
-	CommitMessageHarness,
-	CommitMessageHarnessStatus
-} from '@super-review/core/types';
+import type { CommitMessageHarness, CommitMessageHarnessStatus } from '@super-review/core/types';
 import { COMMIT_MESSAGE_HARNESS_PRIORITY } from '@super-review/core/types';
 import { which } from './which.js';
 
@@ -16,9 +13,7 @@ const HARNESS_BINARIES: Record<CommitMessageHarness, readonly string[]> = {
 	opencode: ['opencode']
 };
 
-export async function resolveHarnessBinary(
-	harness: CommitMessageHarness
-): Promise<string | null> {
+export async function resolveHarnessBinary(harness: CommitMessageHarness): Promise<string | null> {
 	for (const name of HARNESS_BINARIES[harness]) {
 		const bin = await which(name);
 		if (bin) return bin;

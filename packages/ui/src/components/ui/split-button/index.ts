@@ -4,12 +4,7 @@ import Select from './split-button-select.svelte';
 import SelectTrigger from './split-button-select-trigger.svelte';
 import SelectAction from './split-button-select-action.svelte';
 import SelectContent from './split-button-content.svelte';
-import {
-	SelectGroup,
-	SelectGroupHeading,
-	SelectLabel,
-	SelectSeparator
-} from '../select';
+import { SelectGroup, SelectGroupHeading, SelectLabel, SelectSeparator } from '../select';
 
 export type { SplitButtonProps, SplitButtonPropsWithoutHTML } from './split-button.svelte';
 export type { SplitButtonActionProps } from './split-button-action.svelte';

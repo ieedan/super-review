@@ -69,7 +69,10 @@ export function selectOpenCodeModelCandidates(
 	return rankOpenCodeModels(models).slice(0, Math.max(0, limit));
 }
 
-export async function listOpenCodeModels(binary: string, cwd: string): Promise<OpenCodeModelInfo[]> {
+export async function listOpenCodeModels(
+	binary: string,
+	cwd: string
+): Promise<OpenCodeModelInfo[]> {
 	// Use the user's real OpenCode config (do not pass OPENCODE_CONFIG) so we
 	// see authenticated providers. Fall back to plain `models` if --verbose fails.
 	const verbose = await spawnCapture(binary, ['models', '--verbose'], {
@@ -119,9 +122,7 @@ function parseModelMeta(jsonText: string): { cost?: OpenCodeModelCost; status?: 
 			status?: unknown;
 		};
 		const cost =
-			parsed.cost &&
-			typeof parsed.cost.input === 'number' &&
-			typeof parsed.cost.output === 'number'
+			parsed.cost && typeof parsed.cost.input === 'number' && typeof parsed.cost.output === 'number'
 				? {
 						input: parsed.cost.input,
 						output: parsed.cost.output,
@@ -140,10 +141,7 @@ function parseModelMeta(jsonText: string): { cost?: OpenCodeModelCost; status?: 
 	}
 }
 
-function readJsonBlock(
-	lines: string[],
-	start: number
-): { json: string; nextIndex: number } {
+function readJsonBlock(lines: string[], start: number): { json: string; nextIndex: number } {
 	const collected: string[] = [];
 	let depth = 0;
 	let i = start;

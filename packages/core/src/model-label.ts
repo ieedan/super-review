@@ -4,7 +4,10 @@ const CLAUDE_FAMILIES = new Set(['fable', 'mythos', 'opus', 'sonnet', 'haiku']);
 // isn't a Claude model id, so callers can fall back to their own label.
 export function formatClaudeModelLabel(id: string): string | null {
 	// Trailing `[1m]` marks the long-context variant, not a different model.
-	const parts = id.trim().replace(/\[[^\]]*\]$/, '').split('-');
+	const parts = id
+		.trim()
+		.replace(/\[[^\]]*\]$/, '')
+		.split('-');
 	if (parts.shift() !== 'claude') return null;
 
 	const family = parts.shift();

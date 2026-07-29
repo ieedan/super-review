@@ -46,11 +46,6 @@ export function augmentedPath(): string {
 	const extras =
 		process.platform === 'win32'
 			? [process.env.PATH ?? '']
-			: [
-					`${home}/.local/bin`,
-					'/usr/local/bin',
-					'/opt/homebrew/bin',
-					process.env.PATH ?? ''
-				];
+			: [`${home}/.local/bin`, '/usr/local/bin', '/opt/homebrew/bin', process.env.PATH ?? ''];
 	return extras.filter(Boolean).join(path.delimiter);
 }

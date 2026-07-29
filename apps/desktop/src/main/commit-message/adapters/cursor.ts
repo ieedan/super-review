@@ -130,8 +130,7 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		if (msg.method === 'session/update') {
 			const update = msg.params?.update;
 			const kind = update?.sessionUpdate;
-			const text =
-				typeof update?.content?.text === 'string' ? update.content.text : undefined;
+			const text = typeof update?.content?.text === 'string' ? update.content.text : undefined;
 			if (!text) return;
 			if (kind === 'agent_thought_chunk') {
 				reporter.addThinking(text);
@@ -146,8 +145,7 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		if (msg.method === 'session/request_permission' && msg.id != null) {
 			// Reject tool use — ask mode should not need tools; refuse if asked.
 			const reject =
-				msg.params?.options?.find((o) => o.optionId.includes('reject'))?.optionId ??
-				'reject-once';
+				msg.params?.options?.find((o) => o.optionId.includes('reject'))?.optionId ?? 'reject-once';
 			respond(msg.id, { outcome: { outcome: 'selected', optionId: reject } });
 			return;
 		}

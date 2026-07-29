@@ -7,10 +7,7 @@ import {
 	explainOpenCodeNoModels,
 	isRetryableOpenCodeModelFailure
 } from '../cli-error.js';
-import {
-	listOpenCodeModels,
-	selectOpenCodeModelCandidates
-} from '../opencode-models.js';
+import { listOpenCodeModels, selectOpenCodeModelCandidates } from '../opencode-models.js';
 import {
 	createOpenCodeSession,
 	OpenCodeStream,
@@ -95,10 +92,7 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 
 		const preferred = input.model?.trim();
 		const ordered = preferred
-			? [
-					{ slug: preferred },
-					...candidates.filter((c) => c.slug !== preferred)
-				]
+			? [{ slug: preferred }, ...candidates.filter((c) => c.slug !== preferred)]
 			: candidates;
 
 		// `opencode run` only prints when the whole turn is done, so prefer the

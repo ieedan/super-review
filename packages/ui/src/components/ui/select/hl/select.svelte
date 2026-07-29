@@ -104,7 +104,7 @@
 <Root
 	{type}
 	bind:value={value as never}
-	onOpenChange={onOpenChange}
+	{onOpenChange}
 	onValueChange={onValueChange as never}
 	items={flatItems}
 	{disabled}

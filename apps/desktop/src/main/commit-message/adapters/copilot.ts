@@ -56,8 +56,7 @@ export async function generateWithCopilot(input: AdapterInput): Promise<AdapterR
 
 	// With events on stdout the assistant text only exists in what we collected.
 	const parsed = streaming
-		? (parseCommitMessageOutput(reporter.answerText()) ??
-			parseCommitMessageOutput(result.stdout))
+		? (parseCommitMessageOutput(reporter.answerText()) ?? parseCommitMessageOutput(result.stdout))
 		: parseCommitMessageOutput(result.stdout);
 	if (!parsed) {
 		return {

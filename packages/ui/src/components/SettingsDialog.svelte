@@ -380,8 +380,7 @@
 			tab: 'agents',
 			id: 'settings-commit-messages',
 			label: 'Commit messages',
-			keywords:
-				'commit message generate ai harness cursor claude codex copilot opencode agent'
+			keywords: 'commit message generate ai harness cursor claude codex copilot opencode agent'
 		},
 		{
 			tab: 'agents',

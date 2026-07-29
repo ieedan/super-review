@@ -96,13 +96,7 @@ export const SETTINGS_KEYS = new Set(Object.keys(DEFAULT_SETTINGS)) as ReadonlyS
 
 const editorEnum = z.enum(['cursor', 'vscode', 'zed', 'xcode', 'visualstudio']);
 const terminalEnum = z.enum(['terminal', 'iterm', 'warp', 'ghostty', 'cmd', 'powershell']);
-const commitMessageHarnessEnum = z.enum([
-	'claude-code',
-	'cursor',
-	'codex',
-	'opencode',
-	'copilot'
-]);
+const commitMessageHarnessEnum = z.enum(['claude-code', 'cursor', 'codex', 'opencode', 'copilot']);
 const statMetricEnum = z.enum([...STAT_METRICS] as [StatMetric, ...StatMetric[]]);
 // A visibility map (headerItems, sidebarTabs, ...): a record of booleans. Kept
 // loose on purpose — store.ts merges it over the typed defaults, so a partial or

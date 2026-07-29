@@ -38,10 +38,7 @@ export interface ExplainOpenCodeFailureOptions {
 
 // OpenCode (and some other CLIs) print structured errors like:
 //   Error: { "name": "UnknownError", "data": { "message": "...", "ref": "err_…" } }
-export function explainOpenCodeFailure(
-	raw: string,
-	opts: ExplainOpenCodeFailureOptions
-): string {
+export function explainOpenCodeFailure(raw: string, opts: ExplainOpenCodeFailureOptions): string {
 	const { model, modelCount } = opts;
 	const cleaned = stripAnsi(raw).trim();
 	const structured = extractStructuredError(cleaned);
@@ -60,7 +57,9 @@ export function explainOpenCodeFailure(
 	if (/\b(model .+ not found|unknown model|no such model|model unavailable)\b/.test(lower)) {
 		return (
 			`OpenCode doesn't have model \`${model}\` available` +
-			(modelCount > 0 ? ` (your providers list ${modelCount} model${modelCount === 1 ? '' : 's'})` : '') +
+			(modelCount > 0
+				? ` (your providers list ${modelCount} model${modelCount === 1 ? '' : 's'})`
+				: '') +
 			`. Pick another harness in Agents settings, or run \`opencode auth login\` to add a provider.`
 		);
 	}
