@@ -15,7 +15,9 @@ export async function cliSupportsFlag(
 	const cached = cache.get(key);
 	if (cached != null) return cached;
 
-	let supported = false;
+	// No initializer: both branches below assign it, and a starting value that is
+	// never read is what `no-useless-assignment` exists to catch.
+	let supported: boolean;
 	try {
 		const help = await spawnCapture(binary, helpArgs, { cwd, timeoutMs: 10_000 });
 		const text = `${help.stdout}\n${help.stderr}`;
