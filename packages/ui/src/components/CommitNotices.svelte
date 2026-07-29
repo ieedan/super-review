@@ -8,19 +8,31 @@
 	//    agents can't document their changes here for review.
 	// They render through Stack, which arranges them like a Sonner stack (hover to
 	// expand, dismiss one by one with a smooth exit).
+	import CircleStop from '@lucide/svelte/icons/circle-stop';
 	import OfflineIcon from '@iconify/svelte/dist/OfflineIcon.svelte';
-	import { actions, app } from '@super-review/ui/store.svelte';
+	import { actions, app, effectiveCommitMessageHarness } from '@super-review/ui/store.svelte';
 	import { SUPER_REVIEW_ICON } from '@super-review/ui/file-icons';
 	import { Button } from './ui/button';
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import ConfigureAiButton from './ConfigureAiButton.svelte';
+	import GenerateChangesetButton from './GenerateChangesetButton.svelte';
+	import HarnessLogo from './HarnessLogo.svelte';
 	import NoticeCard from './NoticeCard.svelte';
 	import Stack from './stack/Stack.svelte';
 	import UpdateNotice from './UpdateNotice.svelte';
 
+	// Stays up for as long as a run is in flight, whatever the status says. The
+	// agent's changesets land while it is still working, and any refresh that
+	// notices them (the file watcher, a focus poll, the one the run itself does)
+	// flips `needsChangeset` to false — without this the row would vanish
+	// mid-shimmer and hide work that hasn't finished.
 	const showAdd = $derived(
-		(app.changesetStatus?.needsChangeset ?? false) && !app.changesetPromptDismissed
+		((app.changesetStatus?.needsChangeset ?? false) && !app.changesetPromptDismissed) ||
+			app.changesetGenerating
 	);
+
+	// The agent doing the writing, for the logo on the generating row.
+	const generatingHarness = $derived(effectiveCommitMessageHarness());
 
 	// Packages bumped by a changeset *newly added* on this branch but with no actual
 	// changes — that changeset is likely unnecessary. Editing the bumps of a changeset
@@ -197,23 +209,66 @@
 						{/snippet}
 					</NoticeCard>
 				{:else if n.id === 'add'}
-					<NoticeCard onDismiss={dismiss} dismissTitle="Dismiss for this branch">
-						{#snippet logo()}
-							<ChangesetLogo class="h-4 w-auto shrink-0" />
-						{/snippet}
-						Add a changeset?
-						{#snippet action()}
-							<Button
-								type="button"
-								size="xs"
-								variant="outline"
-								class="h-6 text-[11px]"
-								onclick={() => actions.openChangesetDialog()}
+					{#if app.changesetGenerating}
+						<!-- The same row, taken over by the run: the agent's logo and a
+						     shimmering line saying what it is doing right now, with no
+						     controls to press until it lands. Reading a branch takes a
+						     while, and "Generating changeset…" for two minutes reads as
+						     stuck; the real tool calls read as working. -->
+						<NoticeCard
+							tooltip="Your coding agent is reading the branch and writing its changesets."
+						>
+							{#snippet logo()}
+								{#if generatingHarness}
+									<HarnessLogo harness={generatingHarness} size={16} class="shrink-0" />
+								{:else}
+									<ChangesetLogo class="h-4 w-auto shrink-0" />
+								{/if}
+							{/snippet}
+							<span
+								class="shimmer shimmer-color-foreground shimmer-spread-[24px] shimmer-duration-1000"
 							>
-								Add
-							</Button>
-						{/snippet}
-					</NoticeCard>
+								{app.changesetActivity || 'Generating changeset…'}
+							</span>
+							{#snippet action()}
+								<!-- The one control during a run. A read of a big branch takes
+								     minutes, and watching it work is only reassuring while you
+								     still have the option to call it off. -->
+								<Button
+									type="button"
+									size="icon-xs"
+									variant="ghost"
+									class="size-6 text-muted-foreground hover:text-foreground"
+									title="Stop generating"
+									onclick={() => void actions.cancelChangesetGeneration()}
+								>
+									<CircleStop class="size-3.5" />
+									<span class="sr-only">Stop generating</span>
+								</Button>
+							{/snippet}
+						</NoticeCard>
+					{:else}
+						<NoticeCard onDismiss={dismiss} dismissTitle="Dismiss for this branch">
+							{#snippet logo()}
+								<ChangesetLogo class="h-4 w-auto shrink-0" />
+							{/snippet}
+							Add a changeset?
+							{#snippet action()}
+								<span class="flex items-center gap-1">
+									<GenerateChangesetButton />
+									<Button
+										type="button"
+										size="xs"
+										variant="outline"
+										class="h-6 text-[11px]"
+										onclick={() => actions.openChangesetDialog()}
+									>
+										Add
+									</Button>
+								</span>
+							{/snippet}
+						</NoticeCard>
+					{/if}
 				{:else if n.id === 'ai-config-update'}
 					<NoticeCard
 						onDismiss={dismiss}

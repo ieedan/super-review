@@ -1,6 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export const GENERATION_TIMEOUT_MS = 90_000;
+// A run that has to explore the repo before it can write anything: reading files,
+// running git, following what it finds. Minutes, not seconds.
+export const AGENT_TIMEOUT_MS = 600_000;
 
 export interface SpawnCaptureResult {
 	ok: boolean;

@@ -317,16 +317,67 @@ export interface ChangesetStatus {
 	branchChangesets: { path: string; packages: string[]; added: boolean }[];
 }
 
+// How much a changeset bumps a package.
+export type ChangesetBump = 'patch' | 'minor' | 'major';
+
 // Input for writing a new changeset: one bump type applied to every selected
 // package, plus a markdown description that becomes the file body.
 export interface CreateChangesetInput {
 	packages: string[];
-	bump: 'patch' | 'minor' | 'major';
+	bump: ChangesetBump;
 	description: string;
 	// Optional filename slug (no extension); used as `.changeset/<name>.md` when it
 	// is a safe slug and not already taken, else a random one is generated. Lets the
 	// UI preview the exact file it's about to write.
 	name?: string;
+}
+
+// A changeset file an agent wrote, read back off disk after its run. The agent
+// writes the files itself (it has the whole repo to look at, and one file per
+// distinct change is its call), so this is what we found, not what it promised.
+export interface GeneratedChangesetFile {
+	// Repo-relative path, e.g. `.changeset/brave-otters-jog.md`.
+	path: string;
+	// Packages its frontmatter bumps.
+	packages: string[];
+	// First line of the body, for reporting what landed.
+	summary: string;
+}
+
+// What the renderer sends when the user clicks the sparkle on the "Add a
+// changeset?" notice. No diff rides along: a changeset describes the whole
+// branch, and the agent explores it with its own tools.
+export interface GenerateChangesetRequest {
+	branch: string | null;
+	// Preferred harness from prefs; main process falls back if missing/uninstalled.
+	preferredHarness?: CommitMessageHarness | null;
+	// Editable base instructions (style only). Empty/omitted uses the default.
+	basePrompt?: string | null;
+	// Model id for the chosen harness. Empty/omitted uses that harness's default.
+	model?: string | null;
+}
+
+export interface GenerateChangesetResult {
+	ok: boolean;
+	harness?: CommitMessageHarness;
+	// The changeset files the run added or rewrote. Present only on success.
+	written?: GeneratedChangesetFile[];
+	// Packages the written changesets reference that this workspace doesn't
+	// release — `changeset version` would fail on them, so the UI warns.
+	unknownPackages?: string[];
+	// Files outside `.changeset/` the run touched despite being told not to.
+	// Nothing is reverted; the user is told so they can look.
+	strayPaths?: string[];
+	error?: string;
+	code?: 'no-harness' | 'not-installed' | 'timeout' | 'failed' | 'empty' | 'cancelled';
+}
+
+// Progress while an agent works on a branch's changesets. Unlike commit-message
+// generation there is no answer to stream — the output is files on disk — so the
+// only channel is a short line about what the agent is doing right now
+// ("Reading store.svelte.ts", "Running git diff"), for the shimmering notice.
+export interface ChangesetProgressEvent {
+	status: string;
 }
 
 // Which coding-agent harness produced a session. Drives the logo shown on the
@@ -1676,6 +1727,10 @@ export interface UserPrefs {
 	commitMessagePrompt?: string | null;
 	// Preferred model id per harness for commit-message generation.
 	commitMessageModels?: Partial<Record<CommitMessageHarness, string>>;
+	// Editable base prompt for changeset generation (no packages/patch). Null or
+	// empty means the built-in default. Shares the harness/model prefs above;
+	// only the instructions differ between the two kinds of generation.
+	changesetPrompt?: string | null;
 	// File list layout is tracked per sidebar tab so the user can keep, say, a
 	// tree in Unstaged and a flat list in Branch.
 	unstagedFileListLayout: FileListLayout;
@@ -2289,6 +2344,14 @@ export interface PreloadAPI {
 		create(repoId: string, input: CreateChangesetInput): Promise<string>;
 		// Delete a changeset file by its repo-relative path (e.g. an unnecessary one).
 		remove(repoId: string, path: string): Promise<void>;
+		// Turn the preferred harness CLI loose on the branch to write its changesets:
+		// it explores the diff with its own tools and writes the `.changeset/*.md`
+		// files, restricted to that directory. Resolves once the run is over, with
+		// what it wrote read back off disk. Progress streams via
+		// events.onChangesetProgress.
+		generate(repoId: string, request: GenerateChangesetRequest): Promise<GenerateChangesetResult>;
+		// Abort an in-flight generate (returns false when nothing was running).
+		cancelGenerate(): Promise<boolean>;
 	};
 	editor: {
 		detect(): Promise<Record<EditorKind, boolean>>;
@@ -2849,6 +2912,9 @@ export interface PreloadAPI {
 		onPrefsChanged(handler: (change: PrefsChange) => void): () => void;
 		// Streaming text while commit-message generation runs. Returns an unsubscribe fn.
 		onCommitMessageProgress(handler: (event: CommitMessageProgressEvent) => void): () => void;
+		// What the agent is doing while it writes the branch's changesets. Returns an
+		// unsubscribe fn.
+		onChangesetProgress(handler: (event: ChangesetProgressEvent) => void): () => void;
 		// Background auto-update progress pushed by the main process (checking →
 		// downloading → downloaded, or error). Returns an unsubscribe fn.
 		onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;

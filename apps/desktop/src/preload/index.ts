@@ -29,6 +29,9 @@ import type {
 	EditorKind,
 	FeedbackInput,
 	FeedbackResult,
+	ChangesetProgressEvent,
+	GenerateChangesetRequest,
+	GenerateChangesetResult,
 	FileContextMenuResult,
 	HeaderContextMenuResult,
 	EmptyViewContextMenuResult,
@@ -260,7 +263,10 @@ const api: PreloadAPI = {
 		getStatus: (repoId) => invoke('changesets:getStatus', repoId) as Promise<ChangesetStatus>,
 		create: (repoId, input: CreateChangesetInput) =>
 			invoke('changesets:create', repoId, input) as Promise<string>,
-		remove: (repoId, path: string) => invoke('changesets:remove', repoId, path) as Promise<void>
+		remove: (repoId, path: string) => invoke('changesets:remove', repoId, path) as Promise<void>,
+		generate: (repoId, request: GenerateChangesetRequest) =>
+			invoke('changesets:generate', repoId, request) as Promise<GenerateChangesetResult>,
+		cancelGenerate: () => invoke('changesets:cancelGenerate') as Promise<boolean>
 	},
 	editor: {
 		detect: () => invoke('editor:detect') as Promise<Record<EditorKind, boolean>>,
@@ -651,6 +657,12 @@ const api: PreloadAPI = {
 				handler(event);
 			ipcRenderer.on('commitMessage:progress', listener);
 			return () => ipcRenderer.off('commitMessage:progress', listener);
+		},
+		onChangesetProgress(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, event: ChangesetProgressEvent) =>
+				handler(event);
+			ipcRenderer.on('changesets:progress', listener);
+			return () => ipcRenderer.off('changesets:progress', listener);
 		},
 		onUpdateStatus(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status);

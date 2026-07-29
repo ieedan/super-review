@@ -1,10 +1,10 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { describeToolCall } from '../activity.js';
 import { cliSupportsFlag } from '../cli-probe.js';
 import { runCodexAppServerTurn } from '../codex-app-server.js';
-import { parseCommitMessageOutput } from '../parse.js';
-import { GENERATION_TIMEOUT_MS, spawnCapture } from '../spawn.js';
+import { AGENT_TIMEOUT_MS, GENERATION_TIMEOUT_MS, spawnCapture } from '../spawn.js';
 import { createLineReader, createStreamReporter, type StreamReporter } from '../stream.js';
 import type { AdapterInput, AdapterResult } from './types.js';
 
@@ -15,6 +15,14 @@ export async function generateWithCodex(input: AdapterInput): Promise<AdapterRes
 	const reporter = createStreamReporter(input.onProgress);
 
 	try {
+		// The app-server exists to stream an answer token by token. A run that goes
+		// off and works in the repo has no answer worth streaming (the output is the
+		// files it writes) and needs a sandbox `exec` is the one that configures, so
+		// it skips straight there.
+		if (input.tools === 'workspace') {
+			return await generateWithCodexExec(input, model, reporter);
+		}
+
 		// `codex exec` only prints the answer when the turn is over — its event
 		// stream has no deltas. The app-server does stream, so try it first.
 		const streamed = await runCodexAppServerTurn({
@@ -32,13 +40,12 @@ export async function generateWithCodex(input: AdapterInput): Promise<AdapterRes
 			return { ok: false, code: 'timeout', error: streamed.error ?? 'Timed out' };
 		}
 		if (!streamed.unavailable) {
-			const parsed = parseCommitMessageOutput(streamed.text);
-			if (parsed) return { ok: true, subject: parsed.subject, body: parsed.body };
+			if (streamed.text.trim()) return { ok: true, text: streamed.text };
 			if (streamed.error) {
 				return { ok: false, code: 'failed', error: streamed.error };
 			}
-			// Turn finished but the answer wasn't usable — fall through and let
-			// `exec` have one go rather than failing outright.
+			// Turn finished but said nothing: fall through and let `exec` have one go
+			// rather than failing outright.
 		}
 
 		return await generateWithCodexExec(input, model, reporter);
@@ -66,8 +73,10 @@ async function generateWithCodexExec(
 				return;
 			}
 			applyCodexEvent(event, reporter);
+			reportCodexActivity(event, input.onActivity);
 		});
 
+		const agentic = input.tools === 'workspace';
 		const result = await spawnCapture(
 			input.binary,
 			[
@@ -75,11 +84,12 @@ async function generateWithCodexExec(
 				'--ephemeral',
 				'--skip-git-repo-check',
 				'-s',
-				'read-only',
+				// Writing changesets means writing files; anything else stays read-only.
+				agentic ? 'workspace-write' : 'read-only',
 				'--model',
 				model,
 				'--config',
-				'model_reasoning_effort="low"',
+				`model_reasoning_effort="${agentic ? 'medium' : 'low'}"`,
 				'--output-last-message',
 				outputPath,
 				...(streaming ? ['--json'] : []),
@@ -89,6 +99,7 @@ async function generateWithCodexExec(
 				cwd: input.cwd,
 				stdin: input.prompt,
 				signal: input.signal,
+				timeoutMs: agentic ? AGENT_TIMEOUT_MS : undefined,
 				...(streaming
 					? { onStdoutChunk: readLine }
 					: { onStdout: (stdout) => reporter.setAnswer(stdout) })
@@ -110,18 +121,46 @@ async function generateWithCodexExec(
 			raw = streaming ? reporter.answerText() : result.stdout;
 		}
 
-		const parsed = parseCommitMessageOutput(raw);
-		if (!parsed) {
+		if (!raw.trim()) {
 			return {
 				ok: false,
 				code: 'empty',
-				error: result.error ?? 'Codex returned no usable commit message.'
+				error: result.error ?? 'Codex returned an empty response.'
 			};
 		}
-		return { ok: true, subject: parsed.subject, body: parsed.body };
+		return { ok: true, text: raw };
 	} finally {
 		await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 	}
+}
+
+// Codex reports its work as thread items (`command_execution`, `file_change`) or
+// as `exec_command_begin`-style messages, depending on the CLI version. Both
+// carry enough to say what it is doing.
+function reportCodexActivity(
+	event: unknown,
+	onActivity: ((status: string) => void) | undefined
+): void {
+	if (!onActivity || !event || typeof event !== 'object') return;
+	const outer = event as Record<string, unknown>;
+
+	const item = outer.item as Record<string, unknown> | undefined;
+	if (item && typeof item === 'object') {
+		const kind = (item.item_type ?? item.type) as string | undefined;
+		if (!kind) return;
+		const status = describeToolCall({ name: kind, input: item });
+		if (status) onActivity(status);
+		return;
+	}
+
+	const msg = (outer.msg && typeof outer.msg === 'object' ? outer.msg : outer) as Record<
+		string,
+		unknown
+	>;
+	const type = typeof msg.type === 'string' ? msg.type : '';
+	if (!type.endsWith('_begin')) return;
+	const status = describeToolCall({ name: type.replace(/_begin$/, ''), input: msg });
+	if (status) onActivity(status);
 }
 
 // Codex has shipped a few event schemas: `{msg:{type:'agent_message_delta'}}`,

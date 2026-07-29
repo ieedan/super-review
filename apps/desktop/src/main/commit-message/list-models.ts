@@ -14,15 +14,6 @@ export interface CommitMessageModelOption {
 	label: string;
 }
 
-// Defaults when the user hasn't picked a model for that harness yet.
-export const DEFAULT_COMMIT_MESSAGE_MODELS: Record<CommitMessageHarness, string> = {
-	cursor: 'composer-2.5-fast',
-	'claude-code': 'haiku',
-	codex: 'gpt-5.6-luna',
-	copilot: 'claude-haiku-4.5',
-	opencode: ''
-};
-
 // The Claude CLI has no `models` command, so the tier aliases *are* the model
 // list: `--model haiku|sonnet|opus|fable` always resolves to the newest model in
 // that tier. Each one is resolved to a concrete id (see `listClaudeModels`) so
@@ -267,13 +258,4 @@ export function parseCursorModelsOutput(raw: string): CommitMessageModelOption[]
 		models.push({ id, label });
 	}
 	return models;
-}
-
-export function resolveCommitMessageModel(
-	harness: CommitMessageHarness,
-	preferred: string | null | undefined
-): string {
-	const trimmed = preferred?.trim();
-	if (trimmed) return trimmed;
-	return DEFAULT_COMMIT_MESSAGE_MODELS[harness];
 }

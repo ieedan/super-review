@@ -1,24 +1,16 @@
 import type {
 	CommitFileSelection,
-	CommitMessageHarness,
 	CommitMessageProgressEvent,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResult
 } from '@super-review/core/types';
 import { getDiff } from '@super-review/core';
-import { generateWithClaude } from './adapters/claude.js';
-import { generateWithCodex } from './adapters/codex.js';
-import { generateWithCopilot } from './adapters/copilot.js';
-import { generateWithCursor } from './adapters/cursor.js';
-import { generateWithOpenCode } from './adapters/opencode.js';
+import { runAdapter } from './adapters/index.js';
 import type { AdapterInput, AdapterResult } from './adapters/types.js';
-import {
-	detectCommitMessageHarnesses,
-	resolveHarnessBinary,
-	resolvePreferredHarness
-} from './detect.js';
+import { resolveHarnessForRun } from './detect.js';
+import { parseCommitMessageOutput } from './parse.js';
 import { buildCommitMessagePrompt, concatenatePatches, summarizeSelections } from './prompt.js';
-import { resolveCommitMessageModel } from './list-models.js';
+import { resolveCommitMessageModel } from './models.js';
 
 export interface GenerateCommitMessageOptions {
 	onProgress?: (event: CommitMessageProgressEvent) => void;
@@ -48,25 +40,11 @@ export async function generateCommitMessage(
 	activeAbort = abort;
 
 	try {
-		const status = await detectCommitMessageHarnesses();
-		const harness = resolvePreferredHarness(status, request.preferredHarness);
-		if (!harness) {
-			return {
-				ok: false,
-				code: 'no-harness',
-				error:
-					'No supported coding agent CLI found. Install Cursor, Claude Code, Codex, Copilot, or OpenCode and try again.'
-			};
+		const resolved = await resolveHarnessForRun(request.preferredHarness);
+		if (!resolved.ok) {
+			return { ok: false, code: 'no-harness', error: resolved.error };
 		}
-
-		const binary = await resolveHarnessBinary(harness);
-		if (!binary) {
-			return {
-				ok: false,
-				code: 'no-harness',
-				error: `${harness} CLI was detected earlier but is no longer available.`
-			};
-		}
+		const { harness, binary } = resolved;
 
 		if (abort.signal.aborted) {
 			return { ok: false, harness, code: 'cancelled', error: 'Cancelled' };
@@ -115,32 +93,26 @@ export async function generateCommitMessage(
 			};
 		}
 
+		// The harness answers with the message itself (subject, blank line, body);
+		// some still wrap it in a fence or a JSON object, which the parser accepts.
+		const parsed = parseCommitMessageOutput(result.text ?? '');
+		if (!parsed) {
+			return {
+				ok: false,
+				harness,
+				code: 'empty',
+				error: 'The agent returned no usable commit message.'
+			};
+		}
+
 		return {
 			ok: true,
 			harness,
-			subject: result.subject,
-			body: result.body ?? ''
+			subject: parsed.subject,
+			body: parsed.body
 		};
 	} finally {
 		if (activeAbort === abort) activeAbort = null;
-	}
-}
-
-async function runAdapter(
-	harness: CommitMessageHarness,
-	input: AdapterInput
-): Promise<AdapterResult> {
-	switch (harness) {
-		case 'codex':
-			return generateWithCodex(input);
-		case 'claude-code':
-			return generateWithClaude(input);
-		case 'cursor':
-			return generateWithCursor(input);
-		case 'copilot':
-			return generateWithCopilot(input);
-		case 'opencode':
-			return generateWithOpenCode(input);
 	}
 }
 

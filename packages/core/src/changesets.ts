@@ -21,7 +21,12 @@ import { simpleGit, type SimpleGit } from 'simple-git';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { detectDefaultBranch } from './git-service.js';
-import type { ChangesetStatus, CreateChangesetInput, WorkspacePackage } from './types.js';
+import type {
+	ChangesetBump,
+	ChangesetStatus,
+	CreateChangesetInput,
+	WorkspacePackage
+} from './types.js';
 
 // Leading `---` … `---` frontmatter block of a changeset file.
 const FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
@@ -245,7 +250,13 @@ async function revExists(git: SimpleGit, ref: string): Promise<boolean> {
 async function changedFilesOnBranch(
 	git: SimpleGit,
 	config: ChangesetConfig
-): Promise<{ files: string[]; added: Set<string> }> {
+): Promise<{
+	files: string[];
+	added: Set<string>;
+	untracked: string[];
+	baseRef: string | null;
+	mergeBase: string | null;
+}> {
 	const baseName =
 		config.baseBranch ?? (await detectDefaultBranch(git).catch(() => undefined)) ?? 'main';
 	const baseRef = (await revExists(git, `origin/${baseName}`))
@@ -288,16 +299,20 @@ async function changedFilesOnBranch(
 		}
 	}
 	// Untracked files aren't in `diff`; add them explicitly — and they're new.
-	const untracked = await git.raw(['ls-files', '--others', '--exclude-standard']).catch(() => '');
-	for (const p of untracked.split('\n')) {
+	const untrackedOut = await git
+		.raw(['ls-files', '--others', '--exclude-standard'])
+		.catch(() => '');
+	const untracked: string[] = [];
+	for (const p of untrackedOut.split('\n')) {
 		const file = p.trim();
 		if (file) {
 			paths.add(file);
 			added.add(file);
+			untracked.push(file);
 		}
 	}
 
-	return { files: [...paths], added };
+	return { files: [...paths], added, untracked, baseRef, mergeBase };
 }
 
 // A `.changeset/<name>.md` file (paths from git are repo-root-relative, and the
@@ -326,7 +341,7 @@ function packagesForFiles(files: string[], packages: WorkspacePackage[]): string
 
 // --- changesets introduced on this branch -----------------------------------
 
-function packagesInChangeset(src: string): string[] {
+export function packagesInChangeset(src: string): string[] {
 	const m = FRONTMATTER_RE.exec(src);
 	if (!m) return [];
 	const names: string[] = [];
@@ -400,6 +415,108 @@ export async function getChangesetStatus(repoPath: string): Promise<ChangesetSta
 		needsChangeset,
 		branchChangesets
 	};
+}
+
+// --- brief for AI changeset generation ---------------------------------------
+
+// What an agent is told before it goes and looks for itself. Deliberately small:
+// the branch's diff is the agent's to explore with its own tools, so this carries
+// only what it can't cheaply work out — which packages this workspace actually
+// releases, where the branch starts, and what is already covered.
+export interface ChangesetBrief {
+	// Releasable workspace packages: the only names a changeset may reference.
+	packages: WorkspacePackage[];
+	// Packages this branch changed with no changeset covering them yet. This is
+	// exactly what the "Add a changeset?" prompt is reacting to, so it doubles as
+	// the finish line: cover these and the prompt goes away.
+	uncoveredPackages: string[];
+	// Changesets already introduced on this branch (path + the packages each bumps),
+	// so the agent doesn't write a second changeset for work already covered.
+	branchChangesets: { path: string; packages: string[] }[];
+	// The branch this diffs against (e.g. `origin/main`), null when there is none
+	// to compare with (detached, unborn, no default branch).
+	baseRef: string | null;
+	// Where the branch left the base, so the agent can diff against a fixed point
+	// instead of guessing at one.
+	mergeBase: string | null;
+}
+
+export async function getChangesetBrief(repoPath: string): Promise<ChangesetBrief | null> {
+	const config = await readChangesetConfig(repoPath);
+	if (!config) return null;
+
+	const git = simpleGit(repoPath);
+	const [packages, changed] = await Promise.all([
+		listWorkspacePackages(repoPath, config),
+		changedFilesOnBranch(git, config)
+	]);
+
+	const branchChangesets = (await branchChangesetFiles(repoPath, changed.files, changed.added)).map(
+		(c) => ({ path: c.path, packages: c.packages })
+	);
+
+	// Judged the same way getChangesetStatus judges it, so "cover these" and "the
+	// prompt goes away" mean the same thing.
+	const covered = new Set(branchChangesets.flatMap((c) => c.packages));
+	const uncoveredPackages = packagesForFiles(changed.files, packages).filter(
+		(name) => !covered.has(name)
+	);
+
+	return {
+		packages,
+		uncoveredPackages,
+		branchChangesets,
+		baseRef: changed.baseRef,
+		mergeBase: changed.mergeBase
+	};
+}
+
+// --- reading back what an agent wrote ----------------------------------------
+
+// One changeset file on disk: its contents and the packages its frontmatter
+// bumps. Snapshotting `.changeset` before and after a run is how we find out what
+// the agent actually wrote, without it having to tell us.
+export interface ChangesetFile {
+	path: string;
+	contents: string;
+	packages: string[];
+}
+
+export async function readChangesetFiles(repoPath: string): Promise<Map<string, ChangesetFile>> {
+	const dir = path.join(repoPath, '.changeset');
+	let entries: string[];
+	try {
+		entries = await fs.readdir(dir);
+	} catch {
+		return new Map();
+	}
+
+	const out = new Map<string, ChangesetFile>();
+	for (const name of entries) {
+		const relPath = path.posix.join('.changeset', name);
+		if (!isChangesetFile(relPath)) continue;
+		try {
+			const contents = await fs.readFile(path.join(dir, name), 'utf8');
+			out.set(relPath, { path: relPath, contents, packages: packagesInChangeset(contents) });
+		} catch {
+			// unreadable (raced with a delete) — not part of the snapshot
+		}
+	}
+	return out;
+}
+
+// The changeset files a run added or rewrote, judged by comparing snapshots taken
+// either side of it. Returned in path order so the report reads consistently.
+export function changesetFilesWritten(
+	before: Map<string, ChangesetFile>,
+	after: Map<string, ChangesetFile>
+): ChangesetFile[] {
+	const written: ChangesetFile[] = [];
+	for (const [relPath, file] of after) {
+		const prior = before.get(relPath);
+		if (!prior || prior.contents !== file.contents) written.push(file);
+	}
+	return written.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 // changesets-style three-word slug (adjective-noun-verb) so the filename reads
@@ -561,15 +678,30 @@ export async function createChangeset(
 	repoPath: string,
 	input: CreateChangesetInput
 ): Promise<string> {
-	const packages = input.packages.filter((p) => p.trim() !== '');
-	if (packages.length === 0) throw new Error('A changeset needs at least one package.');
+	const entries = input.packages
+		.filter((p) => p.trim() !== '')
+		.map((name) => ({ name, bump: input.bump }));
+	return writeChangesetFile(repoPath, entries, input.description, input.name);
+}
+
+// The one place the app writes a `.changeset/*.md` (an agent-generated one is
+// written by the agent itself). `entries` carries a bump per
+// package, which is how the file format works; the single-bump create dialog
+// just passes the same bump for every package it selected.
+async function writeChangesetFile(
+	repoPath: string,
+	entries: { name: string; bump: ChangesetBump }[],
+	description: string,
+	name?: string
+): Promise<string> {
+	if (entries.length === 0) throw new Error('A changeset needs at least one package.');
 
 	const dir = path.join(repoPath, '.changeset');
 	await fs.mkdir(dir, { recursive: true });
 
 	// Prefer the caller's slug when it's a safe filename and free; otherwise fall
 	// back to a generated `adjective-noun-verb` name, retrying on collision.
-	const requested = /^[a-z0-9-]+$/i.test(input.name ?? '') ? (input.name as string) : null;
+	const requested = /^[a-z0-9-]+$/i.test(name ?? '') ? (name as string) : null;
 	let slug = requested ?? randomSlug();
 	for (
 		let attempt = 0;
@@ -580,8 +712,8 @@ export async function createChangeset(
 	}
 	const relPath = path.posix.join('.changeset', `${slug}.md`);
 
-	const frontmatter = packages.map((p) => `'${p}': ${input.bump}`).join('\n');
-	const body = input.description.trim();
+	const frontmatter = entries.map((e) => `'${e.name}': ${e.bump}`).join('\n');
+	const body = description.trim();
 	const contents = `---\n${frontmatter}\n---\n\n${body}\n`;
 
 	await fs.writeFile(path.join(dir, `${slug}.md`), contents, 'utf8');

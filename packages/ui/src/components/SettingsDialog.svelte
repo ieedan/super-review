@@ -15,8 +15,10 @@
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
 	import Keyboard from '@lucide/svelte/icons/keyboard';
 	import LogOut from '@lucide/svelte/icons/log-out';
+	import MessageSquareText from '@lucide/svelte/icons/message-square-text';
 	import Palette from '@lucide/svelte/icons/palette';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Puzzle from '@lucide/svelte/icons/puzzle';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Search from '@lucide/svelte/icons/search';
@@ -53,6 +55,8 @@
 	import AppChromePreview from './AppChromePreview.svelte';
 	import UsageStatsPanel from './UsageStatsPanel.svelte';
 	import AgentsSettingsPanel from './AgentsSettingsPanel.svelte';
+	import PromptsSettingsPanel from './PromptsSettingsPanel.svelte';
+	import SkillsSettingsPanel from './SkillsSettingsPanel.svelte';
 	import {
 		actions,
 		app,
@@ -124,6 +128,8 @@
 		{ id: 'app', label: 'App', icon: AppWindow },
 		{ id: 'editor', label: 'Integrations', icon: Code2 },
 		{ id: 'agents', label: 'Agents', icon: Bot },
+		{ id: 'prompts', label: 'Prompts', icon: MessageSquareText },
+		{ id: 'skills', label: 'Skills', icon: Puzzle },
 		{ id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
 		{ id: 'stats', label: 'Stats', icon: BarChart3 },
 		{ id: 'updates', label: 'Updates', icon: RefreshCw }
@@ -379,14 +385,41 @@
 		{
 			tab: 'agents',
 			id: 'settings-commit-messages',
-			label: 'Commit messages',
-			keywords: 'commit message generate ai harness cursor claude codex copilot opencode agent'
+			label: 'Agent CLI',
+			keywords:
+				'commit message changeset generate ai harness cli model cursor claude codex copilot opencode agent default'
 		},
 		{
 			tab: 'agents',
 			id: 'settings-agents',
 			label: 'Agents',
-			keywords: 'agents ai skill subagent claude configuration install harness convention'
+			keywords: 'agents ai cli harness model generate commit message changeset default'
+		},
+		// Search-only: both editors live inside PromptsSettingsPanel (under
+		// settings-prompts), each with its own id so search scrolls to the right one.
+		{
+			tab: 'prompts',
+			id: 'settings-commit-message-prompt',
+			label: 'Commit message prompt',
+			keywords: 'prompt instructions commit message generate ai wording style conventional'
+		},
+		{
+			tab: 'prompts',
+			id: 'settings-changeset-prompt',
+			label: 'Changeset prompt',
+			keywords: 'prompt instructions changeset generate ai wording style release changelog bump'
+		},
+		{
+			tab: 'prompts',
+			id: 'settings-prompts',
+			label: 'Prompts',
+			keywords: 'prompts instructions ai generate commit message changeset wording'
+		},
+		{
+			tab: 'skills',
+			id: 'settings-skills',
+			label: 'Skills',
+			keywords: 'skills subagent agent files claude configuration install harness convention'
 		},
 		{
 			tab: 'hotkeys',
@@ -414,7 +447,11 @@
 
 	// Sections whose DOM lives nested inside another section (search still finds
 	// them via SECTIONS; layout skips so we don't render an empty duplicate wrapper).
-	const NESTED_SECTION_IDS = new Set(['settings-commit-messages']);
+	const NESTED_SECTION_IDS = new Set([
+		'settings-commit-messages',
+		'settings-commit-message-prompt',
+		'settings-changeset-prompt'
+	]);
 
 	function sectionsForTab(tab: SettingsTab): SettingsSection[] {
 		return SECTIONS.filter((s) => s.tab === tab && !NESTED_SECTION_IDS.has(s.id));
@@ -1409,6 +1446,15 @@
 			for search. It stays mounted afterwards so returning is instant. -->
 		{#if mountedTabs.has('agents')}
 			<AgentsSettingsPanel />
+		{/if}
+	{:else if id === 'settings-prompts'}
+		{#if mountedTabs.has('prompts')}
+			<PromptsSettingsPanel />
+		{/if}
+	{:else if id === 'settings-skills'}
+		<!-- Same first-visit gate: this panel's onMount rescans the filesystem. -->
+		{#if mountedTabs.has('skills')}
+			<SkillsSettingsPanel />
 		{/if}
 	{:else if id === 'settings-stats'}
 		{#if mountedTabs.has('stats')}

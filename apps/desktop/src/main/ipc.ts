@@ -79,6 +79,8 @@ import type {
 	CommitMessageHarness,
 	CommitMessageHarnessStatus,
 	CommitMessageModelOption,
+	GenerateChangesetRequest,
+	GenerateChangesetResult,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResult,
 	SessionSummary,
@@ -187,8 +189,10 @@ import {
 } from '@super-review/core';
 import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-service.js';
 import {
+	cancelChangesetGeneration,
 	cancelCommitMessageGeneration,
 	detectCommitMessageHarnesses,
+	generateChangeset,
 	generateCommitMessage,
 	listCommitMessageModels,
 	warmCommitMessageModels
@@ -1194,6 +1198,27 @@ export function registerIpc(): void {
 		async (_e, repoId: string, filePath: string): Promise<void> => {
 			await removeChangeset(repoOrThrow(repoId).path, filePath);
 		}
+	);
+
+	ipcMain.handle(
+		'changesets:generate',
+		async (
+			e,
+			repoId: string,
+			request: GenerateChangesetRequest
+		): Promise<GenerateChangesetResult> => {
+			const win = BrowserWindow.fromWebContents(e.sender);
+			return generateChangeset(repoOrThrow(repoId).path, request, {
+				onActivity: (status) => {
+					if (win) sendToWindow(win, 'changesets:progress', { status });
+				}
+			});
+		}
+	);
+
+	ipcMain.handle(
+		'changesets:cancelGenerate',
+		async (): Promise<boolean> => cancelChangesetGeneration()
 	);
 
 	ipcMain.handle('git:cloneRepo', async (_e, url: string): Promise<CloneResult> => {

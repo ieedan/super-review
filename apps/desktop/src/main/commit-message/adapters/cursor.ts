@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import readline from 'node:readline';
-import { parseCommitMessageOutput } from '../parse.js';
-import { GENERATION_TIMEOUT_MS } from '../spawn.js';
+import { describeToolCall } from '../activity.js';
+import { AGENT_TIMEOUT_MS, GENERATION_TIMEOUT_MS } from '../spawn.js';
 import { createStreamReporter } from '../stream.js';
 import type { AdapterInput, AdapterResult } from './types.js';
 
@@ -13,6 +13,11 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 	if (input.signal?.aborted) {
 		return { ok: false, code: 'cancelled', error: 'Cancelled' };
 	}
+
+	// Ask mode answers from the prompt alone; agent mode is what can go and look
+	// at the branch, so a workspace run needs it (and needs its tool calls let
+	// through rather than refused).
+	const agentic = input.tools === 'workspace';
 
 	const model = input.model?.trim() || MODEL;
 
@@ -48,9 +53,12 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		}
 	};
 
-	const timer = setTimeout(() => {
-		finish({ ok: false, code: 'timeout', error: 'Timed out' });
-	}, GENERATION_TIMEOUT_MS);
+	const timer = setTimeout(
+		() => {
+			finish({ ok: false, code: 'timeout', error: 'Timed out' });
+		},
+		agentic ? AGENT_TIMEOUT_MS : GENERATION_TIMEOUT_MS
+	);
 
 	const finish = (result: AdapterResult) => {
 		if (settled) return;
@@ -108,6 +116,11 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 				update?: {
 					sessionUpdate?: string;
 					content?: { type?: string; text?: string };
+					// Present on tool_call updates: the tool's kind ("read", "execute"),
+					// a rendered title, and the arguments it was called with.
+					kind?: string;
+					title?: string;
+					rawInput?: unknown;
 				};
 				options?: Array<{ optionId: string }>;
 			};
@@ -130,6 +143,17 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		if (msg.method === 'session/update') {
 			const update = msg.params?.update;
 			const kind = update?.sessionUpdate;
+			if (kind === 'tool_call' || kind === 'tool_call_update') {
+				// ACP gives a human title ("Read src/foo.ts") plus the raw call; prefer
+				// our own phrasing and fall back to the agent's title.
+				const status =
+					describeToolCall({
+						name: update?.kind ?? update?.title ?? 'tool',
+						input: update?.rawInput
+					}) ?? (typeof update?.title === 'string' ? update.title : null);
+				if (status) input.onActivity?.(status);
+				return;
+			}
 			const text = typeof update?.content?.text === 'string' ? update.content.text : undefined;
 			if (!text) return;
 			if (kind === 'agent_thought_chunk') {
@@ -143,10 +167,14 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		}
 
 		if (msg.method === 'session/request_permission' && msg.id != null) {
-			// Reject tool use — ask mode should not need tools; refuse if asked.
-			const reject =
-				msg.params?.options?.find((o) => o.optionId.includes('reject'))?.optionId ?? 'reject-once';
-			respond(msg.id, { outcome: { outcome: 'selected', optionId: reject } });
+			// Ask mode should not need tools at all, so refuse. A workspace run is the
+			// opposite: every prompt is the agent asking to do the job it was sent to
+			// do, and there is no user sitting in front of it to click allow.
+			const options = msg.params?.options ?? [];
+			const wanted = agentic
+				? (options.find((o) => o.optionId.includes('allow'))?.optionId ?? 'allow-always')
+				: (options.find((o) => o.optionId.includes('reject'))?.optionId ?? 'reject-once');
+			respond(msg.id, { outcome: { outcome: 'selected', optionId: wanted } });
 			return;
 		}
 
@@ -166,7 +194,7 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 				fs: { readTextFile: false, writeTextFile: false },
 				terminal: false
 			},
-			clientInfo: { name: 'super-review-commit-message', version: '1.0.0' }
+			clientInfo: { name: 'super-review', version: '1.0.0' }
 		});
 
 		// Best-effort auth; already-logged-in CLIs succeed, missing login fails later.
@@ -183,7 +211,7 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 		const sessionId = session.sessionId;
 
 		try {
-			await send('session/set_mode', { sessionId, modeId: 'ask' });
+			await send('session/set_mode', { sessionId, modeId: agentic ? 'agent' : 'ask' });
 		} catch {
 			// Older agents may not support set_mode; proceed with defaults.
 		}
@@ -199,15 +227,15 @@ export async function generateWithCursor(input: AdapterInput): Promise<AdapterRe
 			prompt: [{ type: 'text', text: input.prompt }]
 		});
 
-		const parsed = parseCommitMessageOutput(reporter.answerText());
-		if (!parsed) {
+		const text = reporter.answerText();
+		if (!text.trim()) {
 			finish({
 				ok: false,
 				code: 'empty',
-				error: 'Cursor returned no usable commit message.'
+				error: 'Cursor returned an empty response.'
 			});
 		} else {
-			finish({ ok: true, subject: parsed.subject, body: parsed.body });
+			finish({ ok: true, text });
 		}
 	} catch (err) {
 		if (input.signal?.aborted) {

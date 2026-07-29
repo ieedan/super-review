@@ -15,8 +15,7 @@ import {
 	startOpenCodeServer,
 	type OpenCodeServer
 } from '../opencode-server.js';
-import { parseCommitMessageOutput } from '../parse.js';
-import { GENERATION_TIMEOUT_MS, spawnCapture } from '../spawn.js';
+import { AGENT_TIMEOUT_MS, GENERATION_TIMEOUT_MS, spawnCapture } from '../spawn.js';
 import { createStreamReporter, type StreamReporter } from '../stream.js';
 import type { AdapterInput, AdapterResult } from './types.js';
 
@@ -60,8 +59,11 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 		};
 	}
 
-	// Deny-all permission config so the agent cannot edit, shell, or fetch — the
-	// patch is already in the prompt. Applies to both the server and `run`.
+	// Permission config, applied to both the server and `run`. A text-only run gets
+	// deny-all (the patch is already in the prompt); a workspace run needs to read
+	// the repo, run git, and write what it was asked for, but still has no business
+	// on the network or asking the user questions it can't get an answer to.
+	const agentic = input.tools === 'workspace';
 	const dir = await mkdtemp(path.join(tmpdir(), 'sr-opencode-'));
 	const configPath = path.join(dir, 'opencode.json');
 	const reporter = createStreamReporter(input.onProgress);
@@ -72,17 +74,29 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 			configPath,
 			JSON.stringify({
 				$schema: 'https://opencode.ai/config.json',
-				permission: {
-					'*': 'deny',
-					bash: 'deny',
-					edit: 'deny',
-					write: 'deny',
-					read: 'deny',
-					webfetch: 'deny',
-					websearch: 'deny',
-					question: 'deny',
-					external_directory: 'deny'
-				}
+				permission: agentic
+					? {
+							'*': 'allow',
+							bash: 'allow',
+							edit: 'allow',
+							write: 'allow',
+							read: 'allow',
+							webfetch: 'deny',
+							websearch: 'deny',
+							question: 'deny',
+							external_directory: 'deny'
+						}
+					: {
+							'*': 'deny',
+							bash: 'deny',
+							edit: 'deny',
+							write: 'deny',
+							read: 'deny',
+							webfetch: 'deny',
+							websearch: 'deny',
+							question: 'deny',
+							external_directory: 'deny'
+						}
 			}),
 			'utf8'
 		);
@@ -137,9 +151,8 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 				return { ok: false, code: 'timeout', error: attempt.error ?? 'Timed out' };
 			}
 
-			const parsed = parseCommitMessageOutput(attempt.text);
-			if (parsed) {
-				return { ok: true, subject: parsed.subject, body: parsed.body };
+			if (attempt.text.trim()) {
+				return { ok: true, text: attempt.text };
 			}
 
 			const failure: AdapterResult = {
@@ -153,7 +166,7 @@ export async function generateWithOpenCode(input: AdapterInput): Promise<Adapter
 			};
 			lastFailure = failure;
 
-			// Successful call with unparseable output: don't burn more models.
+			// Successful call that answered with nothing: don't burn more models.
 			if (attempt.ok) return failure;
 			if (!isRetryableOpenCodeModelFailure(attempt.error ?? '')) {
 				return failure;
@@ -185,13 +198,13 @@ async function runOnServer(
 	const sessionID = await createOpenCodeSession(server);
 	if (!sessionID) return { ok: false, text: '', serverUnavailable: true };
 
-	stream.watch(sessionID, reporter);
+	stream.watch(sessionID, reporter, input.onActivity);
 	const reply = await sendOpenCodeMessage(
 		server,
 		sessionID,
 		model,
 		input.prompt,
-		GENERATION_TIMEOUT_MS,
+		input.tools === 'workspace' ? AGENT_TIMEOUT_MS : GENERATION_TIMEOUT_MS,
 		input.signal
 	);
 	return {
@@ -218,6 +231,7 @@ async function runOneShot(
 			cwd: input.cwd,
 			env: { OPENCODE_CONFIG: configPath },
 			signal: input.signal,
+			timeoutMs: input.tools === 'workspace' ? AGENT_TIMEOUT_MS : undefined,
 			onStdout: (stdout) => reporter.setAnswer(stdout)
 		}
 	);

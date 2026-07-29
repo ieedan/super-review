@@ -102,10 +102,12 @@ export type SettingsTab =
 	| 'app'
 	| 'editor'
 	| 'agents'
+	| 'prompts'
+	| 'skills'
 	| 'hotkeys'
 	| 'updates'
 	| 'stats';
-export type SettingsScrollTarget = 'hidden-files' | 'commit-messages';
+export type SettingsScrollTarget = 'hidden-files' | 'commit-messages' | 'changeset-prompt';
 import { repoFrecency } from '@super-review/ui/repo-frecency.svelte';
 import { tourFileOrder, tourGroups } from '@super-review/ui/session-tour';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
@@ -289,6 +291,13 @@ interface AppState {
 	changesetStatus: ChangesetStatus | null;
 	// Whether the create-changeset dialog is open.
 	changesetDialogOpen: boolean;
+	// True while a harness CLI is writing this branch's changesets (the "Add a
+	// changeset?" notice turns into a shimmering status row).
+	changesetGenerating: boolean;
+	// What that agent is doing right now ("Reading store.svelte.ts"), streamed from
+	// its tool calls. Empty until the first one lands, which is when the notice
+	// falls back to a generic line.
+	changesetActivity: string;
 	// Whether the user dismissed the "Add a changeset?" prompt / the "Some
 	// changesets may be unnecessary" warning for the current branch. In-memory only
 	// and cleared on every branch switch, so a dismissal lasts only while you stay
@@ -981,6 +990,8 @@ const initial: AppState = {
 	aiConfigDialogOpen: false,
 	changesetStatus: null,
 	changesetDialogOpen: false,
+	changesetGenerating: false,
+	changesetActivity: '',
 	changesetPromptDismissed: false,
 	changesetWarningDismissed: false,
 	changesetsEnabled: true,
@@ -2041,6 +2052,9 @@ async function refreshBranches(): Promise<void> {
 		if (app.currentBranch !== prevBranch) {
 			app.changesetPromptDismissed = false;
 			app.changesetWarningDismissed = false;
+			// A changeset run describes the branch it started on, so drop it rather than
+			// writing files for the branch the user just left.
+			if (app.changesetGenerating) void actions.cancelChangesetGeneration();
 			// New checked-out branch → re-seed its remembered Branch base so the diff
 			// targets the right PR base without waiting on the network PR lookup.
 			void hydrateRememberedBranchBase();
@@ -3721,6 +3735,19 @@ let commitMessageProgressSubscribed = false;
 // Bumped on each generate start and on cancel so a stale run's finally can't
 // clear a newer generation's UI state.
 let commitMessageRunId = 0;
+// Same idea for changeset generation, which has its own run in the main process.
+let changesetRunId = 0;
+// Subscribe once (like the commit-message one) so a run's activity keeps landing
+// even across notice remounts.
+let changesetProgressSubscribed = false;
+function subscribeChangesetProgress(): void {
+	if (changesetProgressSubscribed) return;
+	changesetProgressSubscribed = true;
+	window.api.events.onChangesetProgress((event) => {
+		if (!app.changesetGenerating) return;
+		app.changesetActivity = event.status;
+	});
+}
 function subscribeCommitMessageProgress(): void {
 	if (commitMessageProgressSubscribed) return;
 	const onProgress = window.api.events?.onCommitMessageProgress;
@@ -3959,6 +3986,15 @@ export const actions = {
 			commitMessagePrompt: trimmed.length > 0 ? trimmed : null
 		});
 	},
+	async setChangesetPrompt(prompt: string): Promise<void> {
+		const trimmed = prompt.trim();
+		app.prefs = await window.api.state.setPrefs({
+			changesetPrompt: trimmed.length > 0 ? trimmed : null
+		});
+	},
+	openChangesetPromptSettings(): void {
+		actions.openSettingsDialog('prompts', 'changeset-prompt');
+	},
 	async setCommitMessageModel(harness: CommitMessageHarness, model: string): Promise<void> {
 		const current = { ...(app.prefs?.commitMessageModels ?? {}) };
 		const trimmed = model.trim();
@@ -4104,6 +4140,95 @@ export const actions = {
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}
+	},
+	// Turn the preferred harness CLI loose on the branch: it reads the work with
+	// its own tools and writes the `.changeset/*.md` files itself. Returns the
+	// repo-relative paths it wrote, or null when nothing landed (cancelled, no CLI,
+	// or a run that finished empty-handed; the last two are surfaced to the user).
+	async generateChangeset(): Promise<string[] | null> {
+		if (!app.activeRepo || app.changesetGenerating) return null;
+		// Nothing installed to generate with: point the user at the CLI list rather
+		// than shimmering for minutes and failing.
+		if (app.commitMessageHarnesses && !anyCommitMessageHarnessInstalled()) {
+			actions.openCommitMessageSettings();
+			return null;
+		}
+		const repoId = app.activeRepo.id;
+		const preferredHarness = app.prefs?.commitMessageHarness ?? null;
+		const runId = ++changesetRunId;
+		subscribeChangesetProgress();
+		app.changesetGenerating = true;
+		// Left empty on purpose: the notice shows a generic line until the agent's
+		// first tool call says something more specific.
+		app.changesetActivity = '';
+		try {
+			const result = await window.api.changesets.generate(repoId, {
+				branch: app.currentBranch,
+				preferredHarness,
+				basePrompt: app.prefs?.changesetPrompt ?? null,
+				model: preferredHarness
+					? (app.prefs?.commitMessageModels?.[preferredHarness] ?? null)
+					: null
+			});
+			// Superseded by a cancel or a newer run.
+			if (runId !== changesetRunId) return null;
+			if (!result.ok) {
+				if (result.code === 'cancelled') return null;
+				if (result.code === 'no-harness') {
+					await actions.refreshCommitMessageHarnesses();
+					actions.openCommitMessageSettings();
+					return null;
+				}
+				setError(result.error ?? 'Failed to generate a changeset.', 'Generate changeset');
+				return null;
+			}
+			// The files are already on disk: refresh so the new `.changeset/*.md` show
+			// up in the sidebar (and the commit-box auto-fill picks up the description)
+			// and the "Add a changeset?" prompt clears. Deliberately inside the try, so
+			// `changesetGenerating` only drops once the sidebar has caught up — the
+			// notice shimmers straight through the refresh instead of flashing back to
+			// "Add a changeset?" between the write and the repaint. A refresh failure
+			// is its own problem: the changesets did land, so don't report the run as
+			// failed.
+			try {
+				await refreshFiles();
+			} catch (err) {
+				setError(err instanceof Error ? err.message : String(err), 'Generate changeset');
+			}
+			// The run stayed inside `.changeset/` or it didn't; either way the files
+			// are on disk now, so this is a warning about what to go and look at, not
+			// a failure.
+			if (result.strayPaths?.length) {
+				setError(
+					`The agent also changed ${result.strayPaths.join(', ')}. Review those before committing.`,
+					'Generate changeset'
+				);
+			}
+			if (result.unknownPackages?.length) {
+				setError(
+					`The changesets reference packages this workspace doesn't release: ${result.unknownPackages.join(', ')}.`,
+					'Generate changeset'
+				);
+			}
+			return (result.written ?? []).map((f) => f.path);
+		} catch (err) {
+			if (runId !== changesetRunId) return null;
+			setError(err instanceof Error ? err.message : String(err), 'Generate changeset');
+			return null;
+		} finally {
+			if (runId === changesetRunId) {
+				app.changesetGenerating = false;
+				app.changesetActivity = '';
+			}
+		}
+	},
+	// Stop an in-flight run. Bumping the id first means the run's own result is
+	// ignored when it lands, so the shimmer clears immediately.
+	async cancelChangesetGeneration(): Promise<void> {
+		changesetRunId++;
+		app.changesetGenerating = false;
+		app.changesetActivity = '';
+		await window.api.changesets.cancelGenerate();
 	},
 	// Write a new changeset for the selected packages, then refresh: the new
 	// `.changeset/*.md` shows up in the working tree (and the commit-box auto-fill

@@ -4,6 +4,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { describeToolCall } from './activity.js';
 import type { StreamReporter } from './stream.js';
 
 const STARTUP_TIMEOUT_MS = 20_000;
@@ -130,6 +131,7 @@ export class OpenCodeStream {
 	// only rendered once their message is known to be the assistant's.
 	private roles = new Map<string, string>();
 	private reporter: StreamReporter | null = null;
+	private onActivity: ((status: string) => void) | undefined;
 
 	private constructor(private server: OpenCodeServer) {}
 
@@ -139,10 +141,12 @@ export class OpenCodeStream {
 		return started ? stream : null;
 	}
 
-	/** Point the stream at a new session/turn. */
-	watch(sessionID: string, reporter: StreamReporter): void {
+	/** Point the stream at a new session/turn. `onActivity` is optional and only
+	 * meaningful for runs where the agent uses tools. */
+	watch(sessionID: string, reporter: StreamReporter, onActivity?: (status: string) => void): void {
 		this.sessionID = sessionID;
 		this.reporter = reporter;
+		this.onActivity = onActivity;
 		this.order = [];
 		this.parts.clear();
 		this.roles.clear();
@@ -214,9 +218,21 @@ export class OpenCodeStream {
 
 		if (type === 'message.part.updated') {
 			const part = properties.part as
-				| { id?: string; type?: string; messageID?: string; text?: string }
+				| {
+						id?: string;
+						type?: string;
+						messageID?: string;
+						text?: string;
+						tool?: string;
+						state?: { input?: unknown };
+				  }
 				| undefined;
 			if (!part?.id || !part.messageID) return;
+			// Tool parts have no text to render; they're what the agent is doing.
+			if (part.type === 'tool' && typeof part.tool === 'string' && this.onActivity) {
+				const status = describeToolCall({ name: part.tool, input: part.state?.input });
+				if (status) this.onActivity(status);
+			}
 			if (!this.parts.has(part.id)) this.order.push(part.id);
 			this.parts.set(part.id, {
 				type: part.type ?? 'text',
