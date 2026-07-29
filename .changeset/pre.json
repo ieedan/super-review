@@ -12,13 +12,19 @@
 	"changesets": [
 		"brave-badgers-jump",
 		"brave-otters-jump",
+		"changeset-generation",
 		"gentle-pandas-sing",
+		"harness-commit-messages",
 		"lucky-clouds-wave",
 		"lucky-lions-smile",
+		"mighty-waves-smile",
 		"proud-tigers-dream",
+		"settings-agents",
+		"settings-prompts",
 		"shy-lions-sing",
 		"shy-lions-smile",
 		"tidy-pugs-refuse",
+		"web-pointer",
 		"witty-badgers-travel"
 	]
 }
