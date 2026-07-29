@@ -12,6 +12,7 @@
 	import { actions, app, effectiveCommitMessageHarness } from '@super-review/ui/store.svelte';
 	import { SUPER_REVIEW_ICON } from '@super-review/ui/file-icons';
 	import { Button } from './ui/button';
+	import ChangesetActivityLine from './ChangesetActivityLine.svelte';
 	import ChangesetLogo from './ChangesetLogo.svelte';
 	import ConfigureAiButton from './ConfigureAiButton.svelte';
 	import GenerateChangesetButton from './GenerateChangesetButton.svelte';
@@ -209,25 +210,29 @@
 					</NoticeCard>
 				{:else if n.id === 'add'}
 					{#if app.changesetGenerating}
-						<!-- The same row, taken over by the run: the agent's logo and a
-						     shimmering line saying what it is doing right now, with no
-						     controls to press until it lands. Reading a branch takes a
-						     while, and "Generating changeset…" for two minutes reads as
-						     stuck; the real tool calls read as working. -->
+						<!-- The same row, taken over by the run: the agent's logo, what it
+						     is doing, and the one control worth having. Two lines, because a
+						     read of a big branch runs for minutes: the headline holds still
+						     and shimmers so the row never reads as stuck, while the line
+						     under it rolls through the work as the agent does it. -->
 						<NoticeCard
+							multiline
 							tooltip="Your coding agent is reading the branch and writing its changesets."
 						>
 							{#snippet logo()}
 								{#if generatingHarness}
-									<HarnessLogo harness={generatingHarness} size={16} class="shrink-0" />
+									<HarnessLogo harness={generatingHarness} size={18} class="shrink-0" />
 								{:else}
-									<ChangesetLogo class="h-4 w-auto shrink-0" />
+									<ChangesetLogo class="h-5 w-auto shrink-0" />
 								{/if}
 							{/snippet}
 							<span
-								class="shimmer shimmer-color-foreground shimmer-spread-[24px] shimmer-duration-1000"
+								class="shimmer shimmer-color-foreground shimmer-spread-[24px] shimmer-duration-1000 block truncate"
 							>
-								{app.changesetActivity || 'Generating changeset…'}
+								Generating changeset…
+							</span>
+							<span class="mt-0.5 block text-muted-foreground/70">
+								<ChangesetActivityLine status={app.changesetActivity} />
 							</span>
 							{#snippet action()}
 								<!-- The one control during a run. A read of a big branch takes

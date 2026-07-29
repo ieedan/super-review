@@ -21,7 +21,7 @@
 	<!-- The notices stack positions its cards absolutely inside a box it sizes
 	     itself, so reserve a row's worth of space rather than letting the story's
 	     controls ride up under it. -->
-	<div class="min-h-[52px]">
+	<div class="min-h-[68px]">
 		<CommitNotices />
 	</div>
 

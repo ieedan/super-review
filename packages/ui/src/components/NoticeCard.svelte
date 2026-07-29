@@ -19,13 +19,20 @@
 		action,
 		onDismiss,
 		dismissTitle = 'Dismiss',
-		tooltip
+		tooltip,
+		multiline = false
 	}: {
 		variant?: Variant;
 		/** Small brand/icon shown before the message. */
 		logo?: Snippet;
 		/** The message text (kept to a single truncated line). */
 		children: Snippet;
+		/**
+		 * Let the message run to more than one line: drops the single-line clamp and
+		 * gives the card the breathing room a stacked message needs. The lines
+		 * themselves handle their own truncation.
+		 */
+		multiline?: boolean;
 		/** Trailing action, e.g. a button. */
 		action?: Snippet;
 		/** When set, renders a × button that calls this. */
@@ -52,7 +59,7 @@
 </script>
 
 <div
-	class={`relative flex items-center gap-2 overflow-hidden rounded-md border ${borderClass[variant]} bg-card/90 px-2 py-1.5 shadow-sm backdrop-blur-md`}
+	class={`relative flex items-center gap-2 overflow-hidden rounded-md border ${borderClass[variant]} bg-card/90 px-2 shadow-sm backdrop-blur-md ${multiline ? 'py-2' : 'py-1.5'}`}
 	title={tooltip}
 >
 	<!-- Variant tint over the opaque card background. -->
@@ -64,7 +71,9 @@
 	{#if logo}
 		<span class="relative z-10 flex shrink-0 items-center">{@render logo()}</span>
 	{/if}
-	<span class={`relative z-10 min-w-0 flex-1 truncate text-[11px] ${textClass[variant]}`}>
+	<span
+		class={`relative z-10 min-w-0 flex-1 text-[11px] ${multiline ? '' : 'truncate'} ${textClass[variant]}`}
+	>
 		{@render children()}
 	</span>
 	{#if action}
