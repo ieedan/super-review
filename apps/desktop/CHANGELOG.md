@@ -1,5 +1,12 @@
 # @super-review/desktop
 
+## 0.1.0-beta.8
+
+### Patch Changes
+
+- Updated dependencies [[`8eaf3a8`](https://github.com/ieedan/super-review/commit/8eaf3a881f91ba6bc77e8c2a9501c7905497d442)]:
+  - @super-review/ui@0.2.0-beta.8
+
 ## 0.1.0-beta.7
 
 ### Minor Changes

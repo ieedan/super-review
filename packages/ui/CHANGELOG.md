@@ -1,5 +1,11 @@
 # @super-review/ui
 
+## 0.2.0-beta.8
+
+### Patch Changes
+
+- [`8eaf3a8`](https://github.com/ieedan/super-review/commit/8eaf3a881f91ba6bc77e8c2a9501c7905497d442) Thanks [@ieedan](https://github.com/ieedan)! - fix(DiffFileHeader): prevent 1px code bleed through sticky header during scroll
+
 ## 0.2.0-beta.7
 
 ### Minor Changes
