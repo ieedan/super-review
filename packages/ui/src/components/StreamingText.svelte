@@ -5,6 +5,11 @@
 	// Words are keyed by position, so a growing string only ever appends spans:
 	// the words already on screen keep their DOM node (and never re-run their
 	// animation), and the last word grows in place until the next space arrives.
+	//
+	// The text wraps by default. To keep it on one line, pass `whitespace-nowrap`:
+	// `truncate` on its own does not do it, because tailwind-merge treats it as a
+	// different group from the `whitespace-pre-wrap` below, so both survive and
+	// this one wins the cascade.
 	import { useAnimations } from '@super-review/ui/hooks/use-animations.svelte';
 	import { cn } from '@super-review/ui/utils';
 

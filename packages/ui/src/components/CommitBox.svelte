@@ -20,6 +20,7 @@
 		effectiveGithubAccount
 	} from '@super-review/ui/store.svelte';
 	import { isChangesetPath, parseChangesetMessage } from '@super-review/ui/changeset';
+	import { useAnimations } from '@super-review/ui/hooks/use-animations.svelte';
 	import { cn } from '@super-review/ui/utils';
 	import { splitStreamingMessage } from '@super-review/ui/commit-message-stream';
 	import { type LastCommit } from '@super-review/core/types';
@@ -27,6 +28,8 @@
 	let summary = $state('');
 	let description = $state('');
 	let commitButtonRef = $state<HTMLButtonElement | null>(null);
+
+	const animations = useAnimations();
 
 	// A commit or undo this box started is in flight. It writes the box up front
 	// (emptying it on commit, restoring the message on undo) so those feel
@@ -321,8 +324,47 @@
 	// and type scale from one place. A mismatch shows up as the text changing
 	// size the moment the real value replaces the painted one — which is exactly
 	// what the Input's base `md:text-sm` did to a bare `text-xs`.
-	const SUMMARY_METRICS = 'px-2.5 py-1 pr-8 text-xs md:text-sm';
+	//
+	// The Summary's padding is a pixel light on top on purpose. A field centers
+	// its value on the font's em box, descent and all, and this font reserves more
+	// descent than a commit subject uses: measured in the box, the ink of one runs
+	// 8.8px below the top and 6.3px above the bottom, which reads as the message
+	// sitting low in a field this short. Taking a pixel off the top and giving it
+	// back at the bottom centers what you actually see. The overlay shares the
+	// metrics, so the painted words move with it.
+	const SUMMARY_METRICS = 'px-2.5 pt-[3px] pb-[5px] pr-8 text-xs md:text-sm';
 	const BODY_METRICS = 'px-2 py-1.5 text-xs';
+
+	// Nothing corrects the overlay onto the pixel grid, and nothing should: an
+	// Input puts its value at a fixed offset from its own border box wherever that
+	// box lands, fractional pixels and all, so a correction read off the field's
+	// subpixel position is an offset the field itself never had. `items-center` on
+	// the overlay lands on the same offset: identical at the xs scale, a quarter
+	// pixel high at sm, which is where the browser rounds a line box's leading and
+	// the field does not.
+	//
+	// The roll that hands the field over from the waiting row to the message (see
+	// the markup) moves `top` rather than `transform`, which is what everything
+	// else here animates. A transform transition puts the message on its own
+	// compositing layer, and a layer rounds its own position to whole pixels, which
+	// is enough to leave the painted words a pixel off the value that replaces
+	// them. Chrome keeps that layer well after the transition ends, so the message
+	// was still off when the run landed seconds later, and it only ever showed on a
+	// real run: stepping through by hand never runs the transition. Offsetting a
+	// relatively positioned box composites nothing, so the words stay put.
+	//
+	// Once the roll has played the status row is dropped, which stops its shimmer
+	// and its phase timer running on off-screen work for the rest of the run. On a
+	// timer rather than `transitionend`, which never arrives when the run is cut
+	// short, the window is in the background, or motion is reduced.
+	const ROLL_MS = 400; // keep in step with `duration-400` in the markup
+	let rolled = $state(false);
+
+	$effect(() => {
+		if (!painting || awaitingFirstToken || rolled) return;
+		const timer = setTimeout(() => (rolled = true), ROLL_MS);
+		return () => clearTimeout(timer);
+	});
 
 	// How a painted-over field hides its own text. Not `text-transparent`: `color`
 	// is in the field's `transition-colors`, so when the overlay comes down the
@@ -356,6 +398,7 @@
 					painting = true;
 					painted = { subject: '', body: '' };
 					paintRun++;
+					rolled = false;
 				}
 				if (live.subject || live.body) painted = live;
 			});
@@ -608,18 +651,46 @@
 				     exactly where the real value will sit. `inset-0` covers the field's
 				     border box, so the overlay needs the field's own 1px border back —
 				     without it the padding starts a pixel early and the text nudges
-				     sideways the moment the real value lands. -->
+				     sideways the moment the real value lands. Vertically, `items-center`
+				     over the same padding is all it takes (see the note above). -->
 				<div
 					class={cn(
 						'pointer-events-none absolute inset-0 flex items-center overflow-hidden border border-transparent',
 						SUMMARY_METRICS
 					)}
 				>
-					{#if awaitingFirstToken}
-						<CommitMessageWaiting />
-					{:else}
-						<StreamingText text={painted.subject} class="truncate" />
-					{/if}
+					<!-- The waiting row and the message it gives way to share one
+					     line-tall window, stacked: when the first token lands the stack
+					     rolls up a line, so the status leaves the same way the phases
+					     inside it move on rather than being cut. Once it lands, the status
+					     row and the transform both go (see `rolled`) — the message keeps
+					     its DOM, so dropping them moves nothing and replays nothing. -->
+					<span class="block h-[1lh] min-w-0 flex-1 overflow-hidden">
+						<span
+							class={cn(
+								'relative block',
+								!rolled &&
+									animations.accentsEnabled &&
+									'transition-[top] duration-400 ease-[cubic-bezier(0.19,1,0.22,1)] motion-reduce:transition-none'
+							)}
+							style={rolled ? undefined : `top: calc(${awaitingFirstToken ? 0 : -1} * 1lh)`}
+						>
+							{#if !rolled}
+								<span class="block mt-[0.5px] h-[1lh]">
+									<CommitMessageWaiting />
+								</span>
+							{/if}
+							<!-- A subject longer than the field clips at the same edge the Input
+							     clips its own value at: one line, no ellipsis, so nothing moves
+							     when the real value lands. `whitespace-nowrap` is explicit because
+							     `truncate` alone loses to StreamingText's `whitespace-pre-wrap` —
+							     they are separate merge groups, so both survive and the subject
+							     wraps mid-run. -->
+							<span class="block h-[1lh] mt-[0.5px] overflow-hidden">
+								<StreamingText text={painted.subject} class="whitespace-nowrap" />
+							</span>
+						</span>
+					</span>
 				</div>
 			{/if}
 			<GenerateCommitMessageButton
@@ -636,7 +707,7 @@
 			oninput={persistDraft}
 			onkeydown={onKeydown}
 			placeholder={painting ? '' : 'Description'}
-			rows={5}
+			rows={3}
 			readonly={painting}
 			disabled={busy}
 			class={cn('min-h-0 resize-none', BODY_METRICS, painting && HIDE_FIELD_TEXT)}

@@ -28,7 +28,15 @@
 	});
 </script>
 
-<span class="flex min-w-0 items-center gap-2">
+<!-- The row arrives with the run rather than snapping in: it is the first thing
+     the sparkle produces, and a hard cut reads as a layout glitch next to the
+     tokens that follow it. -->
+<span
+	class={cn(
+		'flex min-w-0 items-center gap-2',
+		animations.accentsEnabled && 'animate-stream-status'
+	)}
+>
 	{#if harness}
 		<HarnessLogo {harness} size={14} class="shrink-0" />
 	{/if}

@@ -87,6 +87,25 @@
 			transform: translateY(0);
 		}
 	}
+
+	/* The line that stands in for a model that has not said anything yet (the
+	   agent's logo and what it is doing). Same language as a streamed token so the
+	   waiting state and the answer that replaces it belong to one run, a little
+	   slower and a little further because it is a whole row arriving rather than
+	   one word landing. */
+	--animate-stream-status: stream-status 260ms cubic-bezier(0.19, 1, 0.22, 1) both;
+	@keyframes stream-status {
+		from {
+			opacity: 0;
+			filter: blur(4px);
+			transform: translateY(3px);
+		}
+		to {
+			opacity: 1;
+			filter: blur(0);
+			transform: translateY(0);
+		}
+	}
 }
 
 /* Reduced motion keeps the fade — it is what tells you the token is new — and
@@ -94,6 +113,14 @@
    definition above wherever the query matches. */
 @media (prefers-reduced-motion: reduce) {
 	@keyframes stream-token {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	@keyframes stream-status {
 		from {
 			opacity: 0;
 		}

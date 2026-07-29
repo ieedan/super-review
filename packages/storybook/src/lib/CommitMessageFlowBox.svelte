@@ -13,6 +13,7 @@
 	import { untrack } from 'svelte';
 	import { app } from '@super-review/ui/store.svelte';
 	import { splitStreamingMessage } from '@super-review/ui/commit-message-stream';
+	import { useAnimations } from '@super-review/ui/hooks/use-animations.svelte';
 	import { cn } from '@super-review/ui/utils';
 
 	let { subject = $bindable(''), body = $bindable('') }: { subject?: string; body?: string } =
@@ -20,14 +21,35 @@
 
 	let commitButtonRef = $state<HTMLButtonElement | null>(null);
 
+	const animations = useAnimations();
+
 	// Same pairing CommitBox uses: the field and its overlay share one set of
-	// metrics so the text does not change size when the real value lands.
-	const SUMMARY_METRICS = 'px-2.5 py-1 pr-8 text-xs md:text-sm';
+	// metrics so the text does not change size when the real value lands. The
+	// Summary is a pixel light on top there too, to optically center a subject in
+	// a field this short. See the comment there.
+	const SUMMARY_METRICS = 'px-2.5 pt-[3px] pb-[5px] pr-8 text-xs md:text-sm';
 	const BODY_METRICS = 'px-2 py-1.5 text-xs';
 	// Also from CommitBox: hiding the real value with `text-transparent` would put a
 	// 150ms color transition on the handoff, so the message blinks out and back
 	// when the overlay comes down. See the comment there.
 	const HIDE_FIELD_TEXT = '[-webkit-text-fill-color:transparent]';
+
+	// Also from CommitBox: nothing snaps the overlay to the pixel grid. An Input
+	// puts its value at a fixed offset from its own border box wherever that box
+	// lands, so `items-center` over the same padding already matches it.
+	//
+	// And the roll moves `top`, not `transform` — a transform transition composites
+	// the message, and a layer rounds itself to whole pixels, which is enough to
+	// leave the painted words a pixel off the value that replaces them. The status
+	// row is dropped once it has played.
+	const ROLL_MS = 400; // keep in step with `duration-400` in the markup
+	let rolled = $state(false);
+
+	$effect(() => {
+		if (!painting || awaitingFirstToken || rolled) return;
+		const timer = setTimeout(() => (rolled = true), ROLL_MS);
+		return () => clearTimeout(timer);
+	});
 
 	const generating = $derived(app.commitMessageGenerating);
 
@@ -45,6 +67,7 @@
 					painting = true;
 					painted = { subject: '', body: '' };
 					paintRun++;
+					rolled = false;
 				}
 				if (live.subject || live.body) painted = live;
 			});
@@ -81,11 +104,30 @@
 					SUMMARY_METRICS
 				)}
 			>
-				{#if awaitingFirstToken}
-					<CommitMessageWaiting />
-				{:else}
-					<StreamingText text={painted.subject} class="truncate" />
-				{/if}
+				<!-- One line-tall window with the waiting row stacked above the message:
+				     the first token rolls the status up and the subject in. See CommitBox. -->
+				<span class="block h-[1lh] min-w-0 flex-1 overflow-hidden">
+					<span
+						class={cn(
+							'relative block',
+							!rolled &&
+								animations.accentsEnabled &&
+								'transition-[top] duration-400 ease-[cubic-bezier(0.19,1,0.22,1)] motion-reduce:transition-none'
+						)}
+						style={rolled ? undefined : `top: calc(${awaitingFirstToken ? 0 : -1} * 1lh)`}
+					>
+						{#if !rolled}
+							<span class="block mt-[0.5px] h-[1lh]">
+								<CommitMessageWaiting />
+							</span>
+						{/if}
+						<!-- Clipped the way the Input clips its own value; `truncate` alone would
+						     lose to StreamingText's `whitespace-pre-wrap`. See CommitBox. -->
+						<span class="block h-[1lh] mt-[0.5px] overflow-hidden">
+							<StreamingText text={painted.subject} class="whitespace-nowrap" />
+						</span>
+					</span>
+				</span>
 			</div>
 		{/if}
 		<GenerateCommitMessageButton
