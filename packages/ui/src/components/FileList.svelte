@@ -38,6 +38,7 @@
 		diff,
 		canViewBranchTab,
 		isPRCommentContext,
+		isLocalCommentSurface,
 		isReadOnlyView,
 		type ContextTab
 	} from '@super-review/ui/store.svelte';
@@ -1367,25 +1368,29 @@
 						{@const isActive = app.selectedFile === node.file.path}
 						{@const isSelected = app.selectedFiles.has(node.file.path)}
 						{@const isFocused = focusedPath === node.file.path}
-						<!-- Per-file comment count. In a PR context these are the PR review
-                 threads (top-level only); otherwise they're this view's local
-                 comments (a flat list, so each comment is its own "thread").
-                 `prComments` can linger from the branch's PR while on the
-                 Unstaged/working-tree tab, where those comments don't apply — so
-                 the PR/local split mirrors which annotations the diff renders. -->
+						<!-- Per-file comment count: PR review threads (top-level only) plus this
+                 view's local comments (a flat list, so each comment is its own
+                 "thread"). Both are counted wherever both render — on the Branch
+                 tab with an open PR the two coexist, and counting only the PR's
+                 would leave local threads visible in the diff but absent from the
+                 count here. `prComments` can linger from the branch's PR while on
+                 the Unstaged/working-tree tab, where those comments don't apply,
+                 so each side mirrors the annotations the diff actually renders. -->
 						{@const inPRContext = isPRCommentContext()}
+						{@const showLocal = isLocalCommentSurface()}
 						{@const prThreads = inPRContext
 							? (app.prComments[node.file.path] ?? []).filter((c) => !c.inReplyTo)
 							: []}
-						{@const localFileComments = inPRContext
-							? []
-							: app.localComments.filter((c) => c.path === node.file.path && c.inReplyTo == null)}
+						{@const localFileComments = showLocal
+							? app.localComments.filter((c) => c.path === node.file.path && c.inReplyTo == null)
+							: []}
 						{@const threadCount = prThreads.length + localFileComments.length}
 						<!-- Every thread/comment on the file resolved → swap the icon for a
                    checked variant so the sidebar reads "comments handled" at a
                    glance. PR threads carry `isResolved`; local comments are
-                   resolved when `resolvedAt` is set. (Only one list is ever
-                   populated, so the empty one's `every` is a harmless true.) -->
+                   resolved when `resolvedAt` is set. Where both lists are
+                   populated the file only reads as handled once each side is
+                   clear; an empty list's `every` is a harmless true. -->
 						{@const allThreadsResolved =
 							threadCount > 0 &&
 							prThreads.every((t) => t.isResolved) &&
