@@ -1,5 +1,13 @@
 # @super-review/docs
 
+## 0.0.14-beta.10
+
+### Patch Changes
+
+- Updated dependencies [[`97e5a74`](https://github.com/ieedan/super-review/commit/97e5a74d04db085bc5f9abb1bf65403ed93404b4), [`1d1b0b2`](https://github.com/ieedan/super-review/commit/1d1b0b2afcdc6e81c430fa65db71366e627884aa)]:
+  - @super-review/core@0.3.0-beta.6
+  - @super-review/ui@0.2.0-beta.9
+
 ## 0.0.14-beta.9
 
 ### Patch Changes
