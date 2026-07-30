@@ -2,7 +2,11 @@ import { error, redirect } from '@sveltejs/kit';
 import { api } from '$lib/convex/_generated/api';
 import { DOWNLOADS } from '$lib/releases';
 import { isWaitlistBlocked } from '$lib/entitlement';
-import { assetSignedUrl, getLatestReleaseAssets, releasesToken } from '$lib/server/github-releases';
+import {
+	assetSignedUrl,
+	findDesktopReleaseAsset,
+	releasesToken
+} from '$lib/server/github-releases';
 import type { RequestHandler } from './$types';
 
 export const prerender = false;
@@ -51,14 +55,13 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 	const filename = DOWNLOADS[os].filename;
 	let asset;
 	try {
-		const assets = await getLatestReleaseAssets(token);
-		asset = assets.find((a) => a.name === filename);
+		asset = await findDesktopReleaseAsset(token, filename);
 	} catch (e) {
 		console.error(`[download] ${(e as Error).message}`);
 		throw error(502, 'Downloads are temporarily unavailable. Try again in a minute.');
 	}
 	if (!asset) {
-		console.error(`[download] no asset named ${filename} on the latest release`);
+		console.error(`[download] no recent desktop release has an asset named ${filename}`);
 		throw error(404, 'That build is not published yet.');
 	}
 

@@ -2,7 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import {
 	assetSignedUrl,
 	assetText,
-	getLatestReleaseAssets,
+	findDesktopReleaseAsset,
 	releasesToken
 } from '$lib/server/github-releases';
 import type { RequestHandler } from './$types';
@@ -48,8 +48,7 @@ export const GET: RequestHandler = async ({ params, setHeaders }) => {
 
 	let asset;
 	try {
-		const assets = await getLatestReleaseAssets(token);
-		asset = assets.find((a) => a.name === file);
+		asset = await findDesktopReleaseAsset(token, file);
 	} catch (e) {
 		console.error(`[update] ${(e as Error).message}`);
 		throw error(502, UNAVAILABLE);
