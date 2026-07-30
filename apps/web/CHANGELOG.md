@@ -1,5 +1,18 @@
 # @super-review/docs
 
+## 0.0.15
+
+### Patch Changes
+
+- [#186](https://github.com/ieedan/super-review/pull/186) [`964ede2`](https://github.com/ieedan/super-review/commit/964ede2138f07bb6979f5c7f6ff412cff2a6431f) Thanks [@ieedan](https://github.com/ieedan)! - fix: resolve the update feed and download links from desktop releases only
+
+  `releases/latest` returns the newest release of any kind in the releases repo.
+  Once changesets started publishing the `super-review` CLI, its release
+  (`super-review@<version>`) outranked the desktop one — and it carries no
+  installers or `latest*.yml`, so the updater reported "Couldn't check for
+  updates" and the download buttons 404'd. Both now scan recent releases for the
+  newest `v<semver>`-tagged one that actually has the requested asset.
+
 ## 0.0.14
 
 ### Patch Changes
