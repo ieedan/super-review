@@ -106,11 +106,37 @@ export async function listComments(repoPath: string): Promise<LocalComment[]> {
 	return rows.map(rowToComment);
 }
 
+// `branch:<base>..<head>` → the `..<head>` suffix; null for any other context key.
+// Git forbids `..` inside a ref name, so the first occurrence always separates the
+// two sides.
+function branchHeadSuffix(contextKey: string): string | null {
+	if (!contextKey.startsWith('branch:')) return null;
+	const sep = contextKey.indexOf('..');
+	return sep === -1 ? null : contextKey.slice(sep);
+}
+
 // Comments scoped to a single diff context (`diffContextKey(ctx)`) within a repo.
+//
+// Branch contexts match on the head alone, ignoring the base. A branch's base is
+// not stable over its life: opening a PR repins the Branch tab from the repo
+// default to `pr/<n>/base`, so an exact-key lookup would strand every comment
+// written before the PR existed under the now-unused `branch:main..<head>` key.
+// The head is what identifies the review, which is also how the CLI reads them
+// (see listLocalComments) — the two stayed in sync on the write path but not the
+// read path, so the desktop app silently lost comments the CLI could still see.
 export async function listCommentsForContext(
 	repoPath: string,
 	contextKey: string
 ): Promise<LocalComment[]> {
+	const headSuffix = branchHeadSuffix(contextKey);
+	if (headSuffix !== null) {
+		// Filtered in JS rather than with a LIKE so a branch name containing `%` or
+		// `_` can't turn into a wildcard. Comment counts per repo are small.
+		const all = await listComments(repoPath);
+		return all.filter(
+			(c) => c.contextKey.startsWith('branch:') && c.contextKey.endsWith(headSuffix)
+		);
+	}
 	const db = await getDb();
 	const rows = await db
 		.select()

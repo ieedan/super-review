@@ -19,15 +19,18 @@
 		app,
 		diff,
 		isPRCommentContext,
+		isLocalCommentSurface,
 		effectiveCommentsSidebarTab
 	} from '@super-review/ui/store.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import { formatRelative } from '@super-review/ui/utils';
 	import type { LocalComment, PRReviewComment } from '@super-review/core/types';
 
-	// In a PR view the sidebar lists GitHub review comments; everywhere else it
-	// lists local comments. The two share the same chrome but different rows.
+	// In a PR view the sidebar lists GitHub review comments; local comments show
+	// wherever they exist. On the Branch tab with an open PR both are true and the
+	// two lists stack — pre-PR local threads used to be hidden outright here.
 	const isPR = $derived(isPRCommentContext());
+	const showLocal = $derived(isLocalCommentSurface());
 
 	// The Tasks and Comments tabs always exist; the Conversation tab (the PR's
 	// top-level discussion) only exists in a PR context, so its trigger is hidden
@@ -46,7 +49,7 @@
 	// PR list. Newest first, but resolved threads always sink below the open ones so
 	// actionable feedback stays at the top.
 	const localThreads = $derived.by(() => {
-		const all = app.localComments;
+		const all = showLocal ? app.localComments : [];
 		const roots = all.filter((c) => c.inReplyTo == null);
 		return roots
 			.map((root) => ({ root, replies: all.filter((c) => c.inReplyTo === root.id).length }))
@@ -64,7 +67,7 @@
 	// Outdated roots have no live `line` but still belong here — they render with
 	// their original line and an "Outdated" badge rather than being dropped.
 	const prThreads = $derived.by(() => {
-		const all = Object.values(app.prComments).flat();
+		const all = isPR ? Object.values(app.prComments).flat() : [];
 		const roots = all.filter((c) => c.inReplyTo == null && (c.line != null || c.isOutdated));
 		const withReplies = roots.map((root) => ({
 			root,
@@ -78,22 +81,22 @@
 		});
 	});
 
-	const totalCount = $derived(isPR ? prThreads.length : localThreads.length);
+	// Both lists self-gate on their surface above, so the counts are plain sums —
+	// on the Branch tab with a PR they span the two sources at once.
+	const totalCount = $derived(prThreads.length + localThreads.length);
 	// The Comments tab badge, like the Tasks badge, counts only what's still
 	// actionable: resolved (and, for PRs, outdated) threads drop out so the number
 	// reflects open comments rather than the full history.
 	const openCommentCount = $derived(
-		isPR
-			? prThreads.filter((t) => !t.root.isResolved && !t.root.isOutdated).length
-			: localThreads.filter((t) => t.root.resolvedAt == null).length
+		prThreads.filter((t) => !t.root.isResolved && !t.root.isOutdated).length +
+			localThreads.filter((t) => t.root.resolvedAt == null).length
 	);
-	// Gates the "copy all" button. Mirrors exactly what copyAll* will emit: for
-	// PRs that's unresolved threads still anchored to a live line (outdated and
-	// file-level roots are skipped); locally it's every unresolved thread root.
+	// Gates the "copy all" button. Mirrors exactly what copyAllUnresolvedInView
+	// will emit: for PRs that's unresolved threads still anchored to a live line
+	// (outdated and file-level roots are skipped); locally every unresolved root.
 	const copyableCount = $derived(
-		isPR
-			? prThreads.filter((t) => !t.root.isResolved && t.root.line != null).length
-			: localThreads.filter((t) => t.root.resolvedAt == null).length
+		prThreads.filter((t) => !t.root.isResolved && t.root.line != null).length +
+			localThreads.filter((t) => t.root.resolvedAt == null).length
 	);
 
 	// Per-button "copied" feedback: the key of the button that was last copied,
@@ -107,8 +110,7 @@
 	}
 
 	function copyAll(): void {
-		if (isPR) void actions.copyAllUnresolvedPRComments();
-		else void actions.copyAllUnresolvedComments();
+		void actions.copyAllUnresolvedInView();
 		flashCopied('all');
 	}
 
@@ -269,86 +271,239 @@
 						</p>
 					</div>
 				</div>
-			{:else if isPR}
-				<ul>
-					{#each prThreads as { root, replies } (root.id)}
-						<li class="border-b border-border">
-							<div
-								role="button"
-								tabindex="0"
-								class={[
-									'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
-									(root.isResolved || root.isOutdated) && 'opacity-60'
-								]}
-								onclick={() => diff.scrollToPRComment(root.path, root.id)}
-								onkeydown={(e) => {
-									if (e.key === 'Enter' || e.key === ' ') {
-										e.preventDefault();
-										diff.scrollToPRComment(root.path, root.id);
-									}
-								}}
-							>
-								<div class="flex items-center gap-2">
-									<img
-										class="size-4 shrink-0 rounded-full"
-										src={root.authorAvatarUrl}
-										alt={root.author}
-									/>
-									<span class="truncate text-xs font-medium">{root.author}</span>
-									<span class="shrink-0 text-[11px] text-muted-foreground">
-										{formatRelative(root.createdAt)}
-									</span>
-									{#if root.isOutdated}
-										<span
-											class="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-											style="background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning);"
-										>
-											Outdated
+			{:else}
+				<!-- With both sources on screen (Branch tab, PR open) each list gets a
+				     header so a local thread isn't mistaken for one that's on GitHub.
+				     A single-source view keeps the plain unlabelled list. -->
+				{@const bothSources = prThreads.length > 0 && localThreads.length > 0}
+				{#if prThreads.length > 0}
+					{#if bothSources}
+						<h2
+							class="sticky top-0 z-10 border-b border-border bg-background/95 px-3 py-1.5 text-[11px] font-semibold text-muted-foreground backdrop-blur"
+						>
+							On this pull request
+						</h2>
+					{/if}
+					<ul>
+						{#each prThreads as { root, replies } (root.id)}
+							<li class="border-b border-border">
+								<div
+									role="button"
+									tabindex="0"
+									class={[
+										'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
+										(root.isResolved || root.isOutdated) && 'opacity-60'
+									]}
+									onclick={() => diff.scrollToPRComment(root.path, root.id)}
+									onkeydown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											diff.scrollToPRComment(root.path, root.id);
+										}
+									}}
+								>
+									<div class="flex items-center gap-2">
+										<img
+											class="size-4 shrink-0 rounded-full"
+											src={root.authorAvatarUrl}
+											alt={root.author}
+										/>
+										<span class="truncate text-xs font-medium">{root.author}</span>
+										<span class="shrink-0 text-[11px] text-muted-foreground">
+											{formatRelative(root.createdAt)}
 										</span>
-									{/if}
-									{#if root.isResolved}
-										<span
-											class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-											style="background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success);"
-										>
-											<Check class="size-2.5" /> Resolved
-										</span>
-									{/if}
-									<div class="flex-1"></div>
-									<div class="flex shrink-0 items-center gap-0.5">
-										{#if root.threadId}
+										{#if root.isOutdated}
+											<span
+												class="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+												style="background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning);"
+											>
+												Outdated
+											</span>
+										{/if}
+										{#if root.isResolved}
+											<span
+												class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+												style="background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success);"
+											>
+												<Check class="size-2.5" /> Resolved
+											</span>
+										{/if}
+										<div class="flex-1"></div>
+										<div class="flex shrink-0 items-center gap-0.5">
+											{#if root.threadId}
+												<button
+													type="button"
+													class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+													title={root.isResolved ? 'Unresolve' : 'Resolve'}
+													onclick={(e) => {
+														e.stopPropagation();
+														togglePRResolved(root);
+													}}
+												>
+													{#if root.isResolved}
+														<RotateCcw class="size-3.5" />
+													{:else}
+														<Check class="size-3.5" />
+													{/if}
+												</button>
+											{/if}
 											<button
 												type="button"
 												class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-												title={root.isResolved ? 'Unresolve' : 'Resolve'}
+												title="Copy thread as prompt"
 												onclick={(e) => {
 													e.stopPropagation();
-													togglePRResolved(root);
+													copyPR(root.path, root.id);
 												}}
 											>
-												{#if root.isResolved}
+												{#if copiedKey === `pr-${root.id}`}
+													<Check class="size-3.5" style="color: var(--color-success);" />
+												{:else}
+													<Copy class="size-3.5" />
+												{/if}
+											</button>
+											{#if root.url || root.canDelete}
+												<DropdownMenu.Root>
+													<DropdownMenu.Trigger
+														class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+														aria-label="More actions"
+														onclick={(e: MouseEvent) => e.stopPropagation()}
+													>
+														<MoreHorizontal class="size-4" />
+													</DropdownMenu.Trigger>
+													<DropdownMenu.Content align="end" class="w-auto!">
+														{#if root.url}
+															<DropdownMenu.Item onSelect={() => viewOnGithub(root)}>
+																<Github class="size-3.5" /> View on GitHub
+															</DropdownMenu.Item>
+														{/if}
+														{#if root.canDelete}
+															{#if root.url}
+																<DropdownMenu.Separator />
+															{/if}
+															<DropdownMenu.Item
+																variant="destructive"
+																onSelect={() => actions.deleteComment(root.id, root.path)}
+															>
+																<Trash2 class="size-3.5" /> Delete
+															</DropdownMenu.Item>
+														{/if}
+													</DropdownMenu.Content>
+												</DropdownMenu.Root>
+											{/if}
+										</div>
+									</div>
+									<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+										{#if app.showFileIcons}
+											<FileIcon path={root.path} class="size-3.5 shrink-0" />
+										{/if}
+										<span class="truncate font-mono">{fileName(root.path)}</span>
+										{#if (root.line ?? root.originalLine) != null}
+											<span class="shrink-0">·</span>
+											<span class="shrink-0 font-mono">L{root.line ?? root.originalLine}</span>
+										{/if}
+										{#if replies > 0}
+											<span class="shrink-0">·</span>
+											<span class="shrink-0">{replies} {replies === 1 ? 'reply' : 'replies'}</span>
+										{/if}
+									</div>
+									<p class="mt-1 line-clamp-3 text-[13px] whitespace-pre-wrap">{root.body}</p>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				{#if localThreads.length > 0}
+					{#if bothSources}
+						<h2
+							class="sticky top-0 z-10 border-b border-border bg-background/95 px-3 py-1.5 text-[11px] font-semibold text-muted-foreground backdrop-blur"
+						>
+							On this machine
+						</h2>
+					{/if}
+					<ul>
+						{#each localThreads as { root, replies } (root.id)}
+							{@const c = root}
+							{@const resolved = c.resolvedAt != null}
+							{@const outdated = app.outdatedLocalCommentIds.has(c.id)}
+							<li class="border-b border-border">
+								<div
+									role="button"
+									tabindex="0"
+									class={[
+										'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
+										(resolved || outdated) && 'opacity-60'
+									]}
+									onclick={() => diff.scrollToComment(c.id)}
+									onkeydown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											diff.scrollToComment(c.id);
+										}
+									}}
+								>
+									<div class="flex items-center gap-2">
+										{#if c.author.avatarUrl}
+											<img
+												class="size-4 shrink-0 rounded-full"
+												src={c.author.avatarUrl}
+												alt={c.author.name}
+											/>
+										{/if}
+										<span class="truncate text-xs font-medium">{c.author.name}</span>
+										<span class="shrink-0 text-[11px] text-muted-foreground">
+											{formatRelative(c.createdAt)}
+										</span>
+										{#if outdated}
+											<span
+												class="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+												style="background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning);"
+												title="The line this comment was left on is no longer in the diff"
+											>
+												Outdated
+											</span>
+										{/if}
+										{#if resolved}
+											<span
+												class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+												style="background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success);"
+											>
+												<Check class="size-2.5" /> Resolved
+											</span>
+										{/if}
+										<div class="flex-1"></div>
+										<div class="flex shrink-0 items-center gap-0.5">
+											<button
+												type="button"
+												class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+												title={resolved ? 'Unresolve' : 'Resolve'}
+												onclick={(e) => {
+													e.stopPropagation();
+													if (resolved) actions.unresolveLocalComment(c.id);
+													else actions.resolveLocalComment(c.id);
+												}}
+											>
+												{#if resolved}
 													<RotateCcw class="size-3.5" />
 												{:else}
 													<Check class="size-3.5" />
 												{/if}
 											</button>
-										{/if}
-										<button
-											type="button"
-											class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-											title="Copy thread as prompt"
-											onclick={(e) => {
-												e.stopPropagation();
-												copyPR(root.path, root.id);
-											}}
-										>
-											{#if copiedKey === `pr-${root.id}`}
-												<Check class="size-3.5" style="color: var(--color-success);" />
-											{:else}
-												<Copy class="size-3.5" />
-											{/if}
-										</button>
-										{#if root.url || root.canDelete}
+											<button
+												type="button"
+												class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+												title="Copy thread as prompt"
+												onclick={(e) => {
+													e.stopPropagation();
+													copyLocal(c.id);
+												}}
+											>
+												{#if copiedKey === c.id}
+													<Check class="size-3.5" style="color: var(--color-success);" />
+												{:else}
+													<Copy class="size-3.5" />
+												{/if}
+											</button>
 											<DropdownMenu.Root>
 												<DropdownMenu.Trigger
 													class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -357,188 +512,56 @@
 												>
 													<MoreHorizontal class="size-4" />
 												</DropdownMenu.Trigger>
-												<DropdownMenu.Content align="end" class="w-auto!">
-													{#if root.url}
-														<DropdownMenu.Item onSelect={() => viewOnGithub(root)}>
-															<Github class="size-3.5" /> View on GitHub
-														</DropdownMenu.Item>
-													{/if}
-													{#if root.canDelete}
-														{#if root.url}
-															<DropdownMenu.Separator />
-														{/if}
-														<DropdownMenu.Item
-															variant="destructive"
-															onSelect={() => actions.deleteComment(root.id, root.path)}
-														>
-															<Trash2 class="size-3.5" /> Delete
-														</DropdownMenu.Item>
-													{/if}
+												<DropdownMenu.Content align="end">
+													<DropdownMenu.Item
+														variant="destructive"
+														onSelect={() => actions.deleteLocalComment(c.id)}
+													>
+														<Trash2 class="size-3.5" /> Delete
+													</DropdownMenu.Item>
 												</DropdownMenu.Content>
 											</DropdownMenu.Root>
+										</div>
+									</div>
+									<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+										{#if app.showFileIcons}
+											<FileIcon path={c.path} class="size-3.5 shrink-0" />
+										{/if}
+										<span class="truncate font-mono">{fileName(c.path)}</span>
+										<span class="shrink-0">·</span>
+										<span class="shrink-0 font-mono">{lineLabel(c)}</span>
+										{#if replies > 0}
+											<span class="shrink-0">·</span>
+											<span class="shrink-0">{replies} {replies === 1 ? 'reply' : 'replies'}</span>
 										{/if}
 									</div>
-								</div>
-								<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
-									{#if app.showFileIcons}
-										<FileIcon path={root.path} class="size-3.5 shrink-0" />
-									{/if}
-									<span class="truncate font-mono">{fileName(root.path)}</span>
-									{#if (root.line ?? root.originalLine) != null}
-										<span class="shrink-0">·</span>
-										<span class="shrink-0 font-mono">L{root.line ?? root.originalLine}</span>
-									{/if}
-									{#if replies > 0}
-										<span class="shrink-0">·</span>
-										<span class="shrink-0">{replies} {replies === 1 ? 'reply' : 'replies'}</span>
-									{/if}
-								</div>
-								<p class="mt-1 line-clamp-3 text-[13px] whitespace-pre-wrap">{root.body}</p>
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{:else}
-				<ul>
-					{#each localThreads as { root, replies } (root.id)}
-						{@const c = root}
-						{@const resolved = c.resolvedAt != null}
-						{@const outdated = app.outdatedLocalCommentIds.has(c.id)}
-						<li class="border-b border-border">
-							<div
-								role="button"
-								tabindex="0"
-								class={[
-									'group w-full cursor-pointer px-3 py-2.5 text-left hover:bg-accent/50',
-									(resolved || outdated) && 'opacity-60'
-								]}
-								onclick={() => diff.scrollToComment(c.id)}
-								onkeydown={(e) => {
-									if (e.key === 'Enter' || e.key === ' ') {
-										e.preventDefault();
-										diff.scrollToComment(c.id);
-									}
-								}}
-							>
-								<div class="flex items-center gap-2">
-									{#if c.author.avatarUrl}
-										<img
-											class="size-4 shrink-0 rounded-full"
-											src={c.author.avatarUrl}
-											alt={c.author.name}
-										/>
-									{/if}
-									<span class="truncate text-xs font-medium">{c.author.name}</span>
-									<span class="shrink-0 text-[11px] text-muted-foreground">
-										{formatRelative(c.createdAt)}
-									</span>
-									{#if outdated}
-										<span
-											class="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-											style="background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning);"
-											title="The line this comment was left on is no longer in the diff"
-										>
-											Outdated
-										</span>
-									{/if}
-									{#if resolved}
-										<span
-											class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-											style="background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success);"
-										>
-											<Check class="size-2.5" /> Resolved
-										</span>
-									{/if}
-									<div class="flex-1"></div>
-									<div class="flex shrink-0 items-center gap-0.5">
-										<button
-											type="button"
-											class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-											title={resolved ? 'Unresolve' : 'Resolve'}
-											onclick={(e) => {
-												e.stopPropagation();
-												if (resolved) actions.unresolveLocalComment(c.id);
-												else actions.resolveLocalComment(c.id);
-											}}
-										>
-											{#if resolved}
-												<RotateCcw class="size-3.5" />
-											{:else}
-												<Check class="size-3.5" />
+									<p class="mt-1 line-clamp-3 text-[13px] whitespace-pre-wrap">{c.body}</p>
+									{#if resolved && c.resolvedBy}
+										<div class="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+											{#if c.resolvedBy.kind === 'agent' && c.resolvedBy.harness}
+												<HarnessLogo harness={c.resolvedBy.harness} size={12} />
 											{/if}
-										</button>
-										<button
-											type="button"
-											class="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-											title="Copy thread as prompt"
-											onclick={(e) => {
-												e.stopPropagation();
-												copyLocal(c.id);
-											}}
-										>
-											{#if copiedKey === c.id}
-												<Check class="size-3.5" style="color: var(--color-success);" />
-											{:else}
-												<Copy class="size-3.5" />
-											{/if}
-										</button>
-										<DropdownMenu.Root>
-											<DropdownMenu.Trigger
-												class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-												aria-label="More actions"
-												onclick={(e: MouseEvent) => e.stopPropagation()}
-											>
-												<MoreHorizontal class="size-4" />
-											</DropdownMenu.Trigger>
-											<DropdownMenu.Content align="end">
-												<DropdownMenu.Item
-													variant="destructive"
-													onSelect={() => actions.deleteLocalComment(c.id)}
+											<span>Resolved by {c.resolvedBy.name}</span>
+											{#if c.resolvedSessionId}
+												<button
+													type="button"
+													class="underline underline-offset-2 hover:opacity-80"
+													style="color: var(--color-primary);"
+													onclick={(e) => {
+														e.stopPropagation();
+														actions.openLinkedSession(c.resolvedSessionId!);
+													}}
 												>
-													<Trash2 class="size-3.5" /> Delete
-												</DropdownMenu.Item>
-											</DropdownMenu.Content>
-										</DropdownMenu.Root>
-									</div>
-								</div>
-								<div class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
-									{#if app.showFileIcons}
-										<FileIcon path={c.path} class="size-3.5 shrink-0" />
-									{/if}
-									<span class="truncate font-mono">{fileName(c.path)}</span>
-									<span class="shrink-0">·</span>
-									<span class="shrink-0 font-mono">{lineLabel(c)}</span>
-									{#if replies > 0}
-										<span class="shrink-0">·</span>
-										<span class="shrink-0">{replies} {replies === 1 ? 'reply' : 'replies'}</span>
+													View session
+												</button>
+											{/if}
+										</div>
 									{/if}
 								</div>
-								<p class="mt-1 line-clamp-3 text-[13px] whitespace-pre-wrap">{c.body}</p>
-								{#if resolved && c.resolvedBy}
-									<div class="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-										{#if c.resolvedBy.kind === 'agent' && c.resolvedBy.harness}
-											<HarnessLogo harness={c.resolvedBy.harness} size={12} />
-										{/if}
-										<span>Resolved by {c.resolvedBy.name}</span>
-										{#if c.resolvedSessionId}
-											<button
-												type="button"
-												class="underline underline-offset-2 hover:opacity-80"
-												style="color: var(--color-primary);"
-												onclick={(e) => {
-													e.stopPropagation();
-													actions.openLinkedSession(c.resolvedSessionId!);
-												}}
-											>
-												View session
-											</button>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						</li>
-					{/each}
-				</ul>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			{/if}
 		</div>
 	{/if}

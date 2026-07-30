@@ -772,15 +772,27 @@ export function prThreadCollapsed(c: PRReviewComment): boolean {
 	return app.commentCollapse.get(`pr-${rootId}`) ?? (root.isResolved || root.isOutdated);
 }
 
-// True when the diff on screen is a pull request's, so commenting surfaces GitHub
-// PR review comments rather than local ones. Mirrors DiffFileSection's gate: a
-// `pr` context, or the Branch tab with an open PR for the checked-out branch.
-// Drives the Comments sidebar's source (PR comments vs local comments).
+// True when the diff on screen is a pull request's, so GitHub PR review comments
+// are in play. Mirrors DiffFileSection's gate: a `pr` context, or the Branch tab
+// with an open PR for the checked-out branch. Drives whether the sidebar shows PR
+// threads and the Conversation tab, and which surface a *new* comment targets.
 export function isPRCommentContext(): boolean {
 	return (
 		app.diffContext.kind === 'pr' ||
 		(app.contextTab === 'branch' && app.branchPR != null && !isReadOnlyView())
 	);
+}
+
+// True when local comments render in the current view. Deliberately NOT the
+// inverse of isPRCommentContext: opening a PR for a branch used to flip the
+// Branch tab wholesale onto GitHub comments, hiding every local comment written
+// before the PR existed. They're still in the DB and the CLI still lists them, so
+// the app was the only place they vanished. The two sources now coexist — local
+// threads stay visible and resolvable while new comments go to the PR. Only a
+// true `pr` context is excluded: nothing writes local comments under a `pr:<n>`
+// key, so there'd be nothing to show.
+export function isLocalCommentSurface(): boolean {
+	return app.diffContext.kind !== 'pr';
 }
 
 // The tab the Comments sidebar actually shows. Outside a PR context the
@@ -801,14 +813,21 @@ export function effectiveCommentsSidebarTab(): 'tasks' | 'comments' | 'conversat
 // toggle's notification dot, which should only show when there's something left
 // to act on (resolved-only threads don't light it).
 export function sidebarHasUnresolvedComments(): boolean {
-	if (isPRCommentContext()) {
-		return Object.values(app.prComments).some((list) =>
+	if (
+		isPRCommentContext() &&
+		Object.values(app.prComments).some((list) =>
 			list.some((c) => c.line != null && c.inReplyTo == null && !c.isResolved)
-		);
+		)
+	) {
+		return true;
 	}
 	// Roots only — replies never carry their own resolution, so a thread is open iff
-	// its root is unresolved.
-	return app.localComments.some((c) => c.inReplyTo == null && c.resolvedAt == null);
+	// its root is unresolved. Checked even in a PR context on the Branch tab, where
+	// pre-PR local threads sit alongside the PR's own.
+	return (
+		isLocalCommentSurface() &&
+		app.localComments.some((c) => c.inReplyTo == null && c.resolvedAt == null)
+	);
 }
 
 // True when the Branch tab has something to show. The Branch diff compares the
@@ -6598,15 +6617,6 @@ export const actions = {
 		await actions.copyToClipboard(formatThreadPrompt(thread));
 	},
 
-	// Copy every unresolved thread (its root) in the active context as one markdown
-	// task list. Replies are conversation context, not standalone tasks, so the list
-	// is keyed off roots — matching the sidebar's copy-all gate.
-	async copyAllUnresolvedComments(): Promise<void> {
-		const open = app.localComments.filter((c) => c.inReplyTo == null && !c.resolvedAt);
-		if (open.length === 0) return;
-		await actions.copyToClipboard(formatCommentsPrompt(open));
-	},
-
 	// Open the session a resolved comment links to, so the reviewer can see how the
 	// feedback was addressed. Switches to the Sessions tab and opens the tour.
 	async openLinkedSession(sessionId: string): Promise<void> {
@@ -6753,16 +6763,30 @@ export const actions = {
 		await actions.copyToClipboard(formatPRThreadPrompt(thread));
 	},
 
-	// Copy every actionable PR review thread (one entry per root comment) as a
-	// markdown task list. Only unresolved threads still anchored to a live line
-	// qualify: resolved threads are done, and outdated/file-level ones (no live
-	// `line`) point at code the agent can no longer act on directly.
-	async copyAllUnresolvedPRComments(): Promise<void> {
-		const roots = Object.values(app.prComments)
-			.flat()
-			.filter((c) => c.inReplyTo == null && c.line != null && !c.isResolved);
-		if (roots.length === 0) return;
-		await actions.copyToClipboard(formatPRCommentsPrompt(roots));
+	// The sidebar's copy-all, spanning every comment source the current view shows.
+	// On the Branch tab with a PR open that's both at once — pre-PR local threads
+	// and the PR's own review threads — so one press hands an agent the whole set
+	// instead of silently dropping half of it. Sections are concatenated rather
+	// than interleaved; each formatter emits a self-contained task list.
+	//
+	// PR side: only unresolved threads still anchored to a live line qualify —
+	// resolved ones are done, and outdated/file-level roots (no live `line`) point
+	// at code the agent can no longer act on. Local side: every unresolved root;
+	// replies are conversation context, not standalone tasks.
+	async copyAllUnresolvedInView(): Promise<void> {
+		const parts: string[] = [];
+		if (isPRCommentContext()) {
+			const roots = Object.values(app.prComments)
+				.flat()
+				.filter((c) => c.inReplyTo == null && c.line != null && !c.isResolved);
+			if (roots.length > 0) parts.push(formatPRCommentsPrompt(roots));
+		}
+		if (isLocalCommentSurface()) {
+			const open = app.localComments.filter((c) => c.inReplyTo == null && !c.resolvedAt);
+			if (open.length > 0) parts.push(formatCommentsPrompt(open));
+		}
+		if (parts.length === 0) return;
+		await actions.copyToClipboard(parts.join('\n\n'));
 	},
 
 	// Scroll a PR review comment's inline thread into view (its annotation

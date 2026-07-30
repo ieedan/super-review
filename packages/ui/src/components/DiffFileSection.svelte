@@ -288,11 +288,17 @@
 			(app.contextTab === 'branch' && app.branchPR != null && !isReadOnlyView())
 	);
 
-	// Local review comments apply in every context that isn't surfacing PR
-	// comments — the working tree, a branch diff with no PR, a session's changes,
-	// a stash. Their line numbers are anchored to whatever diff is on screen and
-	// stored under that context's key, so they never collide with PR comments.
-	const isLocalCommentContext = $derived(!isPRContext);
+	// Local review comments render in every context except a PR's own diff — the
+	// working tree, a branch diff (with or without a PR), a session's changes, a
+	// stash. Their line numbers are anchored to whatever diff is on screen and
+	// stored under that context's key.
+	//
+	// NOT the inverse of isPRContext: on the Branch tab both are true once a PR is
+	// open, and the two sets render side by side. Local threads written before the
+	// PR existed used to disappear the moment it was opened, which is exactly when
+	// a reviewer still needs them. Authoring is still exclusive (see
+	// onDiffLineNumberClick) — a new comment goes to the PR.
+	const isLocalCommentContext = $derived(app.diffContext.kind !== 'pr');
 
 	// Whether Pierre's gutter `+` affordance should be live: any context where a
 	// click produces a comment (PR or local).
@@ -303,14 +309,16 @@
 	let fileDiffMeta = $state<FileDiffMetadata | null>(null);
 
 	// Comment anchors (file-relative line + side) for this file in the current
-	// context. PR comments and local comments are mutually exclusive per context.
+	// context. Both sources contribute — on the Branch tab with a PR open the two
+	// coexist, and a collapsed region has to expand for either kind.
 	const commentAnchors = $derived.by<Array<{ side: 'LEFT' | 'RIGHT'; line: number }>>(() => {
 		const out: Array<{ side: 'LEFT' | 'RIGHT'; line: number }> = [];
 		if (isPRContext) {
 			for (const c of app.prComments[file.path] ?? []) {
 				if (c.line != null) out.push({ side: c.side, line: c.line });
 			}
-		} else if (isLocalCommentContext) {
+		}
+		if (isLocalCommentContext) {
 			for (const c of app.localComments) {
 				if (c.path === file.path) out.push({ side: c.side, line: c.startLine });
 			}
@@ -2010,7 +2018,15 @@
 	const markSeenHotkey = $derived(
 		formatHotkeyParts(app.hotkeys.markSeenNext, app.platform === 'darwin')
 	);
-	const commentCount = $derived(isPRContext ? (app.prComments[file.path] ?? []).length : 0);
+	// The file header's badge, shown only where PR comments are in play
+	// (`showCommentCount`). It spans both sources so it can't undercount a file
+	// whose threads are a mix of the PR's and local ones left before it was opened.
+	const commentCount = $derived(
+		isPRContext
+			? (app.prComments[file.path] ?? []).length +
+					(isLocalCommentContext ? fileLocalComments.length : 0)
+			: 0
+	);
 	const statusBadge = $derived.by(() => {
 		switch (file.status) {
 			case 'deleted':
