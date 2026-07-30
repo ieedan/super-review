@@ -1,5 +1,19 @@
 # @super-review/desktop
 
+## 0.1.2
+
+### Patch Changes
+
+- [#188](https://github.com/ieedan/super-review/pull/188) [`367bb69`](https://github.com/ieedan/super-review/commit/367bb698023d5d7edfd3c161a208920ea02140e6) Thanks [@ieedan](https://github.com/ieedan)! - fix: count local comments in the file list when a PR is open
+
+  The per-file comment count in the sidebar zeroed out local comments in a PR
+  context, so on the Branch tab with an open PR a file's local threads rendered in
+  the diff but were missing from its count. Same mutually-exclusive gate that hid
+  the comments themselves, in one more spot.
+
+- Updated dependencies [[`367bb69`](https://github.com/ieedan/super-review/commit/367bb698023d5d7edfd3c161a208920ea02140e6)]:
+  - @super-review/ui@0.2.1
+
 ## 0.1.1
 
 ### Patch Changes
