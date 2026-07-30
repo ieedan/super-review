@@ -1,6 +1,6 @@
 {
 	"name": "@super-review/core",
-	"version": "0.3.0-beta.5",
+	"version": "0.3.0-beta.6",
 	"description": "Shared session + git layer for super-review (consumed by the CLI and desktop app)",
 	"type": "module",
 	"private": true,
