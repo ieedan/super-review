@@ -129,7 +129,7 @@ export async function listCommitMessageModels(
 export async function warmCommitMessageModels(status?: CommitMessageHarnessStatus): Promise<void> {
 	const installed = status ?? (await detectCommitMessageHarnesses());
 	for (const harness of COMMIT_MESSAGE_HARNESS_PRIORITY) {
-		if (!installed[harness]) continue;
+		if (!installed[harness]?.installed) continue;
 		const hit = readCache(harness);
 		if (hit && Date.now() - hit.fetchedAt <= REVALIDATE_AFTER_MS) continue;
 		try {

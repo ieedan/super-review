@@ -42,7 +42,12 @@ export async function generateCommitMessage(
 	try {
 		const resolved = await resolveHarnessForRun(request.preferredHarness);
 		if (!resolved.ok) {
-			return { ok: false, code: 'no-harness', error: resolved.error };
+			return {
+				ok: false,
+				code: resolved.code,
+				error: resolved.error,
+				...(resolved.code === 'auth' ? { harness: resolved.harness } : {})
+			};
 		}
 		const { harness, binary } = resolved;
 

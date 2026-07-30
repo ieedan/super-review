@@ -9,7 +9,13 @@
 import { app, setCachedDiff } from '@super-review/ui/store.svelte';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import type { DiffContext } from '@super-review/core/types';
-import type { ChangedFile, DiffData } from '@super-review/core/types';
+import type {
+	ChangedFile,
+	CommitMessageHarness,
+	CommitMessageHarnessStatus,
+	DiffData
+} from '@super-review/core/types';
+import { COMMIT_MESSAGE_HARNESS_PRIORITY } from '@super-review/core/types';
 import { makeDiffData } from './fixtures';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,6 +62,10 @@ function resetTouchedFields() {
 	a.dirtyRepoIds = new SvelteSet<string>();
 	a.pendingComposers = {};
 	a.localComposers = new SvelteMap();
+	// Harness auth surfaces: a story that left the sign-in dialog open (or a
+	// notice dismissed) must not carry that into the next one.
+	a.harnessSignIn = { harness: null, open: false, checking: false, recheckFailed: false };
+	a.commitMessageHarnesses = null;
 }
 
 /** Reset the store, then shallow-merge the story's overrides onto it. */
@@ -63,6 +73,36 @@ export function seedStore(overrides: Partial<App> = {}): void {
 	resetTouchedFields();
 	Object.assign(app, overrides);
 }
+
+/**
+ * Build a `commitMessageHarnessStatus` for a story from the short form the
+ * stories actually care about. Pass a list of installed harnesses (all signed
+ * in), or a per-harness record to say more — `'signed-out'` for a CLI that is
+ * installed but has no session, which is what drives the warning row in Agents
+ * settings and the recovery affordance on the toast.
+ */
+export function harnessStatus(
+	installed: readonly CommitMessageHarness[] | Partial<Record<CommitMessageHarness, HarnessSeed>>
+): CommitMessageHarnessStatus {
+	const seeds: Partial<Record<CommitMessageHarness, HarnessSeed>> = Array.isArray(installed)
+		? Object.fromEntries(installed.map((h) => [h, 'ok'] as const))
+		: installed;
+	const status = {} as CommitMessageHarnessStatus;
+	for (const harness of COMMIT_MESSAGE_HARNESS_PRIORITY) {
+		const seed = seeds[harness];
+		status[harness] =
+			seed === undefined || seed === false
+				? { installed: false, auth: 'unknown' }
+				: seed === 'signed-out'
+					? { installed: true, auth: 'missing' }
+					: seed === 'unknown'
+						? { installed: true, auth: 'unknown' }
+						: { installed: true, auth: 'ok', account: 'you@example.com' };
+	}
+	return status;
+}
+
+type HarnessSeed = 'ok' | 'signed-out' | 'unknown' | false;
 
 /**
  * Pre-populate the diff cache for the given files in the working-tree context

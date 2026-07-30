@@ -68,6 +68,8 @@ import {
 	DEFAULT_SIDEBAR_TABS,
 	DEFAULT_SIDEBAR_CONTROLS,
 	COMMIT_MESSAGE_HARNESS_PRIORITY,
+	harnessLoginRecipe,
+	isHarnessInstalled,
 	WINDOW_BOUNDS
 } from '@super-review/core/types';
 import { diffContextKey, reviewContextKey } from '@super-review/core/diff-context';
@@ -164,6 +166,21 @@ export interface GithubSignInState {
 	// True while we're polling GitHub for the user to authorize the code.
 	polling: boolean;
 	error: string | null;
+}
+
+// State for the "sign in to <harness>" dialog. Unlike the GitHub flow there is
+// nothing for us to drive: these CLIs sign in through their own interactive
+// terminal flow, so the dialog hands over the command and then waits for the
+// user to come back and say they're done.
+export interface HarnessSignInState {
+	// Which harness needs signing in; null when the dialog has never opened.
+	harness: CommitMessageHarness | null;
+	open: boolean;
+	// True while a recheck is probing the CLI again.
+	checking: boolean;
+	// Set when a recheck came back still signed out, so the dialog can say so
+	// rather than silently doing nothing and looking broken.
+	recheckFailed: boolean;
 }
 
 // Renderer mirror of the main process's license state. `null` = not yet
@@ -471,6 +488,7 @@ interface AppState {
 	// global "search files (sidebar)" hotkey, which lives outside FileList.
 	focusSidebarSearchNonce: number;
 	githubSignIn: GithubSignInState;
+	harnessSignIn: HarnessSignInState;
 	license: LicenseUiState;
 	pushStatus: PushStatus | null;
 	// Tip commit of the current branch, surfaced so the commit box can offer an
@@ -1090,6 +1108,7 @@ const initial: AppState = {
 		polling: false,
 		error: null
 	},
+	harnessSignIn: { harness: null, open: false, checking: false, recheckFailed: false },
 	license: {
 		current: null,
 		activating: false,
@@ -1684,22 +1703,43 @@ export function effectiveTerminal(): TerminalKind | null {
 }
 
 // Preferred harness for commit-message generation, falling back to the first
-// installed CLI in COMMIT_MESSAGE_HARNESS_PRIORITY.
+// installed CLI in COMMIT_MESSAGE_HARNESS_PRIORITY. Mirrors the main process's
+// `resolvePreferredHarness`, including its tie-break: when we're choosing on the
+// user's behalf, a CLI we know is signed out loses to one that isn't.
 export function effectiveCommitMessageHarness(): CommitMessageHarness | null {
 	const status = app.commitMessageHarnesses;
 	if (!status) return null;
 	const pref = app.prefs?.commitMessageHarness ?? null;
-	if (pref && status[pref]) return pref;
-	for (const harness of COMMIT_MESSAGE_HARNESS_PRIORITY) {
-		if (status[harness]) return harness;
-	}
-	return null;
+	if (pref && isHarnessInstalled(status, pref)) return pref;
+	return (
+		COMMIT_MESSAGE_HARNESS_PRIORITY.find(
+			(h) => isHarnessInstalled(status, h) && status[h].auth !== 'missing'
+		) ??
+		COMMIT_MESSAGE_HARNESS_PRIORITY.find((h) => isHarnessInstalled(status, h)) ??
+		null
+	);
 }
 
 export function anyCommitMessageHarnessInstalled(): boolean {
 	const status = app.commitMessageHarnesses;
 	if (!status) return false;
-	return COMMIT_MESSAGE_HARNESS_PRIORITY.some((h) => status[h]);
+	return COMMIT_MESSAGE_HARNESS_PRIORITY.some((h) => isHarnessInstalled(status, h));
+}
+
+// A signed-out harness is a setup gap, not a failure: it gets the sign-in
+// dialog, not the red error stack (and not the "Report" button — there is no bug
+// to report). Returns true when it handled the result, so callers skip setError.
+function handleHarnessAuthFailure(result: {
+	code?: string;
+	harness?: CommitMessageHarness;
+}): boolean {
+	if (result.code !== 'auth' || !result.harness) return false;
+	// The run just proved the CLI is signed out, so drop the cached auth answer:
+	// Agents settings should agree with what we now know, and the dialog needs an
+	// accurate list of what else the user could switch to.
+	void actions.refreshCommitMessageHarnesses({ force: true });
+	actions.openHarnessSignIn(result.harness);
+	return true;
 }
 
 // The GitHub account the active project authenticates as: its pinned account
@@ -3973,8 +4013,66 @@ export const actions = {
 	openCommitMessageSettings(): void {
 		actions.openSettingsDialog('agents', 'commit-messages');
 	},
-	async refreshCommitMessageHarnesses(): Promise<void> {
-		app.commitMessageHarnesses = await window.api.commitMessage.detect();
+	// The "sign in to <harness>" dialog, opened by a run that reached a CLI with
+	// no session.
+	openHarnessSignIn(harness: CommitMessageHarness): void {
+		app.harnessSignIn = { harness, open: true, checking: false, recheckFailed: false };
+	},
+	closeHarnessSignIn(): void {
+		app.harnessSignIn = { ...app.harnessSignIn, open: false, checking: false };
+	},
+	// "I've signed in": re-probe the CLI for real (not the cached answer) and
+	// close only if it worked. Leaving the dialog open on failure is the point —
+	// silently doing nothing would read as a broken button.
+	async recheckHarnessSignIn(): Promise<void> {
+		const harness = app.harnessSignIn.harness;
+		if (!harness || app.harnessSignIn.checking) return;
+		app.harnessSignIn = { ...app.harnessSignIn, checking: true, recheckFailed: false };
+		try {
+			await actions.refreshCommitMessageHarnesses({ force: true });
+		} catch {
+			// Fall through to the state check: a failed refresh leaves the previous
+			// answer in place, which reads as "still signed out" — correct enough.
+		}
+		// Positive evidence only. Closing the dialog tells the user they're done, so
+		// absent status (a probe that answered with nothing) has to count as "still
+		// signed out" — the one case where we don't get to be optimistic. A status
+		// of 'unknown' does close it: we genuinely can't verify some CLIs, and
+		// trapping the user in a dialog we can never satisfy would be worse.
+		const info = app.commitMessageHarnesses?.[harness];
+		const signedIn = info != null && info.auth !== 'missing';
+		if (signedIn) {
+			app.harnessSignIn = { harness, open: false, checking: false, recheckFailed: false };
+			return;
+		}
+		app.harnessSignIn = { harness, open: true, checking: false, recheckFailed: true };
+	},
+	// The way out that isn't signing back in: pick a different agent. Closes
+	// first — the sign-in dialog sits on a higher layer than Settings, so leaving
+	// it open would bury the thing we just opened.
+	openAgentSettingsFromSignIn(): void {
+		actions.closeHarnessSignIn();
+		actions.openCommitMessageSettings();
+	},
+	// Copy a harness's login command to the clipboard. Lives in the store so the
+	// dialog can't drift from what the rest of the app thinks the command is.
+	async copyHarnessLoginCommand(harness: CommitMessageHarness): Promise<void> {
+		try {
+			await navigator.clipboard.writeText(harnessLoginRecipe(harness).command);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err), 'Copy login command');
+		}
+	},
+	// `force` re-runs the auth probes instead of reading the main process's
+	// one-minute cache: what the user wants after signing a CLI in elsewhere.
+	async refreshCommitMessageHarnesses(options?: { force?: boolean }): Promise<void> {
+		const detected = await window.api.commitMessage.detect(options?.force);
+		// Only accept a real answer. A detect that resolves to nothing must not
+		// overwrite what we already know — everything downstream reads this to
+		// decide whether a harness is usable, and "no data" is not "all fine".
+		if (detected && typeof detected === 'object') {
+			app.commitMessageHarnesses = detected;
+		}
 		void actions.prefetchCommitMessageModels();
 	},
 	async setCommitMessageHarness(harness: CommitMessageHarness | null): Promise<void> {
@@ -4022,13 +4120,15 @@ export const actions = {
 	): Promise<void> {
 		if (!status) return;
 		await Promise.all(
-			COMMIT_MESSAGE_HARNESS_PRIORITY.filter((h) => status[h]).map(async (harness) => {
-				try {
-					await actions.listCommitMessageModels(harness);
-				} catch {
-					// Leave this harness uncached; the picker will fetch on open.
+			COMMIT_MESSAGE_HARNESS_PRIORITY.filter((h) => isHarnessInstalled(status, h)).map(
+				async (harness) => {
+					try {
+						await actions.listCommitMessageModels(harness);
+					} catch {
+						// Leave this harness uncached; the picker will fetch on open.
+					}
 				}
-			})
+			)
 		);
 	},
 	// Generate a commit subject + body via the preferred harness CLI for the
@@ -4094,6 +4194,7 @@ export const actions = {
 					actions.openCommitMessageSettings();
 					return null;
 				}
+				if (handleHarnessAuthFailure(result)) return null;
 				setError(result.error ?? 'Failed to generate a commit message.', 'Generate commit message');
 				return null;
 			}
@@ -4179,6 +4280,7 @@ export const actions = {
 					actions.openCommitMessageSettings();
 					return null;
 				}
+				if (handleHarnessAuthFailure(result)) return null;
 				setError(result.error ?? 'Failed to generate a changeset.', 'Generate changeset');
 				return null;
 			}

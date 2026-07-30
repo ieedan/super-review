@@ -492,7 +492,8 @@ const api: PreloadAPI = {
 			invoke('aiConfig:remove', repoId, item) as Promise<AiConfigRemoveResult>
 	},
 	commitMessage: {
-		detect: () => invoke('commitMessage:detect') as Promise<CommitMessageHarnessStatus>,
+		detect: (force?: boolean) =>
+			invoke('commitMessage:detect', force) as Promise<CommitMessageHarnessStatus>,
 		generate: (repoId, request) =>
 			invoke('commitMessage:generate', repoId, request) as Promise<GenerateCommitMessageResult>,
 		cancel: () => invoke('commitMessage:cancel') as Promise<boolean>,

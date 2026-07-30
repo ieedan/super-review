@@ -2,10 +2,10 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import SettingsDialog from '@super-review/ui/components/SettingsDialog.svelte';
 	import StoreScope from '../../lib/StoreScope.svelte';
-	import { seedStore } from '../../lib/store-harness';
+	import { harnessStatus, seedStore } from '../../lib/store-harness';
 	import { app } from '@super-review/ui/store.svelte';
 	import { OPENCODE_MODELS } from '../../lib/commit-message-flow';
-	import type { CommitMessageHarness } from '@super-review/core/types';
+	import type { CommitMessageHarness, CommitMessageHarnessStatus } from '@super-review/core/types';
 
 	// Settings > Agents > Commit messages: one row per supported harness CLI, each
 	// with its own default-model picker and a "Set as default" action (the current
@@ -28,7 +28,7 @@
 	// every call to `undefined` — which would wipe the seeded state. Wrap the
 	// stub so `commitMessage` answers from the story's fixtures and `setPrefs`
 	// merges instead of resolving undefined (picking a model has to stick).
-	let detected: Record<string, boolean> = {};
+	let detected: CommitMessageHarnessStatus = harnessStatus([]);
 
 	function installCommitMessageStub(): void {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -66,18 +66,14 @@
 	}
 
 	function seed(opts: {
-		installed: CommitMessageHarness[];
+		// A list of signed-in CLIs, or a per-harness record when a story needs to
+		// show one installed but signed out.
+		installed: Parameters<typeof harnessStatus>[0];
 		harness?: CommitMessageHarness | null;
 	}) {
 		return () => {
 			installCommitMessageStub();
-			detected = {
-				cursor: opts.installed.includes('cursor'),
-				'claude-code': opts.installed.includes('claude-code'),
-				codex: opts.installed.includes('codex'),
-				copilot: opts.installed.includes('copilot'),
-				opencode: opts.installed.includes('opencode')
-			};
+			detected = harnessStatus(opts.installed);
 			seedStore({
 				settingsDialogOpen: true,
 				settingsDialogTab: 'agents',
@@ -124,6 +120,24 @@
 <Story name="None installed">
 	{#snippet template()}
 		<StoreScope frame={false} setup={seed({ installed: [], harness: null })}>
+			<SettingsDialog />
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<!-- Installed but signed out: the row says so and offers the login command,
+     instead of looking identical to a working CLI until a generation fails.
+     Claude Code stays the saved default here — a signed-out pref is still the
+     user's pick, and the row is where they see why it isn't working. -->
+<Story name="Signed out">
+	{#snippet template()}
+		<StoreScope
+			frame={false}
+			setup={seed({
+				installed: { 'claude-code': 'signed-out', cursor: 'ok', opencode: 'unknown' },
+				harness: 'claude-code'
+			})}
+		>
 			<SettingsDialog />
 		</StoreScope>
 	{/snippet}

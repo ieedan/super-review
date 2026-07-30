@@ -66,7 +66,7 @@
 	const showCommitMessageSetup = $derived.by(() => {
 		const status = app.commitMessageHarnesses;
 		if (!status || app.commitMessageNoticeDismissed) return false;
-		return !Object.values(status).some(Boolean);
+		return !Object.values(status).some((info) => info.installed);
 	});
 
 	// Trial nudge — rides the same stack. Reappears once per calendar day

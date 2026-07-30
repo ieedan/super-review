@@ -369,7 +369,7 @@ export interface GenerateChangesetResult {
 	// Nothing is reverted; the user is told so they can look.
 	strayPaths?: string[];
 	error?: string;
-	code?: 'no-harness' | 'not-installed' | 'timeout' | 'failed' | 'empty' | 'cancelled';
+	code?: 'no-harness' | 'not-installed' | 'auth' | 'timeout' | 'failed' | 'empty' | 'cancelled';
 }
 
 // Progress while an agent works on a branch's changesets. Unlike commit-message
@@ -416,6 +416,41 @@ const HARNESS_LABELS: Record<HarnessKind, string> = {
 export function harnessLabel(harness: HarnessKind, fallback?: string): string {
 	if (harness === 'other') return fallback?.trim() || HARNESS_LABELS.other;
 	return HARNESS_LABELS[harness];
+}
+
+// How a user signs a harness CLI back in. Every one of these is a terminal
+// command; none of them can be driven from inside this app, so the recovery
+// affordance we offer is "here is the exact command, copied, in a terminal
+// already sitting in your repo". `interactive` marks the ones that drop you
+// into a TUI where the real step is a slash command typed at the prompt —
+// those need the extra `then` line or the instruction is incomplete.
+export interface HarnessLoginRecipe {
+	// The command to run. Copied verbatim by the recovery button.
+	command: string;
+	// A follow-up typed inside the CLI once it starts, for interactive harnesses.
+	then?: string;
+}
+
+const HARNESS_LOGIN: Record<CommitMessageHarness, HarnessLoginRecipe> = {
+	'claude-code': { command: 'claude', then: '/login' },
+	cursor: { command: 'cursor-agent login' },
+	codex: { command: 'codex login' },
+	copilot: { command: 'copilot', then: '/login' },
+	opencode: { command: 'opencode auth login' }
+};
+
+export function harnessLoginRecipe(harness: CommitMessageHarness): HarnessLoginRecipe {
+	return HARNESS_LOGIN[harness];
+}
+
+// One-line instruction for signing a harness back in, for prose (toast bodies,
+// settings rows). The copy button uses `harnessLoginRecipe().command` on its
+// own, so this stays human-readable rather than paste-ready.
+export function harnessLoginHint(harness: CommitMessageHarness): string {
+	const recipe = HARNESS_LOGIN[harness];
+	return recipe.then
+		? `run \`${recipe.command}\`, then \`${recipe.then}\``
+		: `run \`${recipe.command}\``;
 }
 
 // A single changed file frozen into a session: the diff metadata plus the
@@ -1411,9 +1446,41 @@ export interface CommitFileSelection {
 	patch?: string;
 }
 
-// Which harness CLIs are installed and on PATH. Drives the Agents settings
-// picker and the "set up commit message generation" notice.
-export type CommitMessageHarnessStatus = Record<CommitMessageHarness, boolean>;
+// Whether a harness CLI is signed in.
+//   'ok'      — the CLI reported a live session; generation will reach a model.
+//   'missing' — the CLI reported no session. Generation would fail; the UI says
+//               so up front and offers the login command.
+//   'unknown' — we couldn't tell (probe timed out, unrecognized output, or the
+//               CLI has no way to ask). Treated as usable: never block a run on
+//               our own ignorance, and let the runtime error classify it.
+export type HarnessAuthState = 'ok' | 'missing' | 'unknown';
+
+// What one harness CLI looks like on this machine. `installed` is the old
+// boolean; the auth fields come from a probe that runs the CLI's own
+// "am I signed in" path (see main/commit-message/auth-probe.ts).
+export interface CommitMessageHarnessInfo {
+	installed: boolean;
+	auth: HarnessAuthState;
+	// The signed-in identity, when the CLI reports one ("you@example.com").
+	account?: string;
+	// The plan/subscription the CLI reported ("max", "pro"), when it says.
+	plan?: string;
+}
+
+// Which harness CLIs are installed, on PATH, and signed in. Drives the Agents
+// settings picker and the "set up commit message generation" notice.
+export type CommitMessageHarnessStatus = Record<CommitMessageHarness, CommitMessageHarnessInfo>;
+
+// Convenience for the many call sites that only care whether a harness can be
+// picked at all. Auth deliberately doesn't gate this: a signed-out CLI still
+// appears, with its state shown, so the user can fix it rather than wonder
+// where it went.
+export function isHarnessInstalled(
+	status: CommitMessageHarnessStatus | null | undefined,
+	harness: CommitMessageHarness
+): boolean {
+	return status?.[harness]?.installed ?? false;
+}
 
 // What the renderer sends when the user clicks Generate in the commit box.
 // Selections match what Commit would include (checked files + filtered patches).
@@ -1434,7 +1501,7 @@ export interface GenerateCommitMessageResult {
 	body?: string;
 	harness?: CommitMessageHarness;
 	error?: string;
-	code?: 'no-harness' | 'timeout' | 'failed' | 'empty' | 'cancelled';
+	code?: 'no-harness' | 'auth' | 'timeout' | 'failed' | 'empty' | 'cancelled';
 }
 
 // A model option for the commit-message generate popover.
@@ -2739,8 +2806,10 @@ export interface PreloadAPI {
 		remove(repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult>;
 	};
 	commitMessage: {
-		// Which supported harness CLIs are installed and on PATH.
-		detect(): Promise<CommitMessageHarnessStatus>;
+		// Which supported harness CLIs are installed, on PATH, and signed in.
+		// Auth answers are cached for a minute; `force` throws that away, for when
+		// the user has just signed a CLI in and come back.
+		detect(force?: boolean): Promise<CommitMessageHarnessStatus>;
 		// Generate a commit subject + body via the preferred (or first available)
 		// harness CLI, locked down to text-only. Uses the checked-file selections
 		// the commit box would include. Progress streams via events.onCommitMessageProgress.

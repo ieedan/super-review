@@ -191,6 +191,7 @@ import { applyAiConfig, getAiConfigStatus, removeAiConfig } from './ai-config-se
 import {
 	cancelChangesetGeneration,
 	cancelCommitMessageGeneration,
+	clearHarnessAuthCache,
 	detectCommitMessageHarnesses,
 	generateChangeset,
 	generateCommitMessage,
@@ -2799,14 +2800,21 @@ export function registerIpc(): void {
 	);
 
 	// ─── Commit message generation via harness CLIs ──────────────────────────
-	ipcMain.handle('commitMessage:detect', async (): Promise<CommitMessageHarnessStatus> => {
-		const status = await detectCommitMessageHarnesses();
-		// Cache the model lists behind the user's back, so a harness installed
-		// since launch is ready before its picker is ever opened. A no-op when
-		// every installed harness already has a fresh list.
-		void warmCommitMessageModels(status);
-		return status;
-	});
+	ipcMain.handle(
+		'commitMessage:detect',
+		async (_e, force?: boolean): Promise<CommitMessageHarnessStatus> => {
+			// An explicit refresh means the user just did something about it (signed
+			// in a CLI in their terminal and came back), so the cached auth answer is
+			// exactly the one they want thrown away.
+			if (force) clearHarnessAuthCache();
+			const status = await detectCommitMessageHarnesses();
+			// Cache the model lists behind the user's back, so a harness installed
+			// since launch is ready before its picker is ever opened. A no-op when
+			// every installed harness already has a fresh list.
+			void warmCommitMessageModels(status);
+			return status;
+		}
+	);
 
 	ipcMain.handle(
 		'commitMessage:generate',

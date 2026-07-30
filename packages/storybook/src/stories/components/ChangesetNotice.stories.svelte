@@ -3,7 +3,7 @@
 	import CommitNotices from '@super-review/ui/components/CommitNotices.svelte';
 	import ChangesetFlowRunner from '../../lib/ChangesetFlowRunner.svelte';
 	import StoreScope from '../../lib/StoreScope.svelte';
-	import { seedStore } from '../../lib/store-harness';
+	import { harnessStatus, seedStore } from '../../lib/store-harness';
 	import { DEFAULT_RUN_MS, installChangesetMock, pendingStatus } from '../../lib/changeset-flow';
 
 	// The "Add a changeset?" row above the commit box, and the run its sparkle
@@ -12,13 +12,7 @@
 	// the prompt.
 	installChangesetMock();
 
-	const HARNESSES = {
-		cursor: false,
-		'claude-code': true,
-		codex: false,
-		copilot: false,
-		opencode: false
-	};
+	const HARNESSES = harnessStatus(['claude-code']);
 
 	// Everything generateChangeset() reads before it reaches the mocked CLI: a
 	// repo, a branch, an installed harness, and a branch missing a changeset.

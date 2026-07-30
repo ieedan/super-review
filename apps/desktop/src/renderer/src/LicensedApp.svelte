@@ -30,6 +30,7 @@
 	import ErrorToasts from '@super-review/ui/components/ErrorToasts.svelte';
 	import RepositorySettingsDialog from '@super-review/ui/components/RepositorySettingsDialog.svelte';
 	import GithubSignInDialog from '@super-review/ui/components/GithubSignInDialog.svelte';
+	import HarnessSignInDialog from '@super-review/ui/components/HarnessSignInDialog.svelte';
 	import { ConfirmDeleteDialog } from '@super-review/ui/components/ui/confirm-delete-dialog';
 	import CommandPalette from '@super-review/ui/components/CommandPalette.svelte';
 	import * as Sidebar from '@super-review/ui/components/ui/sidebar';
@@ -616,5 +617,6 @@
 <SettingsDialog />
 <FeedbackDialog />
 <GithubSignInDialog />
+<HarnessSignInDialog />
 <CommandPalette />
 <ConfirmDeleteDialog />

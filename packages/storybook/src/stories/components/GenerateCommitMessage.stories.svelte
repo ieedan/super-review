@@ -3,7 +3,7 @@
 	import StoreScope from '../../lib/StoreScope.svelte';
 	import CommitMessageFlowRunner from '../../lib/CommitMessageFlowRunner.svelte';
 	import CommitMessageStepper from '../../lib/CommitMessageStepper.svelte';
-	import { seedStore } from '../../lib/store-harness';
+	import { harnessStatus, seedStore } from '../../lib/store-harness';
 	import {
 		DEFAULT_RESPONSE,
 		DEFAULT_TIMING,
@@ -43,13 +43,13 @@
 				commitMessageGenerating: false,
 				commitMessageReasoning: '',
 				commitMessageAnswer: '',
-				commitMessageHarnesses: {
-					cursor: true,
-					'claude-code': true,
-					codex: true,
-					copilot: true,
-					opencode: true
-				},
+				commitMessageHarnesses: harnessStatus([
+					'cursor',
+					'claude-code',
+					'codex',
+					'copilot',
+					'opencode'
+				]),
 				commitMessageModels: {
 					'claude-code': [
 						{ id: 'haiku', label: 'Haiku' },
@@ -85,13 +85,7 @@
 				commitMessageGenerating: false,
 				commitMessageReasoning: '',
 				commitMessageAnswer: '',
-				commitMessageHarnesses: {
-					cursor: false,
-					'claude-code': false,
-					codex: false,
-					copilot: false,
-					opencode: false
-				},
+				commitMessageHarnesses: harnessStatus([]),
 				commitMessageModels: {},
 				prefs: {}
 			});

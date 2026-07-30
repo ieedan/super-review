@@ -16,6 +16,7 @@
  */
 import { app } from '@super-review/ui/store.svelte';
 import type { CommitMessageHarness } from '@super-review/core/types';
+import { harnessStatus } from './store-harness';
 
 export interface MockResponse {
 	/** What the model "reasons" about before it answers (streamed first). */
@@ -238,7 +239,7 @@ export function installCommitMessageMock(): void {
 
 const commitMessageMock = {
 	async detect() {
-		return { cursor: true, 'claude-code': true, codex: true, copilot: true, opencode: true };
+		return harnessStatus(['cursor', 'claude-code', 'codex', 'copilot', 'opencode']);
 	},
 	async listModels(harness: CommitMessageHarness) {
 		return MODELS[harness] ?? [];
