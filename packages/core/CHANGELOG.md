@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.3.1
+
+### Patch Changes
+
+- [`ee8e155`](https://github.com/ieedan/super-review/commit/ee8e155983341648a37c4bcb2e6f8eb6ed535d7a) Thanks [@ieedan](https://github.com/ieedan)! - chore: remove subscription based pricing
+
 ## 0.3.0
 
 ### Minor Changes
