@@ -3,10 +3,10 @@
 // Adapted from the convex-app template's setup-dev script for our environment:
 // GitHub-only auth, Stripe products/prices/webhook, an Ed25519 license-signing
 // keypair, the releases token behind the desktop download links, and the
-// launch-window / trial config. It generates the secrets,
-// prompts for the external ones, writes the SvelteKit .env.local and the Convex
-// deployment env (they share FUNCTION_SECRET / LAUNCH_CUTOFF / IP_HASH_SALT),
-// and drops the generated public key into the desktop app.
+// launch-window / trial config. It generates the secrets, prompts for the
+// external ones, writes the SvelteKit .env.local and the Convex deployment env
+// (they share FUNCTION_SECRET / LAUNCH_CUTOFF / IP_HASH_SALT), and drops the
+// generated public key into the desktop app.
 //
 // RESUMABLE: each step writes its result to its real destination (.env.local or
 // the Convex deployment env) as soon as it finishes, and on the next run a step
@@ -192,16 +192,18 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 		async () => {
 			describe([
 				'SITE_URL      the web app origin (dev default is fine).',
-				'LAUNCH_CUTOFF ISO date the $100 perpetual deal stops being sold. After it,',
-				'              only the $12/mo and $120/yr subscriptions are offered.',
+				'LAUNCH_CUTOFF when the discounted launch price ends and everyone pays the',
+				'              standing price. EXCLUSIVE: a bare date means the discount is',
+				'              gone at UTC midnight starting that day, so to run "through',
+				'              August 31" you set 2026-09-01.',
 				'TRIAL_DAYS    length of the free trial that starts at first activation.'
 			]);
 			siteUrl = await ask(rl, 'SITE_URL', siteUrlDefault);
 			const launchCutoff = await ask(rl, 'LAUNCH_CUTOFF', defaultLaunchCutoff());
 			const trialDays = await ask(rl, 'TRIAL_DAYS', '7');
 			upsertEnvLocal(projectRoot, 'LAUNCH_CUTOFF', launchCutoff);
-			// The homepage pricing reads the launch date client-side, so it also
-			// needs the PUBLIC_ copy (kept identical to the server-side value).
+			// The pricing card reads the cutoff client-side, so it also needs the
+			// PUBLIC_ copy (kept identical to the server-side value).
 			upsertEnvLocal(projectRoot, 'PUBLIC_LAUNCH_CUTOFF', launchCutoff);
 			setConvexEnv(projectRoot, {
 				SITE_URL: siteUrl,
@@ -289,30 +291,30 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 
 	// --- Step 7: Stripe -------------------------------------------------------
 	await step(
-		'Stripe billing (products, prices, webhook)',
+		'Stripe billing (product, price, webhook)',
 		() =>
 			convexHas('STRIPE_SECRET_KEY') &&
 			convexHas('STRIPE_WEBHOOK_SECRET') &&
-			convexHas('STRIPE_PRICE_MONTHLY') &&
-			convexHas('STRIPE_PRICE_ANNUAL') &&
-			convexHas('STRIPE_PRICE_LIFETIME'),
+			convexHas('STRIPE_PRICE_LIFETIME') &&
+			convexHas('STRIPE_PRICE_LAUNCH'),
 		async () => {
 			const desc = [
 				bold('Turn on Test mode in Stripe first (toggle, top-right).'),
 				'',
-				`${bold('1) Create products & prices')} (Products > Add product):`,
-				'   Product "Super Review" with TWO recurring prices:',
-				`     ${cyan('•')} $12.00 USD / Monthly   -> STRIPE_PRICE_MONTHLY`,
-				`     ${cyan('•')} $120.00 USD / Yearly   -> STRIPE_PRICE_ANNUAL`,
-				'   Product "Super Review Perpetual" with ONE one-time price:',
-				`     ${cyan('•')} $100.00 USD one-time   -> STRIPE_PRICE_LIFETIME`,
+				`${bold('1) Create the product & prices')} (Products > Add product):`,
+				'   Product "Super Review Perpetual" with TWO one-time prices:',
+				`     ${cyan('•')} $59.99 USD one-time   -> STRIPE_PRICE_LIFETIME  (standing)`,
+				`     ${cyan('•')} $39.99 USD one-time   -> STRIPE_PRICE_LAUNCH    (until LAUNCH_CUTOFF)`,
 				'   Open each price and copy its API ID (starts with price_...).',
+				dim('   Two prices rather than a coupon: Stripe Checkout takes only one'),
+				dim('   entry in `discounts`, and the referral reward already uses it.'),
+				dim('   There are no subscriptions: the perpetual license is all we sell.'),
 				''
 			];
 			desc.push(
 				`${bold('2) Create the webhook')} (Developers > Webhooks > Add endpoint):`,
 				`   Endpoint URL:  ${bold(webhookUrl)}`,
-				'   Select exactly these 6 events:',
+				'   Select exactly these 3 events:',
 				...STRIPE_WEBHOOK_EVENTS.map((e) => `     ${cyan('•')} ${e}`),
 				'   After creating it, reveal and copy the Signing secret (whsec_...).',
 				dim('   Stripe delivers straight to the Convex deployment, so nothing has to'),
@@ -320,11 +322,7 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 				''
 			);
 			desc.push(
-				`${bold('3) Activate the customer portal')} (Settings > Billing > Customer portal):`,
-				'   Click "Activate test link" and enable "Customers can cancel',
-				'   subscriptions" (powers the dashboard\'s Manage billing button).',
-				'',
-				`${bold('4) Get your API key')} (Developers > API keys):`,
+				`${bold('3) Get your API key')} (Developers > API keys):`,
 				'   Copy the test Secret key (sk_test_...).'
 			);
 			describe(desc);
@@ -343,22 +341,18 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 			rl = createPrompt();
 			const webhookSecret = await askSecret(rl, 'STRIPE_WEBHOOK_SECRET (whsec_...)');
 			rl = createPrompt();
-			const priceMonthly = await ask(rl, 'STRIPE_PRICE_MONTHLY (price_...)');
-			const priceAnnual = await ask(rl, 'STRIPE_PRICE_ANNUAL (price_...)');
 			const priceLifetime = await ask(rl, 'STRIPE_PRICE_LIFETIME (price_...)');
-			if (!secretKey || !webhookSecret || !priceMonthly || !priceAnnual || !priceLifetime) {
-				throw new Error(
-					'Stripe setup needs the secret key, webhook secret, and all three price ids.'
-				);
+			const priceLaunch = await ask(rl, 'STRIPE_PRICE_LAUNCH (price_...)');
+			if (!secretKey || !webhookSecret || !priceLifetime || !priceLaunch) {
+				throw new Error('Stripe setup needs the secret key, webhook secret, and both price ids.');
 			}
 			setConvexEnv(projectRoot, {
 				STRIPE_SECRET_KEY: secretKey,
 				STRIPE_WEBHOOK_SECRET: webhookSecret,
-				STRIPE_PRICE_MONTHLY: priceMonthly,
-				STRIPE_PRICE_ANNUAL: priceAnnual,
-				STRIPE_PRICE_LIFETIME: priceLifetime
+				STRIPE_PRICE_LIFETIME: priceLifetime,
+				STRIPE_PRICE_LAUNCH: priceLaunch
 			});
-			console.log(green('  Stored Stripe keys and price ids.'));
+			console.log(green('  Stored Stripe key and price ids.'));
 		}
 	);
 

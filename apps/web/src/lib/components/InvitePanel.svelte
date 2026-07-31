@@ -8,7 +8,6 @@
 	import Mail from '@lucide/svelte/icons/mail';
 	import Gift from '@lucide/svelte/icons/gift';
 	import { page } from '$app/state';
-	import { env } from '$lib/env.client';
 	import { useConvexClient } from '$lib/convex.svelte';
 	import { takeStashedInviteCode } from '$lib/invite-code';
 	import { api } from '$lib/convex/_generated/api';
@@ -179,10 +178,6 @@
 		closeEmailDialog();
 	}
 
-	// The lifetime plan is only sold during the launch window, so only mention it
-	// while it can actually be bought. Mirrors the same check in Pricing.svelte.
-	const launchOpen = Date.now() < Date.parse(env.PUBLIC_LAUNCH_CUTOFF);
-
 	const unusedCount = $derived(guestCodes.filter((c) => !c.redeemed).length);
 	const usedCount = $derived(guestCodes.length - unusedCount);
 	const earned = $derived(!!referralReward.earnedAt);
@@ -337,7 +332,7 @@
 						{:else}
 							Share your remaining codes to unlock
 							<span class="text-flame font-medium">{referralReward.percentOff}% off</span>
-							{launchOpen ? 'a subscription or perpetual license' : 'a subscription'}
+							on the perpetual license
 						{/if}
 					</span>
 				</div>

@@ -30,7 +30,7 @@ export function parseLicenseClaims(payloadJson: string): LicenseClaims | null {
 	) {
 		return null;
 	}
-	if (c.plan !== 'trial' && c.plan !== 'monthly' && c.plan !== 'annual' && c.plan !== 'lifetime') {
+	if (c.plan !== 'trial' && c.plan !== 'lifetime') {
 		return null;
 	}
 	if (c.sta !== 'active' && c.sta !== 'trialing') return null;

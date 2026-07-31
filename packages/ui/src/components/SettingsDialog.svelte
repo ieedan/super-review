@@ -182,7 +182,7 @@
 			id: 'settings-super-review',
 			title: 'Super Review',
 			keywords:
-				'super review license licensed holder subscription subscribe plan perpetual lifetime annual yearly monthly trial upgrade manage billing payment invoice renew renewal cancel purchase buy pay expires expiry active since account signed in sign out signout log out logout activate activation authorize device card'
+				'super review license licensed holder plan perpetual lifetime trial upgrade billing payment invoice purchase buy pay expires expiry active since account signed in sign out signout log out logout activate activation authorize device card'
 		},
 		{
 			tab: 'accounts',
@@ -1016,19 +1016,14 @@
 	{#if id === 'settings-super-review'}
 		{@const lic = app.license.current}
 		{@const holder = lic?.state === 'licensed' ? lic.holder : undefined}
-		{#if lic?.state === 'licensed' && (lic.plan === 'lifetime' || lic.plan === 'monthly' || lic.plan === 'annual') && lic.status === 'active'}
+		{#if lic?.state === 'licensed' && lic.plan === 'lifetime' && lic.status === 'active'}
 			<!-- Paid license: the metal card. The holder comes from the signed token,
 				so it's the account the license actually belongs to (NOT whatever
 				GitHub account happens to be signed in locally - they're separate). -->
 			<p class="mt-1 text-xs text-muted-foreground">Your Super Review license.</p>
 			<div class="mt-3 flex flex-col items-center">
 				<LicenseCard
-					variant={lic.plan === 'lifetime' ? 'gold' : 'silver'}
-					plan={lic.plan === 'lifetime'
-						? 'Perpetual'
-						: lic.plan === 'annual'
-							? 'Annual'
-							: 'Monthly'}
+					plan="Perpetual"
 					holder={holder?.name ?? holder?.email}
 					activeSince={lic.activeSince}
 				/>
@@ -1055,7 +1050,7 @@
 						{days === 0 ? 'Ends today' : `${days} day${days === 1 ? '' : 's'} left`}
 					</div>
 				</div>
-				<Button size="sm" onclick={() => actions.openPricing()}>Upgrade</Button>
+				<Button size="sm" onclick={() => actions.openPricing()}>Buy a license</Button>
 			</div>
 			<Button
 				variant="outline"
@@ -1067,7 +1062,7 @@
 			</Button>
 		{:else}
 			<p class="mt-1 text-xs text-muted-foreground">Manage your Super Review license.</p>
-			<Button size="sm" class="mt-3" onclick={() => actions.openPricing()}>See plans</Button>
+			<Button size="sm" class="mt-3" onclick={() => actions.openPricing()}>Buy a license</Button>
 		{/if}
 
 		{#if lic?.state === 'licensed'}

@@ -151,19 +151,6 @@ export const trialEligibility = query({
 	}
 });
 
-/** Internal: the plan on a user's license, or null if none. Used by the Stripe
- * checkout guard to stop a lifetime holder from starting a paid subscription. */
-export const getPlanForUser = internalQuery({
-	args: { userId: v.string() },
-	handler: async (ctx, args) => {
-		const license = await ctx.db
-			.query('licenses')
-			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
-			.unique();
-		return license?.plan ?? null;
-	}
-});
-
 /**
  * Admin preview (Convex dashboard only): how many licenses `resetTrials` would
  * touch, broken down by current status, without changing anything. Run this
@@ -193,7 +180,7 @@ export const previewResetTrials = internalQuery({
 /**
  * Admin (Convex dashboard only): grant every account that currently holds a
  * trial a fresh TRIAL_DAYS window starting now. Only licenses on the `trial`
- * plan are touched, so paid (`monthly`/`annual`/`lifetime`) and never-activated
+ * plan are touched, so paid (`lifetime`) and never-activated
  * (`none`) accounts are left untouched, and suspended trials (auto-suspended for
  * abuse) are skipped so a reset does not resurrect a farmed account.
  *

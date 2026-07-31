@@ -10,7 +10,6 @@ import { betterAuth, type BetterAuthOptions } from 'better-auth/minimal';
 import authConfig from './auth.config';
 import authSchema from './betterAuth/schema';
 import { env } from '../env.convex';
-import { subscriptionWillCancel } from './licensingShared';
 
 const siteUrl = env.SITE_URL;
 
@@ -88,80 +87,17 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
 		plugins: [
 			// The Convex plugin is required for Convex compatibility
 			convex({ authConfig }),
+			// Super Review sells exactly one thing: the perpetual license, a one-time
+			// payment minted by billing.createLifetimeCheckout. The plugin's
+			// `subscription` support is deliberately left off - the plugin is here for
+			// `createCustomerOnSignUp` and for serving the Stripe webhook, whose events
+			// handleStripeEvent turns into license changes.
 			stripe({
 				stripeClient,
 				stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
 				createCustomerOnSignUp: true,
 				onEvent: async (event) => {
 					await handleStripeEvent(actionCtx, event);
-				},
-				subscription: {
-					enabled: true,
-					plans: [
-						{
-							name: 'pro',
-							priceId: env.STRIPE_PRICE_MONTHLY,
-							annualDiscountPriceId: env.STRIPE_PRICE_ANNUAL
-							// Deliberately no Stripe `freeTrial`. Every account already gets a
-							// single 7-day trial in the app (startTrialIfEligible, keyed on the
-							// GitHub account and never reset). A Stripe subscription trial would
-							// stack a SECOND free week on top of that, since the plugin's
-							// anti-farming check only looks at prior Stripe subscriptions and
-							// knows nothing about the app trial. Subscribing therefore charges
-							// at checkout; the app trial stays the one and only free window.
-						}
-					],
-					// Subscriptions are always available, including during the launch
-					// window (the lifetime deal is an extra option then, not the only
-					// one). Only the lifetime purchase itself is launch-window gated,
-					// enforced in billing.createLifetimeCheckout.
-					getCheckoutSessionParams: async ({ user }) => {
-						// Closed beta: do not open Stripe Checkout for accounts that
-						// have not redeemed an invite (or already hold a plan).
-						const betaAllowed = await actionCtx.runQuery(internal.waitlist.hasAccessForUser, {
-							userId: user.id
-						});
-						if (!betaAllowed) {
-							throw new Error('Redeem an invite code before upgrading.');
-						}
-						// A lifetime license never expires, so charging its owner for a
-						// subscription would take money for nothing. Block it server-side
-						// (this hook runs before the Stripe Checkout session is created).
-						const plan = await actionCtx.runQuery(internal.licenses.getPlanForUser, {
-							userId: user.id
-						});
-						if (plan === 'lifetime') {
-							throw new Error(
-								'You already own a perpetual license, so there is nothing to subscribe to.'
-							);
-						}
-						// Referral reward: members who got all their guest codes redeemed
-						// check out at a discount. Applied server-side rather than via a
-						// promo code the user types, so it cannot be shared or guessed.
-						//
-						// `discounts` and `allow_promotion_codes` are mutually exclusive
-						// in Stripe Checkout, so it is one or the other per session: the
-						// earned referral reward wins, and everyone else gets the
-						// promo-code box.
-						const coupon = env.STRIPE_REFERRAL_COUPON_ID;
-						const earned =
-							!!coupon &&
-							(await actionCtx.runQuery(internal.invites.hasReferralReward, {
-								userId: user.id
-							}));
-						return earned
-							? { params: { discounts: [{ coupon }] } }
-							: { params: { allow_promotion_codes: true } };
-					},
-					onSubscriptionComplete: async ({ subscription, stripeSubscription }) => {
-						await syncSubscription(actionCtx, subscription.referenceId, stripeSubscription);
-					},
-					onSubscriptionUpdate: async ({ subscription, stripeSubscription }) => {
-						await syncSubscription(actionCtx, subscription.referenceId, stripeSubscription);
-					},
-					onSubscriptionDeleted: async ({ subscription, stripeSubscription }) => {
-						await syncSubscription(actionCtx, subscription.referenceId, stripeSubscription);
-					}
 				}
 			})
 		]
@@ -172,34 +108,8 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
 	return betterAuth(createAuthOptions(ctx));
 };
 
-/** Maps a Stripe subscription onto the user's license row. */
-async function syncSubscription(
-	ctx: GenericActionCtx<DataModel>,
-	userId: string,
-	stripeSubscription: Stripe.Subscription
-) {
-	const item = stripeSubscription.items.data[0];
-	const priceId = item?.price.id ?? null;
-	const currentPeriodEnd = item?.current_period_end ? item.current_period_end * 1000 : null;
-	await ctx.runMutation(internal.billing.syncSubscription, {
-		userId,
-		stripeCustomerId:
-			typeof stripeSubscription.customer === 'string'
-				? stripeSubscription.customer
-				: stripeSubscription.customer.id,
-		stripeSubscriptionId: stripeSubscription.id,
-		stripeStatus: stripeSubscription.status,
-		priceId,
-		currentPeriodEnd,
-		cancelAtPeriodEnd: subscriptionWillCancel({
-			cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end,
-			cancelAt: stripeSubscription.cancel_at
-		})
-	});
-}
-
-/** Lifetime purchases, refunds, and chargebacks (not covered by the
- * subscription lifecycle hooks). */
+/** The perpetual purchase, refunds, and chargebacks: every Stripe event that
+ * moves a license. */
 async function handleStripeEvent(ctx: GenericActionCtx<DataModel>, event: Stripe.Event) {
 	switch (event.type) {
 		case 'checkout.session.completed': {

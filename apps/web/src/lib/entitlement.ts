@@ -12,16 +12,16 @@ export type InvitesMine = {
 };
 
 /**
- * True when the account is already on a paid plan that is currently in good
- * standing. Used to keep paying users out of checkout, where a second purchase
- * would either fail or double-charge.
+ * True when the account already owns the perpetual license and it is in good
+ * standing. Used to keep owners out of checkout, where a second purchase would
+ * either fail or double-charge.
  *
  * A `trial` plan is deliberately not paid: trial users are exactly who should
- * be able to subscribe.
+ * be able to buy.
  */
 export function hasPaidPlan(license: MaybeLicense): boolean {
 	if (!license || license === 'unauthenticated') return false;
-	if (license.plan === 'none' || license.plan === 'trial') return false;
+	if (license.plan !== 'lifetime') return false;
 	return license.status === 'active' || license.status === 'trialing';
 }
 

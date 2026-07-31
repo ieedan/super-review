@@ -1983,7 +1983,7 @@ export interface GithubAuthError {
 
 // --- Licensing ---------------------------------------------------------------
 // The plan claim carried by a signed license token.
-export type LicensePlan = 'trial' | 'monthly' | 'annual' | 'lifetime';
+export type LicensePlan = 'trial' | 'lifetime';
 
 // Why the app is locked. `offline_expired`: the cached token expired and the
 // server was unreachable. `clock_rollback`: the system clock ran backwards, so
@@ -1994,7 +1994,6 @@ export type LicenseLockReason =
 	// possible while the server has waitlist mode on.
 	| 'waitlist'
 	| 'trial_expired'
-	| 'subscription_lapsed'
 	| 'suspended'
 	| 'offline_expired'
 	| 'revoked'
@@ -2020,7 +2019,7 @@ export type LicenseState =
 			status: 'active' | 'trialing';
 			// Present while trialing: ms epoch the trial ends.
 			trialEndsAt?: number;
-			// ms epoch the paid plan started (lifetime purchase / first subscription).
+			// ms epoch the perpetual license was purchased.
 			// Display only — drives "Active since" on the license card.
 			activeSince?: number;
 			// Who the license belongs to. Comes from the server (the desktop's local
@@ -2078,7 +2077,7 @@ export interface LicenseClaims {
 	plan: LicensePlan;
 	sta: 'active' | 'trialing';
 	fp: string; // sha256(machineFingerprint)
-	tex: number | null; // display expiry (trialEndsAt / currentPeriodEnd / null)
+	tex: number | null; // display expiry (trialEndsAt, or null for perpetual)
 	// ms epoch the paid plan started. Optional so tokens minted before this claim
 	// existed still parse (an older cached token just won't show "Active since").
 	since?: number | null;

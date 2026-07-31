@@ -23,8 +23,6 @@
 				return "This account isn't in the beta yet. Redeem your invite code on the website, then recheck.";
 			case 'trial_expired':
 				return 'Your free trial has ended.';
-			case 'subscription_lapsed':
-				return 'Your subscription has lapsed.';
 			case 'suspended':
 				return 'This license has been suspended. Please contact support.';
 			case 'offline_expired':
@@ -38,10 +36,7 @@
 		}
 	}
 
-	const isPaywall = $derived(
-		license?.state === 'locked' &&
-			(license.reason === 'trial_expired' || license.reason === 'subscription_lapsed')
-	);
+	const isPaywall = $derived(license?.state === 'locked' && license.reason === 'trial_expired');
 	const isSuspended = $derived(license?.state === 'locked' && license.reason === 'suspended');
 	// Not a paywall and not an error: there is nothing to buy and nothing to fix,
 	// they just aren't in yet. Recheck is the only useful action, and it works the
@@ -147,14 +142,14 @@
 				<div class="flex w-full flex-col gap-3">
 					{#if isPaywall}
 						<Button class="h-11 w-full rounded-xl" onclick={() => actions.openPricing()}>
-							See plans
+							Buy a license
 						</Button>
 						<Button
 							variant="outline"
 							class="h-11 w-full rounded-xl"
 							onclick={() => actions.recheckLicense()}
 						>
-							I've subscribed - recheck
+							I've bought one - recheck
 						</Button>
 					{:else if isRetryable}
 						<Button class="h-11 w-full rounded-xl" onclick={() => actions.recheckLicense()}>

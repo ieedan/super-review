@@ -1,14 +1,12 @@
 <script lang="ts">
-	// A physical license card for paid plans: gold for lifetime, silver
-	// for subscriptions. Tilts toward the pointer and catches the light as it
+	// A physical license card for the perpetual license: gold, because that is
+	// the only thing sold. Tilts toward the pointer and catches the light as it
 	// moves; falls flat (and still) under prefers-reduced-motion.
 	let {
-		variant,
 		plan,
 		holder,
 		activeSince
 	}: {
-		variant: 'gold' | 'silver';
 		plan: string;
 		/** Whom the license is registered to. Omitted where it isn't known (e.g.
 		 * the desktop, which only has the plan). */
@@ -51,7 +49,7 @@
 <div class="card-stage">
 	<div
 		bind:this={card}
-		class="card {variant}"
+		class="card gold"
 		class:hovering
 		role="presentation"
 		style="--px: {px}; --py: {py};"
@@ -125,26 +123,6 @@
 		border: 1px solid rgba(255, 240, 190, 0.55);
 		box-shadow:
 			0 24px 60px -18px rgba(212, 175, 55, 0.4),
-			0 8px 24px -12px rgba(0, 0, 0, 0.6);
-	}
-
-	.silver {
-		color: #22262b;
-		background:
-			radial-gradient(120% 160% at 15% 0%, rgba(255, 255, 255, 0.5) 0%, transparent 45%),
-			linear-gradient(
-				128deg,
-				#6b7178 0%,
-				#9aa1a8 18%,
-				#d4dade 38%,
-				#f0f3f5 50%,
-				#b8bfc6 64%,
-				#7d848b 85%,
-				#a6adb4 100%
-			);
-		border: 1px solid rgba(255, 255, 255, 0.55);
-		box-shadow:
-			0 24px 60px -18px rgba(180, 190, 200, 0.35),
 			0 8px 24px -12px rgba(0, 0, 0, 0.6);
 	}
 

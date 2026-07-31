@@ -15,7 +15,7 @@
 	<title>Pricing - Super Review</title>
 	<meta
 		name="description"
-		content="Super Review pricing: start with a 7-day free trial, then a simple subscription or a one-time perpetual license."
+		content="Super Review pricing: start with a 7-day free trial, then one payment for a perpetual license. No subscription."
 	/>
 	<link rel="canonical" href="https://superreview.dev/pricing" />
 
@@ -25,7 +25,7 @@
 	<meta property="og:title" content="Pricing - Super Review" />
 	<meta
 		property="og:description"
-		content="Start with a 7-day free trial, then a simple subscription or a one-time perpetual license."
+		content="Start with a 7-day free trial, then one payment for a perpetual license. No subscription."
 	/>
 	<meta property="og:image" content="https://superreview.dev/og.png" />
 	<meta property="og:image:width" content="1200" />
@@ -35,7 +35,7 @@
 	<meta name="twitter:title" content="Pricing - Super Review" />
 	<meta
 		name="twitter:description"
-		content="Start with a 7-day free trial, then a simple subscription or a one-time perpetual license."
+		content="Start with a 7-day free trial, then one payment for a perpetual license. No subscription."
 	/>
 	<meta name="twitter:image" content="https://superreview.dev/og.png" />
 </svelte:head>

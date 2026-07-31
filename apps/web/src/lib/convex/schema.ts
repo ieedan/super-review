@@ -1,13 +1,10 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
-export const licensePlan = v.union(
-	v.literal('none'),
-	v.literal('trial'),
-	v.literal('monthly'),
-	v.literal('annual'),
-	v.literal('lifetime')
-);
+// `lifetime` is the stored value for what users see as the Perpetual license
+// (see the naming note in the README). It is the only paid plan; Super Review
+// has no subscriptions.
+export const licensePlan = v.union(v.literal('none'), v.literal('trial'), v.literal('lifetime'));
 
 export const licenseStatus = v.union(
 	v.literal('inactive'),
@@ -113,14 +110,6 @@ export default defineSchema({
 		trialStartedAt: v.optional(v.number()),
 		trialEndsAt: v.optional(v.number()),
 		stripeCustomerId: v.optional(v.string()),
-		stripeSubscriptionId: v.optional(v.string()),
-		currentPeriodEnd: v.optional(v.number()),
-		// True when Stripe has the subscription set to cancel at period end, so
-		// the dashboard can show "Cancels <date>" instead of "Renews <date>".
-		cancelAtPeriodEnd: v.optional(v.boolean()),
-		// When the subscription first became active; survives renewals so the
-		// dashboard card can show how long the holder has been a member.
-		subscribedAt: v.optional(v.number()),
 		lifetimePurchasedAt: v.optional(v.number()),
 		suspendedAt: v.optional(v.number()),
 		suspensionReason: v.optional(v.string())

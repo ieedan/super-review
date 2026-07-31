@@ -240,8 +240,7 @@ export const poll = secretMutation({
 					{
 						plan: license.plan,
 						status: license.status,
-						trialEndsAt: license.trialEndsAt,
-						currentPeriodEnd: license.currentPeriodEnd
+						trialEndsAt: license.trialEndsAt
 					},
 					now
 				)
@@ -266,9 +265,7 @@ export const poll = secretMutation({
 			plan: license.plan,
 			activeSince: activeSinceFor({
 				plan: license.plan,
-				lifetimePurchasedAt: license.lifetimePurchasedAt,
-				subscribedAt: license.subscribedAt,
-				createdAt: license._creationTime
+				lifetimePurchasedAt: license.lifetimePurchasedAt
 			})
 		};
 	}

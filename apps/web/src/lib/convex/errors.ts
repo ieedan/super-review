@@ -12,11 +12,6 @@ export const convexError = errf.create({
 		code: 'INVALID_SECRET_ERROR',
 		message: 'Invalid secret'
 	},
-	LaunchWindowClosed: {
-		code: 'LAUNCH_WINDOW_CLOSED',
-		message: 'The perpetual launch deal is no longer available',
-		userMessage: 'The perpetual launch deal is no longer available'
-	},
 	AlreadyLifetime: {
 		code: 'ALREADY_LIFETIME',
 		message: 'This account already has a perpetual license',

@@ -1,95 +1,30 @@
 import { v } from 'convex/values';
 import Stripe from 'stripe';
-import { action, internalAction, internalQuery } from './_generated/server';
+import { action } from './_generated/server';
 import { internalMutation } from './utils';
 import { internal } from './_generated/api';
 import { authComponent } from './auth';
 import { getOrCreateLicense } from './licenses';
-import { subscriptionWillCancel } from './licensingShared';
 import { env } from '../env.convex';
+import { isLaunchOpen } from '../pricing';
 import { convexError, createConvexError } from './errors';
 
-/** Stripe subscription statuses that keep a license active. Everything else
- * (canceled, unpaid, incomplete_expired, ...) expires it at period end via
- * the grace window in licensingShared. */
-const ACTIVE_STRIPE_STATUSES = new Set(['active', 'trialing', 'past_due']);
-
-export const syncSubscription = internalMutation({
-	args: {
-		userId: v.string(),
-		stripeCustomerId: v.string(),
-		stripeSubscriptionId: v.string(),
-		stripeStatus: v.string(),
-		priceId: v.union(v.string(), v.null()),
-		currentPeriodEnd: v.union(v.number(), v.null()),
-		cancelAtPeriodEnd: v.boolean()
-	},
-	handler: async (ctx, args) => {
-		const license = await getOrCreateLicense(ctx, args.userId);
-		// A lifetime license is never downgraded by subscription churn.
-		if (license.plan === 'lifetime') return;
-
-		const plan = args.priceId === env.STRIPE_PRICE_ANNUAL ? 'annual' : 'monthly';
-		const active = ACTIVE_STRIPE_STATUSES.has(args.stripeStatus);
-		// Suspensions (refund/chargeback) are only lifted manually.
-		const status = license.status === 'suspended' ? 'suspended' : active ? 'active' : 'expired';
-		await ctx.db.patch(license._id, {
-			plan,
-			status,
-			stripeCustomerId: args.stripeCustomerId,
-			stripeSubscriptionId: args.stripeSubscriptionId,
-			currentPeriodEnd: args.currentPeriodEnd ?? undefined,
-			cancelAtPeriodEnd: args.cancelAtPeriodEnd,
-			subscribedAt: license.subscribedAt ?? (active ? Date.now() : undefined)
-		});
-	}
-});
-
-/** Lists every license that has a live Stripe subscription, for backfills. */
-export const listSubscriptionLicenses = internalQuery({
-	args: {},
-	handler: async (ctx) => {
-		const licenses = await ctx.db.query('licenses').collect();
-		return licenses
-			.filter((l) => !!l.stripeSubscriptionId)
-			.map((l) => ({ userId: l.userId, stripeSubscriptionId: l.stripeSubscriptionId! }));
-	}
-});
-
 /**
- * One-off backfill: re-pulls each subscription's current state from Stripe and
- * re-runs syncSubscription, so rows written before a field was persisted (e.g.
- * `cancelAtPeriodEnd`) get corrected without waiting for the next webhook.
- * Run with `npx convex run billing:resyncSubscriptions`.
+ * Which Stripe price to charge right now. The launch window swaps the price id
+ * rather than applying a coupon on purpose: Stripe Checkout takes at most one
+ * entry in `discounts`, and the referral reward already claims it. A separate
+ * price leaves that slot free, so a referred buyer gets 15% off the launch
+ * price instead of having to choose between the two offers.
+ *
+ * Falls back to the standing price whenever the launch price is unconfigured,
+ * so a missing env var overcharges rather than undercharges.
  */
-export const resyncSubscriptions = internalAction({
-	args: {},
-	handler: async (ctx): Promise<{ resynced: number }> => {
-		const stripeClient = new Stripe(env.STRIPE_SECRET_KEY, {
-			httpClient: Stripe.createFetchHttpClient()
-		});
-		const rows = await ctx.runQuery(internal.billing.listSubscriptionLicenses, {});
-		let resynced = 0;
-		for (const { userId, stripeSubscriptionId } of rows) {
-			const sub = await stripeClient.subscriptions.retrieve(stripeSubscriptionId);
-			const item = sub.items.data[0];
-			await ctx.runMutation(internal.billing.syncSubscription, {
-				userId,
-				stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
-				stripeSubscriptionId: sub.id,
-				stripeStatus: sub.status,
-				priceId: item?.price.id ?? null,
-				currentPeriodEnd: item?.current_period_end ? item.current_period_end * 1000 : null,
-				cancelAtPeriodEnd: subscriptionWillCancel({
-					cancelAtPeriodEnd: sub.cancel_at_period_end,
-					cancelAt: sub.cancel_at
-				})
-			});
-			resynced += 1;
-		}
-		return { resynced };
-	}
-});
+function priceIdForNow(now: number): string {
+	const launchOpen = isLaunchOpen(env.LAUNCH_CUTOFF, now);
+	return launchOpen && env.STRIPE_PRICE_LAUNCH
+		? env.STRIPE_PRICE_LAUNCH
+		: env.STRIPE_PRICE_LIFETIME;
+}
 
 export const markLifetime = internalMutation({
 	args: {
@@ -127,13 +62,13 @@ export const suspendByCustomer = internalMutation({
 	}
 });
 
-export const isLaunchWindowOpen = () => Date.now() < Date.parse(env.LAUNCH_CUTOFF);
-
 /**
- * Mints a Stripe Checkout session for the $100 lifetime purchase. The
- * better-auth Stripe plugin is subscription-only, so this is a plain one-time
- * payment session; the webhook (checkout.session.completed with
- * metadata.kind=lifetime) marks the license.
+ * Mints a Stripe Checkout session for the perpetual purchase - the only thing
+ * Super Review sells. It is a plain one-time payment session; the webhook
+ * (checkout.session.completed with metadata.kind=lifetime) marks the license.
+ *
+ * The price is resolved here, server-side, so a stale page holding the launch
+ * price cannot buy at it after the window has closed.
  */
 export const createLifetimeCheckout = action({
 	args: {},
@@ -145,9 +80,6 @@ export const createLifetimeCheckout = action({
 		});
 		if (!betaAllowed) {
 			throw createConvexError(convexError.WaitlistRequired());
-		}
-		if (!isLaunchWindowOpen()) {
-			throw createConvexError(convexError.LaunchWindowClosed());
 		}
 		const license = await ctx.runMutation(internal.licenses.getOrCreateForUser, {
 			userId: user._id
@@ -161,8 +93,8 @@ export const createLifetimeCheckout = action({
 		});
 		const customerId = license.stripeCustomerId ?? user.stripeCustomerId ?? undefined;
 
-		// Referral reward, same rule as the subscription checkout: applied
-		// server-side off the account's earned state rather than a code they type.
+		// Referral reward, applied server-side off the account's earned state
+		// rather than a code they type.
 		const coupon = env.STRIPE_REFERRAL_COUPON_ID;
 		const earned =
 			!!coupon && (await ctx.runQuery(internal.invites.hasReferralReward, { userId: user._id }));
@@ -171,7 +103,7 @@ export const createLifetimeCheckout = action({
 			mode: 'payment',
 			customer: customerId,
 			customer_email: customerId ? undefined : user.email,
-			line_items: [{ price: env.STRIPE_PRICE_LIFETIME, quantity: 1 }],
+			line_items: [{ price: priceIdForNow(Date.now()), quantity: 1 }],
 			// `discounts` and `allow_promotion_codes` are mutually exclusive in
 			// Stripe Checkout, so the earned referral reward wins and everyone
 			// else gets the promo-code box.

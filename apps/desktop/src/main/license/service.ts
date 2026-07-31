@@ -257,8 +257,6 @@ function mapDenial(reason: string): LicenseState {
 			return { state: 'locked', reason: 'waitlist' };
 		case 'trial_expired':
 			return { state: 'locked', reason: 'trial_expired' };
-		case 'subscription_lapsed':
-			return { state: 'locked', reason: 'subscription_lapsed' };
 		case 'suspended':
 			return { state: 'locked', reason: 'suspended' };
 		case 'fingerprint_mismatch':

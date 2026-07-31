@@ -94,8 +94,7 @@ export const validateDevice = secretMutation({
 			{
 				plan: effective.plan,
 				status: effective.status,
-				trialEndsAt: effective.trialEndsAt,
-				currentPeriodEnd: effective.currentPeriodEnd
+				trialEndsAt: effective.trialEndsAt
 			},
 			now
 		);
@@ -122,12 +121,9 @@ export const validateDevice = secretMutation({
 			plan: effective.plan,
 			status: decision.status,
 			trialEndsAt: effective.trialEndsAt ?? null,
-			currentPeriodEnd: effective.currentPeriodEnd ?? null,
 			activeSince: activeSinceFor({
 				plan: effective.plan,
-				lifetimePurchasedAt: effective.lifetimePurchasedAt,
-				subscribedAt: effective.subscribedAt,
-				createdAt: effective._creationTime
+				lifetimePurchasedAt: effective.lifetimePurchasedAt
 			})
 		};
 	}
@@ -187,13 +183,9 @@ export const watchToken = query({
 
 		// Every field that can flip the license decision, joined into one opaque
 		// value. Any change re-pushes; unrelated writes leave it identical.
-		return [
-			license.plan,
-			license.status,
-			license.trialEndsAt ?? 0,
-			license.currentPeriodEnd ?? 0,
-			license.suspendedAt ?? 0
-		].join(':');
+		return [license.plan, license.status, license.trialEndsAt ?? 0, license.suspendedAt ?? 0].join(
+			':'
+		);
 	}
 });
 

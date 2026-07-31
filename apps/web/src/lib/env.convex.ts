@@ -39,16 +39,19 @@ export const env = {
 	get STRIPE_WEBHOOK_SECRET() {
 		return str('STRIPE_WEBHOOK_SECRET');
 	},
-	get STRIPE_PRICE_MONTHLY() {
-		return str('STRIPE_PRICE_MONTHLY');
-	},
-	get STRIPE_PRICE_ANNUAL() {
-		return str('STRIPE_PRICE_ANNUAL');
-	},
+	// The standing one-time Stripe price for the perpetual license, the only
+	// thing Super Review sells.
 	get STRIPE_PRICE_LIFETIME() {
 		return str('STRIPE_PRICE_LIFETIME');
 	},
-	// ISO date after which the $100 lifetime launch deal is no longer sold.
+	// The discounted launch price, charged instead while LAUNCH_CUTOFF is in the
+	// future. Optional: unset falls back to STRIPE_PRICE_LIFETIME, so a
+	// half-configured deployment overcharges rather than undercharges.
+	get STRIPE_PRICE_LAUNCH() {
+		return str('STRIPE_PRICE_LAUNCH');
+	},
+	// Exclusive instant the launch price ends; after it, everyone pays
+	// STRIPE_PRICE_LIFETIME. Unset means the window is shut (see isLaunchOpen).
 	get LAUNCH_CUTOFF() {
 		return str('LAUNCH_CUTOFF');
 	},

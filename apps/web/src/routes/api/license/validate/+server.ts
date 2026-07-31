@@ -49,8 +49,7 @@ export const POST: RequestHandler = async ({ request, locals, getClientAddress }
 		plan: result.plan,
 		status: result.status,
 		fingerprint: b.fingerprint,
-		displayExpiresAt:
-			result.plan === 'lifetime' ? null : (result.currentPeriodEnd ?? result.trialEndsAt),
+		displayExpiresAt: result.plan === 'lifetime' ? null : result.trialEndsAt,
 		activeSince: result.activeSince,
 		holderName: result.holder?.name ?? null,
 		holderEmail: result.holder?.email ?? null,

@@ -191,13 +191,12 @@ someone a waitlist form they have already been through is a dead end.
 
 So in waitlist mode `/pricing` is **member-gated rather than replaced**. Signed
 out you get bounced to `/login?next=/pricing`; signed in without an invite you
-go to the dashboard; invited members get the real plans. The homepage pricing
+go to the dashboard; invited members get the real price. The homepage pricing
 section stays hidden either way, since that is the surface we don't publish
 prices on.
 
-Checkout routes and the Stripe session hooks (`createLifetimeCheckout`,
-`getCheckoutSessionParams`) re-check `hasBetaAccess`, so a deep link cannot
-open payment for a non-invited account.
+The checkout route and `createLifetimeCheckout` both re-check `hasBetaAccess`,
+so a deep link cannot open payment for a non-invited account.
 
 ### Inviting people
 
@@ -260,9 +259,8 @@ to map the code space.
 ### Referral reward
 
 When **every** guest code a member was given has been redeemed, they earn a
-permanent **15% off** at checkout. It applies to both the subscription and the
-perpetual purchase, server-side, with no code for them to type (so it cannot be
-shared or guessed).
+permanent **15% off** at checkout, applied server-side, with no code for them to
+type (so it cannot be shared or guessed).
 
 It has no expiry date, and does not need one: **invite codes stop being
 redeemable the moment waitlist mode is turned off**, so no new rewards can be
@@ -354,9 +352,9 @@ place the decision is made, and it always allows when:
 
 - **waitlist mode is off** — so the gate is completely inert after launch, and
   turning the flag off can never leave someone stranded; and
-- **the account already has a plan** — a paying, perpetual, or mid-trial license
-  is never revoked by the gate. Access is only ever withheld from accounts that
-  have nothing yet.
+- **the account already has a plan** — a perpetual or mid-trial license is never
+  revoked by the gate. Access is only ever withheld from accounts that have
+  nothing yet.
 
 Both branches are verified: turning waitlist mode on does not lock out a paying
 customer who was never invited.

@@ -4,10 +4,11 @@ import { z } from 'zod';
 const _env = createEnv({
 	client: {
 		PUBLIC_CONVEX_URL: z.url(),
-		// ISO date the $100 lifetime launch deal closes. Public so the prerendered
-		// homepage pricing can show/hide the lifetime option client-side. Must match
-		// the server-side LAUNCH_CUTOFF (which is what actually enforces it).
-		PUBLIC_LAUNCH_CUTOFF: z.string().default('2099-01-01')
+		// Exclusive instant the launch price ends, so the pricing card can show the
+		// discount client-side. Must match the server-side LAUNCH_CUTOFF, which is
+		// what actually picks the Stripe price. Optional and fail-closed: with it
+		// unset the card just shows the standing price.
+		PUBLIC_LAUNCH_CUTOFF: z.string().optional()
 	},
 	emptyStringAsUndefined: true,
 	clientPrefix: 'PUBLIC_',

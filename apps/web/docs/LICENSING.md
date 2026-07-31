@@ -15,7 +15,7 @@ by hand.
 
 ## Environment variables
 
-Two homes. The shared ones (`FUNCTION_SECRET`, `LAUNCH_CUTOFF`, `IP_HASH_SALT`)
+Two homes. The shared ones (`FUNCTION_SECRET`, `IP_HASH_SALT`, `LAUNCH_CUTOFF`)
 must be identical in both.
 
 ### SvelteKit process — `apps/web/.env.local`
@@ -26,20 +26,22 @@ must be identical in both.
 | `PUBLIC_CONVEX_SITE_URL`                 | `PUBLIC_CONVEX_URL` with `.convex.cloud` → `.convex.site` |
 | `FUNCTION_SECRET`                        | generated (shared with Convex)                            |
 | `IP_HASH_SALT`                           | generated (shared with Convex)                            |
-| `LAUNCH_CUTOFF`                          | chosen ISO date (shared with Convex)                      |
+| `LAUNCH_CUTOFF`                          | chosen ISO instant (shared with Convex)                   |
 | `ED25519_PRIVATE_KEY`, `ED25519_KID`     | generated keypair (private half)                          |
 
 ### Convex deployment — `pnpm convex env set ...`
 
-| Var                                                                    | Source                                    |
-| ---------------------------------------------------------------------- | ----------------------------------------- |
-| `FUNCTION_SECRET`, `IP_HASH_SALT`, `LAUNCH_CUTOFF`                     | same values as `.env.local`               |
-| `BETTER_AUTH_SECRET`                                                   | generated                                 |
-| `SITE_URL`                                                             | web origin (dev: `http://localhost:5173`) |
-| `TRIAL_DAYS`                                                           | trial length (default 7)                  |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`                             | GitHub OAuth app                          |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                           | Stripe                                    |
-| `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_ANNUAL`, `STRIPE_PRICE_LIFETIME` | Stripe prices                             |
+| Var                                          | Source                                    |
+| -------------------------------------------- | ----------------------------------------- |
+| `FUNCTION_SECRET`, `IP_HASH_SALT`            | same values as `.env.local`               |
+| `LAUNCH_CUTOFF`                              | same value as `.env.local`                |
+| `BETTER_AUTH_SECRET`                         | generated                                 |
+| `SITE_URL`                                   | web origin (dev: `http://localhost:5173`) |
+| `TRIAL_DAYS`                                 | trial length (default 7)                  |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`   | GitHub OAuth app                          |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Stripe                                    |
+| `STRIPE_PRICE_LIFETIME`                      | Stripe price (standing)                   |
+| `STRIPE_PRICE_LAUNCH`                        | Stripe price (launch discount)            |
 
 The generated Ed25519 **public** key is written into
 `apps/desktop/src/main/license/public-key.ts` (keyed by `ED25519_KID`) so the
@@ -58,26 +60,45 @@ Copy the Client ID and a generated client secret.
 
 Use **Test mode**.
 
-### Products & prices (3 prices, 2 products)
+### Product & prices (2 prices, 1 product)
 
-- Product **"Super Review"** (subscription) with two recurring prices:
-  - $12.00 USD / month → `STRIPE_PRICE_MONTHLY`
-  - $120.00 USD / year → `STRIPE_PRICE_ANNUAL`
-- Product **"Super Review Lifetime"** with one one-time price:
-  - $100.00 USD one-time → `STRIPE_PRICE_LIFETIME`
+Super Review sells exactly one thing: the perpetual license. There are no
+subscriptions. It has two prices, and which one checkout uses is decided
+server-side by `LAUNCH_CUTOFF`.
+
+- Product **"Super Review Perpetual"** with two one-time prices:
+  - $59.99 USD one-time → `STRIPE_PRICE_LIFETIME` (the standing price)
+  - $39.99 USD one-time → `STRIPE_PRICE_LAUNCH` (charged until `LAUNCH_CUTOFF`)
 
 Copy each price's API ID (`price_...`).
+
+Two prices rather than a coupon on one price: Stripe Checkout accepts at most one
+entry in `discounts`, and the referral reward already claims it. Swapping the
+price id leaves that slot free, so a referred buyer gets 15% off the launch price
+instead of having to pick one offer or the other.
+
+### The launch window
+
+`LAUNCH_CUTOFF` is the **exclusive** instant the launch price ends — at that
+moment checkout reverts to `STRIPE_PRICE_LIFETIME`. A bare date is UTC midnight,
+so to run the discount _through_ 31 August you set `2026-09-01`.
+
+Both halves fail **closed**: an unset or unparseable cutoff, or an unset
+`STRIPE_PRICE_LAUNCH`, means everyone pays the standing price. A missing env var
+should overcharge and be noticed, not quietly discount every sale.
+
+The pricing card reads `PUBLIC_LAUNCH_CUTOFF` to show the offer, and derives the
+"through <date>" line from the same value, so the card cannot advertise a day on
+which checkout has already reverted. `createLifetimeCheckout` resolves the price
+itself, so a stale page cannot buy at the old price after the window shuts.
 
 ### Webhook
 
 Create a dashboard webhook (Developers → Webhooks) at
-`https://<deployment>.convex.site/api/auth/stripe/webhook` with exactly these 6
+`https://<deployment>.convex.site/api/auth/stripe/webhook` with exactly these 3
 events, and copy its signing secret (`whsec_...`) → `STRIPE_WEBHOOK_SECRET`:
 
 - `checkout.session.completed`
-- `customer.subscription.created`
-- `customer.subscription.updated`
-- `customer.subscription.deleted`
 - `charge.refunded`
 - `charge.dispute.created`
 
@@ -109,14 +130,9 @@ invalidates every token already issued.
 > signature"_. `apps/web/scripts/stripe-listen.mjs` is kept only as a manual
 > escape hatch for when no dashboard endpoint exists.
 
-The first four drive the subscription lifecycle; `checkout.session.completed`
-also carries the lifetime purchase (matched by `metadata.kind`); the two
-`charge.*` events suspend a license on refund/chargeback.
-
-### Customer portal
-
-Activate it under **Settings → Billing → Customer portal** (enable "Customers
-can cancel subscriptions"). This powers the dashboard's "Manage billing" button.
+`checkout.session.completed` carries the perpetual purchase (matched by
+`metadata.kind`); the two `charge.*` events suspend a license on
+refund/chargeback.
 
 ### API key
 

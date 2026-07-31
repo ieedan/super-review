@@ -407,19 +407,19 @@ export const LOOPS_TEMPLATES = [
 // embed is stripped to an empty message.
 export const FEEDBACK_BOT_PERMISSIONS = String((1 << 10) + (1 << 11) + (1 << 14) + 2 ** 35);
 
-// The 6 Stripe events the better-auth Stripe plugin and our billing hooks act
-// on. Listed here so the dev and prod scripts can never drift apart.
+// The 3 Stripe events our billing hooks act on. Listed here so the dev and prod
+// scripts can never drift apart. There are no subscription events: Super Review
+// sells a single one-time perpetual license.
 export const STRIPE_WEBHOOK_EVENTS = [
 	'checkout.session.completed',
-	'customer.subscription.created',
-	'customer.subscription.updated',
-	'customer.subscription.deleted',
 	'charge.refunded',
 	'charge.dispute.created'
 ];
 
 // Default LAUNCH_CUTOFF when setting up from scratch: 30 days out, which is a
-// plausible launch window and, more importantly, not in the past.
+// plausible launch window and, more importantly, not in the past. It is the
+// EXCLUSIVE instant the discounted launch price ends, so a bare date means the
+// launch price is gone at UTC midnight starting that day.
 export function defaultLaunchCutoff() {
 	const d = new Date();
 	d.setDate(d.getDate() + 30);

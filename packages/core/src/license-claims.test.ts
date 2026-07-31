@@ -14,7 +14,7 @@ function claims(overrides: Partial<LicenseClaims> = {}): LicenseClaims {
 		exp: NOW / 1000 + 72 * 3600,
 		lic: 'lic_1',
 		dev: 'dev_1',
-		plan: 'monthly',
+		plan: 'lifetime',
 		sta: 'active',
 		fp: FP,
 		tex: null,
@@ -25,7 +25,7 @@ function claims(overrides: Partial<LicenseClaims> = {}): LicenseClaims {
 describe('parseLicenseClaims', () => {
 	it('parses a well-formed payload', () => {
 		const parsed = parseLicenseClaims(JSON.stringify(claims()));
-		expect(parsed?.plan).toBe('monthly');
+		expect(parsed?.plan).toBe('lifetime');
 	});
 
 	it('rejects malformed JSON and missing fields', () => {
@@ -42,7 +42,7 @@ describe('parseLicenseClaims', () => {
 describe('licenseClaimsToState', () => {
 	it('unlocks a valid, unexpired, fingerprint-matching token', () => {
 		const state = licenseClaimsToState(claims(), NOW, FP);
-		expect(state).toMatchObject({ state: 'licensed', plan: 'monthly', status: 'active' });
+		expect(state).toMatchObject({ state: 'licensed', plan: 'lifetime', status: 'active' });
 	});
 
 	it('locks on audience mismatch', () => {

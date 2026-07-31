@@ -66,26 +66,9 @@
 	// wrong here is cosmetic rather than a hole.
 	const waitlistPending = $derived(!!invites && invites.waitlistMode && !invites.isMember);
 
-	const planNames = { lifetime: 'Perpetual', monthly: 'Monthly', annual: 'Annual' } as const;
-	// Active paid licenses get the metal card; everything else keeps the
+	// An owned perpetual license gets the metal card; everything else keeps the
 	// plain status panel.
-	const cardPlan = $derived.by(() => {
-		const l = license;
-		if (!l || l.status !== 'active') return undefined;
-		return l.plan === 'lifetime' || l.plan === 'monthly' || l.plan === 'annual'
-			? (l.plan as keyof typeof planNames)
-			: undefined;
-	});
-
-	// Recurring plans (or a leftover Stripe subscription id) get the Billing
-	// tab's subscription summary. Lifetime is a one-time purchase, not a sub.
-	const subscriptionPlan = $derived.by(() => {
-		const l = license;
-		if (!l) return undefined;
-		if (l.plan === 'monthly' || l.plan === 'annual') return l.plan;
-		return undefined;
-	});
-	const canOpenBillingPortal = $derived(!!license?.stripeCustomerId);
+	const hasCard = $derived(license?.plan === 'lifetime' && license.status === 'active');
 
 	function statusLabel(plan: string, status: string, trialEndsAt?: number | null): string {
 		if (status === 'suspended') return 'Suspended';
@@ -97,9 +80,6 @@
 				: 0;
 			return `Trial - ${days} day${days === 1 ? '' : 's'} left`;
 		}
-		if (plan === 'monthly' || plan === 'annual') {
-			return status === 'active' ? `${plan} - active` : `${plan} - lapsed`;
-		}
 		return 'No active license';
 	}
 
@@ -109,22 +89,6 @@
 			month: 'short',
 			day: 'numeric'
 		});
-	}
-
-	let openingPortal = $state(false);
-	async function manageBilling(): Promise<void> {
-		if (openingPortal) return;
-		openingPortal = true;
-		try {
-			// Absolute URL: better-auth's origin check accepts a ?query on relative
-			// paths, but an absolute return URL is the safest way to land back on
-			// the billing tab after the Stripe portal.
-			await authClient.subscription.billingPortal({
-				returnUrl: `${window.location.origin}/dashboard?tab=billing`
-			});
-		} finally {
-			openingPortal = false;
-		}
 	}
 
 	const initials = $derived(
@@ -179,14 +143,13 @@
 			tab: 'billing',
 			id: 'settings-license',
 			title: 'Your license',
-			keywords: 'license card perpetual lifetime annual yearly monthly trial upgrade active since'
+			keywords: 'license card perpetual lifetime trial upgrade buy active since'
 		},
 		{
 			tab: 'billing',
 			id: 'settings-billing',
 			title: 'Billing',
-			keywords:
-				'billing subscription subscribe stripe portal invoice payment renew cancel manage plan monthly annual'
+			keywords: 'billing purchase buy stripe payment receipt perpetual license one time plan'
 		}
 	];
 
@@ -471,7 +434,7 @@
 						guestCodes={invites.guestCodes}
 						referralReward={invites.referralReward}
 						email={data.account.email}
-						hasPaidPlan={!!cardPlan}
+						hasPaidPlan={hasCard}
 					/>
 				{/if}
 
@@ -521,15 +484,12 @@
 				{:else if activeTab === 'billing'}
 					<div id="settings-license" class="flex flex-col gap-3">
 						<h2 class="font-display text-lg font-semibold">Your license</h2>
-						{#if license && cardPlan}
+						{#if license && hasCard}
 							<div class="flex flex-col items-center gap-4">
 								<LicenseCard
-									variant={cardPlan === 'lifetime' ? 'gold' : 'silver'}
-									plan={planNames[cardPlan]}
+									plan="Perpetual"
 									holder={data.holderName}
-									activeSince={cardPlan === 'lifetime'
-										? license.lifetimePurchasedAt
-										: (license.subscribedAt ?? license._creationTime)}
+									activeSince={license.lifetimePurchasedAt}
 								/>
 							</div>
 						{:else}
@@ -568,49 +528,18 @@
 										One-time purchase
 										{#if license.lifetimePurchasedAt}
 											on {formatDate(license.lifetimePurchasedAt)}
-										{/if}. No recurring charges.
+										{/if}. No recurring charges, ever.
 									</p>
 								</div>
-							{:else if subscriptionPlan}
-								<div class="flex flex-col gap-1">
-									<div class="text-foreground text-base font-semibold">
-										{planNames[subscriptionPlan]} subscription
-									</div>
-									<p class="text-muted-foreground text-sm">
-										{license?.status === 'active'
-											? 'Active'
-											: license?.status === 'suspended'
-												? 'Suspended'
-												: 'Lapsed'}
-										{#if license?.currentPeriodEnd}
-											·
-											{license.status !== 'active'
-												? 'Access until'
-												: license.cancelAtPeriodEnd
-													? 'Cancels'
-													: 'Renews'}
-											{formatDate(license.currentPeriodEnd)}
-										{/if}
-									</p>
-								</div>
-								{#if canOpenBillingPortal}
-									<Button
-										variant="outline"
-										class="w-fit"
-										onclick={manageBilling}
-										disabled={openingPortal}
-									>
-										Manage billing
-									</Button>
-								{/if}
 							{:else}
 								<div>
-									<div class="text-foreground text-base font-semibold">No subscription</div>
+									<div class="text-foreground text-base font-semibold">No license yet</div>
 									<p class="text-muted-foreground mt-1 text-sm text-pretty">
 										{#if waitlistPending}
-											Billing unlocks once you redeem an invite code.
+											Buying unlocks once you redeem an invite code.
 										{:else}
-											Subscribe or buy a perpetual license to keep Super Review after your trial.
+											Buy the perpetual license to keep Super Review after your trial. One payment,
+											no subscription.
 										{/if}
 									</p>
 								</div>

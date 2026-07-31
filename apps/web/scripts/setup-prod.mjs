@@ -614,7 +614,9 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 				'SITE_URL      the public origin. better-auth uses it as its baseURL, so',
 				'              it has to match the domain users actually arrive on,',
 				'              exactly, including the scheme and no trailing slash.',
-				'LAUNCH_CUTOFF ISO date the $100 perpetual deal stops being sold.',
+				'LAUNCH_CUTOFF when the discounted launch price ends. EXCLUSIVE: a bare',
+				'              date means the discount is gone at UTC midnight starting',
+				'              that day, so "through August 31" is 2026-09-01.',
 				'TRIAL_DAYS    length of the free trial that starts at first activation.'
 			]);
 			siteUrl = await ask(rl, 'SITE_URL', PRODUCTION_SITE_URL);
@@ -631,8 +633,8 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 				{ SITE_URL: siteUrl, LAUNCH_CUTOFF: launchCutoff, TRIAL_DAYS: trialDays },
 				CONVEX_PROD
 			);
-			// The homepage pricing reads the launch date client-side, so the build
-			// also needs the PUBLIC_ copy (kept identical to the server-side value).
+			// The pricing card reads the cutoff client-side, so the build also needs
+			// the PUBLIC_ copy (kept identical to the server-side value).
 			forProduction({ LAUNCH_CUTOFF: launchCutoff, PUBLIC_LAUNCH_CUTOFF: launchCutoff });
 			console.log(green('  Stored the production core config.'));
 
@@ -766,40 +768,36 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 
 	// --- Step 9: Stripe ---------------------------------------------------------
 	await step(
-		'Stripe billing (live products, prices, webhook)',
+		'Stripe billing (live product, prices, webhook)',
 		() =>
 			prodHas('STRIPE_SECRET_KEY') &&
 			prodHas('STRIPE_WEBHOOK_SECRET') &&
-			prodHas('STRIPE_PRICE_MONTHLY') &&
-			prodHas('STRIPE_PRICE_ANNUAL') &&
-			prodHas('STRIPE_PRICE_LIFETIME'),
+			prodHas('STRIPE_PRICE_LIFETIME') &&
+			prodHas('STRIPE_PRICE_LAUNCH'),
 		async () => {
 			describe([
 				bold(yellow('Turn OFF Test mode in Stripe first (toggle, top-right).')),
 				dim('Test-mode ids and keys are a different namespace; mixing them shows up'),
 				dim('as "No such price" at checkout.'),
 				'',
-				`${bold('1) Create products & prices')} (Products > Add product):`,
-				'   Product "Super Review" with TWO recurring prices:',
-				`     ${cyan('•')} $12.00 USD / Monthly   -> STRIPE_PRICE_MONTHLY`,
-				`     ${cyan('•')} $120.00 USD / Yearly   -> STRIPE_PRICE_ANNUAL`,
-				'   Product "Super Review Perpetual" with ONE one-time price:',
-				`     ${cyan('•')} $100.00 USD one-time   -> STRIPE_PRICE_LIFETIME`,
+				`${bold('1) Create the product & prices')} (Products > Add product):`,
+				'   Product "Super Review Perpetual" with TWO one-time prices:',
+				`     ${cyan('•')} $59.99 USD one-time   -> STRIPE_PRICE_LIFETIME  (standing)`,
+				`     ${cyan('•')} $39.99 USD one-time   -> STRIPE_PRICE_LAUNCH    (until LAUNCH_CUTOFF)`,
 				'   Open each price and copy its API ID (starts with price_...).',
+				dim('   Two prices rather than a coupon: Stripe Checkout takes only one'),
+				dim('   entry in `discounts`, and the referral reward already uses it.'),
+				dim('   There are no subscriptions: the perpetual license is all we sell.'),
 				'',
 				`${bold('2) Create the webhook')} (Developers > Webhooks > Add endpoint):`,
 				`   Endpoint URL:  ${bold(webhookUrl)}`,
-				'   Select exactly these 6 events:',
+				'   Select exactly these 3 events:',
 				...STRIPE_WEBHOOK_EVENTS.map((e) => `     ${cyan('•')} ${e}`),
 				'   Then reveal and copy the Signing secret (whsec_...).',
 				dim('   Stripe delivers straight to the Convex deployment, so the webhook'),
 				dim('   keeps working even while Vercel is mid-deploy.'),
 				'',
-				`${bold('3) Activate the customer portal')} (Settings > Billing > Customer portal):`,
-				'   Enable "Customers can cancel subscriptions" (powers the dashboard\'s',
-				'   Manage billing button).',
-				'',
-				`${bold('4) Get your API key')} (Developers > API keys):`,
+				`${bold('3) Get your API key')} (Developers > API keys):`,
 				'   Copy the LIVE Secret key (sk_live_...).'
 			]);
 
@@ -822,26 +820,22 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 			}
 			const webhookSecret = await askSecret(rl, 'STRIPE_WEBHOOK_SECRET (whsec_...)');
 			rl = createPrompt();
-			const priceMonthly = await ask(rl, 'STRIPE_PRICE_MONTHLY (price_...)');
-			const priceAnnual = await ask(rl, 'STRIPE_PRICE_ANNUAL (price_...)');
 			const priceLifetime = await ask(rl, 'STRIPE_PRICE_LIFETIME (price_...)');
-			if (!secretKey || !webhookSecret || !priceMonthly || !priceAnnual || !priceLifetime) {
-				throw new Error(
-					'Stripe setup needs the secret key, webhook secret, and all three price ids.'
-				);
+			const priceLaunch = await ask(rl, 'STRIPE_PRICE_LAUNCH (price_...)');
+			if (!secretKey || !webhookSecret || !priceLifetime || !priceLaunch) {
+				throw new Error('Stripe setup needs the secret key, webhook secret, and both price ids.');
 			}
 			setConvexEnv(
 				projectRoot,
 				{
 					STRIPE_SECRET_KEY: secretKey,
 					STRIPE_WEBHOOK_SECRET: webhookSecret,
-					STRIPE_PRICE_MONTHLY: priceMonthly,
-					STRIPE_PRICE_ANNUAL: priceAnnual,
-					STRIPE_PRICE_LIFETIME: priceLifetime
+					STRIPE_PRICE_LIFETIME: priceLifetime,
+					STRIPE_PRICE_LAUNCH: priceLaunch
 				},
 				CONVEX_PROD
 			);
-			console.log(green('  Stored the live Stripe keys and price ids.'));
+			console.log(green('  Stored the live Stripe key and price ids.'));
 
 			if (skipPreview) return;
 			// Previews stay on the dev deployment's TEST-mode Stripe config: a
@@ -850,9 +844,8 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 			const testConfig = {
 				STRIPE_SECRET_KEY: devConvex('STRIPE_SECRET_KEY'),
 				STRIPE_WEBHOOK_SECRET: devConvex('STRIPE_WEBHOOK_SECRET'),
-				STRIPE_PRICE_MONTHLY: devConvex('STRIPE_PRICE_MONTHLY'),
-				STRIPE_PRICE_ANNUAL: devConvex('STRIPE_PRICE_ANNUAL'),
-				STRIPE_PRICE_LIFETIME: devConvex('STRIPE_PRICE_LIFETIME')
+				STRIPE_PRICE_LIFETIME: devConvex('STRIPE_PRICE_LIFETIME'),
+				STRIPE_PRICE_LAUNCH: devConvex('STRIPE_PRICE_LAUNCH')
 			};
 			if (Object.values(testConfig).every(Boolean)) {
 				setConvexEnv(projectRoot, testConfig, CONVEX_PREVIEW_DEFAULTS);
