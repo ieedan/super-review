@@ -15,8 +15,11 @@ by hand.
 
 ## Environment variables
 
-Two homes. The shared ones (`FUNCTION_SECRET`, `IP_HASH_SALT`, `LAUNCH_CUTOFF`)
-must be identical in both.
+Two homes. `FUNCTION_SECRET` and `IP_HASH_SALT` must be identical in both. The
+launch cutoff is split by audience rather than shared: Convex holds
+`LAUNCH_CUTOFF` (it charges the price), the SvelteKit build holds
+`PUBLIC_LAUNCH_CUTOFF` (it shows the offer). Same instant in both, or the card
+advertises a discount checkout will not honour.
 
 ### SvelteKit process — `apps/web/.env.local`
 
@@ -26,7 +29,7 @@ must be identical in both.
 | `PUBLIC_CONVEX_SITE_URL`                 | `PUBLIC_CONVEX_URL` with `.convex.cloud` → `.convex.site` |
 | `FUNCTION_SECRET`                        | generated (shared with Convex)                            |
 | `IP_HASH_SALT`                           | generated (shared with Convex)                            |
-| `LAUNCH_CUTOFF`                          | chosen ISO instant (shared with Convex)                   |
+| `PUBLIC_LAUNCH_CUTOFF`                   | chosen ISO instant (same value as Convex's LAUNCH_CUTOFF) |
 | `ED25519_PRIVATE_KEY`, `ED25519_KID`     | generated keypair (private half)                          |
 
 ### Convex deployment — `pnpm convex env set ...`
@@ -34,7 +37,7 @@ must be identical in both.
 | Var                                          | Source                                    |
 | -------------------------------------------- | ----------------------------------------- |
 | `FUNCTION_SECRET`, `IP_HASH_SALT`            | same values as `.env.local`               |
-| `LAUNCH_CUTOFF`                              | same value as `.env.local`                |
+| `LAUNCH_CUTOFF`                              | same instant as `PUBLIC_LAUNCH_CUTOFF`    |
 | `BETTER_AUTH_SECRET`                         | generated                                 |
 | `SITE_URL`                                   | web origin (dev: `http://localhost:5173`) |
 | `TRIAL_DAYS`                                 | trial length (default 7)                  |

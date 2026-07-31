@@ -201,9 +201,9 @@ Prerequisite: run \`pnpm convex dev --once\` first.`);
 			siteUrl = await ask(rl, 'SITE_URL', siteUrlDefault);
 			const launchCutoff = await ask(rl, 'LAUNCH_CUTOFF', defaultLaunchCutoff());
 			const trialDays = await ask(rl, 'TRIAL_DAYS', '7');
-			upsertEnvLocal(projectRoot, 'LAUNCH_CUTOFF', launchCutoff);
-			// The pricing card reads the cutoff client-side, so it also needs the
-			// PUBLIC_ copy (kept identical to the server-side value).
+			// Only the PUBLIC_ copy goes in .env.local: the SvelteKit server never
+			// reads the cutoff, the browser does (to show the offer) and Convex does
+			// (to charge the launch price). Both must hold the same instant.
 			upsertEnvLocal(projectRoot, 'PUBLIC_LAUNCH_CUTOFF', launchCutoff);
 			setConvexEnv(projectRoot, {
 				SITE_URL: siteUrl,

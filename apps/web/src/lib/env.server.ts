@@ -27,11 +27,12 @@ const _env = createEnv({
 		ED25519_KID: line(),
 		// Salt for hashing client IPs before they reach Convex (abuse detection).
 		IP_HASH_SALT: line(),
-		// Exclusive instant the discounted launch price ends. Also set in the Convex
-		// env, where the checkout action enforces it; here it is only read to keep
-		// the two in step. Optional so adding the launch offer never breaks a
-		// deployment that has not configured it yet.
-		LAUNCH_CUTOFF: line().optional(),
+		// No LAUNCH_CUTOFF here on purpose. The launch window is enforced in Convex
+		// (billing.createLifetimeCheckout reads it from the Convex deployment env)
+		// and displayed from PUBLIC_LAUNCH_CUTOFF in env.client.ts. A third,
+		// server-side copy would be read by nothing while looking authoritative -
+		// exactly the kind of var someone updates instead of the one that matters.
+		//
 		// Read-only GitHub token used by /api/download to resolve release assets
 		// from the private repo. Contents: read is the only scope it needs.
 		// Optional on purpose: without it only downloads break, and taking the

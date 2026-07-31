@@ -608,7 +608,7 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 			prodHas('SITE_URL') &&
 			prodHas('LAUNCH_CUTOFF') &&
 			prodHas('TRIAL_DAYS') &&
-			vercelHas('LAUNCH_CUTOFF'),
+			vercelHas('PUBLIC_LAUNCH_CUTOFF'),
 		async () => {
 			describe([
 				'SITE_URL      the public origin. better-auth uses it as its baseURL, so',
@@ -633,9 +633,9 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 				{ SITE_URL: siteUrl, LAUNCH_CUTOFF: launchCutoff, TRIAL_DAYS: trialDays },
 				CONVEX_PROD
 			);
-			// The pricing card reads the cutoff client-side, so the build also needs
-			// the PUBLIC_ copy (kept identical to the server-side value).
-			forProduction({ LAUNCH_CUTOFF: launchCutoff, PUBLIC_LAUNCH_CUTOFF: launchCutoff });
+			// Only the PUBLIC_ copy: the SvelteKit server never reads the cutoff. The
+			// browser shows the offer from this, Convex charges from its own copy.
+			forProduction({ PUBLIC_LAUNCH_CUTOFF: launchCutoff });
 			console.log(green('  Stored the production core config.'));
 
 			if (skipPreview) return;
@@ -660,7 +660,7 @@ and the Vercel CLI logged in (\`vercel login\`).`);
 				},
 				CONVEX_PREVIEW_DEFAULTS
 			);
-			forPreview({ LAUNCH_CUTOFF: launchCutoff, PUBLIC_LAUNCH_CUTOFF: launchCutoff });
+			forPreview({ PUBLIC_LAUNCH_CUTOFF: launchCutoff });
 			console.log(green('  Stored the preview core config.'));
 		}
 	);

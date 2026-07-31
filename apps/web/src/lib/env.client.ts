@@ -8,7 +8,12 @@ const _env = createEnv({
 		// discount client-side. Must match the server-side LAUNCH_CUTOFF, which is
 		// what actually picks the Stripe price. Optional and fail-closed: with it
 		// unset the card just shows the standing price.
-		PUBLIC_LAUNCH_CUTOFF: z.string().optional()
+		//
+		// Trimmed for the same reason env.server.ts trims everything: `vercel env
+		// add` stores the trailing newline it is piped, and this value goes
+		// straight into Date.parse. An untrimmed one already shipped a "lk_...\n"
+		// ED25519_KID once.
+		PUBLIC_LAUNCH_CUTOFF: z.string().trim().optional()
 	},
 	emptyStringAsUndefined: true,
 	clientPrefix: 'PUBLIC_',
