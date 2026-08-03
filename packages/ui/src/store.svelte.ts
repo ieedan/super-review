@@ -494,6 +494,14 @@ interface AppState {
 	// Tip commit of the current branch, surfaced so the commit box can offer an
 	// "Undo" affordance for the most recent unpushed commit.
 	lastCommit: LastCommit | null;
+	// The commit box's live message, mirrored out of the box so a flow that
+	// commits on the user's behalf can use what they actually typed instead of
+	// inventing a message. Today that's publishing a repo with no commits yet,
+	// where the publish makes the initial commit itself.
+	commitDraft: { summary: string; description: string };
+	// Bumped whenever one of those flows commits the draft, telling the box to
+	// empty itself the way it does after a commit of its own.
+	commitDraftConsumed: number;
 	// PR matching the current branch (if any). Refreshed alongside push status.
 	branchPR: PRSummary | null;
 	// PR numbers whose base branch tip we've pinned locally to `pr/<n>/base`.
@@ -1137,6 +1145,8 @@ const initial: AppState = {
 	},
 	pushStatus: null,
 	lastCommit: null,
+	commitDraft: { summary: '', description: '' },
+	commitDraftConsumed: 0,
 	branchPR: null,
 	fetchedPRBases: new Set<number>(),
 	rememberedBranchBase: null,
@@ -7021,14 +7031,36 @@ export const actions = {
 		}
 	},
 
+	// Mirror the commit box's live message into the store — see app.commitDraft.
+	syncCommitDraft(summary: string, description: string): void {
+		app.commitDraft = { summary, description };
+	},
+
 	// Publish the active repo to GitHub: creates the remote, sets `origin`, and
 	// pushes the current branch. Re-activates the refreshed repo so the UI picks
 	// up the new remote (the Publish button gives way to push/PR actions).
 	async publishRepo(options: PublishRepoOptions): Promise<boolean> {
 		if (!app.activeRepo) return false;
+		// Publishing a repo with no commits makes the initial commit itself, so
+		// send the commit box's message along — the user wrote it for that commit.
+		// A blank box leaves the naming to the main process ("Initial commit"), and
+		// a repo that already has commits ignores this entirely.
+		const summary = app.commitDraft.summary.trim();
+		const description = app.commitDraft.description.trim();
+		const initialCommitMessage = summary
+			? description
+				? `${summary}\n\n${description}`
+				: summary
+			: undefined;
 		try {
-			const repo = await window.api.repos.publish(app.activeRepo.id, options);
-			await activateRepo(repo);
+			const result = await window.api.repos.publish(app.activeRepo.id, {
+				...options,
+				initialCommitMessage
+			});
+			// The box's message went into that commit — empty the box so it isn't
+			// offered again for the next one.
+			if (result.initialCommit && initialCommitMessage) app.commitDraftConsumed++;
+			await activateRepo(result.repo);
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
