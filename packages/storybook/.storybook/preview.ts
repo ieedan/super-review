@@ -1,11 +1,20 @@
 import type { Preview } from '@storybook/svelte-vite';
 import type { AnimationMode } from '@super-review/core/types';
 import { installApiStub } from './api-stub';
+import { initDiffWorkerPool } from '@super-review/ui/diff-worker-pool';
 import AnimationsScope from '../src/lib/AnimationsScope.svelte';
 import './preview.css';
 
 // Stand in for the Electron preload bridge before any component mounts.
 installApiStub();
+
+// The same boot step the app does. Besides moving highlighting off the main
+// thread, the pool carries the render options that make Pierre emit per-token
+// `data-char` offsets, which is what the token-level features (the package.json
+// hover cards, the inline regex tester) resolve a hover against. Without it the
+// diff still renders, but nothing token-level fires and those stories look
+// inert.
+initDiffWorkerPool();
 
 // Apply the chosen theme (light/dark) and accent (flame/mono) to the preview
 // document root and backdrop. These mirror the classes the real app toggles on

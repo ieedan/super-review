@@ -7,6 +7,7 @@
 	import BranchReviewComplete from './BranchReviewComplete.svelte';
 	import FindBar from './FindBar.svelte';
 	import PackageHoverCard from './PackageHoverCard.svelte';
+	import RegexTesterPopup from './RegexTesterPopup.svelte';
 	import { app, actions, allBranchChangesSeen } from '@super-review/ui/store.svelte';
 	import { find, openFind, closeFind, setFindRoot } from '@super-review/ui/diff-find.svelte';
 	import { initSelectionHighlight } from '@super-review/ui/diff-selection';
@@ -579,6 +580,10 @@
 <!-- One shared hover card for the whole diff view; each file section's Pierre
      token-hover events drive it through the package-hover controller. -->
 <PackageHoverCard />
+
+<!-- Likewise one shared regex tester, driven by the token hover/click events a
+     JS/TS section fires for its regex literals. -->
+<RegexTesterPopup />
 
 <style>
 	/* The wrapper is layout-transparent by default so a file section behaves as a
