@@ -1,5 +1,22 @@
 # @super-review/ui
 
+## 0.3.0
+
+### Minor Changes
+
+- [#192](https://github.com/ieedan/super-review/pull/192) [`80eb5bf`](https://github.com/ieedan/super-review/commit/80eb5bfdcc85718f0a911cca566c0f2d82ed1f80) Thanks [@ieedan](https://github.com/ieedan)! - feat: test regex literals inline in the diff
+
+  Hovering a regex literal in a JS/TS diff now hints that it can be tested, and
+  clicking it opens a small popup: type a test string and see live whether it
+  matches, with the matched runs highlighted in place and the character range
+  called out. A global literal highlights every match; a literal that does not
+  compile shows the engine's error instead, which makes a broken pattern obvious
+  during review rather than after it ships.
+
+  Detection is a real scanner, not a search for slashes: division, comments,
+  strings and template text are left alone, and a literal split across several
+  syntax-highlighted tokens still resolves as one.
+
 ## 0.2.2
 
 ### Patch Changes
