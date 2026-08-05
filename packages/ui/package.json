@@ -1,6 +1,6 @@
 {
 	"name": "@super-review/ui",
-	"version": "0.2.2",
+	"version": "0.3.0",
 	"description": "Shared Svelte UI components and renderer state for super-review (consumed by the desktop app and future sites)",
 	"type": "module",
 	"private": true,

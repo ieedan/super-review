@@ -1,5 +1,12 @@
 # @super-review/storybook
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [[`80eb5bf`](https://github.com/ieedan/super-review/commit/80eb5bfdcc85718f0a911cca566c0f2d82ed1f80)]:
+  - @super-review/ui@0.3.0
+
 ## 0.1.2
 
 ### Patch Changes
