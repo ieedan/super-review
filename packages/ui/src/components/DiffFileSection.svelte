@@ -59,6 +59,21 @@
 		showPackageHover,
 		scheduleHidePackageHover
 	} from '@super-review/ui/package-hover.svelte';
+	import {
+		isRegexTestablePath,
+		parseRegexLiterals,
+		regexSpanAt,
+		tokenBelongsToLiteral,
+		type RegexLiteralIndex,
+		type RegexLiteralSpan
+	} from '@super-review/ui/regex-literals';
+	import {
+		showRegexHint,
+		scheduleHideRegexHint,
+		toggleRegexTester,
+		closeRegexTesterFor,
+		type RegexTarget
+	} from '@super-review/ui/regex-tester.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
@@ -249,7 +264,7 @@
 	// Pierre fires this for every token the pointer enters (mouse only). For a
 	// dependency name/version token we open the card anchored to that token;
 	// hovering anything else in the file dismisses it.
-	function onTokenEnter(props: DiffTokenEventBaseProps): void {
+	function onPackageTokenEnter(props: DiffTokenEventBaseProps): void {
 		const index = props.side === 'deletions' ? pkgDepsOld : pkgDepsNew;
 		if (!index) return;
 		const span = spanAt(index, props.lineNumber, props.lineCharStart, props.lineCharEnd);
@@ -268,10 +283,112 @@
 		});
 	}
 
-	// Leaving a token starts the shared close timer; re-entering a dep token (or
+	// ----------------------------------------------------------------------
+	// Inline regex tester. Same shape as the package.json cards above: index each
+	// side's regex literals up front, then map Pierre's token events onto them to
+	// drive the shared tester. Hovering a literal hints that it's testable;
+	// clicking one opens a popup that evaluates it against a test string.
+	// ----------------------------------------------------------------------
+	const isRegexTestable = $derived(isRegexTestablePath(file.path));
+	// Rebuilt in renderDiff, like the package.json indexes; null until then.
+	let regexesNew: RegexLiteralIndex | null = null;
+	let regexesOld: RegexLiteralIndex | null = null;
+
+	// The literal under a token, plus everything needed to address it. Returns
+	// null when the token isn't part of one.
+	function regexAt(
+		props: DiffTokenEventBaseProps
+	): { span: RegexLiteralSpan; elements: HTMLElement[]; target: RegexTarget } | null {
+		const index = props.side === 'deletions' ? regexesOld : regexesNew;
+		if (!index) return null;
+		const span = regexSpanAt(index, props.lineNumber, props.lineCharStart, props.lineCharEnd);
+		if (!span) return null;
+		return {
+			span,
+			elements: regexFragments(props.tokenElement, span),
+			target: {
+				// Unique per literal across the whole view: two sections, or the two
+				// sides of one, can hold a literal at the same line and column.
+				key: `${file.path}:${props.side}:${props.lineNumber}:${span.startCol}`,
+				pattern: span.pattern,
+				flags: span.flags,
+				source: span.source
+			}
+		};
+	}
+
+	// Every token fragment making up the literal. Syntax highlighting and
+	// character-level intra-line diffs both chop a literal into several tokens,
+	// and the tester underlines/anchors to the whole `/pattern/flags` rather than
+	// the one fragment the pointer is over. Pierre tags each token with its start
+	// offset (`data-char`) inside the line, so the fragments are the tokens on
+	// this line that belong to the literal by the same rule that resolved the
+	// hover (see `tokenBelongsToLiteral`).
+	function regexFragments(tokenElement: HTMLElement, span: RegexLiteralSpan): HTMLElement[] {
+		const line = tokenElement.closest<HTMLElement>('[data-line]');
+		if (!line) return [tokenElement];
+		const fragments: HTMLElement[] = [];
+		for (const el of line.querySelectorAll<HTMLElement>('[data-char]')) {
+			const start = Number(el.getAttribute('data-char'));
+			if (!Number.isFinite(start)) continue;
+			const end = start + (el.textContent?.length ?? 0);
+			if (tokenBelongsToLiteral(span, start, end)) fragments.push(el);
+		}
+		return fragments.length > 0 ? fragments : [tokenElement];
+	}
+
+	function onRegexTokenEnter(props: DiffTokenEventBaseProps): void {
+		const hit = regexAt(props);
+		if (!hit) {
+			scheduleHideRegexHint();
+			return;
+		}
+		showRegexHint(hit.elements, diffContainer, hit.target);
+	}
+
+	// Clicking a literal opens the tester on it (or closes it, if it's the one
+	// already open).
+	function onRegexTokenClick(props: DiffTokenEventBaseProps): void {
+		// A click that ends a drag-selection is the user selecting code, not asking
+		// to test a regex — opening the popup there would steal focus and drop the
+		// selection they just made.
+		if (!isSelectionCollapsed()) return;
+		const hit = regexAt(props);
+		if (!hit) return;
+		toggleRegexTester(hit.elements, diffContainer, hit.target);
+	}
+
+	// True when nothing is selected, so a click is a plain click. Pierre renders
+	// into a shadow root; `getSelection()` on it reports selections inside that
+	// tree, and we fall back to the document's for browsers that don't implement
+	// the shadow-root method.
+	function isSelectionCollapsed(): boolean {
+		const root = diffContainer?.shadowRoot as
+			| (ShadowRoot & { getSelection?: () => Selection | null })
+			| null
+			| undefined;
+		const selection = root?.getSelection?.() ?? document.getSelection();
+		return !selection || selection.isCollapsed || selection.toString().length === 0;
+	}
+
+	// Pierre's token callbacks are one per event, so each dispatches to whichever
+	// feature this file's type enables. Only one ever applies: package.json has no
+	// regex literals to find, and the JS/TS files the tester runs on aren't
+	// package.json.
+	function onTokenEnter(props: DiffTokenEventBaseProps): void {
+		if (isPkgJson) onPackageTokenEnter(props);
+		if (isRegexTestable) onRegexTokenEnter(props);
+	}
+
+	// Leaving a token starts the shared close timers; re-entering a dep token (or
 	// moving onto the card) cancels it, so name→version moves don't flicker.
 	function onTokenLeave(): void {
-		scheduleHidePackageHover();
+		if (isPkgJson) scheduleHidePackageHover();
+		if (isRegexTestable) scheduleHideRegexHint();
+	}
+
+	function onTokenClick(props: DiffTokenEventBaseProps): void {
+		if (isRegexTestable) onRegexTokenClick(props);
 	}
 
 	// Show comments / accept new ones only where the local diff matches what
@@ -886,6 +1003,14 @@
 			pkgDepsOld = null;
 			scheduleHidePackageHover();
 		}
+		// Same for the regex tester, but it closes only if it's actually anchored
+		// in this section: unlike the hover card it survives the pointer leaving,
+		// so an unrelated file re-rendering must not shut it.
+		if (isRegexTestable) {
+			regexesNew = null;
+			regexesOld = null;
+			if (diffContainer) closeRegexTesterFor(diffContainer);
+		}
 		if (diffContainer) {
 			diffContainer.remove();
 			diffContainer = null;
@@ -1487,6 +1612,12 @@
 			pkgDepsNew = parsePackageDeps(diff.newContents);
 			pkgDepsOld = parsePackageDeps(diff.oldContents);
 		}
+		// Likewise for a JS/TS file's regex literals, so a hovered token resolves
+		// to the literal it belongs to.
+		if (isRegexTestable) {
+			regexesNew = parseRegexLiterals(diff.newContents);
+			regexesOld = parseRegexLiterals(diff.oldContents);
+		}
 
 		// Identical sides have nothing to diff — which includes a newly added empty
 		// file (both sides '') and mode-only changes that somehow still fetched.
@@ -1536,10 +1667,12 @@
 				// via setOptions + flushManagers when `canComment` changes.
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
-				// Token-level hover → npm info cards, only wired for package.json so
-				// Pierre doesn't track hovered tokens for every other file.
-				onTokenEnter: isPkgJson ? onTokenEnter : undefined,
-				onTokenLeave: isPkgJson ? onTokenLeave : undefined,
+				// Token-level events → npm info cards (package.json) and the inline
+				// regex tester (JS/TS). Left off entirely for every other file type so
+				// Pierre doesn't track hovered tokens where nothing consumes them.
+				onTokenEnter: isPkgJson || isRegexTestable ? onTokenEnter : undefined,
+				onTokenLeave: isPkgJson || isRegexTestable ? onTokenLeave : undefined,
+				onTokenClick: isRegexTestable ? onTokenClick : undefined,
 				// Inject the staging gutters after every (re)render. Pierre rebuilds
 				// its shadow DOM on render and on the worker's async highlight
 				// rerender, so re-apply each time.
