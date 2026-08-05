@@ -163,12 +163,16 @@ describe('segmentsFor', () => {
 });
 
 describe('describeMatch', () => {
-	it('describes a single match by its character range', () => {
-		expect(describeMatch([{ start: 4, end: 9 }])).toBe('Match at characters 4-9');
+	it('states a single match plainly', () => {
+		// The popup shows the matched text itself underneath, so the verdict says
+		// no more than whether it matched.
+		expect(describeMatch([{ start: 4, end: 9 }])).toBe('Match');
 	});
 
-	it('describes a zero-length match by its position', () => {
-		expect(describeMatch([{ start: 2, end: 2 }])).toBe('Empty match at character 2');
+	it('calls out a zero-length match', () => {
+		// Nothing gets highlighted for one, so saying "Match" alone would look
+		// like the highlighting was broken.
+		expect(describeMatch([{ start: 2, end: 2 }])).toBe('Empty match');
 	});
 
 	it('counts multiple matches', () => {

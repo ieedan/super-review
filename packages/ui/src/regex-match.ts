@@ -98,16 +98,14 @@ export function segmentsFor(input: string, ranges: RegexMatchRange[]): RegexSegm
 	return segments;
 }
 
-// The status line's text for a settled evaluation, e.g. `Match at characters
-// 4-9` for a single hit or `3 matches` once there are several. Character
-// positions are 0-based (the offsets `String.prototype.indexOf` and friends
-// report), stated end-exclusive as the range the match covers.
+// The verdict line for a settled evaluation. Deliberately terse: the popup
+// shows what a single match captured underneath this, and the input itself
+// highlights every match in place, so counting characters here would restate
+// what's already on screen. A zero-length match is called out because it is
+// otherwise invisible, being a match with nothing highlighted.
 export function describeMatch(ranges: RegexMatchRange[]): string {
 	if (ranges.length === 0) return 'No match';
-	if (ranges.length === 1) {
-		const [range] = ranges;
-		if (range.end === range.start) return `Empty match at character ${range.start}`;
-		return `Match at characters ${range.start}-${range.end}`;
-	}
-	return `${ranges.length} matches`;
+	if (ranges.length > 1) return `${ranges.length} matches`;
+	const [range] = ranges;
+	return range.end === range.start ? 'Empty match' : 'Match';
 }

@@ -94,6 +94,7 @@ function card(): Element | null {
 	return popupInput()?.closest('[data-slot="popover-content"]') ?? null;
 }
 
+// The verdict block, absent entirely until there is something to report.
 function statusText(): string {
 	return card()?.querySelector('[role="status"]')?.textContent?.trim() ?? '';
 }
@@ -129,7 +130,6 @@ describe('regex tester in the diff', () => {
 		// Hovering one fragment (`\d`) identifies the whole literal, not the piece
 		// under the pointer.
 		expect(regexTester.openTarget?.source).toBe('/^\\d+\\.\\d+$/');
-		expect(card()?.textContent).toContain('/^\\d+\\.\\d+$/');
 		// Opening the tester retires the hint.
 		expect(regexTester.hintArmed).toBe(false);
 	});
@@ -153,11 +153,13 @@ describe('regex tester in the diff', () => {
 		click(await tokenAt('SEMVER', 24));
 		await expect.poll(() => popupInput()).toBeTruthy();
 
-		// Nothing typed yet: neither a match nor a failure.
-		expect(statusText()).toContain('Waiting');
+		// Nothing typed yet: no verdict block at all, so the popup is just an input.
+		expect(card()?.querySelector('[role="status"]')).toBeNull();
 
 		await type('1.4');
-		expect(statusText()).toContain('Match at characters 0-3');
+		expect(statusText()).toContain('Match');
+		// What matched is spelled out under the verdict.
+		expect(statusText()).toContain('1.4');
 
 		await type('nope');
 		expect(statusText()).toContain('No match');
