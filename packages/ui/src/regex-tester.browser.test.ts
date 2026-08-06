@@ -8,7 +8,7 @@ import type { DiffData } from '@super-review/core/types';
 // job is glue: Pierre's token events fire from inside a shadow root, the popup
 // is portaled by bits-ui, and the anchor is measured from live rects. None of
 // that exists in jsdom. The detection and evaluation logic underneath is covered
-// by the fast Node tests in regex-literals.test.ts / regex-match.test.ts.
+// by the fast Node tests in regex-scan-*.test.ts / regex-match.test.ts.
 
 // An all-additions .ts file, so Pierre's render and the diff cache agree and
 // every literal below lands on screen.
@@ -62,6 +62,29 @@ async function tokenAt(lineText: string, char: number): Promise<HTMLElement> {
 						t.getAttribute('data-char') === String(char) &&
 						(t.closest('[data-line]')?.textContent ?? '').includes(lineText)
 				)),
+			{ timeout: 5000 }
+		)
+		.toBeTruthy();
+	return found as HTMLElement;
+}
+
+// The rendered token whose own text contains `tokenText`, for the cases where
+// the exact column is incidental to what is being asserted.
+//
+// Excludes a token that spans its whole line, which is what Pierre's first,
+// pre-highlight paint emits: that token deliberately does NOT resolve to a regex
+// (see `tokenBelongsToLiteral`), so matching it would just race the highlighter
+// and fail. Waiting it out is the point.
+async function tokenContaining(tokenText: string): Promise<HTMLElement> {
+	let found: HTMLElement | undefined;
+	await expect
+		.poll(
+			() =>
+				(found = tokens().find((t) => {
+					const text = t.textContent ?? '';
+					if (!text.includes(tokenText)) return false;
+					return text !== (t.closest('[data-line]')?.textContent ?? '');
+				})),
 			{ timeout: 5000 }
 		)
 		.toBeTruthy();
@@ -239,6 +262,68 @@ describe('regex tester in the diff', () => {
 		await expect.poll(() => regexTester.openTarget?.source).toBe('/(unclosed/');
 		// Test strings don't carry over between literals.
 		expect(popupInput()?.value).toBe('');
+	});
+
+	it('finds a regex in a C# file, where regexes are strings', async () => {
+		// A verbatim string handed to a target-typed `new`, which is how the .NET
+		// code that prompted C# support writes them: the `Regex` type is on the
+		// declaration, not the expression.
+		render(Harness, {
+			fixtures: [
+				fixture(
+					[
+						'public static class ListSqlTrace {',
+						'  private static readonly Regex ParameterPattern =',
+						'    new(@"(?<!@)@([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);',
+						'}'
+					],
+					'src/ListSqlTrace.cs'
+				)
+			]
+		});
+
+		click(await tokenContaining('[A-Za-z_]'));
+		await expect.poll(() => popupInput()).toBeTruthy();
+		// The pattern is the string's value: no `@"` wrapper, and nothing decoded
+		// away, since a verbatim string keeps its backslashes.
+		expect(regexTester.openTarget?.pattern).toBe('(?<!@)@([A-Za-z_][A-Za-z0-9_]*)');
+
+		await type('select @name from t');
+		expect(statusText()).toContain('Match');
+		expect(statusText()).toContain('@name');
+	});
+
+	it('translates RegexOptions into RegExp flags', async () => {
+		render(Harness, {
+			fixtures: [
+				fixture(['var re = new Regex("^ab$", RegexOptions.IgnoreCase);'], 'src/Options.cs')
+			]
+		});
+		click(await tokenContaining('^ab$'));
+		await expect.poll(() => regexTester.openTarget?.flags).toBe('i');
+		await type('AB');
+		expect(statusText()).toContain('Match');
+	});
+
+	it('leaves an ordinary C# string alone', async () => {
+		render(Harness, {
+			fixtures: [
+				fixture(
+					['public class A {', '  private const string Key = "__chorus_list_sql";', '}'],
+					'src/A.cs'
+				)
+			]
+		});
+		const token = await tokenContaining('__chorus_list_sql');
+
+		hover(token);
+		// Well past the hover-intent delay: a string that isn't in a Regex position
+		// must stay inert, or every string in a C# file would look testable.
+		await new Promise((resolve) => setTimeout(resolve, 600));
+		expect(regexTester.hintArmed).toBe(false);
+
+		click(token);
+		expect(popupInput()).toBeNull();
 	});
 
 	it('drops the hint when the pointer moves to a token that is not a literal', async () => {

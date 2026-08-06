@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import {
-	isRegexTestablePath,
-	parseRegexLiterals,
-	regexSpanAt,
-	type RegexLiteralSpan
-} from './regex-literals';
+import { parseJsRegexLiterals } from './regex-scan-js';
+import { isRegexTestablePath, regexSpanAt, type RegexLiteralSpan } from './regex-literals';
 
 // Flatten the index to a plain list in line order, which is what most
 // assertions here care about.
 function literals(text: string): (RegexLiteralSpan & { line: number })[] {
 	const out: (RegexLiteralSpan & { line: number })[] = [];
-	for (const [line, spans] of parseRegexLiterals(text)) {
+	for (const [line, spans] of parseJsRegexLiterals(text)) {
 		for (const span of spans) out.push({ ...span, line });
 	}
 	return out.sort((a, b) => a.line - b.line || a.startCol - b.startCol);
@@ -197,16 +193,16 @@ describe('parseRegexLiterals: degrading gracefully', () => {
 	});
 
 	it('returns nothing for text with no literals', () => {
-		expect(parseRegexLiterals('export const x = 1;\n').size).toBe(0);
+		expect(parseJsRegexLiterals('export const x = 1;\n').size).toBe(0);
 	});
 
 	it('handles an empty file', () => {
-		expect(parseRegexLiterals('').size).toBe(0);
+		expect(parseJsRegexLiterals('').size).toBe(0);
 	});
 });
 
 describe('regexSpanAt', () => {
-	const index = parseRegexLiterals('const re = /ab+c/gi;');
+	const index = parseJsRegexLiterals('const re = /ab+c/gi;');
 	// `/ab+c/gi` occupies columns 11..19.
 
 	it('resolves a token that covers the whole literal', () => {
@@ -236,7 +232,7 @@ describe('regexSpanAt', () => {
 	it('still resolves a token that runs slightly past the literal', () => {
 		// Shiki gives up on an unparseable literal and lumps its tail in with what
 		// follows; that token is still overwhelmingly the literal.
-		const broken = parseRegexLiterals('const B = /(unclosed/;');
+		const broken = parseJsRegexLiterals('const B = /(unclosed/;');
 		expect(regexSpanAt(broken, 1, 12, 22)?.source).toBe('/(unclosed/');
 	});
 
@@ -245,7 +241,7 @@ describe('regexSpanAt', () => {
 	});
 
 	it('picks the literal the token overlaps when a line has several', () => {
-		const many = parseRegexLiterals('s.split(/,/).join(/;/);');
+		const many = parseJsRegexLiterals('s.split(/,/).join(/;/);');
 		expect(regexSpanAt(many, 1, 8, 11)?.source).toBe('/,/');
 		expect(regexSpanAt(many, 1, 18, 21)?.source).toBe('/;/');
 	});

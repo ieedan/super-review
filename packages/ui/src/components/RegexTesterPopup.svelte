@@ -184,8 +184,10 @@
 			</div>
 
 			<!-- The verdict, and what matched. Absent entirely until there's
-			     something to report, so an untouched tester is just an input. -->
-			{#if verdict}
+			     something to report, so an untouched tester is just an input. A
+			     compatibility note counts as something to report on its own: it's a
+			     caveat about the answer, so it can't wait for the user to type. -->
+			{#if verdict || target.note}
 				<div
 					role="status"
 					aria-live="polite"
@@ -193,15 +195,25 @@
 						? 'motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150'
 						: ''}"
 				>
-					<p
-						class="text-xs {evaluation.status === 'invalid'
-							? 'text-destructive'
-							: 'text-muted-foreground'}"
-					>
-						{verdict}
-					</p>
+					{#if verdict}
+						<p
+							class="text-xs {evaluation.status === 'invalid'
+								? 'text-destructive'
+								: 'text-muted-foreground'}"
+						>
+							{verdict}
+						</p>
+					{/if}
 					{#if matchedText}
 						<p class="regex-matched mt-1 truncate text-xs text-foreground">{matchedText}</p>
+					{/if}
+					{#if target.note}
+						<!-- The pattern was written for another engine and this one differs
+						     on it. Rare enough to earn the space, and always more useful
+						     than the verdict above it, which it may well contradict. -->
+						<p class="mt-1.5 text-xs text-warning" class:mt-0={!verdict && !matchedText}>
+							{target.note}
+						</p>
 					{/if}
 				</div>
 			{/if}

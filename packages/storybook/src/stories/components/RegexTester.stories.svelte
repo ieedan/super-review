@@ -8,11 +8,14 @@
 	import { makeRepos } from '../../lib/fixtures';
 	import type { ChangedFile } from '@super-review/core/types';
 
-	// The inline regex tester lives on the diff: hovering a regex literal in a
-	// JS/TS file hints that it can be tested, and clicking one opens a popup that
-	// evaluates it live against a test string. These stories cover it end to end
-	// (a real Pierre-rendered diff, real token events) plus a bench for the popup
-	// on its own.
+	// The inline regex tester lives on the diff: hovering a regex hints that it
+	// can be tested, and clicking it opens a popup that evaluates it live against
+	// a test string. These stories cover it end to end (a real Pierre-rendered
+	// diff, real token events) plus a bench for the popup on its own.
+	//
+	// What counts as a regex is per language. JavaScript has literals; C# has no
+	// such thing, so a regex there is a string in a position that means regex, and
+	// the C# stories are as much about what stays inert as what lights up.
 	const repo = makeRepos(1)[0];
 
 	// Lines are written out rather than templated so what the detector sees here
@@ -84,6 +87,57 @@
 		'const stripped = raw.replace(/^\\/+|\\/+$/g, "");',
 		'const both = [/^a/, /b$/i];',
 		'const interpolated = `x${line.replace(/\\d/g, "#")}y`;',
+		''
+	].join('\n');
+
+	// C#, where every regex is a string. Only the strings in a `Regex` position
+	// should light up; the SQL, the key and the message must stay inert, or a C#
+	// file (which is mostly strings) would be unusable.
+	const CSHARP = [
+		'using System.Text.RegularExpressions;',
+		'',
+		'public static class ListSqlTrace {',
+		'\tprivate const string ItemKey = "__chorus_list_sql";',
+		'',
+		'\t// The parameter placeholders Dapper would bind, but not @@IDENTITY and friends.',
+		'\tprivate static readonly Regex ParameterPattern =',
+		'\t\tnew(@"(?<!@)@([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);',
+		'',
+		'\t[GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$")]',
+		'\tprivate static partial Regex SlugPattern();',
+		'',
+		'\tpublic static bool LooksLikeSelect(string sql) =>',
+		'\t\tRegex.IsMatch(sql, @"^\\s*SELECT\\b", RegexOptions.IgnoreCase);',
+		'',
+		'\tpublic static string Normalize(string sql) =>',
+		'\t\tRegex.Replace(sql, "\\\\s+", " ");',
+		'',
+		'\tpublic static void Log(string sql) =>',
+		'\t\tConsole.WriteLine("Executing: " + sql);',
+		'}',
+		''
+	].join('\n');
+
+	// A .NET pattern the browser engine reads differently. `\\A` is a .NET anchor
+	// that RegExp treats as a literal "A", which is exactly the silently-wrong
+	// answer the compatibility note exists to catch.
+	const CSHARP_DIALECT = [
+		'using System.Text.RegularExpressions;',
+		'',
+		'public static class Dialect {',
+		'\t// .NET anchors: RegExp reads these as literal characters.',
+		'\tprivate static readonly Regex Anchored = new(@"\\Astart\\z");',
+		'',
+		'\t// Inline options: RegExp has no syntax for them at all.',
+		'\tprivate static readonly Regex Inline = new(@"(?i)hello");',
+		'',
+		'\t// Whitespace mode: no equivalent, so the spaces below count here.',
+		'\tprivate static readonly Regex Spaced =',
+		'\t\tnew(@"\\d+ \\w+", RegexOptions.IgnorePatternWhitespace);',
+		'',
+		'\t// Nothing to warn about: this means the same thing in both engines.',
+		'\tprivate static readonly Regex Fine = new(@"^(?<year>\\d{4})-\\d{2}$");',
+		'}',
 		''
 	].join('\n');
 
@@ -172,6 +226,43 @@
 	{#snippet template()}
 		<StoreScope
 			setup={() => seedFile('src/lib/parse.ts', '', AMBIGUOUS)}
+			width="980px"
+			height="620px"
+		>
+			<DiffView />
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<!--
+	C#, where a regex is a string rather than a literal. The four in a `Regex`
+	position light up (the constructor, the [GeneratedRegex] attribute, and the
+	second argument of Regex.IsMatch / Regex.Replace); the SQL string, the item key
+	and the log message do not. RegexOptions.IgnoreCase on the IsMatch call comes
+	through as the `i` flag.
+-->
+<Story name="C# (regexes as strings)">
+	{#snippet template()}
+		<StoreScope
+			setup={() => seedFile('src/ListSqlTrace.cs', '', CSHARP)}
+			width="980px"
+			height="620px"
+		>
+			<DiffView />
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<!--
+	Where .NET and the browser's engine disagree. The first three carry a note
+	saying so, because the answer the popup gives would otherwise be quietly wrong
+	(or the pattern simply won't compile); the last one is ordinary and says
+	nothing, which is the case for almost every real pattern.
+-->
+<Story name="C# (dialect differences)">
+	{#snippet template()}
+		<StoreScope
+			setup={() => seedFile('src/Dialect.cs', '', CSHARP_DIALECT)}
 			width="980px"
 			height="620px"
 		>

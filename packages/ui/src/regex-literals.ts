@@ -1,397 +1,122 @@
-// Locates JavaScript/TypeScript regex literals inside a source file so the diff
-// viewer can map a hovered token back to "this is the regex `/pattern/flags`".
-// Pierre reports a hovered token as a line number + a character range within
-// that line (its `data-char` offset); this builds the matching index: line → the
-// literal spans on that line, with their own character ranges, so a hover is
-// resolved with a cheap range-overlap test. Mirrors `package-json-deps.ts`,
-// which does the same job for package.json dependency entries.
+// The regex tester's detection layer: what counts as a regex in a source file,
+// where it sits, and which engine dialect it was written for.
 //
-// It's a hand-rolled scanner rather than a real parser because the file in a
-// working-tree diff may not parse at all (half-typed code), and because we only
-// need source positions, not an AST. The scanner degrades gracefully: anything
-// it can't classify simply doesn't become a regex literal.
+// Pierre reports a hovered token as a line number plus a character range within
+// that line (its `data-char` offset), so every language's scanner produces the
+// same thing: line -> the spans on that line, each with its own character range.
+// A hover then resolves with a cheap range test, exactly like
+// `package-json-deps.ts` does for package.json dependency entries.
 //
-// The hard part is that `/` is ambiguous in JavaScript: it starts a regex in
-// some positions and is division in others. Resolving that needs to know what
-// came before, which means tracking strings, template literals and comments as
-// we go, and classifying the last significant token (see `PrevToken`).
+// One wrinkle makes this more than "find the slashes". Only JavaScript has regex
+// literals; everywhere else a regex is a *string* in a position that means
+// regex, so each language needs its own scanner (see `regex-scan-*.ts`) and the
+// pattern a scanner reports is the decoded string, not the source text. The
+// evaluation is always the browser's `RegExp`, which is the real engine for a
+// JavaScript literal but only an approximation of, say, .NET's, so a span also
+// carries the dialect it came from and anything the translation had to drop.
+
+import { parseJsRegexLiterals } from './regex-scan-js';
+import { dotnetCompatibilityNote, parseCSharpRegexLiterals } from './regex-scan-csharp';
+
+// Whose regex engine the pattern was written for. Drives the compatibility note
+// (see `regexCompatibilityNote`), nothing else: evaluation is always `RegExp`.
+export type RegexDialect = 'javascript' | 'dotnet';
 
 export interface RegexLiteralSpan {
 	// 0-based character offsets within the line, end-exclusive, spanning the
-	// whole literal from the opening `/` through the last flag. Matched against
+	// whole thing the user sees as the regex: `/pattern/flags` in JavaScript, the
+	// entire string literal (quotes, `@` prefix and all) in C#. Matched against
 	// Pierre's token range.
 	startCol: number;
 	endCol: number;
-	// The body between the slashes, exactly as written (escapes intact).
+	// The pattern as the engine receives it. For a JavaScript literal that's the
+	// text between the slashes verbatim; for a C# string it's the *decoded* value,
+	// so source `"\\d+"` becomes `\d+`.
 	pattern: string;
-	// The trailing flag letters, e.g. `gi`. Empty when the literal has none.
+	// Flags in `RegExp` terms. A JavaScript literal's own flags; for C# the
+	// translatable subset of its `RegexOptions`.
 	flags: string;
-	// `/pattern/flags` as written, for the popup header.
+	// The regex as written in the source, for identity and debugging.
 	source: string;
+	dialect: RegexDialect;
+	// Options the source language applied that `RegExp` has no equivalent for AND
+	// that change whether something matches, so the note can own up to them.
+	// Options that only affect capture groups or performance aren't listed.
+	droppedOptions?: string[];
 }
 
-// Line number (1-based, matching Pierre's `data-line`) → literal spans on that
-// line. A line can carry several (`line.split(/,/).map((s) => s.replace(/^ /,
-// ''))`), and they're recorded in source order.
+// Line number (1-based, matching Pierre's `data-line`) -> the spans on that
+// line, in source order. A line can carry several.
 export type RegexLiteralIndex = Map<number, RegexLiteralSpan[]>;
 
-// Extensions whose contents this scanner understands. Deliberately just the
-// JS/TS family: the scanner assumes JavaScript token rules, and applying it to
-// a template language (`.svelte`, `.vue`, `.html`) would read markup like
-// `</div>` as the start of a regex. Other languages' regex dialects are a
-// non-goal for v1 anyway, since evaluation uses the browser's `RegExp`.
-const TESTABLE_EXTENSIONS = new Set(['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts']);
-
-// True when the file's extension is one whose regex literals we can test.
-export function isRegexTestablePath(filePath: string): boolean {
-	const base = filePath.split(/[\\/]/).pop() ?? filePath;
-	const dot = base.lastIndexOf('.');
-	if (dot <= 0) return false;
-	return TESTABLE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
-}
-
-// The flag letters a regex literal may carry. Used to bound the flag scan: only
-// these characters are consumed after the closing slash, so `/re/g.test(x)`
-// stops at the `.` and `1/2/g` (were it ever read as a literal) can't swallow
-// an identifier. Invalid *combinations* (e.g. `ug`, duplicate letters) are left
-// to `RegExp` to reject, which surfaces as the popup's error state.
-const FLAG_CHARS = 'dgimsuvy';
-
-// Keywords after which a `/` can only start a regex, never divide. Anything else
-// that ends in an identifier position (a variable, `this`, a literal) means the
-// `/` is division.
-const REGEX_PRECEDING_KEYWORDS = new Set([
-	'await',
-	'case',
-	'delete',
-	'do',
-	'else',
-	'in',
-	'instanceof',
-	'new',
-	'of',
-	'return',
-	'throw',
-	'typeof',
-	'void',
-	'yield'
-]);
-
-const IDENT_START = /[A-Za-z_$]/;
-const IDENT_PART = /[\w$]/;
-
-function isDigit(ch: string): boolean {
-	return ch >= '0' && ch <= '9';
-}
-
-function addSpan(index: RegexLiteralIndex, line: number, span: RegexLiteralSpan): void {
+// Shared by the scanners, which each build one of these.
+export function addSpan(index: RegexLiteralIndex, line: number, span: RegexLiteralSpan): void {
 	const existing = index.get(line);
 	if (existing) existing.push(span);
 	else index.set(line, [span]);
 }
 
-// What the last significant token was, which is all we need to disambiguate a
-// following `/`. `value` means the token could end an expression (identifier,
-// number, string, `)`, `]`, or a regex literal), so `/` divides. Everything
-// else (operators, `(`, `,`, `=`, `{`, `}`, a regex-permitting keyword, or the
-// very start of the file) means `/` starts a regex.
-type PrevToken = 'value' | 'other';
+// Languages the tester can find regexes in. Each needs a scanner that knows both
+// its string syntax and where a regex can appear, so this list only grows with
+// real support behind it.
+type RegexLanguage = 'javascript' | 'csharp';
 
-// The result of trying to read a regex literal at `start`.
-interface ScannedLiteral {
-	span: RegexLiteralSpan;
-	// Index just past the literal in the source text.
-	end: number;
-	// Columns advanced, so the caller can keep its column counter in step.
-	endCol: number;
+const EXTENSION_LANGUAGES = new Map<string, RegexLanguage>([
+	// JavaScript's regex literals. Deliberately not the template languages
+	// (`.svelte`, `.vue`, `.html`): the scanner assumes JavaScript token rules and
+	// would read markup like `</div>` as the start of a regex.
+	['js', 'javascript'],
+	['jsx', 'javascript'],
+	['mjs', 'javascript'],
+	['cjs', 'javascript'],
+	['ts', 'javascript'],
+	['tsx', 'javascript'],
+	['mts', 'javascript'],
+	['cts', 'javascript'],
+	['cs', 'csharp'],
+	['csx', 'csharp']
+]);
+
+// The scanner language for a file, or null when we have none.
+export function regexLanguageFor(filePath: string): RegexLanguage | null {
+	const base = filePath.split(/[\\/]/).pop() ?? filePath;
+	const dot = base.lastIndexOf('.');
+	if (dot <= 0) return null;
+	return EXTENSION_LANGUAGES.get(base.slice(dot + 1).toLowerCase()) ?? null;
 }
 
-// Try to read a complete regex literal beginning at the `/` at `start`.
-// Returns null when it isn't one after all: an unterminated literal, or one
-// that would run past the end of the line (a regex literal can't contain a raw
-// newline, so `a / b` followed by `c / d` on the next line isn't a match).
-function scanLiteral(text: string, start: number, startCol: number): ScannedLiteral | null {
-	const n = text.length;
-	// Inside a `[...]` character class a `/` is literal, so it doesn't close the
-	// regex (`/[/]/` is a valid one-character class).
-	let inClass = false;
-	let i = start + 1;
-	let col = startCol + 1;
-
-	while (i < n) {
-		const ch = text[i];
-		if (ch === '\\') {
-			// An escape consumes the next character whatever it is, unless the line
-			// ends first (in which case this was never a literal).
-			if (i + 1 >= n || text[i + 1] === '\n') return null;
-			i += 2;
-			col += 2;
-			continue;
-		}
-		if (ch === '\n') return null;
-		if (ch === '[') inClass = true;
-		else if (ch === ']') inClass = false;
-		else if (ch === '/' && !inClass) {
-			const pattern = text.slice(start + 1, i);
-			// An empty pattern would be `//`, which the caller already routed to the
-			// line-comment branch, so `pattern` is always non-empty here.
-			i++;
-			col++;
-			const flagStart = i;
-			while (i < n && FLAG_CHARS.includes(text[i])) {
-				i++;
-				col++;
-			}
-			const flags = text.slice(flagStart, i);
-			return {
-				span: {
-					startCol,
-					endCol: col,
-					pattern,
-					flags,
-					source: `/${pattern}/${flags}`
-				},
-				end: i,
-				endCol: col
-			};
-		}
-		i++;
-		col++;
-	}
-	return null;
+// True when the file is one whose regexes we can find and test.
+export function isRegexTestablePath(filePath: string): boolean {
+	return regexLanguageFor(filePath) !== null;
 }
 
-// Scan JS/TS source and index every regex literal by line. `text` is the full
-// contents of one side of the diff (old or new); the caller keys the result by
-// which side the hovered token reported.
-export function parseRegexLiterals(text: string): RegexLiteralIndex {
-	const index: RegexLiteralIndex = new Map();
-
-	const n = text.length;
-	let i = 0;
-	let line = 1;
-	let col = 0;
-	let prev: PrevToken = 'other';
-
-	// Template literals interleave with ordinary code through `${ ... }`, so the
-	// scanner tracks brace depth and remembers the depth at each open `${`. When
-	// a `}` closes back down to that depth we're inside the template again rather
-	// than in code. Without this, a `/` inside `` `${a / b}` `` would be read
-	// against the wrong context.
-	let braceDepth = 0;
-	const templateBraces: number[] = [];
-	// True while scanning the literal-text portion of a template.
-	let inTemplate = false;
-
-	while (i < n) {
-		const ch = text[i];
-
-		if (inTemplate) {
-			if (ch === '\\') {
-				// Escapes inside a template can span a newline (`\<newline>`), so keep
-				// the line counter honest rather than blindly skipping two characters.
-				if (text[i + 1] === '\n') {
-					line++;
-					col = 0;
-					i += 2;
-				} else {
-					i += 2;
-					col += 2;
-				}
-				continue;
-			}
-			if (ch === '\n') {
-				line++;
-				col = 0;
-				i++;
-				continue;
-			}
-			if (ch === '`') {
-				inTemplate = false;
-				prev = 'value';
-				i++;
-				col++;
-				continue;
-			}
-			if (ch === '$' && text[i + 1] === '{') {
-				// Back to ordinary code until the matching `}`.
-				inTemplate = false;
-				templateBraces.push(braceDepth);
-				braceDepth++;
-				prev = 'other';
-				i += 2;
-				col += 2;
-				continue;
-			}
-			i++;
-			col++;
-			continue;
-		}
-
-		if (ch === '\n') {
-			line++;
-			col = 0;
-			i++;
-			continue;
-		}
-
-		if (ch === ' ' || ch === '\t' || ch === '\r') {
-			i++;
-			col++;
-			continue;
-		}
-
-		if (ch === '/') {
-			const next = text[i + 1];
-			if (next === '/') {
-				// Line comment: everything to the newline, which the loop then handles.
-				while (i < n && text[i] !== '\n') {
-					i++;
-					col++;
-				}
-				continue;
-			}
-			if (next === '*') {
-				// Block comment, possibly spanning lines.
-				i += 2;
-				col += 2;
-				while (i < n && !(text[i] === '*' && text[i + 1] === '/')) {
-					if (text[i] === '\n') {
-						line++;
-						col = 0;
-					} else {
-						col++;
-					}
-					i++;
-				}
-				i += 2;
-				col += 2;
-				continue;
-			}
-			if (prev !== 'value') {
-				const scanned = scanLiteral(text, i, col);
-				if (scanned) {
-					addSpan(index, line, scanned.span);
-					i = scanned.end;
-					col = scanned.endCol;
-					// A regex literal is a value, so a following `/` divides it.
-					prev = 'value';
-					continue;
-				}
-			}
-			// Division (or `/=`), or a `/` we couldn't resolve into a literal.
-			prev = 'other';
-			i++;
-			col++;
-			continue;
-		}
-
-		if (ch === '"' || ch === "'") {
-			// String literal. JS strings can't contain a raw newline, but a broken
-			// one in a working-tree diff might, so bail at the newline and let the
-			// outer loop resynchronise instead of consuming the rest of the file.
-			const quote = ch;
-			i++;
-			col++;
-			while (i < n && text[i] !== quote && text[i] !== '\n') {
-				if (text[i] === '\\') {
-					i += 2;
-					col += 2;
-					continue;
-				}
-				i++;
-				col++;
-			}
-			if (text[i] === quote) {
-				i++;
-				col++;
-			}
-			prev = 'value';
-			continue;
-		}
-
-		if (ch === '`') {
-			inTemplate = true;
-			i++;
-			col++;
-			continue;
-		}
-
-		if (ch === '{') {
-			braceDepth++;
-			prev = 'other';
-			i++;
-			col++;
-			continue;
-		}
-
-		if (ch === '}') {
-			if (
-				templateBraces.length > 0 &&
-				templateBraces[templateBraces.length - 1] === braceDepth - 1
-			) {
-				// This `}` closes a `${ ... }`, so the template's text resumes.
-				templateBraces.pop();
-				braceDepth--;
-				inTemplate = true;
-				i++;
-				col++;
-				continue;
-			}
-			if (braceDepth > 0) braceDepth--;
-			// A `}` ends a block far more often than it ends an object literal that's
-			// about to be divided, so treat it as regex-permitting.
-			prev = 'other';
-			i++;
-			col++;
-			continue;
-		}
-
-		if (IDENT_START.test(ch)) {
-			const start = i;
-			while (i < n && IDENT_PART.test(text[i])) {
-				i++;
-				col++;
-			}
-			const word = text.slice(start, i);
-			prev = REGEX_PRECEDING_KEYWORDS.has(word) ? 'other' : 'value';
-			continue;
-		}
-
-		if (isDigit(ch)) {
-			// Numeric literal, including `0x…`, exponents and separators. The exact
-			// grammar doesn't matter, only that it ends as a value.
-			while (i < n && (IDENT_PART.test(text[i]) || text[i] === '.')) {
-				i++;
-				col++;
-			}
-			prev = 'value';
-			continue;
-		}
-
-		// `)` and `]` close an expression, so a following `/` divides. Everything
-		// else is punctuation or an operator, after which a regex can start.
-		prev = ch === ')' || ch === ']' ? 'value' : 'other';
-		i++;
-		col++;
+// Index every regex in one side of a diff, using the scanner for the file's
+// language. `text` is the full contents of that side; the caller keys the result
+// by which side the hovered token reported.
+export function parseRegexLiterals(text: string, filePath: string): RegexLiteralIndex {
+	switch (regexLanguageFor(filePath)) {
+		case 'javascript':
+			return parseJsRegexLiterals(text);
+		case 'csharp':
+			return parseCSharpRegexLiterals(text);
+		default:
+			return new Map();
 	}
-
-	return index;
 }
 
 // Whether a token at `[tokenStart, tokenEnd)` belongs to `span`.
 //
 // Not a plain overlap test. Syntax highlighting and intra-line diffs chop a
-// literal into pieces (`/`, `^`, `\d`, `+`, …), and each of those must resolve
-// to the whole literal. But tokens also run the other way: Pierre's first,
-// pre-highlight paint emits one token per *line*, and Shiki lumps unparseable
-// code together too. Overlapping alone would make the entire line count as the
-// literal, so the whole line would light up as testable and a click anywhere on
-// it would open the tester.
+// regex into pieces (`/`, `^`, `\d`, `+`, ...), and each of those must resolve
+// to the whole thing. But tokens also run the other way: Pierre's first,
+// pre-highlight paint emits one token per *line*, and Shiki merges any run of
+// characters that share a style. Overlapping alone would make the entire line
+// count as the regex, so the whole line would light up as testable and a click
+// anywhere on it would open the tester.
 //
-// The rule instead is that most of the token has to lie inside the literal. A
-// fragment is fully inside it (100%); a line-wide token holding a short literal
-// is mostly outside it and doesn't count.
+// The rule instead is that most of the token has to lie inside the span. A
+// fragment is fully inside it (100%); a line-wide token holding a short regex is
+// mostly outside it and doesn't count.
 export function tokenBelongsToLiteral(
 	span: RegexLiteralSpan,
 	tokenStart: number,
@@ -404,7 +129,7 @@ export function tokenBelongsToLiteral(
 	return overlap * 2 >= tokenLength;
 }
 
-// Find the regex literal a hovered token belongs to, given the token's line and
+// Find the regex a hovered token belongs to, given the token's line and
 // character range.
 export function regexSpanAt(
 	index: RegexLiteralIndex,
@@ -418,4 +143,16 @@ export function regexSpanAt(
 		if (tokenBelongsToLiteral(span, tokenStart, tokenEnd)) return span;
 	}
 	return null;
+}
+
+// One short sentence owning up to a difference between the dialect the pattern
+// was written for and the browser's `RegExp` that evaluates it, or null when
+// there is none.
+//
+// Deliberately silent by default. The overwhelming majority of patterns mean the
+// same thing in both engines, and a standing "results may vary" disclaimer on
+// every non-JavaScript regex would be noise that trains people to ignore the one
+// case that matters.
+export function regexCompatibilityNote(span: RegexLiteralSpan): string | null {
+	return span.dialect === 'dotnet' ? dotnetCompatibilityNote(span) : null;
 }
