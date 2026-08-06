@@ -123,6 +123,40 @@ export function normalizeInlineFlags(
 	return { pattern: pattern.slice(match[0].length), flags: next };
 }
 
+// Rewrite `\A` / `\z` / `\Z` as `^` and `$`, which is what they mean when the
+// subject is a single line, and the tester's input is exactly that. Idiomatic
+// Ruby anchors nearly every pattern this way (`/\A[a-z]+\z/`), and .NET, Java,
+// Python and PCRE all have them too, so translating turns the single most common
+// silently-wrong case into a correct answer instead of a warning.
+//
+// Only safe without the `m` flag: with it, `^` and `$` match at every line
+// break, which is not what `\A` means. Those keep the escapes, and the note
+// below explains them.
+export function normalizeAnchors(pattern: string, flags: string): string {
+	if (flags.includes('m')) return pattern;
+	let out = '';
+	let inClass = false;
+	for (let i = 0; i < pattern.length; i++) {
+		const ch = pattern[i];
+		if (ch === '\\') {
+			const next = pattern[i + 1] ?? '';
+			// Inside a character class these aren't anchors, so leave them be.
+			if (!inClass && (next === 'A' || next === 'z' || next === 'Z')) {
+				out += next === 'A' ? '^' : '$';
+				i++;
+				continue;
+			}
+			out += ch + next;
+			i++;
+			continue;
+		}
+		if (ch === '[') inClass = true;
+		else if (ch === ']') inClass = false;
+		out += ch;
+	}
+	return out;
+}
+
 // One sentence naming a real difference between the pattern's home engine and
 // this one, or null when there is none.
 export function compatibilityNote(pattern: string, droppedOptions?: string[]): string | null {

@@ -12,7 +12,6 @@
 // which is the whole game: these files are full of strings, and lighting them
 // all up would be worse than no feature.
 
-import { normalizeInlineFlags } from './regex-compat';
 import {
 	addSpan,
 	type RegexDialect,
@@ -40,16 +39,21 @@ export interface QuoteForm {
 	skip?: boolean;
 }
 
-export interface RegexCallSpec {
+// How one language writes its regexes. `literals` covers the languages with a
+// real regex literal; the rest of the fields describe strings sitting in calls.
+// A language can have both (Ruby), and only needs the fields it uses.
+export interface RegexLanguageSpec {
 	dialect: RegexDialect;
-	lineComments: string[];
+	// Scanner for this language's regex literals, if it has any.
+	literals?: (text: string) => RegexLiteralIndex;
+	lineComments?: string[];
 	blockComment?: [string, string];
-	quotes: QuoteForm[];
+	quotes?: QuoteForm[];
 	// Callee -> which argument holds the pattern, 0-based. A key matches the
 	// call's dotted name exactly or as a suffix (`Regex.IsMatch` matches
 	// `System.Text.RegularExpressions.Regex.IsMatch`); a leading dot matches on
 	// the method name alone, for calls on any receiver (`.replaceAll`).
-	sites: Record<string, number>;
+	sites?: Record<string, number>;
 	// The same, for calls introduced by `new`.
 	newSites?: Record<string, number>;
 	// The type whose name in a statement licenses a target-typed `new(…)`, where
@@ -85,7 +89,7 @@ interface CallFrame {
 
 // Which argument of this call holds the pattern, or null when it holds none.
 function patternArgIndex(
-	spec: RegexCallSpec,
+	spec: RegexLanguageSpec,
 	frame: CallFrame,
 	statementNamesType: boolean
 ): number | null {
@@ -231,7 +235,7 @@ function unwrapDelimited(
 // Fold the flag constants in a call's later arguments into the pattern's flags.
 // Reading them off the source is enough: they're written at the call site
 // virtually always, and a value we can't see just leaves the flags empty.
-function applyOptions(spec: RegexCallSpec, span: RegexLiteralSpan, argsText: string): void {
+function applyOptions(spec: RegexLanguageSpec, span: RegexLiteralSpan, argsText: string): void {
 	const options = spec.options;
 	if (!options) return;
 	const dropped = [...(span.droppedOptions ?? [])];
@@ -253,12 +257,13 @@ const IDENT = /[A-Za-z_$]/;
 const IDENT_PART = /[\w$]/;
 
 // Scan a source file and index every regex by line.
-export function scanRegexCalls(spec: RegexCallSpec, text: string): RegexLiteralIndex {
+export function scanRegexCalls(spec: RegexLanguageSpec, text: string): RegexLiteralIndex {
 	const index: RegexLiteralIndex = new Map();
 
 	// Longest opener first, so a form can't be shadowed by a shorter one that
 	// happens to be listed earlier.
-	const quotes = [...spec.quotes].sort((a, b) => b.open.length - a.open.length);
+	const quotes = [...(spec.quotes ?? [])].sort((a, b) => b.open.length - a.open.length);
+	const lineComments = spec.lineComments ?? [];
 
 	const n = text.length;
 	let i = 0;
@@ -318,18 +323,11 @@ export function scanRegexCalls(spec: RegexCallSpec, text: string): RegexLiteralI
 				if (wanted === frame.argIndex) {
 					const unwrapped = spec.delimited ? unwrapDelimited(scanned.value) : null;
 					if (!spec.delimited || unwrapped) {
-						// A leading `(?i)` becomes a real flag: it is how the RE2
-						// languages spell flags at all, so leaving it in the pattern would
-						// fail to compile here for no good reason.
-						const normalized = normalizeInlineFlags(
-							unwrapped ? unwrapped.pattern : scanned.value,
-							unwrapped ? unwrapped.flags : ''
-						);
 						const span: RegexLiteralSpan = {
 							startCol,
 							endCol: col,
-							pattern: normalized.pattern,
-							flags: normalized.flags,
+							pattern: unwrapped ? unwrapped.pattern : scanned.value,
+							flags: unwrapped ? unwrapped.flags : '',
 							source: text.slice(start, scanned.end),
 							dialect: spec.dialect
 						};
@@ -345,7 +343,7 @@ export function scanRegexCalls(spec: RegexCallSpec, text: string): RegexLiteralI
 			continue;
 		}
 
-		const lineComment = spec.lineComments.find((c) => text.startsWith(c, i));
+		const lineComment = lineComments.find((c) => text.startsWith(c, i));
 		if (lineComment) {
 			while (i < n && text[i] !== '\n') {
 				i++;

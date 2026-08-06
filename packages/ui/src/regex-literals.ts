@@ -15,15 +15,14 @@
 // JavaScript literal but only an approximation of, say, .NET's, so a span also
 // carries the dialect it came from and anything the translation had to drop.
 
-import { compatibilityNote } from './regex-compat';
+import { compatibilityNote, normalizeAnchors, normalizeInlineFlags } from './regex-compat';
 import { REGEX_EXTENSIONS, REGEX_LANGUAGES } from './regex-languages';
-import { parseJsRegexLiterals } from './regex-scan-js';
 import { scanRegexCalls } from './regex-scan-call';
 
 // Whose regex engine the pattern was written for. Only `javascript` means the
 // engine evaluating it is the one the code will run under, which is why it is
 // the one dialect that never gets a compatibility note.
-export type RegexDialect = 'javascript' | 'dotnet' | 'python' | 'java' | 're2' | 'pcre';
+export type RegexDialect = 'javascript' | 'dotnet' | 'python' | 'java' | 're2' | 'pcre' | 'ruby';
 
 export interface RegexLiteralSpan {
 	// 0-based character offsets within the line, end-exclusive, spanning the
@@ -72,14 +71,40 @@ export function isRegexTestablePath(filePath: string): boolean {
 	return regexLanguageFor(filePath) !== null;
 }
 
-// Index every regex in one side of a diff, using the scanner for the file's
+// Index every regex in one side of a diff, using the scanners for the file's
 // language. `text` is the full contents of that side; the caller keys the result
 // by which side the hovered token reported.
+//
+// A language can have either kind of scanner or both: JavaScript has only
+// literals, most languages have only calls, and Ruby has both (`/…/` and
+// `%r{…}` alongside `Regexp.new("…")`).
 export function parseRegexLiterals(text: string, filePath: string): RegexLiteralIndex {
 	const language = regexLanguageFor(filePath);
-	if (language === 'javascript') return parseJsRegexLiterals(text);
 	const spec = language ? REGEX_LANGUAGES[language] : undefined;
-	return spec ? scanRegexCalls(spec, text) : new Map();
+	if (!spec) return new Map();
+
+	const index = spec.literals ? spec.literals(text) : new Map<number, RegexLiteralSpan[]>();
+	if (spec.sites || spec.newSites) {
+		for (const [line, spans] of scanRegexCalls(spec, text)) {
+			for (const span of spans) addSpan(index, line, span);
+		}
+	}
+	for (const spans of index.values()) {
+		spans.sort((a, b) => a.startCol - b.startCol);
+		for (const span of spans) normalize(span);
+	}
+	return index;
+}
+
+// Bring a pattern from its home dialect to the one that will evaluate it, where
+// that can be done without changing what it means. A JavaScript literal is
+// already home, and rewriting it would be the one case that breaks something:
+// `/\Afoo/` there really does mean a literal "A".
+function normalize(span: RegexLiteralSpan): void {
+	if (span.dialect === 'javascript') return;
+	const lifted = normalizeInlineFlags(span.pattern, span.flags);
+	span.pattern = normalizeAnchors(lifted.pattern, lifted.flags);
+	span.flags = lifted.flags;
 }
 
 // Whether a token at `[tokenStart, tokenEnd)` belongs to `span`.

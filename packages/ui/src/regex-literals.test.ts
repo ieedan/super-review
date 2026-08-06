@@ -62,6 +62,27 @@ describe('parseRegexLiterals', () => {
 		]);
 	});
 
+	it('lifts a leading inline flag group into a real flag', () => {
+		// How RE2 spells flags at all, so without this nearly every Go and Rust
+		// pattern would fail to compile here for no good reason.
+		const [span] = [
+			...parseRegexLiterals('regexp.MustCompile(`(?i)^hello$`)', 'a.go').values()
+		].flat();
+		expect(span).toMatchObject({ pattern: '^hello$', flags: 'i' });
+	});
+
+	it('rewrites foreign anchors, which this engine reads as literal letters', () => {
+		const [span] = [...parseRegexLiterals('re.compile(r"\\Aabc\\z")', 'a.py').values()].flat();
+		expect(span.pattern).toBe('^abc$');
+	});
+
+	it('leaves a JavaScript literal exactly as written', () => {
+		// `/\Afoo/` in JavaScript really does mean a literal "A", so the rewriting
+		// above would be the one case that breaks something.
+		const [span] = [...parseRegexLiterals('const p = /\\Afoo/;', 'a.ts').values()].flat();
+		expect(span.pattern).toBe('\\Afoo');
+	});
+
 	it('returns nothing for a language it does not know', () => {
 		expect(parseRegexLiterals('const p = /^a$/;', 'a.svelte').size).toBe(0);
 	});

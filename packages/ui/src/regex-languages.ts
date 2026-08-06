@@ -1,19 +1,37 @@
 // Which languages the regex tester understands, and how each one writes a
-// regex. Everything here is data for the shared call scanner (see
-// `regex-scan-call.ts`); JavaScript is the exception, having real regex
-// literals and its own scanner.
+// regex.
 //
-// Adding a language means adding an entry here. The bar for one is that its
-// regexes live in argument positions we can name, because that precision is
-// what keeps every other string in the file inert.
+// Most of it is data for the shared call scanner (see `regex-scan-call.ts`),
+// because in most languages a regex is a string in a known argument of a known
+// call. That precision is what keeps every other string in the file inert.
+// Adding one of those is the dozen lines below it.
+//
+// Two languages have real regex literals, which is syntax rather than a call
+// and needs a scanner of its own: JavaScript and Ruby, the latter having both.
 
-import type { RegexCallSpec } from './regex-scan-call';
+import { parseJsRegexLiterals } from './regex-scan-js';
+import { parseRubyRegexLiterals } from './regex-scan-ruby';
+import type { QuoteForm, RegexLanguageSpec } from './regex-scan-call';
 
 // Quote forms shared by the C-family languages: escapes, no newlines.
-const DOUBLE: RegexCallSpec['quotes'][number] = { open: '"', close: '"' };
-const SINGLE: RegexCallSpec['quotes'][number] = { open: "'", close: "'" };
+const DOUBLE: QuoteForm = { open: '"', close: '"' };
+const SINGLE: QuoteForm = { open: "'", close: "'" };
 
-export const REGEX_LANGUAGES: Record<string, RegexCallSpec> = {
+export const REGEX_LANGUAGES: Record<string, RegexLanguageSpec> = {
+	// JavaScript and TypeScript, the only language here whose regexes are pure
+	// syntax: there is no call to sit in.
+	javascript: { dialect: 'javascript', literals: parseJsRegexLiterals },
+
+	// Ruby has both. The literals are its own scanner (they carry the same `/`
+	// ambiguity JavaScript's do); `Regexp.new("…")` is an ordinary call.
+	ruby: {
+		dialect: 'ruby',
+		literals: parseRubyRegexLiterals,
+		lineComments: ['#'],
+		quotes: [DOUBLE, SINGLE],
+		sites: { 'Regexp.new': 0, 'Regexp.union': 0 }
+	},
+
 	// C#. Regexes are strings passed to `Regex`, including the target-typed
 	// `new(…)` form where the type sits on the declaration.
 	csharp: {
@@ -176,8 +194,7 @@ export const REGEX_LANGUAGES: Record<string, RegexCallSpec> = {
 	}
 };
 
-// File extension -> the language whose regexes it holds. `javascript` has its
-// own scanner; everything else resolves to a `REGEX_LANGUAGES` entry.
+// File extension -> the language whose regexes it holds.
 //
 // Deliberately not the template languages (`.svelte`, `.vue`, `.html`): the
 // JavaScript scanner assumes JavaScript token rules and would read markup like
@@ -200,5 +217,8 @@ export const REGEX_EXTENSIONS: Record<string, string> = {
 	kts: 'kotlin',
 	go: 'go',
 	rs: 'rust',
-	php: 'php'
+	php: 'php',
+	rb: 'ruby',
+	rake: 'ruby',
+	gemspec: 'ruby'
 };

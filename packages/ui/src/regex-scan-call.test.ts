@@ -235,12 +235,11 @@ describe('Go', () => {
 		expect(patterns('go', 'regexp.MustCompile("\\\\s+")')).toEqual(['\\s+']);
 	});
 
-	it('lifts a leading inline flag group into RegExp flags', () => {
-		// This is how RE2 spells flags at all, so without the lift a Go pattern
-		// would fail to compile here for no good reason.
-		const [span] = spans('go', 'regexp.MustCompile(`(?i)^hello$`)');
-		expect(span.pattern).toBe('^hello$');
-		expect(span.flags).toBe('i');
+	it('reads an inline flag group as written', () => {
+		// The scanner only finds; lifting `(?i)` into a real flag is normalisation,
+		// which belongs to every language and so lives in the dispatcher (see
+		// regex-literals.test.ts).
+		expect(patterns('go', 'regexp.MustCompile(`(?i)^hello$`)')).toEqual(['(?i)^hello$']);
 	});
 
 	it('ignores ordinary strings', () => {

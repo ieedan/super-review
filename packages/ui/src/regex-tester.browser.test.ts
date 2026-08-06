@@ -398,6 +398,21 @@ describe('regex tester in the diff', () => {
 			testable: 'preg_match',
 			inert: '$label'
 		},
+		'a.rb': {
+			lines: [
+				'SLUG = /\\A[a-z0-9-]+\\z/',
+				'',
+				'def normalize(text)',
+				'  text.gsub(/\\s+/, " ")',
+				'end',
+				'',
+				'RATIO = width / height',
+				'URL = "https://example.com/a/b"'
+			],
+			testable: 'SLUG =',
+			// A slash that divides, on a line with two of them.
+			inert: 'RATIO ='
+		},
 		'A.kt': {
 			lines: [
 				'fun main() {',
@@ -436,6 +451,19 @@ describe('regex tester in the diff', () => {
 		expect(statusText()).toContain('Match');
 	});
 
+	it('rewrites a Ruby anchor into one this engine shares', async () => {
+		// `\A…\z` anchors nearly every Ruby validation, and RegExp reads `\A` as a
+		// literal "A". On a single-line subject the rewrite is exact, so the tester
+		// gives the real answer instead of a warning and a wrong one.
+		render(Harness, { fixtures: [fixture(['SLUG = /\\A[a-z-]+\\z/'], 'src/a.rb')] });
+		await expect.poll(() => openOnLine('SLUG'), { timeout: 8000 }).toBe(true);
+		expect(regexTester.openTarget?.pattern).toBe('^[a-z-]+$');
+		await type('my-slug');
+		expect(statusText()).toContain('Match');
+		await type('my slug');
+		expect(statusText()).toContain('No match');
+	});
+
 	it('unwraps a PHP pattern from its delimiters', async () => {
 		render(Harness, { fixtures: [fixture(["preg_match('/^a.c$/i', $s);"], 'src/a.php')] });
 		await expect.poll(() => openOnLine('preg_match'), { timeout: 8000 }).toBe(true);
@@ -443,12 +471,17 @@ describe('regex tester in the diff', () => {
 		expect(regexTester.openTarget?.flags).toBe('i');
 	});
 
-	it('warns when the pattern means something else in this engine', async () => {
-		// `\A` is an anchor in .NET; RegExp reads it as a literal "A", so the
-		// honest answer is "no match, and here is why".
-		render(Harness, { fixtures: [fixture(['var re = new Regex(@"\\Astart");'], 'src/A.cs')] });
+	it('warns when the pattern cannot be brought over faithfully', async () => {
+		// `\A` is normally rewritten to `^`, which is exact on a single-line
+		// subject. Under Multiline it is not, since `^` then matches at every line
+		// break, so the rewrite is skipped and the note explains the difference
+		// instead of a wrong answer being given quietly.
+		render(Harness, {
+			fixtures: [fixture(['var re = new Regex(@"\\Astart", RegexOptions.Multiline);'], 'src/A.cs')]
+		});
 		await expect.poll(() => openOnLine('new Regex'), { timeout: 8000 }).toBe(true);
 		await expect.poll(() => popupInput()).toBeTruthy();
+		expect(regexTester.openTarget?.pattern).toBe('\\Astart');
 		expect(statusText()).toContain('literal characters');
 	});
 

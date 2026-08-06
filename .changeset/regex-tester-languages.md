@@ -3,11 +3,13 @@
 '@super-review/ui': minor
 ---
 
-feat: find regexes in C#, Python, Java, Kotlin, Go, Rust and PHP
+feat: find regexes in C#, Python, Java, Kotlin, Go, Rust, PHP and Ruby
 
-The inline regex tester only understood JavaScript's `/pattern/flags`. Every
-other language writes a regex as a string handed to a function, so detection
-there is about position rather than syntax: `re.compile(…)`,
+The inline regex tester only understood JavaScript's `/pattern/flags`. Ruby has
+literals of its own (`/…/` and `%r{…}`, with the same division-or-regex question
+JavaScript poses) and gets its own scanner. Every other language writes a regex
+as a string handed to a function, so detection there is about position rather
+than syntax: `re.compile(…)`,
 `Pattern.compile(…)`, `regexp.MustCompile(…)`, `new Regex(…)`, `preg_match(…)`
 and friends. Every other string in the file stays inert, which is the harder
 half of the job in files that are mostly strings.
@@ -19,9 +21,11 @@ engine would receive, so `"\\d+"` is tested as `\d+`, and PHP's `'/^a$/i'`
 is unwrapped into a pattern and its flags.
 
 Patterns still run on the browser's engine, which is the real one only for
-JavaScript. Where the two agree, which is nearly always, the popup says
-nothing. Where they don't it adds a line, because the quiet differences are the
-dangerous ones: `\A` is an anchor in most of these languages and a literal "A"
-here, so a pattern using it would otherwise report "No match" and look simply
-broken. A leading `(?i)` is lifted into a real flag instead, since that is how
-Go and Rust spell flags at all.
+JavaScript, so two things are brought over where that can be done exactly. A
+leading `(?i)` becomes a real flag, since that is how Go and Rust spell flags at
+all. And `\A` / `\z`, which anchor nearly every Ruby validation and which this
+engine reads as literal letters, become `^` and `$`, which is what they mean
+when the subject is a single line and the tester's input is exactly that.
+
+For what is left, the popup adds a line. It says nothing when the pattern means
+the same thing in both engines, which is nearly always.

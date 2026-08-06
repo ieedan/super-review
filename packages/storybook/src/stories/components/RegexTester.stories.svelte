@@ -214,6 +214,25 @@
 			]
 		},
 		{
+			path: 'app/models/account.rb',
+			lines: [
+				'class Account',
+				'  # Ruby anchors with \\A and \\z, which this engine reads as letters.',
+				'  # They are rewritten to ^ and $, exact for a single-line subject.',
+				'  SLUG = /\\A[a-z0-9-]+\\z/',
+				'  HOST = %r{\\Ahttps?://[^/]+\\z}i',
+				'',
+				'  def normalize(name)',
+				'    name.gsub(/\\s+/, " ").strip',
+				'  end',
+				'',
+				'  # Neither of these is a regex.',
+				'  RATIO = width / height',
+				'  URL = "https://example.com/a/b"',
+				'end'
+			]
+		},
+		{
 			path: 'src/Slug.kt',
 			lines: [
 				'fun main() {',
@@ -367,12 +386,15 @@
 </Story>
 
 <!--
-	Every other language, one file each: Python, Java, Go, Rust, PHP and Kotlin.
+	Every other language, one file each: Python, Java, Go, Rust, PHP, Ruby and
+	Kotlin.
 	Worth scrolling the whole way for what does NOT react, which is the harder
 	half: the plain strings, the comment that names `re.compile`, and Kotlin's
 	`split(",")` (unlike Java's, it takes a literal delimiter). The Go file also
 	shows an inline `(?i)` becoming a real flag, and the PHP one a pattern being
-	unwrapped from its delimiters.
+	unwrapped from its delimiters, and the Ruby one `\A…\z` being rewritten into
+	anchors this engine shares (its `RATIO = width / height` stays inert, which is
+	the same division-or-regex question JavaScript poses).
 -->
 <Story name="Every other language">
 	{#snippet template()}
