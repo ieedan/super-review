@@ -141,6 +141,91 @@
 		''
 	].join('\n');
 
+	// The remaining languages. Each file pairs the regex positions the scanner
+	// knows with a plain string that looks like one, because staying inert is half
+	// of what makes the feature usable in a file that is mostly strings.
+	const OTHER_LANGUAGES = [
+		{
+			path: 'app/validators.py',
+			lines: [
+				'import re',
+				'',
+				'SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")',
+				'EMAIL = re.compile(r"^[^@\\s]+@[^@\\s]+$", re.IGNORECASE)',
+				'',
+				'# A plain string, and a comment mentioning re.compile(r"nope").',
+				'BANNER = "re.compile is not called here"',
+				'',
+				'def normalize(text):',
+				'    return re.sub(r"\\s+", " ", text.strip())'
+			]
+		},
+		{
+			path: 'src/Validators.java',
+			lines: [
+				'public final class Validators {',
+				'\tprivate static final Pattern SEMVER =',
+				'\t\tPattern.compile("^\\\\d+\\\\.\\\\d+\\\\.\\\\d+$");',
+				'',
+				'\tprivate static final String KEY = "plain string";',
+				'',
+				'\t// In Java these String methods really are regex-based.',
+				'\tstatic String normalize(String raw) {',
+				'\t\treturn raw.replaceAll("\\\\s+", " ");',
+				'\t}',
+				'}'
+			]
+		},
+		{
+			path: 'internal/parse/slug.go',
+			lines: [
+				'package parse',
+				'',
+				'var slug = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)',
+				'',
+				'// RE2 has no flag arguments, so this is how Go spells them. The',
+				'// leading group is lifted into a real flag rather than left to fail.',
+				'var greeting = regexp.MustCompile(`(?i)^hello,? world$`)',
+				'',
+				'var name = "not a regex"'
+			]
+		},
+		{
+			path: 'src/slug.rs',
+			lines: [
+				'fn main() {',
+				'    let slug = Regex::new(r"^[a-z0-9]+(?:-[a-z0-9]+)*$").unwrap();',
+				'    let quoted = Regex::new(r#"^"(.*)"$"#).unwrap();',
+				'    let message = "not a regex";',
+				'}'
+			]
+		},
+		{
+			path: 'src/Validator.php',
+			lines: [
+				'<?php',
+				'',
+				'// The pattern carries its own delimiters and modifiers.',
+				"if (preg_match('/^[a-z0-9-]+$/i', $slug)) {",
+				"    $clean = preg_replace('/\\s+/', ' ', $raw);",
+				'}',
+				'',
+				'$label = "not a regex";'
+			]
+		},
+		{
+			path: 'src/Slug.kt',
+			lines: [
+				'fun main() {',
+				'    val slug = Regex("^[a-z0-9]+(?:-[a-z0-9]+)*$")',
+				'',
+				'    // Kotlin split takes a literal delimiter, so this stays inert.',
+				'    val parts = line.split(",")',
+				'}'
+			]
+		}
+	].map(({ path, lines }) => ({ path, oldContents: '', newContents: lines.join('\n') + '\n' }));
+
 	// Seeds one file's diff and points the view at it. An empty `oldContents`
 	// makes it a new file, which renders every line as an addition, the way to
 	// get a whole fixture on screen at once. (Identical sides render the
@@ -152,31 +237,41 @@
 		newContents: string,
 		viewMode: 'split' | 'unified' = 'split'
 	) {
-		const file: ChangedFile = {
+		seedFiles([{ path, oldContents, newContents }], viewMode);
+	}
+
+	// Several files at once, for walking a feature across languages.
+	function seedFiles(
+		entries: { path: string; oldContents: string; newContents: string }[],
+		viewMode: 'split' | 'unified' = 'split'
+	) {
+		const files: ChangedFile[] = entries.map(({ path, oldContents, newContents }) => ({
 			path,
 			status: oldContents === '' ? 'added' : 'modified',
 			additions: newContents.split('\n').length,
 			deletions: oldContents === '' ? 0 : oldContents.split('\n').length,
 			isBinary: false,
 			contentSig: `sig-${path}`
-		};
+		}));
 		seedStore({
 			repos: [repo],
 			activeRepo: repo,
 			currentBranch: 'feat/validators',
 			contextTab: 'branch',
 			diffContext: { kind: 'workingTree' },
-			changedFiles: [file],
-			selectedFile: file.path,
+			changedFiles: files,
+			selectedFile: files[0]?.path ?? null,
 			diffLayout: 'scroll',
 			viewMode
 		});
-		setCachedDiff(repo.id, { kind: 'workingTree' }, file.path, {
-			file,
-			patch: '',
-			oldContents,
-			newContents,
-			truncated: false
+		files.forEach((file, i) => {
+			setCachedDiff(repo.id, { kind: 'workingTree' }, file.path, {
+				file,
+				patch: '',
+				oldContents: entries[i].oldContents,
+				newContents: entries[i].newContents,
+				truncated: false
+			});
 		});
 	}
 
@@ -266,6 +361,22 @@
 			width="980px"
 			height="620px"
 		>
+			<DiffView />
+		</StoreScope>
+	{/snippet}
+</Story>
+
+<!--
+	Every other language, one file each: Python, Java, Go, Rust, PHP and Kotlin.
+	Worth scrolling the whole way for what does NOT react, which is the harder
+	half: the plain strings, the comment that names `re.compile`, and Kotlin's
+	`split(",")` (unlike Java's, it takes a literal delimiter). The Go file also
+	shows an inline `(?i)` becoming a real flag, and the PHP one a pattern being
+	unwrapped from its delimiters.
+-->
+<Story name="Every other language">
+	{#snippet template()}
+		<StoreScope setup={() => seedFiles(OTHER_LANGUAGES)} width="980px" height="620px">
 			<DiffView />
 		</StoreScope>
 	{/snippet}

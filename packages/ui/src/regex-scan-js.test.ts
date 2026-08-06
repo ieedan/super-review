@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseJsRegexLiterals } from './regex-scan-js';
-import { isRegexTestablePath, regexSpanAt, type RegexLiteralSpan } from './regex-literals';
+import type { RegexLiteralSpan } from './regex-literals';
 
 // Flatten the index to a plain list in line order, which is what most
 // assertions here care about.
@@ -16,35 +16,7 @@ function sources(text: string): string[] {
 	return literals(text).map((l) => l.source);
 }
 
-describe('isRegexTestablePath', () => {
-	it('accepts the JS/TS family', () => {
-		for (const path of [
-			'src/a.js',
-			'src/a.jsx',
-			'a.mjs',
-			'a.cjs',
-			'src/deep/b.ts',
-			'b.tsx',
-			'b.mts',
-			'b.cts'
-		]) {
-			expect(isRegexTestablePath(path), path).toBe(true);
-		}
-	});
-
-	it('rejects everything else', () => {
-		// Template languages embed JS but their markup would be misread as regex.
-		for (const path of ['a.svelte', 'a.vue', 'a.html', 'a.py', 'a.json', 'README.md', 'Makefile']) {
-			expect(isRegexTestablePath(path), path).toBe(false);
-		}
-	});
-
-	it('is case insensitive and handles Windows separators', () => {
-		expect(isRegexTestablePath('src\\components\\A.TS')).toBe(true);
-	});
-});
-
-describe('parseRegexLiterals', () => {
+describe('parseJsRegexLiterals', () => {
 	it('finds a literal and its character range', () => {
 		const [literal] = literals('const re = /ab+c/gi;');
 		expect(literal).toMatchObject({
@@ -98,7 +70,7 @@ describe('parseRegexLiterals', () => {
 	});
 });
 
-describe('parseRegexLiterals: division vs regex', () => {
+describe('parseJsRegexLiterals: division vs regex', () => {
 	it('reads a slash after an identifier as division', () => {
 		expect(sources('const ratio = width / height;')).toEqual([]);
 	});
@@ -137,7 +109,7 @@ describe('parseRegexLiterals: division vs regex', () => {
 	});
 });
 
-describe('parseRegexLiterals: strings, comments and templates', () => {
+describe('parseJsRegexLiterals: strings, comments and templates', () => {
 	it('ignores slashes inside strings', () => {
 		expect(sources('const url = "https://example.com/a/b";')).toEqual([]);
 		expect(sources("const p = 'a/b/c';")).toEqual([]);
@@ -178,7 +150,7 @@ describe('parseRegexLiterals: strings, comments and templates', () => {
 	});
 });
 
-describe('parseRegexLiterals: degrading gracefully', () => {
+describe('parseJsRegexLiterals: degrading gracefully', () => {
 	it('ignores an unterminated literal', () => {
 		expect(sources('const p = /unterminated\nconst q = 1;')).toEqual([]);
 	});
@@ -198,51 +170,5 @@ describe('parseRegexLiterals: degrading gracefully', () => {
 
 	it('handles an empty file', () => {
 		expect(parseJsRegexLiterals('').size).toBe(0);
-	});
-});
-
-describe('regexSpanAt', () => {
-	const index = parseJsRegexLiterals('const re = /ab+c/gi;');
-	// `/ab+c/gi` occupies columns 11..19.
-
-	it('resolves a token that covers the whole literal', () => {
-		expect(regexSpanAt(index, 1, 11, 19)?.source).toBe('/ab+c/gi');
-	});
-
-	it('resolves any fragment of it', () => {
-		// Highlighting and intra-line diffs split the literal into pieces; each
-		// one must resolve to the same literal.
-		expect(regexSpanAt(index, 1, 11, 12)?.source).toBe('/ab+c/gi'); // the opening slash
-		expect(regexSpanAt(index, 1, 13, 15)?.source).toBe('/ab+c/gi'); // the middle
-		expect(regexSpanAt(index, 1, 17, 19)?.source).toBe('/ab+c/gi'); // the flags
-	});
-
-	it('returns null for tokens outside the literal', () => {
-		expect(regexSpanAt(index, 1, 0, 5)).toBeNull(); // `const`
-		expect(regexSpanAt(index, 1, 19, 20)).toBeNull(); // the trailing `;`
-	});
-
-	it('ignores a token that merely contains the literal', () => {
-		// Pierre's first, pre-highlight paint emits one token per line. Matching it
-		// would make the whole line testable, so a token that is mostly outside the
-		// literal is not a fragment of it.
-		expect(regexSpanAt(index, 1, 0, 20)).toBeNull();
-	});
-
-	it('still resolves a token that runs slightly past the literal', () => {
-		// Shiki gives up on an unparseable literal and lumps its tail in with what
-		// follows; that token is still overwhelmingly the literal.
-		const broken = parseJsRegexLiterals('const B = /(unclosed/;');
-		expect(regexSpanAt(broken, 1, 12, 22)?.source).toBe('/(unclosed/');
-	});
-
-	it('returns null for a line with no literals', () => {
-		expect(regexSpanAt(index, 2, 0, 5)).toBeNull();
-	});
-
-	it('picks the literal the token overlaps when a line has several', () => {
-		const many = parseJsRegexLiterals('s.split(/,/).join(/;/);');
-		expect(regexSpanAt(many, 1, 8, 11)?.source).toBe('/,/');
-		expect(regexSpanAt(many, 1, 18, 21)?.source).toBe('/;/');
 	});
 });

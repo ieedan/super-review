@@ -326,6 +326,132 @@ describe('regex tester in the diff', () => {
 		expect(popupInput()).toBeNull();
 	});
 
+	// Click along the line containing `lineText` until the tester opens, and say
+	// whether it did. Left open on success, so a caller can inspect the target.
+	//
+	// Asserting over every token on the line beats guessing where Shiki draws
+	// token boundaries, and says exactly what the affordance should do: somewhere
+	// on this line is testable, or nowhere on it is. The whole-line token is
+	// excluded because it is Pierre's pre-highlight paint, which deliberately
+	// resolves to nothing.
+	//
+	// Reads the controller rather than the DOM, since it settles synchronously on
+	// the click where the portaled popup needs a tick to paint.
+	function openOnLine(lineText: string): boolean {
+		const onLine = tokens().filter((t) => {
+			const line = t.closest('[data-line]');
+			if (!line || !(line.textContent ?? '').includes(lineText)) return false;
+			return t.textContent !== line.textContent;
+		});
+		for (const token of onLine) {
+			click(token);
+			if (regexTester.openTarget) return true;
+		}
+		return false;
+	}
+
+	// One file per language, each with a regex and a plain string that looks like
+	// one. Detection is unit-tested per language; what this adds is that it still
+	// holds against Pierre's real tokens, where a regex arrives in fragments and
+	// the affordance has to land on the right ones.
+	const LANGUAGES: Record<string, { lines: string[]; testable: string; inert: string }> = {
+		'a.py': {
+			lines: [
+				'import re',
+				'SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")',
+				'BANNER = "not a regex"'
+			],
+			testable: 'SLUG =',
+			inert: 'BANNER ='
+		},
+		'A.java': {
+			lines: [
+				'public class A {',
+				'  private static final Pattern P = Pattern.compile("^\\\\d+$");',
+				'  private static final String KEY = "plain string";',
+				'}'
+			],
+			testable: 'Pattern.compile',
+			inert: 'String KEY'
+		},
+		'a.go': {
+			lines: [
+				'package main',
+				'var slug = regexp.MustCompile(`^[a-z]+$`)',
+				'var name = "not a regex"'
+			],
+			testable: 'MustCompile',
+			inert: 'var name'
+		},
+		'a.rs': {
+			lines: [
+				'fn main() {',
+				'    let re = Regex::new(r"^\\d{4}$").unwrap();',
+				'    let m = "not a regex";',
+				'}'
+			],
+			testable: 'Regex::new',
+			inert: 'let m ='
+		},
+		'a.php': {
+			lines: ['<?php', "if (preg_match('/^\\d+$/i', $s)) { }", '$label = "not a regex";'],
+			testable: 'preg_match',
+			inert: '$label'
+		},
+		'A.kt': {
+			lines: [
+				'fun main() {',
+				'    val re = Regex("^[a-z]+$")',
+				'    val parts = line.split(",")',
+				'}'
+			],
+			testable: 'val re',
+			// Unlike Java, Kotlin's split takes a literal delimiter, not a regex.
+			inert: 'val parts'
+		}
+	};
+
+	for (const [path, spec] of Object.entries(LANGUAGES)) {
+		it(`finds the regex and only the regex in ${path}`, async () => {
+			render(Harness, { fixtures: [fixture(spec.lines, `src/${path}`)] });
+			// Each grammar loads on demand, so poll the regex line rather than a
+			// clock. Doing it first also means the inert assertion below runs
+			// against a fully tokenized file, where it actually proves something.
+			await expect.poll(() => openOnLine(spec.testable), { timeout: 8000 }).toBe(true);
+			closeRegexTester();
+			expect(openOnLine(spec.inert), `${spec.inert} should stay inert`).toBe(false);
+		});
+	}
+
+	it('lifts a Go inline flag group into a real flag', async () => {
+		// RE2 has no flag arguments, so `(?i)` is how Go spells them. Left in the
+		// pattern it would just fail to compile here.
+		render(Harness, {
+			fixtures: [fixture(['var ci = regexp.MustCompile(`(?i)^hello$`)'], 'src/a.go')]
+		});
+		await expect.poll(() => openOnLine('MustCompile'), { timeout: 8000 }).toBe(true);
+		expect(regexTester.openTarget?.flags).toBe('i');
+		expect(regexTester.openTarget?.pattern).toBe('^hello$');
+		await type('HELLO');
+		expect(statusText()).toContain('Match');
+	});
+
+	it('unwraps a PHP pattern from its delimiters', async () => {
+		render(Harness, { fixtures: [fixture(["preg_match('/^a.c$/i', $s);"], 'src/a.php')] });
+		await expect.poll(() => openOnLine('preg_match'), { timeout: 8000 }).toBe(true);
+		expect(regexTester.openTarget?.pattern).toBe('^a.c$');
+		expect(regexTester.openTarget?.flags).toBe('i');
+	});
+
+	it('warns when the pattern means something else in this engine', async () => {
+		// `\A` is an anchor in .NET; RegExp reads it as a literal "A", so the
+		// honest answer is "no match, and here is why".
+		render(Harness, { fixtures: [fixture(['var re = new Regex(@"\\Astart");'], 'src/A.cs')] });
+		await expect.poll(() => openOnLine('new Regex'), { timeout: 8000 }).toBe(true);
+		await expect.poll(() => popupInput()).toBeTruthy();
+		expect(statusText()).toContain('literal characters');
+	});
+
 	it('drops the hint when the pointer moves to a token that is not a literal', async () => {
 		render(Harness, { fixtures: [fixture(LINES)] });
 		hover(await tokenAt('SEMVER', 24));

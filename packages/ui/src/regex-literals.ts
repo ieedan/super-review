@@ -15,12 +15,15 @@
 // JavaScript literal but only an approximation of, say, .NET's, so a span also
 // carries the dialect it came from and anything the translation had to drop.
 
+import { compatibilityNote } from './regex-compat';
+import { REGEX_EXTENSIONS, REGEX_LANGUAGES } from './regex-languages';
 import { parseJsRegexLiterals } from './regex-scan-js';
-import { dotnetCompatibilityNote, parseCSharpRegexLiterals } from './regex-scan-csharp';
+import { scanRegexCalls } from './regex-scan-call';
 
-// Whose regex engine the pattern was written for. Drives the compatibility note
-// (see `regexCompatibilityNote`), nothing else: evaluation is always `RegExp`.
-export type RegexDialect = 'javascript' | 'dotnet';
+// Whose regex engine the pattern was written for. Only `javascript` means the
+// engine evaluating it is the one the code will run under, which is why it is
+// the one dialect that never gets a compatibility note.
+export type RegexDialect = 'javascript' | 'dotnet' | 'python' | 'java' | 're2' | 'pcre';
 
 export interface RegexLiteralSpan {
 	// 0-based character offsets within the line, end-exclusive, spanning the
@@ -56,33 +59,12 @@ export function addSpan(index: RegexLiteralIndex, line: number, span: RegexLiter
 	else index.set(line, [span]);
 }
 
-// Languages the tester can find regexes in. Each needs a scanner that knows both
-// its string syntax and where a regex can appear, so this list only grows with
-// real support behind it.
-type RegexLanguage = 'javascript' | 'csharp';
-
-const EXTENSION_LANGUAGES = new Map<string, RegexLanguage>([
-	// JavaScript's regex literals. Deliberately not the template languages
-	// (`.svelte`, `.vue`, `.html`): the scanner assumes JavaScript token rules and
-	// would read markup like `</div>` as the start of a regex.
-	['js', 'javascript'],
-	['jsx', 'javascript'],
-	['mjs', 'javascript'],
-	['cjs', 'javascript'],
-	['ts', 'javascript'],
-	['tsx', 'javascript'],
-	['mts', 'javascript'],
-	['cts', 'javascript'],
-	['cs', 'csharp'],
-	['csx', 'csharp']
-]);
-
 // The scanner language for a file, or null when we have none.
-export function regexLanguageFor(filePath: string): RegexLanguage | null {
+export function regexLanguageFor(filePath: string): string | null {
 	const base = filePath.split(/[\\/]/).pop() ?? filePath;
 	const dot = base.lastIndexOf('.');
 	if (dot <= 0) return null;
-	return EXTENSION_LANGUAGES.get(base.slice(dot + 1).toLowerCase()) ?? null;
+	return REGEX_EXTENSIONS[base.slice(dot + 1).toLowerCase()] ?? null;
 }
 
 // True when the file is one whose regexes we can find and test.
@@ -94,14 +76,10 @@ export function isRegexTestablePath(filePath: string): boolean {
 // language. `text` is the full contents of that side; the caller keys the result
 // by which side the hovered token reported.
 export function parseRegexLiterals(text: string, filePath: string): RegexLiteralIndex {
-	switch (regexLanguageFor(filePath)) {
-		case 'javascript':
-			return parseJsRegexLiterals(text);
-		case 'csharp':
-			return parseCSharpRegexLiterals(text);
-		default:
-			return new Map();
-	}
+	const language = regexLanguageFor(filePath);
+	if (language === 'javascript') return parseJsRegexLiterals(text);
+	const spec = language ? REGEX_LANGUAGES[language] : undefined;
+	return spec ? scanRegexCalls(spec, text) : new Map();
 }
 
 // Whether a token at `[tokenStart, tokenEnd)` belongs to `span`.
@@ -154,5 +132,6 @@ export function regexSpanAt(
 // every non-JavaScript regex would be noise that trains people to ignore the one
 // case that matters.
 export function regexCompatibilityNote(span: RegexLiteralSpan): string | null {
-	return span.dialect === 'dotnet' ? dotnetCompatibilityNote(span) : null;
+	if (span.dialect === 'javascript') return null;
+	return compatibilityNote(span.pattern, span.droppedOptions);
 }
