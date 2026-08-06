@@ -7,9 +7,9 @@ feat: find regexes in C#, Python, Java, Kotlin, Go, Rust, PHP and Ruby
 
 The inline regex tester only understood JavaScript's `/pattern/flags`. Ruby has
 literals of its own (`/…/` and `%r{…}`, with the same division-or-regex question
-JavaScript poses) and gets its own scanner. Every other language writes a regex
-as a string handed to a function, so detection there is about position rather
-than syntax: `re.compile(…)`,
+JavaScript poses), so it gets its own scanner, which owns every way Ruby writes
+a regex including `Regexp.new`. Every other language writes one as a string
+handed to a function, so detection there is about position rather than syntax: `re.compile(…)`,
 `Pattern.compile(…)`, `regexp.MustCompile(…)`, `new Regex(…)`, `preg_match(…)`
 and friends. Every other string in the file stays inert, which is the harder
 half of the job in files that are mostly strings.

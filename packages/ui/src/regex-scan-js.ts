@@ -42,8 +42,23 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
 	'yield'
 ]);
 
+// Keywords whose parenthesised head is followed by a statement, so the `)` that
+// closes one does NOT end an expression: `if (ok) /re/.test(s)` is a regex,
+// where `(a + b) / 2` is division. Telling those two apart is the only reason
+// the scanner tracks parentheses at all.
+const CONTROL_HEADS = new Set(['if', 'while', 'for', 'switch', 'catch', 'with']);
+
 const IDENT_START = /[A-Za-z_$]/;
 const IDENT_PART = /[\w$]/;
+
+// The last character before `i` that isn't whitespace. Used to spot `</`, which
+// is a JSX closing tag rather than the start of a regex.
+function prevNonSpace(text: string, i: number): string {
+	let k = i - 1;
+	while (k >= 0 && (text[k] === ' ' || text[k] === '\t' || text[k] === '\r' || text[k] === '\n'))
+		k--;
+	return text[k] ?? '';
+}
 
 function isDigit(ch: string): boolean {
 	return ch >= '0' && ch <= '9';
@@ -142,6 +157,11 @@ export function parseJsRegexLiterals(text: string): RegexLiteralIndex {
 	// against the wrong context.
 	let braceDepth = 0;
 	const templateBraces: number[] = [];
+	// For each open `(`, whether it heads a control-flow statement. Its `)` then
+	// leaves a regex possible instead of ending an expression.
+	const controlParens: boolean[] = [];
+	// The identifier immediately before the current `(`, read at the paren.
+	let lastWord = '';
 	// True while scanning the literal-text portion of a template.
 	let inTemplate = false;
 
@@ -230,7 +250,10 @@ export function parseJsRegexLiterals(text: string): RegexLiteralIndex {
 				col += 2;
 				continue;
 			}
-			if (prev !== 'value') {
+			// `</div>` in JSX puts a `/` exactly where a regex could otherwise start.
+			// The alternative reading, `a < /re/`, is a comparison against a regex,
+			// which is not a thing anyone writes.
+			if (prev !== 'value' && prevNonSpace(text, i) !== '<') {
 				const scanned = scanLiteral(text, i, col);
 				if (scanned) {
 					addSpan(index, line, scanned.span);
@@ -316,6 +339,7 @@ export function parseJsRegexLiterals(text: string): RegexLiteralIndex {
 				col++;
 			}
 			const word = text.slice(start, i);
+			lastWord = word;
 			prev = REGEX_PRECEDING_KEYWORDS.has(word) ? 'other' : 'value';
 			continue;
 		}
@@ -331,9 +355,36 @@ export function parseJsRegexLiterals(text: string): RegexLiteralIndex {
 			continue;
 		}
 
-		// `)` and `]` close an expression, so a following `/` divides. Everything
-		// else is punctuation or an operator, after which a regex can start.
-		prev = ch === ')' || ch === ']' ? 'value' : 'other';
+		if (ch === '(') {
+			controlParens.push(CONTROL_HEADS.has(lastWord));
+			lastWord = '';
+			prev = 'other';
+			i++;
+			col++;
+			continue;
+		}
+
+		if (ch === ')') {
+			// A control-flow head's `)` is followed by a statement, where a regex can
+			// start; any other `)` ends an expression, so a `/` after it divides.
+			prev = controlParens.pop() ? 'other' : 'value';
+			i++;
+			col++;
+			continue;
+		}
+
+		// `++` and `--` don't change what came before: postfix leaves a value
+		// (`i++ / 2` is division), prefix leaves an operator. Reading them as two
+		// separate `+` would make the next `/` look like a regex opener.
+		if ((ch === '+' || ch === '-') && text[i + 1] === ch) {
+			i += 2;
+			col += 2;
+			continue;
+		}
+
+		// `]` closes an expression, so a following `/` divides. Everything else is
+		// punctuation or an operator, after which a regex can start.
+		prev = ch === ']' ? 'value' : 'other';
 		i++;
 		col++;
 	}

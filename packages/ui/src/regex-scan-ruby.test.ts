@@ -87,13 +87,42 @@ describe('parseRubyRegexLiterals: percent literals', () => {
 		expect(patterns('RE = %r{a{2,3}b}')).toEqual(['a{2,3}b']);
 	});
 
+	it('finds a typed percent literal even where a value could have ended', () => {
+		// `puts %r{…}` is a command argument, not modulo. Ruby itself leans on the
+		// spacing here; a typed literal is unambiguous enough to take either way.
+		expect(patterns('puts %r{^a$}')).toEqual(['^a$']);
+	});
+
 	it('leaves the other percent literals alone', () => {
 		expect(patterns('WORDS = %w[one two]')).toEqual([]);
 		expect(patterns('S = %q(not a regex)')).toEqual([]);
 	});
 
-	it('reads a percent after a value as modulo', () => {
+	it('reads a bare percent after a value as modulo', () => {
 		expect(patterns('rest = total % count')).toEqual([]);
+	});
+
+	it('does not read the body of another percent literal as code', () => {
+		// Failing to recognise `%q(…)` leaves its slashes to be read as a regex,
+		// which is the whole reason the typed forms are recognised anywhere.
+		expect(patterns('puts %q(/a/)')).toEqual([]);
+		expect(patterns('puts %w[/a/ /b/]')).toEqual([]);
+	});
+});
+
+describe('parseRubyRegexLiterals: interpolation', () => {
+	it('skips a literal with interpolation, which has no pattern until it runs', () => {
+		expect(patterns('RE = /#{prefix}\\d+/')).toEqual([]);
+		expect(patterns('RE = %r{#{host}/path}')).toEqual([]);
+	});
+
+	it('keeps an escaped interpolation, which is literal text', () => {
+		expect(patterns('RE = /\\#{not_interpolated}/')).toEqual(['\\#{not_interpolated}']);
+	});
+
+	it('keeps scanning correctly after a skipped literal', () => {
+		const text = ['A = /#{x}/', 'B = /[a-z]+/'].join('\n');
+		expect(patterns(text)).toEqual(['[a-z]+']);
 	});
 });
 
@@ -129,8 +158,46 @@ describe('parseRubyRegexLiterals: strings, comments and heredocs', () => {
 	});
 });
 
+describe('parseRubyRegexLiterals: Regexp.new', () => {
+	it('finds the pattern and decodes the string', () => {
+		expect(patterns('DYNAMIC = Regexp.new("^\\\\d+$")')).toEqual(['^\\d+$']);
+		// Single quotes escape only the quote and the backslash, so a regex escape
+		// survives either way.
+		expect(patterns("DYNAMIC = Regexp.new('\\\\s+')")).toEqual(['\\s+']);
+	});
+
+	it('reads the option constants as flags', () => {
+		expect(spans('R = Regexp.new("^a$", Regexp::IGNORECASE)')[0].flags).toBe('i');
+		// Ruby's MULTILINE is "dot matches newline", the same rename its /m carries.
+		expect(spans('R = Regexp.new("a", Regexp::MULTILINE)')[0].flags).toBe('s');
+		expect(spans('R = Regexp.new("a b", Regexp::EXTENDED)')[0].droppedOptions).toEqual(['x']);
+	});
+
+	it('skips an interpolated argument, which has no pattern until it runs', () => {
+		expect(patterns('R = Regexp.new("^#{prefix}")')).toEqual([]);
+	});
+
+	it('ignores strings in any other call', () => {
+		expect(patterns('puts("^not a pattern$")')).toEqual([]);
+		expect(patterns('Thing.new("^not a pattern$")')).toEqual([]);
+	});
+
+	it('ignores an argument after the first', () => {
+		expect(patterns('R = Regexp.new("^a$", "^b$")')).toEqual(['^a$']);
+	});
+
+	it('is not fooled by a call inside a comment, heredoc or percent literal', () => {
+		// The reason this lives in Ruby's own scanner rather than the shared one:
+		// that scanner knows none of these.
+		expect(patterns('# R = Regexp.new("^a$")')).toEqual([]);
+		expect(patterns(['=begin', 'R = Regexp.new("^a$")', '=end'].join('\n'))).toEqual([]);
+		expect(patterns(['sql = <<~SQL', '  Regexp.new("^a$")', 'SQL'].join('\n'))).toEqual([]);
+		expect(patterns('puts %q(Regexp.new("^a$"))')).toEqual([]);
+	});
+});
+
 describe('Ruby through the dispatcher', () => {
-	it('finds literals and Regexp.new together', () => {
+	it('finds literals and Regexp.new together, without duplicating either', () => {
 		const text = ['SLUG = /[a-z]+/', 'DYNAMIC = Regexp.new("^\\\\d+$")'].join('\n');
 		const found = [...parseRegexLiterals(text, 'app/models/thing.rb').values()].flat();
 		expect(found.map((s) => s.pattern).sort()).toEqual(['[a-z]+', '^\\d+$']);

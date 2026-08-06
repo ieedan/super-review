@@ -6,8 +6,9 @@
 // call. That precision is what keeps every other string in the file inert.
 // Adding one of those is the dozen lines below it.
 //
-// Two languages have real regex literals, which is syntax rather than a call
-// and needs a scanner of its own: JavaScript and Ruby, the latter having both.
+// Two languages have real regex literals, which is syntax rather than a call.
+// Those get a scanner of their own, and it owns every way that language writes
+// a regex: `regex-scan-js.ts` and `regex-scan-ruby.ts`.
 
 import { parseJsRegexLiterals } from './regex-scan-js';
 import { parseRubyRegexLiterals } from './regex-scan-ruby';
@@ -22,15 +23,11 @@ export const REGEX_LANGUAGES: Record<string, RegexLanguageSpec> = {
 	// syntax: there is no call to sit in.
 	javascript: { dialect: 'javascript', literals: parseJsRegexLiterals },
 
-	// Ruby has both. The literals are its own scanner (they carry the same `/`
-	// ambiguity JavaScript's do); `Regexp.new("…")` is an ordinary call.
-	ruby: {
-		dialect: 'ruby',
-		literals: parseRubyRegexLiterals,
-		lineComments: ['#'],
-		quotes: [DOUBLE, SINGLE],
-		sites: { 'Regexp.new': 0, 'Regexp.union': 0 }
-	},
+	// Ruby, whose literals carry the same `/` ambiguity JavaScript's do. Its
+	// scanner also handles `Regexp.new("…")`, rather than the shared call scanner
+	// doing it: that one doesn't know `=begin`, heredocs or `#{…}`, and would read
+	// a call inside any of them as real.
+	ruby: { dialect: 'ruby', literals: parseRubyRegexLiterals },
 
 	// C#. Regexes are strings passed to `Regex`, including the target-typed
 	// `new(…)` form where the type sits on the declaration.

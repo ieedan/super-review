@@ -75,22 +75,15 @@ export function isRegexTestablePath(filePath: string): boolean {
 // language. `text` is the full contents of that side; the caller keys the result
 // by which side the hovered token reported.
 //
-// A language can have either kind of scanner or both: JavaScript has only
-// literals, most languages have only calls, and Ruby has both (`/…/` and
-// `%r{…}` alongside `Regexp.new("…")`).
+// A language whose regexes are syntax brings its own scanner, which owns every
+// form that language has; the rest go through the shared call scanner.
 export function parseRegexLiterals(text: string, filePath: string): RegexLiteralIndex {
 	const language = regexLanguageFor(filePath);
 	const spec = language ? REGEX_LANGUAGES[language] : undefined;
 	if (!spec) return new Map();
 
-	const index = spec.literals ? spec.literals(text) : new Map<number, RegexLiteralSpan[]>();
-	if (spec.sites || spec.newSites) {
-		for (const [line, spans] of scanRegexCalls(spec, text)) {
-			for (const span of spans) addSpan(index, line, span);
-		}
-	}
+	const index = spec.literals ? spec.literals(text) : scanRegexCalls(spec, text);
 	for (const spans of index.values()) {
-		spans.sort((a, b) => a.startCol - b.startCol);
 		for (const span of spans) normalize(span);
 	}
 	return index;

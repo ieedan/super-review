@@ -8,8 +8,13 @@
 // its `%` is modulo or a literal opener depending on the same context `/` is.
 // Parameterising one loop to cover both would have been longer than two.
 //
-// `Regexp.new("…")` is not here: a string in a call is exactly what the shared
-// call scanner already does, so the Ruby table lists it there.
+// `Regexp.new("…")` is here too, rather than going through the shared call
+// scanner. That scanner finds strings in calls for the languages whose regexes
+// only ever appear that way, and it does not know `=begin` blocks, heredocs,
+// `%q(…)` or `#{…}` interpolation. Pointing it at Ruby source would read a
+// `Regexp.new("…")` inside a heredoc or a comment as real. Ruby's own scanner
+// already steps over all of those correctly, so the few lines to spot the call
+// belong here.
 
 import { addSpan, type RegexLiteralIndex } from './regex-literals';
 
@@ -50,8 +55,36 @@ const FLAGS_THAT_CHANGE_MATCHING = 'x';
 // own repeat.
 const PAIRS: Record<string, string> = { '(': ')', '[': ']', '{': '}', '<': '>' };
 
+// Calls whose first argument is a pattern string.
+const PATTERN_CALLS = new Set(['Regexp.new', 'Regexp.union', 'Regexp.escape']);
+
+// `Regexp::IGNORECASE` and friends, read off the rest of the call. Ruby's
+// MULTILINE is "dot matches newline", the same rename its `/m` flag carries.
+const CONSTANT_FLAGS: Record<string, string> = { IGNORECASE: 'i', MULTILINE: 's' };
+
 const IDENT_START = /[A-Za-z_]/;
 const IDENT_PART = /[\w?!]/;
+
+// Decode a Ruby string body. Single quotes only escape the quote and the
+// backslash; double quotes take the usual C-style set. Either way a regex
+// escape like `\d` has to survive untouched.
+function decodeString(body: string, quote: string): string {
+	const simple: Record<string, string> =
+		quote === "'"
+			? { '\\': '\\', "'": "'" }
+			: { '\\': '\\', '"': '"', n: '\n', r: '\r', t: '\t', 0: '\0', e: '\x1b', s: ' ' };
+	let out = '';
+	for (let i = 0; i < body.length; i++) {
+		if (body[i] === '\\' && i + 1 < body.length) {
+			const next = body[i + 1];
+			out += next in simple ? simple[next] : `\\${next}`;
+			i++;
+			continue;
+		}
+		out += body[i];
+	}
+	return out;
+}
 
 // Split Ruby's flag letters into RegExp flags and the ones we have to own up to.
 function translateFlags(raw: string): { flags: string; dropped: string[] } {
@@ -79,6 +112,10 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 	// Whether the last significant token could end an expression. `/` and `%`
 	// both divide after one and open a literal otherwise.
 	let afterValue = false;
+	// The dotted name most recently read, and whether the string coming next is
+	// the first argument of a call that takes a pattern.
+	let chain = '';
+	let expectPattern = false;
 
 	const skipTo = (to: number): void => {
 		for (let k = i; k < to && k < n; k++) {
@@ -123,7 +160,7 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 		from: number,
 		open: string,
 		close: string
-	): { body: string; end: number } | null => {
+	): { body: string; end: number; interpolated: boolean } | null => {
 		const nests = open !== close;
 		// `%r[…]` delimits with the same brackets a character class uses, so there
 		// the depth count is the only thing that can close it.
@@ -132,6 +169,7 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 		let inClass = false;
 		let j = from;
 		let body = '';
+		let interpolated = false;
 		while (j < n) {
 			const ch = text[j];
 			if (ch === '\n' || ch === undefined) return null;
@@ -140,6 +178,8 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 				j += 2;
 				continue;
 			}
+			// `/#{prefix}\d+/` has no pattern until it runs, so it can't be tested.
+			if (ch === '#' && text[j + 1] === '{') interpolated = true;
 			if (tracksClass && (ch === '[' || ch === ']')) {
 				inClass = ch === '[';
 			} else if (!inClass) {
@@ -147,7 +187,7 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 					depth++;
 				} else if (ch === close) {
 					depth--;
-					if (depth === 0) return { body, end: j + 1 };
+					if (depth === 0) return { body, end: j + 1, interpolated };
 				}
 			}
 			body += ch;
@@ -225,6 +265,10 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 		// be stepped over as a unit.
 		if (ch === '"' || ch === "'" || ch === '`') {
 			const quote = ch;
+			const startCol = col;
+			const startLine = line;
+			const start = i;
+			let interpolated = false;
 			let j = i + 1;
 			while (j < n && text[j] !== quote) {
 				if (text[j] === '\\') {
@@ -232,6 +276,9 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 					continue;
 				}
 				if (quote !== "'" && text[j] === '#' && text[j + 1] === '{') {
+					// Interpolation: no pattern until it runs, and it can hold quotes of
+					// its own, so step over it as a unit.
+					interpolated = true;
 					let depth = 1;
 					j += 2;
 					while (j < n && depth > 0) {
@@ -243,26 +290,54 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 				}
 				j++;
 			}
-			skipTo(Math.min(j + 1, n));
+			const end = Math.min(j + 1, n);
+			if (expectPattern && !interpolated && quote !== '`') {
+				// Flags arrive as constants later in the call; the call is on one line
+				// virtually always, so that is as far as this looks.
+				const lineEnd = text.indexOf('\n', end);
+				const tail = text.slice(end, lineEnd === -1 ? n : lineEnd);
+				let flags = '';
+				for (const match of tail.matchAll(/Regexp::([A-Z]+)/g)) {
+					const flag = CONSTANT_FLAGS[match[1]];
+					if (flag && !flags.includes(flag)) flags += flag;
+				}
+				const pattern = decodeString(text.slice(start + 1, end - 1), quote);
+				addSpan(index, startLine, {
+					startCol,
+					endCol: startCol + (end - start),
+					pattern,
+					flags,
+					source: text.slice(start, end),
+					dialect: 'ruby',
+					...(/Regexp::EXTENDED/.test(tail) ? { droppedOptions: ['x'] } : {})
+				});
+			}
+			skipTo(end);
+			expectPattern = false;
+			chain = '';
 			afterValue = true;
 			continue;
 		}
 
-		// `%r{…}` and the other percent literals. `%` after a value is modulo, the
-		// same call `/` needs.
-		if (ch === '%' && !afterValue) {
-			const type = /[a-zA-Z]/.test(text[i + 1] ?? '') ? text[i + 1] : '';
+		// `%r{…}` and the other percent literals. A bare `%(…)` is only a literal
+		// where a value can't already have ended, since otherwise it is modulo. A
+		// *typed* one (`%r{…}`, `%w[…]`, `%q(…)`) is unambiguous anywhere: the
+		// reading as modulo would need a method called `r`, `w` or `q`. That
+		// matters beyond `%r`, because failing to recognise `%q(a/b/c)` leaves its
+		// slashes to be read as a regex.
+		if (ch === '%') {
+			const type = /[qQwWiIrsx]/.test(text[i + 1] ?? '') ? text[i + 1] : '';
 			const openIndex = i + 1 + type.length;
 			const open = text[openIndex] ?? '';
 			// A delimiter is any punctuation; a letter or digit here means this was
 			// something else entirely.
-			if (open && !/[\sA-Za-z0-9]/.test(open)) {
+			if ((type !== '' || !afterValue) && open && !/[\sA-Za-z0-9]/.test(open)) {
 				const close = PAIRS[open] ?? open;
 				const read = readBody(openIndex + 1, open, close);
 				if (read) {
 					if (type === 'r') {
 						const flags = readFlags(read.end);
-						record(i, col, line, read.body, flags.raw, flags.end);
+						if (!read.interpolated) record(i, col, line, read.body, flags.raw, flags.end);
 						skipTo(flags.end);
 					} else {
 						// Some other percent literal (`%w[…]`, `%q(…)`): skipped, not read.
@@ -279,7 +354,7 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 				const read = readBody(i + 1, '/', '/');
 				if (read) {
 					const flags = readFlags(read.end);
-					record(i, col, line, read.body, flags.raw, flags.end);
+					if (!read.interpolated) record(i, col, line, read.body, flags.raw, flags.end);
 					skipTo(flags.end);
 					afterValue = true;
 					continue;
@@ -301,8 +376,12 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 				col++;
 			}
 			const word = text.slice(start, i);
-			// A symbol (`:foo`) or a keyword leaves a regex possible; anything else
-			// is a value or a method whose result is one.
+			// `Regexp.new` and friends reach here as two words joined by the `.` (or
+			// `::`) the catch-all below records.
+			chain = chain.endsWith('.') ? chain + word : word;
+			expectPattern = false;
+			// A keyword leaves a regex possible; anything else is a value, or a
+			// method whose result is one.
 			afterValue = !KEYWORDS.has(word);
 			continue;
 		}
@@ -314,6 +393,29 @@ export function parseRubyRegexLiterals(text: string): RegexLiteralIndex {
 			}
 			afterValue = true;
 			continue;
+		}
+
+		if (ch === '(') {
+			expectPattern = PATTERN_CALLS.has(chain);
+			chain = '';
+			afterValue = false;
+			i++;
+			col++;
+			continue;
+		}
+
+		// `.` and `::` continue a dotted name; anything else ends it.
+		if (ch === '.') {
+			chain += '.';
+		} else if (ch === ':' && text[i + 1] === ':') {
+			chain += '.';
+			i += 2;
+			col += 2;
+			afterValue = false;
+			continue;
+		} else {
+			chain = '';
+			expectPattern = false;
 		}
 
 		// `)` and `]` close an expression; `}` more often ends a block than an

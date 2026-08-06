@@ -104,6 +104,35 @@ describe('parseJsRegexLiterals: division vs regex', () => {
 		expect(sources('const n = /a/ / 2;')).toEqual(['/a/']);
 	});
 
+	it('reads a slash after a control-flow head as a literal', () => {
+		// `)` usually ends an expression, but the one closing an `if`/`while` head
+		// is followed by a statement, where a regex can start.
+		expect(sources('if (ok) /^a/.test(s);')).toEqual(['/^a/']);
+		expect(sources('while (n) /^a/.test(s);')).toEqual(['/^a/']);
+		expect(sources('for (;;) /^a/.test(s);')).toEqual(['/^a/']);
+		// An ordinary parenthesised expression still divides.
+		expect(sources('const r = (a + b) / 2;')).toEqual([]);
+	});
+
+	it('reads a slash after a postfix increment as division', () => {
+		// Read as two `+` tokens this looks like an operator, and the `/` after it
+		// like a regex opener that swallows the rest of the line.
+		expect(sources('const r = i++ / 2 + j / 3;')).toEqual([]);
+		expect(sources('const r = n-- / 2;')).toEqual([]);
+		// A prefix increment leaves an operator, so division still reads as one.
+		expect(sources('const r = ++i / 2;')).toEqual([]);
+	});
+
+	it('does not read a JSX closing tag as a literal', () => {
+		// `</span>` puts a `/` exactly where a regex could start, and the next `/`
+		// on the line closes it. The other reading, `a < /re/`, is a comparison
+		// against a regex, which nobody writes.
+		expect(sources('return <div><span>x</span></div>;')).toEqual([]);
+		expect(sources('return <Foo a={1} />;')).toEqual([]);
+		// A regex elsewhere on a JSX line is still found.
+		expect(sources('return <Foo ok={/^a/.test(s)} />;')).toEqual(['/^a/']);
+	});
+
 	it('does not read a `/=` after a value as a literal', () => {
 		expect(sources('total /= count;')).toEqual([]);
 	});
