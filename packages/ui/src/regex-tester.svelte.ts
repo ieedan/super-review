@@ -23,11 +23,16 @@ export interface RegexTarget {
 	// tell "clicked the open literal again" (close) from "clicked a different
 	// one" (retarget), and to keep the hint from re-arming over the open one.
 	key: string;
-	// The body between the slashes and the trailing flags, as written.
+	// The pattern and flags as the browser's RegExp receives them (decoded, for a
+	// language whose regexes are strings).
 	pattern: string;
 	flags: string;
-	// `/pattern/flags`, for the popup header.
+	// The regex as written in the source, for identity and debugging.
 	source: string;
+	// One sentence owning up to a difference between the dialect this was written
+	// for and the engine evaluating it, or null when there is none. Resolved by
+	// the caller (see `regexCompatibilityNote`) so the popup stays dumb.
+	note?: string | null;
 }
 
 interface RegexTesterState {

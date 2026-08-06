@@ -12,8 +12,9 @@
 	} from '@super-review/ui/regex-tester.svelte';
 	import { parseRegexLiterals } from '@super-review/ui/regex-literals';
 
-	// Each line is scanned with the real detector, so what the bench offers is
-	// exactly what the diff would find in the same source.
+	// Each line is scanned with the real detector (as TypeScript, hence the
+	// filename), so what the bench offers is exactly what the diff would find in
+	// the same source.
 	const LINES = [
 		{ code: 'const EMAIL = /^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/i;', note: 'try  a@b.com' },
 		{ code: 'const words = text.match(/\\b\\w+\\b/g);', note: 'global: every match highlights' },
@@ -26,7 +27,7 @@
 	// Line number is 1-based to match the detector's index, and each bench line
 	// is its own "file" of one line.
 	const rows = LINES.map((line, i) => {
-		const span = parseRegexLiterals(line.code).get(1)?.[0] ?? null;
+		const span = parseRegexLiterals(line.code, 'bench.ts').get(1)?.[0] ?? null;
 		return {
 			...line,
 			span,

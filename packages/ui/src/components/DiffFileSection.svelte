@@ -62,6 +62,7 @@
 	import {
 		isRegexTestablePath,
 		parseRegexLiterals,
+		regexCompatibilityNote,
 		regexSpanAt,
 		tokenBelongsToLiteral,
 		type RegexLiteralIndex,
@@ -285,9 +286,11 @@
 
 	// ----------------------------------------------------------------------
 	// Inline regex tester. Same shape as the package.json cards above: index each
-	// side's regex literals up front, then map Pierre's token events onto them to
-	// drive the shared tester. Hovering a literal hints that it's testable;
-	// clicking one opens a popup that evaluates it against a test string.
+	// side's regexes up front, then map Pierre's token events onto them to drive
+	// the shared tester. Hovering one hints that it's testable; clicking it opens
+	// a popup that evaluates it against a test string. What counts as a regex is
+	// per language (a literal in JS, a string in a `Regex` position in C#), which
+	// `parseRegexLiterals` resolves from the file's path.
 	// ----------------------------------------------------------------------
 	const isRegexTestable = $derived(isRegexTestablePath(file.path));
 	// Rebuilt in renderDiff, like the package.json indexes; null until then.
@@ -312,7 +315,8 @@
 				key: `${file.path}:${props.side}:${props.lineNumber}:${span.startCol}`,
 				pattern: span.pattern,
 				flags: span.flags,
-				source: span.source
+				source: span.source,
+				note: regexCompatibilityNote(span)
 			}
 		};
 	}
@@ -372,9 +376,8 @@
 	}
 
 	// Pierre's token callbacks are one per event, so each dispatches to whichever
-	// feature this file's type enables. Only one ever applies: package.json has no
-	// regex literals to find, and the JS/TS files the tester runs on aren't
-	// package.json.
+	// feature this file's type enables. Only one ever applies: package.json is not
+	// a language the regex tester scans.
 	function onTokenEnter(props: DiffTokenEventBaseProps): void {
 		if (isPkgJson) onPackageTokenEnter(props);
 		if (isRegexTestable) onRegexTokenEnter(props);
@@ -1612,11 +1615,11 @@
 			pkgDepsNew = parsePackageDeps(diff.newContents);
 			pkgDepsOld = parsePackageDeps(diff.oldContents);
 		}
-		// Likewise for a JS/TS file's regex literals, so a hovered token resolves
-		// to the literal it belongs to.
+		// Likewise for the file's regexes, so a hovered token resolves to the one
+		// it belongs to.
 		if (isRegexTestable) {
-			regexesNew = parseRegexLiterals(diff.newContents);
-			regexesOld = parseRegexLiterals(diff.oldContents);
+			regexesNew = parseRegexLiterals(diff.newContents, file.path);
+			regexesOld = parseRegexLiterals(diff.oldContents, file.path);
 		}
 
 		// Identical sides have nothing to diff — which includes a newly added empty
@@ -1668,8 +1671,9 @@
 				enableGutterUtility: canComment,
 				onGutterUtilityClick: onGutterClick,
 				// Token-level events → npm info cards (package.json) and the inline
-				// regex tester (JS/TS). Left off entirely for every other file type so
-				// Pierre doesn't track hovered tokens where nothing consumes them.
+				// regex tester (the languages it can scan). Left off entirely for every
+				// other file type so Pierre doesn't track hovered tokens where nothing
+				// consumes them.
 				onTokenEnter: isPkgJson || isRegexTestable ? onTokenEnter : undefined,
 				onTokenLeave: isPkgJson || isRegexTestable ? onTokenLeave : undefined,
 				onTokenClick: isRegexTestable ? onTokenClick : undefined,
