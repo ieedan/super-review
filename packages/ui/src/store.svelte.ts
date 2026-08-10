@@ -7798,6 +7798,7 @@ export const actions = {
 			filePath: file.path,
 			canDiscard: isWorkingTree,
 			canInclude: app.contextTab === 'unstaged',
+			isSeen: app.seenFiles.has(file.path),
 			ignoreFile: !isBulk && canIgnoreThisFile ? fileToGitignorePattern(file.path) : null,
 			ignoreFolders: !isBulk && canIgnoreThisFile ? ancestorFolderPatterns(file.path) : [],
 			ignoreExtensions,
@@ -7833,13 +7834,15 @@ export const actions = {
 				await actions.addToGitignore(result.patterns);
 				if (isBulk) actions.clearSelectedFiles();
 				break;
-			case 'markSelectedSeen':
+			case 'markSeen':
+				// `targets` is the selection in bulk and the right-clicked file
+				// otherwise, so both menus mark exactly what they offered to mark.
 				// toggleSeen mutates seenFiles synchronously before its await, so the
 				// set lands in order while the setFileSeen IPC calls run concurrently.
-				await Promise.all(selectedPaths.map((p) => actions.toggleSeen(p, true)));
+				await Promise.all(targets.map((f) => actions.toggleSeen(f.path, true)));
 				break;
-			case 'markSelectedUnseen':
-				await Promise.all(selectedPaths.map((p) => actions.toggleSeen(p, false)));
+			case 'markUnseen':
+				await Promise.all(targets.map((f) => actions.toggleSeen(f.path, false)));
 				break;
 			case 'copyPath':
 				await actions.copyToClipboard(actions.resolveRepoPath(file.path) ?? file.path);

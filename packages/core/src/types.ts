@@ -963,8 +963,11 @@ export type FileContextMenuAction =
 	| 'discardSelected'
 	| 'includeSelected'
 	| 'excludeSelected'
-	| 'markSelectedSeen'
-	| 'markSelectedUnseen'
+	// Seen marks apply to the menu's whole target set: the multi-selection when
+	// the menu was opened on one, else just the right-clicked file. Both cases
+	// share these two actions, so the names carry no "Selected".
+	| 'markSeen'
+	| 'markUnseen'
 	// Any of the add-to-.gitignore items (file / folder / extension / selection).
 	// They differ only in which patterns they append, so they share one action and
 	// the result carries the chosen patterns.
@@ -1347,6 +1350,11 @@ export interface FileContextMenuParams {
 	// Whether to offer commit Include/Exclude items — only in the Unstaged tab,
 	// where the file list drives which changes go into the next commit.
 	canInclude: boolean;
+	// Whether the right-clicked file is currently marked seen, so the single-file
+	// menu can offer the one item that flips it ("Mark as Unseen" when it is).
+	// Ignored for a multi-selection, which offers both directions at once since
+	// the files in it can be in either state.
+	isSeen: boolean;
 	// Ready-made .gitignore patterns for the add-to-.gitignore items. The renderer
 	// builds and escapes them (and drops .gitignore itself, which is never worth
 	// ignoring); the main process only turns them into labelled menu items. An

@@ -1926,8 +1926,8 @@ export function registerIpc(): void {
 					groups.push([item(`Discard ${n} Selected Files`, 'discardSelected')]);
 				}
 				groups.push([
-					item(`Mark ${n} Selected Files as Seen`, 'markSelectedSeen'),
-					item(`Mark ${n} Selected Files as Unseen`, 'markSelectedUnseen')
+					item(`Mark ${n} Selected Files as Seen`, 'markSeen'),
+					item(`Mark ${n} Selected Files as Unseen`, 'markUnseen')
 				]);
 				if (params.canInclude) {
 					groups.push([
@@ -1957,6 +1957,15 @@ export function registerIpc(): void {
 					template.push(item('Discard Changes', 'discard'));
 					template.push({ type: 'separator' });
 				}
+				// One item that flips this file's seen mark, labelled for the direction
+				// it moves. The sidebar checkbox and the diff header's "Mark seen"
+				// button do the same thing, but neither is reachable everywhere: the
+				// Unstaged tab's rows show a commit-inclusion checkbox instead, so
+				// right-click is the only way to mark a single file seen there.
+				template.push(
+					params.isSeen ? item('Mark as Unseen', 'markUnseen') : item('Mark as Seen', 'markSeen')
+				);
+				template.push({ type: 'separator' });
 				// Add-to-.gitignore items: this file, one of its ancestor folders
 				// (submenu, deepest first), and each extension it spans.
 				const ignoreGroup: MenuItemConstructorOptions[] = [];
