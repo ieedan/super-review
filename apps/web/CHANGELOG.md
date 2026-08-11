@@ -1,5 +1,13 @@
 # @super-review/docs
 
+## 0.0.21
+
+### Patch Changes
+
+- Updated dependencies [[`2b0801b`](https://github.com/ieedan/super-review/commit/2b0801bc39fa7e12635488da7c222685b986f9c2)]:
+  - @super-review/core@0.5.0
+  - @super-review/ui@0.6.0
+
 ## 0.0.20
 
 ### Patch Changes

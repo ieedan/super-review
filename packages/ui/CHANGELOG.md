@@ -1,5 +1,31 @@
 # @super-review/ui
 
+## 0.6.0
+
+### Minor Changes
+
+- [`2b0801b`](https://github.com/ieedan/super-review/commit/2b0801bc39fa7e12635488da7c222685b986f9c2) Thanks [@ieedan](https://github.com/ieedan)! - feat: summarize the commits waiting to be pushed
+
+  The commit box only ever showed the tip commit, so a stack of local work read as
+  one line and an Undo button. Anything below it meant leaving for the History tab
+  and opening commits one at a time.
+
+  There's now a row under Undo when more than one commit is waiting: "3 more
+  commits". Hovering it opens a panel with the whole stack, newest first, each
+  commit showing when it landed, its line counts, and the files it touched. A
+  commit lists ten files up front and the rest are one click away, so a wide commit
+  doesn't bury the ones below it. The list scrolls, and commit headers stick as you
+  go so you always know which commit the files belong to. Click the row to pin the
+  panel and scroll it from the keyboard; Escape puts it away.
+
+  The set is the same one Undo works on: commits on HEAD that aren't on any remote
+  yet. Push, and the row goes with it.
+
+### Patch Changes
+
+- Updated dependencies [[`2b0801b`](https://github.com/ieedan/super-review/commit/2b0801bc39fa7e12635488da7c222685b986f9c2)]:
+  - @super-review/core@0.5.0
+
 ## 0.5.0
 
 ### Minor Changes
