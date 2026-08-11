@@ -19,10 +19,13 @@ import type {
 	DiscardTarget,
 	FileStatus,
 	GitIdentity,
+	LocalCommit,
+	LocalCommitFile,
 	LocalOnlyBranch,
 	ManagedStash,
 	RepoInfo
 } from './types.js';
+import { LOCAL_COMMITS_LIMIT } from './types.js';
 import { imageMimeForPath } from './media.js';
 import { getGitignore, getLicense } from './repo-templates.js';
 
@@ -3225,6 +3228,9 @@ export interface LastCommit {
 	// True when the commit has not yet been pushed to any remote, so undoing it
 	// is safe (won't rewrite shared history).
 	canUndo: boolean;
+	// How many commits (this one included) are on HEAD but not on any remote.
+	// Drives the commit box's "more commits" summary; 1 when it can't be counted.
+	unpushedCount: number;
 }
 
 // Returns the tip commit of HEAD plus whether it is safe to undo. `null` when
@@ -3241,17 +3247,147 @@ export async function getLastCommit(repoPath: string): Promise<LastCommit | null
 		// Count commits reachable from HEAD but not from any remote-tracking
 		// branch. >0 means the tip is local-only and can be undone. With no remotes
 		// at all this counts every commit, which is the behavior we want.
-		let canUndo = true;
+		// Unknown (the count failed) is treated as "just this one": undo stays
+		// offered, and the caller shows no "more commits" affordance.
+		let unpushedCount = 1;
 		try {
-			const unpushed =
+			unpushedCount =
 				Number((await git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes'])).trim()) || 0;
-			canUndo = unpushed > 0;
 		} catch {
-			canUndo = true;
+			unpushedCount = 1;
 		}
-		return { hash, subject, body, relativeTime, canUndo };
+		return { hash, subject, body, relativeTime, canUndo: unpushedCount > 0, unpushedCount };
 	} catch {
 		return null;
+	}
+}
+
+// `git log --numstat` writes a rename as `a/{old => new}/f.ts`, or plain
+// `old => new` when the paths share no prefix. Expand it to the post-rename
+// path so the numstat rows line up with the name-status ones.
+function numstatNewPath(p: string): string {
+	if (!p.includes(' => ')) return p;
+	const open = p.indexOf('{');
+	const close = p.indexOf('}', open);
+	if (open === -1 || close === -1) return p.slice(p.indexOf(' => ') + 4);
+	const inner = p.slice(open + 1, close);
+	const arrow = inner.indexOf(' => ');
+	const to = arrow === -1 ? inner : inner.slice(arrow + 4);
+	// One side of the rename can be empty (`apps/{ => web}/f.ts`), which leaves a
+	// doubled separator behind once it's spliced out.
+	return `${p.slice(0, open)}${to}${p.slice(close + 1)}`.replace(/\/{2,}/g, '/');
+}
+
+// A `git log` record: the header fields from our `--pretty` format, plus the
+// per-file lines git printed under it. Records are separated by a unit
+// separator so a subject containing one still parses (it's the last field).
+function splitLogRecords(raw: string): { fields: string[]; lines: string[] }[] {
+	const records: { fields: string[]; lines: string[] }[] = [];
+	for (const chunk of raw.split('\x1e')) {
+		if (!chunk.trim()) continue;
+		const [header, ...rest] = chunk.split('\n');
+		records.push({ fields: header.split('\x1f'), lines: rest.filter((l) => l.trim().length > 0) });
+	}
+	return records;
+}
+
+function statusFromCode(code: string): FileStatus {
+	if (code.startsWith('A')) return 'added';
+	if (code.startsWith('D')) return 'deleted';
+	if (code.startsWith('R')) return 'renamed';
+	if (code.startsWith('C')) return 'copied';
+	if (code.startsWith('T')) return 'type-change';
+	return 'modified';
+}
+
+// Commits on HEAD that aren't on any remote yet — what the commit box's "more
+// commits" summary lists — newest first, each with its line counts and the files
+// it touched. Same set `getLastCommit` counts for `unpushedCount`.
+//
+// Two log passes because git honors only the last of `--numstat` /
+// `--name-status`: the first carries the line counts, the second the
+// add/delete/rename codes. Merge commits report no files (git prints no diff for
+// them without `-m`), which is what we want in a summary of hand-written work.
+export async function listLocalCommits(
+	repoPath: string,
+	limit = LOCAL_COMMITS_LIMIT
+): Promise<LocalCommit[]> {
+	const git = openGit(repoPath);
+	const args = [
+		'log',
+		`--max-count=${Math.max(1, Math.floor(limit))}`,
+		'--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%ae%x1f%at%x1f%s',
+		'--find-renames',
+		'HEAD',
+		'--not',
+		'--remotes'
+	];
+	try {
+		const [numstatRaw, nameStatusRaw] = await Promise.all([
+			git.raw([...args, '--numstat']),
+			git.raw([...args, '--name-status'])
+		]);
+
+		// Status codes keyed by commit hash, then by post-rename path.
+		const statusByCommit = new Map<string, Map<string, { status: FileStatus; oldPath?: string }>>();
+		for (const record of splitLogRecords(nameStatusRaw)) {
+			const hash = record.fields[0];
+			if (!hash) continue;
+			const files = new Map<string, { status: FileStatus; oldPath?: string }>();
+			for (const line of record.lines) {
+				const parts = line.split('\t');
+				const status = statusFromCode(parts[0]);
+				const renamed = status === 'renamed' || status === 'copied';
+				const p = renamed ? parts[2] : parts[1];
+				if (!p) continue;
+				files.set(p, { status, oldPath: renamed ? parts[1] : undefined });
+			}
+			statusByCommit.set(hash, files);
+		}
+
+		const commits: LocalCommit[] = [];
+		for (const record of splitLogRecords(numstatRaw)) {
+			const [hash, shortHash, authorName, authorEmail, at, ...rest] = record.fields;
+			if (!hash) continue;
+			const statuses = statusByCommit.get(hash);
+			const files: LocalCommitFile[] = [];
+			let additions = 0;
+			let deletions = 0;
+			for (const line of record.lines) {
+				const [a, d, ...pathParts] = line.split('\t');
+				const p = numstatNewPath(pathParts.join('\t'));
+				if (!p) continue;
+				const isBinary = a === '-' && d === '-';
+				const adds = isBinary ? 0 : Number(a) || 0;
+				const dels = isBinary ? 0 : Number(d) || 0;
+				additions += adds;
+				deletions += dels;
+				const known = statuses?.get(p);
+				files.push({
+					path: p,
+					oldPath: known?.oldPath,
+					status: known?.status ?? 'modified',
+					additions: adds,
+					deletions: dels,
+					isBinary
+				});
+			}
+			commits.push({
+				hash,
+				shortHash,
+				authorName,
+				authorEmail,
+				authoredAt: Number(at) * 1000,
+				subject: rest.join('\x1f'),
+				additions,
+				deletions,
+				files
+			});
+		}
+		return commits;
+	} catch {
+		// Unborn HEAD, or a repo git can't walk — an empty summary beats an error.
+		return [];
 	}
 }
 

@@ -39,6 +39,7 @@ import type {
 	GithubOrg,
 	IssueReference,
 	LastCommit,
+	LocalCommit,
 	LocalOnlyBranch,
 	ManagedStash,
 	MentionableUser,
@@ -137,6 +138,7 @@ import {
 	isWorkingTreeDirty,
 	listBranches,
 	listCommits,
+	listLocalCommits,
 	listLocalOnlyBranches,
 	listChangedFiles,
 	mergeBase,
@@ -1101,6 +1103,12 @@ export function registerIpc(): void {
 		'git:listCommits',
 		async (_e, repoId: string, head?: string, limit?: number): Promise<CommitInfo[]> =>
 			listCommits(repoOrThrow(repoId).path, head, limit)
+	);
+
+	ipcMain.handle(
+		'git:listLocalCommits',
+		async (_e, repoId: string, limit?: number): Promise<LocalCommit[]> =>
+			listLocalCommits(repoOrThrow(repoId).path, limit)
 	);
 
 	ipcMain.handle(

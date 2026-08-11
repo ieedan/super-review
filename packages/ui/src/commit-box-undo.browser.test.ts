@@ -18,8 +18,8 @@ const repo: RepoInfo = {
 	lastOpenedAt: 0
 };
 
-function commit(subject: string, canUndo: boolean): LastCommit {
-	return { hash: subject, subject, body: '', relativeTime: '1 minute ago', canUndo };
+function commit(subject: string, canUndo: boolean, unpushedCount = canUndo ? 1 : 0): LastCommit {
+	return { hash: subject, subject, body: '', relativeTime: '1 minute ago', canUndo, unpushedCount };
 }
 
 const idle = { inProgress: false, stage: 'idle', intent: 'push', op: 'push', error: null } as const;
@@ -69,10 +69,15 @@ beforeEach(() => {
 	app.changedFiles = [];
 	app.push = { ...idle };
 	app.lastCommit = commit('feat: the one being undone', true);
+	app.localCommits = [];
+	app.localCommitsKey = null;
 	(window as unknown as { api: unknown }).api = {
 		state: {
 			getCommitDraft: vi.fn(async () => ({ summary: '', description: '' })),
 			setCommitDraft: vi.fn(async () => {})
+		},
+		git: {
+			listLocalCommits: vi.fn(async () => [])
 		}
 	};
 });
@@ -129,5 +134,22 @@ describe('CommitBox undo row', () => {
 		await sleep(TAIL_MS);
 		watch.stop();
 		expect(watch.transitions).toEqual([false]);
+	});
+});
+
+describe('CommitBox local commits row', () => {
+	it('counts the commits stacked behind the undo row', async () => {
+		app.lastCommit = commit('feat: the tip', true, 3);
+		const { container } = render(CommitBox);
+		await sleep(20);
+
+		expect(container.textContent).toContain('2 more commits');
+	});
+
+	it('stays hidden when the tip is the only local commit', async () => {
+		const { container } = render(CommitBox);
+		await sleep(20);
+
+		expect(container.textContent).not.toContain('more commit');
 	});
 });

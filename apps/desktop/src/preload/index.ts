@@ -42,6 +42,7 @@ import type {
 	GithubOrg,
 	IssueReference,
 	LastCommit,
+	LocalCommit,
 	LocalComment,
 	LocalCommentAuthor,
 	MentionableUser,
@@ -245,6 +246,8 @@ const api: PreloadAPI = {
 		getLastCommit: (repoId) => invoke('git:getLastCommit', repoId) as Promise<LastCommit | null>,
 		listCommits: (repoId, head, limit) =>
 			invoke('git:listCommits', repoId, head, limit) as Promise<CommitInfo[]>,
+		listLocalCommits: (repoId, limit) =>
+			invoke('git:listLocalCommits', repoId, limit) as Promise<LocalCommit[]>,
 		mergeBase: (repoId, a, b) => invoke('git:mergeBase', repoId, a, b) as Promise<string | null>,
 		undoLastCommit: (repoId) => invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
 		cloneRepo: (url) => invoke('git:cloneRepo', url) as Promise<CloneResult>,

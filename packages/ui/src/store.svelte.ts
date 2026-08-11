@@ -32,6 +32,7 @@ import type {
 	GithubAuthError,
 	LicenseState,
 	LastCommit,
+	LocalCommit,
 	LocalComment,
 	LocalCommentAuthor,
 	ManagedStash,
@@ -270,6 +271,14 @@ interface AppState {
 	// The commit whose diff is currently open, or null when the History tab is
 	// showing the list. Ephemeral — not persisted across launches.
 	activeCommit: CommitInfo | null;
+	// Commits on HEAD that aren't on any remote yet, newest first, with their
+	// line counts and touched files — the commit box's "more commits" summary.
+	// Loaded (and kept fresh) only while that summary is on screen.
+	localCommits: LocalCommit[];
+	// The HEAD `localCommits` was loaded for (`<repoId>:<hash>:<count>`), so a new
+	// commit, an undo, or a push reloads it and nothing else does. null when
+	// nothing has been loaded.
+	localCommitsKey: string | null;
 	// Where the super-review skill + tour-author subagent are configured across
 	// every coding agent for the active repo, or null while unknown (no active
 	// repo, or the check hasn't returned yet). `anyInstalled === false` drives the
@@ -1015,6 +1024,8 @@ const initial: AppState = {
 	commits: [],
 	historyForkPoint: null,
 	activeCommit: null,
+	localCommits: [],
+	localCommitsKey: null,
 	aiConfigStatus: null,
 	aiConfigNoticeDismissed: false,
 	aiConfigUpdateDismissed: false,
@@ -2149,6 +2160,10 @@ async function refreshStash(): Promise<void> {
 		// Non-critical — keep whatever we last knew rather than throwing a banner.
 	}
 }
+
+// The `localCommitsKey` a `loadLocalCommits` call is currently fetching, so
+// repeated calls (the summary re-arms on every hover) coalesce onto one request.
+let loadingLocalCommitsKey: string | null = null;
 
 async function refreshPushStatus(): Promise<void> {
 	if (!app.activeRepo) {
@@ -4599,6 +4614,8 @@ export const actions = {
 			app.activeCommit = null;
 			app.commits = [];
 			app.historyForkPoint = null;
+			app.localCommits = [];
+			app.localCommitsKey = null;
 			app.aiConfigStatus = null;
 			app.aiConfigNoticeDismissed = false;
 			app.aiConfigUpdateDismissed = false;
@@ -4926,6 +4943,33 @@ export const actions = {
 			if (sha && commits[0]?.hash !== sha && commits.some((c) => c.hash === sha)) {
 				app.historyForkPoint = { sha, baseLabel: forkBaseLabel(baseRef) };
 			}
+		}
+	},
+
+	// Load the commits waiting to be pushed (with their files) for the commit
+	// box's summary. Called while that summary is on screen; it re-fetches only
+	// when HEAD moves, so hovering the row repeatedly costs nothing. The previous
+	// list stays put while a reload runs, so the panel never blanks out.
+	async loadLocalCommits(): Promise<void> {
+		const repo = app.activeRepo;
+		if (!repo) {
+			app.localCommits = [];
+			app.localCommitsKey = null;
+			return;
+		}
+		const key = `${repo.id}:${app.lastCommit?.hash ?? ''}:${app.lastCommit?.unpushedCount ?? 0}`;
+		if (app.localCommitsKey === key || loadingLocalCommitsKey === key) return;
+		loadingLocalCommitsKey = key;
+		try {
+			const commits = await window.api.git.listLocalCommits(repo.id);
+			// A repo switch (or a newer load) superseded this one.
+			if (app.activeRepo?.id !== repo.id || loadingLocalCommitsKey !== key) return;
+			app.localCommits = commits;
+			app.localCommitsKey = key;
+		} catch {
+			// Non-critical: keep whatever the panel already had.
+		} finally {
+			if (loadingLocalCommitsKey === key) loadingLocalCommitsKey = null;
 		}
 	},
 

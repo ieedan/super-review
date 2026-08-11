@@ -1546,6 +1546,44 @@ export interface LastCommit {
 	// True when the commit has not yet been pushed to any remote, so undoing it
 	// is safe.
 	canUndo: boolean;
+	// How many commits (this one included) are on HEAD but not on any remote.
+	// Drives the commit box's "more commits" summary; 1 when it can't be counted.
+	unpushedCount: number;
+}
+
+// One file touched by a local commit, as listed in the commit box's summary of
+// everything waiting to be pushed.
+export interface LocalCommitFile {
+	path: string;
+	// Pre-rename path, when git detected the change as a rename or copy.
+	oldPath?: string;
+	status: FileStatus;
+	additions: number;
+	deletions: number;
+	isBinary: boolean;
+}
+
+// How many local commits `listLocalCommits` reports by default. Well past what
+// anyone stacks up before pushing, and it keeps the summary panel's work bounded
+// on a repo with no remotes at all (where every commit counts as local). The
+// panel says so when the list is capped, so keep the two in step.
+export const LOCAL_COMMITS_LIMIT = 50;
+
+// A commit that exists only locally (isn't on any remote), with the line counts
+// and file list needed to summarize it without opening its diff.
+export interface LocalCommit {
+	hash: string;
+	shortHash: string;
+	// First line of the commit message.
+	subject: string;
+	authorName: string;
+	authorEmail: string;
+	// Unix epoch ms of the author date.
+	authoredAt: number;
+	// Totals across `files`. Zero for a merge commit, which reports no files.
+	additions: number;
+	deletions: number;
+	files: LocalCommitFile[];
 }
 
 export interface CreateBranchResult {
@@ -2386,6 +2424,10 @@ export interface PreloadAPI {
 		// List commits reachable from `head` (defaults to the checked-out branch),
 		// newest first, capped at `limit`. Backs the History tab's commit list.
 		listCommits(repoId: string, head?: string, limit?: number): Promise<CommitInfo[]>;
+		// Commits on HEAD that aren't on any remote yet, newest first, each with
+		// its line counts and touched files. Backs the commit box's summary of
+		// what's waiting to be pushed.
+		listLocalCommits(repoId: string, limit?: number): Promise<LocalCommit[]>;
 		// Most-recent common ancestor of two refs (where `b` diverged from `a`), or
 		// null when they share no history. Backs the History tab's fork-point marker.
 		mergeBase(repoId: string, a: string, b: string): Promise<string | null>;

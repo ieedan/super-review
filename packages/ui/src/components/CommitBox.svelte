@@ -11,6 +11,7 @@
 	import { Textarea } from './ui/textarea';
 	import AccountSwitcher from './AccountSwitcher.svelte';
 	import GenerateCommitMessageButton from './GenerateCommitMessageButton.svelte';
+	import LocalCommitsSummary from './LocalCommitsSummary.svelte';
 	import CommitMessageWaiting from './CommitMessageWaiting.svelte';
 	import StreamingText from './StreamingText.svelte';
 	import {
@@ -557,6 +558,9 @@
 	});
 	// Row visibility: held, so it survives the in-flight churn.
 	const showUndo = $derived(undoTarget?.canUndo ?? false);
+	// Commits stacked up behind the one the undo row shows, all of them local.
+	// Two or more and the row below opens a summary of the whole stack.
+	const unpushedCount = $derived(undoTarget?.unpushedCount ?? 0);
 	// The button itself is only live once nothing is in flight.
 	const canUndo = $derived(!busy && !boxBusy && showUndo);
 
@@ -840,4 +844,7 @@
 			Undo
 		</Button>
 	</div>
+	{#if unpushedCount > 1}
+		<LocalCommitsSummary count={unpushedCount} />
+	{/if}
 {/if}
