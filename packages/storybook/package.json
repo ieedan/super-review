@@ -1,6 +1,6 @@
 {
 	"name": "@super-review/storybook",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"description": "Storybook workbench for the @super-review/ui component library",
 	"type": "module",
 	"private": true,
