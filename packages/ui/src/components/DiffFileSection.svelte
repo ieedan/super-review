@@ -9,7 +9,6 @@
 		DIFFS_TAG_NAME,
 		File as FileClass,
 		FileDiff as FileDiffClass,
-		parseDiffFromFile,
 		type DiffLineAnnotation,
 		type DiffTokenEventBaseProps,
 		type FileContents,
@@ -34,6 +33,7 @@
 		isTaskManifestPath
 	} from '@super-review/core/session-manifest';
 	import { getDiffWorkerPool } from '@super-review/ui/diff-worker-pool';
+	import { diffFilePair, parseDiffMetadata } from '@super-review/ui/diff-highlight-cache';
 	import { scheduleRender } from '@super-review/ui/render-scheduler';
 	import {
 		applyIndentGuides,
@@ -813,9 +813,20 @@
 	function markInView(v: boolean): void {
 		inView = v;
 	}
+	// Stash the observer callback and the synchronous render fast lane on the
+	// section element. The parent already owns these elements (it queries them by
+	// `data-file-path` to scroll), so hanging the hooks here keeps DiffView from
+	// needing a registry of its own — it's the same channel `__setInView` has
+	// always used. `__renderNow` is what makes a scrolled-to file paint in the
+	// same frame instead of queueing behind the rest of the jump; see renderNow().
 	$effect(() => {
 		if (!section) return;
-		(section as HTMLElement & { __setInView?: (v: boolean) => void }).__setInView = markInView;
+		const el = section as HTMLElement & {
+			__setInView?: (v: boolean) => void;
+			__renderNow?: () => boolean;
+		};
+		el.__setInView = markInView;
+		el.__renderNow = renderNow;
 	});
 
 	// Register with the find controller so it can highlight matches inside
@@ -852,7 +863,7 @@
 		// 0 while the diff DOM stays painted, so find decides the file is unrendered
 		// and stops highlighting. We only want to (re)register when the section
 		// element or its path actually changes.
-		return untrack(() => registerFindSection(path, sec, { renderIfNeeded: forceRenderForFind }));
+		return untrack(() => registerFindSection(path, sec, { renderIfNeeded: renderNow }));
 	});
 
 	// Mirror `inView` into the find controller. Same untrack rationale: the
@@ -878,7 +889,7 @@
 		section?.scrollIntoView({ behavior: 'auto', block: 'start' });
 		// Render synchronously from cache if possible; otherwise the in-view fetch
 		// kicked off above lands within the retry window below.
-		forceRenderForFind();
+		renderNow();
 		let raf = 0;
 		let stableFrames = 0;
 		let lastTop = Number.NaN;
@@ -1602,12 +1613,12 @@
 		// eslint-disable-next-line svelte/no-dom-manipulating
 		host.appendChild(diffContainer);
 
-		const namePair = {
-			old: diff.file.oldPath ?? diff.file.path,
-			new: diff.file.path
-		};
-		const oldFile = { name: namePair.old, contents: diff.oldContents };
-		const newFile = { name: namePair.new, contents: diff.newContents };
+		// Content-derived cache keys on both sides, which is what lets Pierre's
+		// worker-side highlight cache hit at all — it keys off the metadata's
+		// `cacheKey`, and `parseDiffFromFile` only produces one when both file
+		// objects carry theirs. Without them every render re-tokenized from scratch
+		// and the first paint was always plain text. See diff-highlight-cache.ts.
+		const { oldFile, newFile } = diffFilePair(diff);
 
 		// Index this package.json's dependency tokens per side so the hover card
 		// can resolve a hovered token to its package name/version range.
@@ -1643,7 +1654,9 @@
 		// collapsed regions around comments expand on the first paint (no flash).
 		let metadata: FileDiffMetadata | undefined | null;
 		try {
-			metadata = parseDiffFromFile(oldFile, newFile);
+			// Memoized by the same content key, so a re-render (scrolling back, a
+			// view-mode flip) and the prefetch's prime don't each pay for the parse.
+			metadata = parseDiffMetadata(oldFile, newFile);
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : String(err);
 			return;
@@ -1766,13 +1779,16 @@
 		});
 	}
 
-	// Render the diff right now, skipping the render scheduler. Called by find
-	// when the user navigates here so the highlight doesn't sit behind every
-	// other queued render. Hydrates from the diff cache if data hasn't loaded
-	// through the lazy path yet. Returns true if rendered DOM is available
-	// by the time we return (already rendered, or just rendered in-place);
-	// false when data hasn't been fetched and we have nothing to render yet.
-	function forceRenderForFind(): boolean {
+	// Render the diff right now, skipping the render scheduler. Called whenever
+	// the user is navigated straight to this file — a find match, a callout, or
+	// the diff view scrolling here (sidebar click, "Mark seen" advance) — so the
+	// diff they asked for doesn't sit behind every other file that the jump swept
+	// into the IntersectionObserver margin. Hydrates from the diff cache if data
+	// hasn't loaded through the lazy path yet, which is what the store's
+	// `prefetchDiff` primes. Returns true if rendered DOM is available by the time
+	// we return (already rendered, or just rendered in-place); false when data
+	// hasn't been fetched and we have nothing to render yet.
+	function renderNow(): boolean {
 		if (host == null) return false;
 		// Never render into a hidden host. A collapsed file we were just asked to
 		// jump to is wrapped in `hidden={!expanded}`; if the caller invokes this in

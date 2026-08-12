@@ -82,6 +82,26 @@
 
 <!-- A real, sized scroll viewport so the IntersectionObserver + sticky layout
      behave exactly as in the app. -->
-<div style="height: 600px; width: 900px; display: flex; flex-direction: column;">
+<div class="viewport" style="height: 600px; width: 900px; display: flex; flex-direction: column;">
 	<DiffView />
 </div>
+
+<style>
+	/* These tests run without Tailwind, so the utility classes DiffView relies on
+	   for its own layout are inert: `flex-1 overflow-auto` doesn't actually clip,
+	   which leaves the scroll container the full height of its content. Every
+	   section then intersects it, so the IntersectionObserver reports the whole
+	   file list as in view and lazily-rendered sections all render at once —
+	   nothing like the app. Re-declaring the two rules that matter restores real
+	   clipping, so "off screen" means off screen here too. */
+	.viewport > :global(section) {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		min-width: 0;
+	}
+	.viewport > :global(section) > :global(.overflow-auto) {
+		flex: 1 1 0%;
+		overflow: auto;
+	}
+</style>

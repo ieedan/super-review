@@ -59,6 +59,13 @@ export interface FilesCacheEntry {
 export const filesCache = new Map<string, FilesCacheEntry>();
 export const diffCache = new Map<string, DiffData>();
 
+// Diff-cache keys with a prefetch currently in flight. The prefetch is driven by
+// the reviewer's position, which the scroll handler updates every frame, so
+// without this a burst of scrolling would fire the same `getDiff` repeatedly
+// before the first one lands. Entries are dropped once the fetch settles — from
+// then on `diffCache` itself is the dedupe.
+export const diffPrefetchInFlight = new Set<string>();
+
 // Push-access answers are stable for a session, so cache per repo+PR to avoid
 // re-hitting the API on every branch-PR refresh.
 export const prPushAccess = new Map<string, boolean>();

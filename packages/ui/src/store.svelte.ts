@@ -85,7 +85,8 @@ import {
 	stagingLineKey,
 	type DiffSide
 } from '@super-review/core/diff-staging';
-import { DEFAULT_HIDDEN_DIFF_PATTERNS } from '@super-review/core/diff-defer';
+import { DEFAULT_HIDDEN_DIFF_PATTERNS, diffDeferReason } from '@super-review/core/diff-defer';
+import { isImagePath } from '@super-review/core/media';
 import { DEFAULT_HOTKEYS, type Hotkeys } from '@super-review/core/hotkeys';
 import { canSync } from '@super-review/core/push-status';
 import { comparePathsVSCodeStyle } from '@super-review/ui/utils';
@@ -95,6 +96,7 @@ import {
 	getDiffWorkerPool,
 	POOL_PERSISTENT_RENDER_OPTIONS
 } from '@super-review/ui/diff-worker-pool';
+import { primeDiffHighlight } from '@super-review/ui/diff-highlight-cache';
 
 export type SettingsTab =
 	| 'accounts'
@@ -121,6 +123,7 @@ import {
 	viewLayoutByRepo,
 	filesCache,
 	diffCache,
+	diffPrefetchInFlight,
 	prPushAccess,
 	repoPushAccessChecked,
 	type ScrollAnchor
@@ -5216,6 +5219,83 @@ export const actions = {
 			: visible;
 	},
 
+	// The file "mark seen" would open next when acting on `from`: the next unseen
+	// file below it in display order, wrapping to the first unseen file above when
+	// nothing remains below (the last file, or a tail of already-seen files) so the
+	// reviewer isn't stranded — without the wrap, marking the last file seen left
+	// the diff parked while only the sidebar's active highlight moved. Null when
+	// there's nothing left to review.
+	//
+	// `from` itself is never returned — it's excluded from both slices — so the
+	// answer is the same whether it's called before or after `from` is marked seen.
+	// That's what lets the diff view prefetch exactly the file the click will open.
+	nextUnseenAfter(from: string): ChangedFile | null {
+		const ordered = actions.displayedFiles();
+		const idx = ordered.findIndex((f) => f.path === from);
+		const isUnseen = (f: ChangedFile): boolean => !app.seenFiles.has(f.path);
+		const next =
+			idx >= 0
+				? (ordered.slice(idx + 1).find(isUnseen) ?? ordered.slice(0, idx).find(isUnseen))
+				: ordered.find(isUnseen);
+		return next ?? null;
+	},
+
+	// Warm a file the reviewer is about to open, on both stages that stand between
+	// the click and a readable diff: the diff itself (so the section renders from
+	// cache instead of waiting on an IPC round trip) and its syntax highlighting
+	// (so the first paint comes up highlighted rather than as plain text while the
+	// workers tokenize). Fire-and-forget: a failure here is swallowed because the
+	// section's own lazy fetch still runs and will surface any real error at the
+	// point the file is actually opened.
+	//
+	// Skips work the section itself would skip — a diff hidden behind "Load diff"
+	// (lock files, oversized rewrites), a binary, or a file with no textual change
+	// — so priming never pulls content nothing will render.
+	prefetchDiff(path: string): void {
+		const repo = app.activeRepo;
+		if (!repo) return;
+		const file = app.changedFiles.find((f) => f.path === path);
+		if (!file) return;
+		if (file.isBinary) return;
+		if (diffDeferReason(file, app.maxDiffLines, app.hiddenDiffPatterns)) return;
+		// Mirrors DiffFileSection's `noContentChanges`: mode-only changes, pure
+		// renames and empty adds render a one-liner without ever fetching. Images
+		// are excluded from that rule there, so they're excluded here too.
+		if (!isImagePath(file.path) && file.additions === 0 && file.deletions === 0) return;
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		const key = diffCacheKeyFor(repo.id, ctx, path);
+		// Already fetched, but possibly never highlighted — a diff can reach the
+		// cache through a section's own lazy fetch, which primes nothing. Prime off
+		// what we have and stop; Pierre no-ops if its cache is already warm.
+		const have = diffCache.get(key);
+		if (have) {
+			primeDiffHighlight(have);
+			return;
+		}
+		if (diffPrefetchInFlight.has(key)) return;
+		// The repo and context are baked into `key`, so switching either can't make
+		// this write land in the wrong bucket. A reload token bump is the one case
+		// that invalidates the answer without changing the key — the files were
+		// rewritten in place (merge, pull, discard) and `bumpDiffReload` cleared the
+		// cache. Dropping the result keeps an in-flight prefetch from re-seeding it
+		// with pre-op content.
+		const reloadToken = app.diffReloadToken;
+		diffPrefetchInFlight.add(key);
+		void window.api.git
+			.getDiff(repo.id, path, ctx)
+			.then((d) => {
+				if (app.diffReloadToken !== reloadToken) return;
+				diffCache.set(key, d);
+				primeDiffHighlight(d);
+			})
+			.catch(() => {
+				// Ignored on purpose — see above.
+			})
+			.finally(() => {
+				diffPrefetchInFlight.delete(key);
+			});
+	},
+
 	// Mark a file seen, collapse it, and open the next unseen file in display
 	// order. Shared by the diff section's "Mark seen" button and the
 	// Cmd/Ctrl+Enter hotkey so both walk through changes identically. Marking is
@@ -5231,18 +5311,7 @@ export const actions = {
 		// Collapse so the next file's header slides up under the cursor before the
 		// scroll request pins it at the top.
 		void actions.toggleFileCollapsed(filePath, true);
-		const ordered = actions.displayedFiles();
-		const idx = ordered.findIndex((f) => f.path === filePath);
-		const isUnseen = (f: ChangedFile): boolean => !app.seenFiles.has(f.path);
-		// Advance to the next unseen file below; if nothing remains below (e.g. the
-		// last file, or a tail of already-seen files), wrap to the first unseen file
-		// above instead of stranding the reviewer here. Without the wrap, marking
-		// the last file seen left the diff parked while only the sidebar's active
-		// highlight moved.
-		const next =
-			idx >= 0
-				? (ordered.slice(idx + 1).find(isUnseen) ?? ordered.slice(0, idx).find(isUnseen))
-				: ordered.find(isUnseen);
+		const next = actions.nextUnseenAfter(filePath);
 		if (!next) return;
 		// Glue the sidebar's single-file selection (the plain background highlight)
 		// to the file we're advancing to. Both branches below set `selectedFile`
@@ -5259,7 +5328,7 @@ export const actions = {
 		const detail = app.activeSessionDetail;
 		const lead =
 			app.sessionView === 'tour' && detail
-				? tourGroups(detail, ordered)?.find((g) => g.files[0]?.path === next.path)
+				? tourGroups(detail, actions.displayedFiles())?.find((g) => g.files[0]?.path === next.path)
 				: undefined;
 		if (lead) {
 			app.selectedFile = next.path;

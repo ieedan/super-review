@@ -344,12 +344,48 @@
 			const idx = planIndexForRequest(req);
 			if (idx >= renderLimit) {
 				renderLimit = idx + RENDER_CHUNK;
-				await tick();
-				if (!scrollContainer) return;
 			}
 		}
+		// Always settle pending DOM work before querying. Beyond the window growth
+		// above, `scrollToFile` expands a collapsed target in the same tick that
+		// raised this request — and a section whose wrapper is still `hidden` has a
+		// `display:none` host, which the render fast lane below refuses (Pierre
+		// measures 0×0 in there and paints a permanently blank diff).
+		await tick();
+		if (!scrollContainer) return;
 		const target = scrollContainer.querySelector(selector) as HTMLElement | null;
-		if (target) pinToTop(target);
+		if (!target) return;
+		// Paint the destination before pinning to it. The jump sweeps every section
+		// it passes into the IntersectionObserver margin, and they all queue through
+		// the time-budgeted render scheduler — so without this fast lane the one file
+		// the reviewer actually asked for waits its turn behind them, showing
+		// "Loading diff…" for a beat. `__renderNow` hydrates from the diff cache (the
+		// mark-seen prefetch below primes it) and renders in place, so the section is
+		// already at its true height when pinToTop starts correcting drift. Returns
+		// false when there's nothing cached to render yet; the normal in-view fetch
+		// then paints it, exactly as before.
+		renderTargetNow(target, req);
+		pinToTop(target);
+	}
+
+	// Kick the fast-lane render for a scroll target. For a file request that's the
+	// target itself; for a tour step it's the section that follows the header,
+	// since the step lands the reviewer on the header with the file just below it.
+	function renderTargetNow(target: HTMLElement, req: { path?: string | null }): void {
+		const section = req.path ? target : sectionAfter(target);
+		(section as (HTMLElement & { __renderNow?: () => boolean }) | null)?.__renderNow?.();
+	}
+
+	// The first file section following a step header in document order, or null.
+	// Sections sit inside a `display: contents` wrapper, so the match can be either
+	// the sibling itself or nested one level in.
+	function sectionAfter(from: HTMLElement): HTMLElement | null {
+		for (let el = from.nextElementSibling; el; el = el.nextElementSibling) {
+			if (el.matches('section[data-file-path]')) return el as HTMLElement;
+			const nested = el.querySelector('section[data-file-path]');
+			if (nested) return nested as HTMLElement;
+		}
+		return null;
 	}
 
 	// Track which file section is currently being viewed so the sidebar can
@@ -455,6 +491,39 @@
 			el.removeEventListener('scroll', schedule);
 			ro.disconnect();
 		};
+	});
+
+	// Warm the diff cache for the file "Mark seen" is about to open, so the jump
+	// lands on a section that can render straight from cache (see renderTargetNow)
+	// instead of waiting on a git IPC round trip while showing "Loading diff…".
+	//
+	// The target is computed exactly the way `markSeenAndAdvance` computes it, from
+	// the same file the two mark-seen affordances act on: the first on-screen
+	// unseen file (what Cmd/Ctrl+Enter targets), falling back to the selected file.
+	// `nextUnseenAfter` never returns its own argument, so predicting before the
+	// mark and resolving after it give the same answer.
+	//
+	// Trailing-debounced: `firstVisibleUnseenFile` is rewritten by the scroll
+	// handler as often as once a frame, and prefetching on every intermediate value
+	// during a fast scroll would fire a burst of fetches for files the reviewer flew
+	// straight past. Waiting for the scroll to settle primes one file, the right
+	// one. The timer is cleared on re-run, so only the final position fetches.
+	const PREFETCH_DEBOUNCE_MS = 200;
+	$effect(() => {
+		const from = app.firstVisibleUnseenFile ?? app.selectedFile;
+		// Read so a mark/unmark re-predicts: the next unseen file moves whenever the
+		// seen set changes, not just when the reviewer scrolls. Same for a refresh
+		// swapping in a new file list.
+		void app.seenFiles.size;
+		void app.changedFiles;
+		if (!from) return;
+		// The callback runs outside the effect's tracking scope, so the store reads
+		// inside `nextUnseenAfter` don't become dependencies of this effect.
+		const timer = setTimeout(() => {
+			const next = actions.nextUnseenAfter(from);
+			if (next) actions.prefetchDiff(next.path);
+		}, PREFETCH_DEBOUNCE_MS);
+		return () => clearTimeout(timer);
 	});
 
 	// Register the scroll container as the search root so the find controller
