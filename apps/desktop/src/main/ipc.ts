@@ -222,6 +222,8 @@ import {
 	recordFileReviewed,
 	recordSessionReviewed,
 	removeRepo,
+	repoWorkDir,
+	setRepoActiveWorktree,
 	setBranchBase,
 	setCachedFileList,
 	setCommitDraft,
@@ -247,6 +249,16 @@ function repoOrThrow(id: string): RepoInfo {
 	const repo = getRepo(id);
 	if (!repo) throw new Error(`Repo not found: ${id}`);
 	return repo;
+}
+
+// The directory a git/session/comment/task operation should run in: the repo's
+// active worktree while one is entered, else the repo itself. Ref-level reads
+// are identical either way (worktrees share objects and refs); this is what
+// points working-tree state — status, staging, commit, pull, HEAD — at the
+// worktree so its branch behaves like a normal checkout. `git:checkout` (and
+// friends) deliberately bypass this and use the registry path.
+function repoWorkDirOrThrow(id: string): string {
+	return repoWorkDir(repoOrThrow(id));
 }
 
 // MIME types for the image extensions a custom file icon may point at. Anything
@@ -376,17 +388,20 @@ function releaseSessionWatch(repoPath: string): void {
 function setSessionWatch(sender: Electron.WebContents, repoId: string): void {
 	const repo = getRepo(repoId);
 	if (!repo) return;
+	// Watch where the app is looking: inside a worktree, the agent's CLI writes
+	// sessions under the worktree, not the main checkout.
+	const dir = repoWorkDir(repo);
 	const prev = sessionWatchByContents.get(sender.id);
-	if (prev === repo.path) return; // Already watching this repo for this window.
+	if (prev === dir) return; // Already watching this repo for this window.
 	if (prev) releaseSessionWatch(prev);
-	sessionWatchByContents.set(sender.id, repo.path);
+	sessionWatchByContents.set(sender.id, dir);
 
-	const entry = sessionWatchers.get(repo.path);
+	const entry = sessionWatchers.get(dir);
 	if (entry) {
 		entry.refs += 1;
 	} else {
-		const close = watchSessionsDir(repo.path, () => broadcast('sessions:changed', repoId));
-		sessionWatchers.set(repo.path, { close, refs: 1 });
+		const close = watchSessionsDir(dir, () => broadcast('sessions:changed', repoId));
+		sessionWatchers.set(dir, { close, refs: 1 });
 	}
 
 	// Drop this window's watch when it goes away (registered once per window).
@@ -425,17 +440,18 @@ function releaseCommentWatch(repoPath: string): void {
 function setCommentWatch(sender: Electron.WebContents, repoId: string): void {
 	const repo = getRepo(repoId);
 	if (!repo) return;
+	const dir = repoWorkDir(repo);
 	const prev = commentWatchByContents.get(sender.id);
-	if (prev === repo.path) return; // Already watching this repo for this window.
+	if (prev === dir) return; // Already watching this repo for this window.
 	if (prev) releaseCommentWatch(prev);
-	commentWatchByContents.set(sender.id, repo.path);
+	commentWatchByContents.set(sender.id, dir);
 
-	const entry = commentWatchers.get(repo.path);
+	const entry = commentWatchers.get(dir);
 	if (entry) {
 		entry.refs += 1;
 	} else {
-		const close = watchCommentsDir(repo.path, () => broadcast('comments:changed', repoId));
-		commentWatchers.set(repo.path, { close, refs: 1 });
+		const close = watchCommentsDir(dir, () => broadcast('comments:changed', repoId));
+		commentWatchers.set(dir, { close, refs: 1 });
 	}
 
 	if (!commentWatchHooked.has(sender.id)) {
@@ -472,17 +488,18 @@ function releaseTaskWatch(repoPath: string): void {
 function setTaskWatch(sender: Electron.WebContents, repoId: string): void {
 	const repo = getRepo(repoId);
 	if (!repo) return;
+	const dir = repoWorkDir(repo);
 	const prev = taskWatchByContents.get(sender.id);
-	if (prev === repo.path) return; // Already watching this repo for this window.
+	if (prev === dir) return; // Already watching this repo for this window.
 	if (prev) releaseTaskWatch(prev);
-	taskWatchByContents.set(sender.id, repo.path);
+	taskWatchByContents.set(sender.id, dir);
 
-	const entry = taskWatchers.get(repo.path);
+	const entry = taskWatchers.get(dir);
 	if (entry) {
 		entry.refs += 1;
 	} else {
-		const close = watchTasksDir(repo.path, () => broadcast('tasks:changed', repoId));
-		taskWatchers.set(repo.path, { close, refs: 1 });
+		const close = watchTasksDir(dir, () => broadcast('tasks:changed', repoId));
+		taskWatchers.set(dir, { close, refs: 1 });
 	}
 
 	if (!taskWatchHooked.has(sender.id)) {
@@ -784,28 +801,45 @@ export function registerIpc(): void {
 
 	// ─── Git ───────────────────────────────────────────────────────────────
 	ipcMain.handle('git:listBranches', async (_e, repoId: string): Promise<BranchInfo[]> => {
-		return listBranches(repoOrThrow(repoId).path);
+		return listBranches(repoWorkDirOrThrow(repoId));
 	});
 
 	ipcMain.handle(
 		'git:listLocalOnlyBranches',
 		async (_e, repoId: string): Promise<LocalOnlyBranch[]> => {
-			return listLocalOnlyBranches(repoOrThrow(repoId).path);
+			return listLocalOnlyBranches(repoWorkDirOrThrow(repoId));
 		}
 	);
 
 	ipcMain.handle('git:getCurrentBranch', async (_e, repoId: string): Promise<string | null> => {
-		return getCurrentBranch(repoOrThrow(repoId).path);
+		return getCurrentBranch(repoWorkDirOrThrow(repoId));
 	});
 
+	// Checking out always targets the main checkout: leave any active worktree
+	// first so we never flip the branch out from under an agent's worktree.
 	ipcMain.handle('git:checkout', async (_e, repoId: string, branch: string) => {
-		await checkout(repoOrThrow(repoId).path, branch);
+		const repo = repoOrThrow(repoId);
+		setRepoActiveWorktree(repoId, null);
+		await checkout(repo.path, branch);
 	});
+
+	// Enter (or leave, with null) a linked worktree — see setRepoActiveWorktree.
+	ipcMain.handle(
+		'git:setActiveWorktree',
+		async (_e, repoId: string, worktreePath: string | null): Promise<RepoInfo> => {
+			repoOrThrow(repoId);
+			const updated = setRepoActiveWorktree(repoId, worktreePath);
+			if (!updated) throw new Error(`Repo not found: ${repoId}`);
+			return updated;
+		}
+	);
 
 	ipcMain.handle(
 		'git:checkoutPR',
 		async (_e, repoId: string, pr: PRSummary, source: PRSource = 'fork') => {
 			const repo = repoOrThrow(repoId);
+			// Like git:checkout, a PR checkout targets the main checkout.
+			setRepoActiveWorktree(repoId, null);
 			// Base remote used only for the read-only fallback (deleted head repo).
 			const fallbackRemote =
 				source === 'upstream' && repo.upstreamOwner && repo.upstreamRepo
@@ -826,13 +860,19 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle('git:isDirty', async (_e, repoId: string): Promise<boolean> => {
-		return isWorkingTreeDirty(repoOrThrow(repoId).path);
+		return isWorkingTreeDirty(repoWorkDirOrThrow(repoId));
 	});
 
 	ipcMain.handle(
 		'git:createBranch',
 		async (_e, repoId: string, name: string, opts: { base?: string; checkout: boolean }) => {
-			const result = await createBranch(repoOrThrow(repoId).path, name, opts);
+			const repo = repoOrThrow(repoId);
+			// `checkout: true` moves HEAD, so it belongs to the main checkout — leave
+			// any active worktree first. Without checkout, run where the app is
+			// looking so a base-less create branches from the HEAD the user sees.
+			if (opts.checkout) setRepoActiveWorktree(repoId, null);
+			const dir = opts.checkout ? repo.path : repoWorkDir(repo);
+			const result = await createBranch(dir, name, opts);
 			if (result.ok) bumpStat(repoId, 'branchesCreated');
 			return result;
 		}
@@ -841,7 +881,7 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:deleteBranch',
 		async (_e, repoId: string, name: string, opts: { deleteRemote: boolean; upstream?: string }) =>
-			deleteBranch(repoOrThrow(repoId).path, name, opts)
+			deleteBranch(repoWorkDirOrThrow(repoId), name, opts)
 	);
 
 	ipcMain.handle(
@@ -851,7 +891,7 @@ export function registerIpc(): void {
 			// list straight from the manifest. `ctx.ref` reads the manifest committed
 			// on a branch/PR viewed read-only; otherwise it's on disk.
 			if (ctx.kind === 'session') {
-				const repoPath = repoOrThrow(repoId).path;
+				const repoPath = repoWorkDirOrThrow(repoId);
 				const session = ctx.ref
 					? await getSessionAtRef(repoPath, ctx.ref, ctx.sessionId)
 					: await getSession(repoPath, ctx.sessionId);
@@ -864,12 +904,12 @@ export function registerIpc(): void {
 					isBinary: f.isBinary
 				}));
 			}
-			return listChangedFiles(repoOrThrow(repoId).path, ctx);
+			return listChangedFiles(repoWorkDirOrThrow(repoId), ctx);
 		}
 	);
 
 	ipcMain.handle('git:refExists', async (_e, repoId: string, ref: string): Promise<boolean> => {
-		return refExists(repoOrThrow(repoId).path, ref);
+		return refExists(repoWorkDirOrThrow(repoId), ref);
 	});
 
 	ipcMain.handle(
@@ -878,7 +918,7 @@ export function registerIpc(): void {
 			// Session diffs come from the manifest, not git. `ctx.ref` reads the
 			// manifest committed on a branch/PR viewed read-only; otherwise on disk.
 			if (ctx.kind === 'session') {
-				const repoPath = repoOrThrow(repoId).path;
+				const repoPath = repoWorkDirOrThrow(repoId);
 				const session = ctx.ref
 					? await getSessionAtRef(repoPath, ctx.ref, ctx.sessionId)
 					: await getSession(repoPath, ctx.sessionId);
@@ -903,12 +943,12 @@ export function registerIpc(): void {
 					newImage: f.newImage
 				};
 			}
-			return getDiff(repoOrThrow(repoId).path, filePath, ctx);
+			return getDiff(repoWorkDirOrThrow(repoId), filePath, ctx);
 		}
 	);
 
 	ipcMain.handle('git:fetchOrigin', async (_e, repoId: string) => {
-		return fetchOrigin(repoOrThrow(repoId).path);
+		return fetchOrigin(repoWorkDirOrThrow(repoId));
 	});
 
 	ipcMain.handle('git:getPushStatus', async (_e, repoId: string): Promise<PushStatus> => {
@@ -928,23 +968,24 @@ export function registerIpc(): void {
 				broadcast('repos:active-changed', merged);
 			}
 		}
-		return getPushStatus(repo.path, defaultBranch);
+		// Push status follows the checkout the app is looking at (its HEAD/branch).
+		return getPushStatus(repoWorkDir(repo), defaultBranch);
 	});
 
 	ipcMain.handle(
 		'git:pull',
-		async (_e, repoId: string): Promise<PullPushResult> => pull(repoOrThrow(repoId).path)
+		async (_e, repoId: string): Promise<PullPushResult> => pull(repoWorkDirOrThrow(repoId))
 	);
 
 	ipcMain.handle(
 		'git:push',
-		async (_e, repoId: string): Promise<PullPushResult> => push(repoOrThrow(repoId).path)
+		async (_e, repoId: string): Promise<PullPushResult> => push(repoWorkDirOrThrow(repoId))
 	);
 
 	ipcMain.handle(
 		'git:mergeIntoCurrent',
 		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
-			mergeIntoCurrent(repoOrThrow(repoId).path, ref)
+			mergeIntoCurrent(repoWorkDirOrThrow(repoId), ref)
 	);
 
 	ipcMain.handle(
@@ -958,25 +999,25 @@ export function registerIpc(): void {
 					error: 'This repository does not have an upstream.'
 				};
 			}
-			return updateFromUpstream(repo.path, upstreamFetchUrl(repo), branch);
+			return updateFromUpstream(repoWorkDir(repo), upstreamFetchUrl(repo), branch);
 		}
 	);
 
 	ipcMain.handle(
 		'git:getConflicts',
-		async (_e, repoId: string): Promise<string[]> => getConflicts(repoOrThrow(repoId).path)
+		async (_e, repoId: string): Promise<string[]> => getConflicts(repoWorkDirOrThrow(repoId))
 	);
 
 	ipcMain.handle(
 		'git:recheckConflicts',
 		async (_e, repoId: string, files: string[]): Promise<string[]> =>
-			recheckConflicts(repoOrThrow(repoId).path, files)
+			recheckConflicts(repoWorkDirOrThrow(repoId), files)
 	);
 
 	ipcMain.handle(
 		'git:stageFile',
 		async (_e, repoId: string, filePath: string): Promise<void> =>
-			stageFile(repoOrThrow(repoId).path, filePath)
+			stageFile(repoWorkDirOrThrow(repoId), filePath)
 	);
 
 	ipcMain.handle(
@@ -985,7 +1026,7 @@ export function registerIpc(): void {
 			// Inject the OS-trash implementation: core stays Electron-free, so the
 			// app supplies `shell.trashItem` to keep discards of new/untracked files
 			// recoverable (move to trash) rather than hard-deleting them.
-			discardChanges(repoOrThrow(repoId).path, filePath, oldPath, (p) =>
+			discardChanges(repoWorkDirOrThrow(repoId), filePath, oldPath, (p) =>
 				import('electron').then(({ shell }) => shell.trashItem(p))
 			)
 	);
@@ -994,7 +1035,7 @@ export function registerIpc(): void {
 		'git:discardFiles',
 		async (_e, repoId: string, files: DiscardTarget[]): Promise<void> =>
 			// Same OS-trash injection as git:discardChanges, applied across the batch.
-			discardFiles(repoOrThrow(repoId).path, files, (p) =>
+			discardFiles(repoWorkDirOrThrow(repoId), files, (p) =>
 				import('electron').then(({ shell }) => shell.trashItem(p))
 			)
 	);
@@ -1002,22 +1043,22 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:discardLines',
 		async (_e, repoId: string, _filePath: string, patch: string): Promise<void> =>
-			discardLines(repoOrThrow(repoId).path, patch)
+			discardLines(repoWorkDirOrThrow(repoId), patch)
 	);
 
 	ipcMain.handle(
 		'git:addToGitignore',
 		async (_e, repoId: string, patterns: string[]): Promise<void> =>
-			addToGitignore(repoOrThrow(repoId).path, patterns)
+			addToGitignore(repoWorkDirOrThrow(repoId), patterns)
 	);
 
 	ipcMain.handle(
 		'git:continueMerge',
-		async (_e, repoId: string): Promise<PullPushResult> => continueMerge(repoOrThrow(repoId).path)
+		async (_e, repoId: string): Promise<PullPushResult> => continueMerge(repoWorkDirOrThrow(repoId))
 	);
 
 	ipcMain.handle('git:abortMerge', async (_e, repoId: string): Promise<void> => {
-		await abortMerge(repoOrThrow(repoId).path);
+		await abortMerge(repoWorkDirOrThrow(repoId));
 	});
 
 	// Stash management. Create/find key off the current branch (one managed stash
@@ -1026,50 +1067,50 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:createManagedStash',
 		async (_e, repoId: string): Promise<{ ok: boolean; error?: string }> => {
-			const repo = repoOrThrow(repoId);
-			const branch = await getCurrentBranch(repo.path);
+			const dir = repoWorkDirOrThrow(repoId);
+			const branch = await getCurrentBranch(dir);
 			if (!branch) return { ok: false, error: 'Not on a branch (detached HEAD).' };
-			return createManagedStash(repo.path, branch);
+			return createManagedStash(dir, branch);
 		}
 	);
 
 	ipcMain.handle(
 		'git:findManagedStash',
 		async (_e, repoId: string): Promise<ManagedStash | null> => {
-			const repo = repoOrThrow(repoId);
-			const branch = await getCurrentBranch(repo.path);
+			const dir = repoWorkDirOrThrow(repoId);
+			const branch = await getCurrentBranch(dir);
 			if (!branch) return null;
-			return findManagedStash(repo.path, branch);
+			return findManagedStash(dir, branch);
 		}
 	);
 
 	ipcMain.handle(
 		'git:restoreManagedStash',
 		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
-			restoreManagedStash(repoOrThrow(repoId).path, ref)
+			restoreManagedStash(repoWorkDirOrThrow(repoId), ref)
 	);
 
 	ipcMain.handle(
 		'git:restoreManagedStashKeepingLocal',
 		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
-			restoreManagedStashKeepingLocal(repoOrThrow(repoId).path, ref)
+			restoreManagedStashKeepingLocal(repoWorkDirOrThrow(repoId), ref)
 	);
 
 	ipcMain.handle(
 		'git:discardManagedStash',
 		async (_e, repoId: string, ref: string): Promise<void> => {
-			await discardManagedStash(repoOrThrow(repoId).path, ref);
+			await discardManagedStash(repoWorkDirOrThrow(repoId), ref);
 		}
 	);
 
 	ipcMain.handle(
 		'git:finishStashPop',
 		async (_e, repoId: string, ref: string): Promise<PullPushResult> =>
-			finishStashPop(repoOrThrow(repoId).path, ref)
+			finishStashPop(repoWorkDirOrThrow(repoId), ref)
 	);
 
 	ipcMain.handle('git:abortStashPop', async (_e, repoId: string): Promise<void> => {
-		await abortStashPop(repoOrThrow(repoId).path);
+		await abortStashPop(repoWorkDirOrThrow(repoId));
 	});
 
 	ipcMain.handle(
@@ -1083,7 +1124,7 @@ export function registerIpc(): void {
 			const repo = repoOrThrow(repoId);
 			const identity = gh.resolveCommitIdentity(repo.githubAccountId);
 			const signing = await gh.resolveCommitSigning(repo.githubAccountId);
-			const result = await commit(repo.path, message, files, identity, signing);
+			const result = await commit(repoWorkDir(repo), message, files, identity, signing);
 			if (result.ok) {
 				bumpStat(repoId, 'commitsAuthored');
 				addStat(repoId, 'filesCommitted', result.filesCommitted ?? 0);
@@ -1096,30 +1137,30 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'git:getLastCommit',
 		async (_e, repoId: string): Promise<LastCommit | null> =>
-			getLastCommit(repoOrThrow(repoId).path)
+			getLastCommit(repoWorkDirOrThrow(repoId))
 	);
 
 	ipcMain.handle(
 		'git:listCommits',
 		async (_e, repoId: string, head?: string, limit?: number): Promise<CommitInfo[]> =>
-			listCommits(repoOrThrow(repoId).path, head, limit)
+			listCommits(repoWorkDirOrThrow(repoId), head, limit)
 	);
 
 	ipcMain.handle(
 		'git:listLocalCommits',
 		async (_e, repoId: string, limit?: number): Promise<LocalCommit[]> =>
-			listLocalCommits(repoOrThrow(repoId).path, limit)
+			listLocalCommits(repoWorkDirOrThrow(repoId), limit)
 	);
 
 	ipcMain.handle(
 		'git:mergeBase',
 		async (_e, repoId: string, a: string, b: string): Promise<string | null> =>
-			mergeBase(repoOrThrow(repoId).path, a, b)
+			mergeBase(repoWorkDirOrThrow(repoId), a, b)
 	);
 
 	ipcMain.handle(
 		'git:undoLastCommit',
-		async (_e, repoId: string): Promise<CommitResult> => undoLastCommit(repoOrThrow(repoId).path)
+		async (_e, repoId: string): Promise<CommitResult> => undoLastCommit(repoWorkDirOrThrow(repoId))
 	);
 
 	// Convert the project to a fork: repoint `origin` at the freshly-created fork,
@@ -1192,20 +1233,20 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle('changesets:getStatus', async (_e, repoId: string): Promise<ChangesetStatus> => {
-		return getChangesetStatus(repoOrThrow(repoId).path);
+		return getChangesetStatus(repoWorkDirOrThrow(repoId));
 	});
 
 	ipcMain.handle(
 		'changesets:create',
 		async (_e, repoId: string, input: CreateChangesetInput): Promise<string> => {
-			return createChangeset(repoOrThrow(repoId).path, input);
+			return createChangeset(repoWorkDirOrThrow(repoId), input);
 		}
 	);
 
 	ipcMain.handle(
 		'changesets:remove',
 		async (_e, repoId: string, filePath: string): Promise<void> => {
-			await removeChangeset(repoOrThrow(repoId).path, filePath);
+			await removeChangeset(repoWorkDirOrThrow(repoId), filePath);
 		}
 	);
 
@@ -1217,7 +1258,7 @@ export function registerIpc(): void {
 			request: GenerateChangesetRequest
 		): Promise<GenerateChangesetResult> => {
 			const win = BrowserWindow.fromWebContents(e.sender);
-			return generateChangeset(repoOrThrow(repoId).path, request, {
+			return generateChangeset(repoWorkDirOrThrow(repoId), request, {
 				onActivity: (status) => {
 					if (win) sendToWindow(win, 'changesets:progress', { status });
 				}
@@ -2630,7 +2671,7 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'sessions:list',
 		async (_e, repoId: string, ref?: string | null): Promise<SessionSummary[]> => {
-			const repoPath = repoOrThrow(repoId).path;
+			const repoPath = repoWorkDirOrThrow(repoId);
 			return ref ? listSessionsAtRef(repoPath, ref) : listSessions(repoPath);
 		}
 	);
@@ -2638,7 +2679,7 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'sessions:get',
 		async (_e, repoId: string, id: string, ref?: string | null): Promise<Session | null> => {
-			const repoPath = repoOrThrow(repoId).path;
+			const repoPath = repoWorkDirOrThrow(repoId);
 			return ref ? getSessionAtRef(repoPath, ref, id) : getSession(repoPath, id);
 		}
 	);
@@ -2646,18 +2687,18 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'sessions:remove',
 		async (_e, repoId: string, id: string): Promise<void> =>
-			deleteSession(repoOrThrow(repoId).path, id)
+			deleteSession(repoWorkDirOrThrow(repoId), id)
 	);
 
 	ipcMain.handle(
 		'sessions:clear',
-		async (_e, repoId: string): Promise<void> => clearSessions(repoOrThrow(repoId).path)
+		async (_e, repoId: string): Promise<void> => clearSessions(repoWorkDirOrThrow(repoId))
 	);
 
 	ipcMain.handle(
 		'sessions:count',
 		async (_e, repoId: string, ref?: string | null): Promise<number> => {
-			const repoPath = repoOrThrow(repoId).path;
+			const repoPath = repoWorkDirOrThrow(repoId);
 			return ref ? countSessionsAtRef(repoPath, ref) : countSessions(repoPath);
 		}
 	);
@@ -2678,13 +2719,13 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'comments:list',
 		async (_e, repoId: string, contextKey: string): Promise<LocalComment[]> =>
-			listCommentsForContext(repoOrThrow(repoId).path, contextKey)
+			listCommentsForContext(repoWorkDirOrThrow(repoId), contextKey)
 	);
 
 	ipcMain.handle(
 		'comments:add',
 		async (_e, repoId: string, input: NewLocalCommentInput): Promise<LocalComment> => {
-			const comment = await addComment(repoOrThrow(repoId).path, input);
+			const comment = await addComment(repoWorkDirOrThrow(repoId), input);
 			bumpStat(repoId, 'commentsWritten');
 			return comment;
 		}
@@ -2693,7 +2734,7 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'comments:edit',
 		async (_e, repoId: string, id: string, body: string): Promise<LocalComment | null> =>
-			editComment(repoOrThrow(repoId).path, id, body)
+			editComment(repoWorkDirOrThrow(repoId), id, body)
 	);
 
 	ipcMain.handle(
@@ -2705,19 +2746,19 @@ export function registerIpc(): void {
 			resolver: LocalCommentAuthor,
 			sessionId?: string | null
 		): Promise<LocalComment | null> =>
-			resolveComment(repoOrThrow(repoId).path, id, resolver, sessionId ?? null)
+			resolveComment(repoWorkDirOrThrow(repoId), id, resolver, sessionId ?? null)
 	);
 
 	ipcMain.handle(
 		'comments:unresolve',
 		async (_e, repoId: string, id: string): Promise<LocalComment | null> =>
-			unresolveComment(repoOrThrow(repoId).path, id)
+			unresolveComment(repoWorkDirOrThrow(repoId), id)
 	);
 
 	ipcMain.handle(
 		'comments:remove',
 		async (_e, repoId: string, id: string): Promise<void> =>
-			deleteCommentRecord(repoOrThrow(repoId).path, id)
+			deleteCommentRecord(repoWorkDirOrThrow(repoId), id)
 	);
 
 	ipcMain.handle('comments:watch', (e, repoId: string | null): void => {
@@ -2734,7 +2775,7 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'tasks:list',
 		async (_e, repoId: string, branch: string, ref?: string | null): Promise<Task[]> => {
-			const repoPath = repoOrThrow(repoId).path;
+			const repoPath = repoWorkDirOrThrow(repoId);
 			return ref ? listTasksAtRef(repoPath, branch, ref) : listTasks(repoPath, branch);
 		}
 	);
@@ -2742,7 +2783,7 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'tasks:add',
 		async (_e, repoId: string, branch: string, input: NewTaskInput): Promise<Task> =>
-			addTask(repoOrThrow(repoId).path, branch, input)
+			addTask(repoWorkDirOrThrow(repoId), branch, input)
 	);
 
 	ipcMain.handle(
@@ -2753,7 +2794,7 @@ export function registerIpc(): void {
 			branch: string,
 			id: string,
 			patch: TaskPatch
-		): Promise<Task | null> => updateTask(repoOrThrow(repoId).path, branch, id, patch)
+		): Promise<Task | null> => updateTask(repoWorkDirOrThrow(repoId), branch, id, patch)
 	);
 
 	ipcMain.handle(
@@ -2765,25 +2806,25 @@ export function registerIpc(): void {
 			id: string,
 			done: boolean,
 			actor: TaskActor
-		): Promise<Task | null> => setTaskDone(repoOrThrow(repoId).path, branch, id, done, actor)
+		): Promise<Task | null> => setTaskDone(repoWorkDirOrThrow(repoId), branch, id, done, actor)
 	);
 
 	ipcMain.handle(
 		'tasks:remove',
 		async (_e, repoId: string, branch: string, id: string): Promise<void> =>
-			removeTask(repoOrThrow(repoId).path, branch, id)
+			removeTask(repoWorkDirOrThrow(repoId), branch, id)
 	);
 
 	ipcMain.handle(
 		'tasks:reorder',
 		async (_e, repoId: string, branch: string, ids: string[]): Promise<void> =>
-			reorderTasks(repoOrThrow(repoId).path, branch, ids)
+			reorderTasks(repoWorkDirOrThrow(repoId), branch, ids)
 	);
 
 	ipcMain.handle(
 		'tasks:clear',
 		async (_e, repoId: string, branch: string): Promise<void> =>
-			clearTasks(repoOrThrow(repoId).path, branch)
+			clearTasks(repoWorkDirOrThrow(repoId), branch)
 	);
 
 	ipcMain.handle('tasks:watch', (e, repoId: string | null): void => {
@@ -2801,19 +2842,19 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'aiConfig:status',
 		async (_e, repoId: string): Promise<AiConfigStatus> =>
-			getAiConfigStatus(repoOrThrow(repoId).path)
+			getAiConfigStatus(repoWorkDirOrThrow(repoId))
 	);
 
 	ipcMain.handle(
 		'aiConfig:apply',
 		async (_e, repoId: string, request: AiConfigApplyRequest): Promise<AiConfigApplyResult> =>
-			applyAiConfig(repoOrThrow(repoId).path, request)
+			applyAiConfig(repoWorkDirOrThrow(repoId), request)
 	);
 
 	ipcMain.handle(
 		'aiConfig:remove',
 		async (_e, repoId: string, item: AiConfigInstallItem): Promise<AiConfigRemoveResult> =>
-			removeAiConfig(repoOrThrow(repoId).path, item)
+			removeAiConfig(repoWorkDirOrThrow(repoId), item)
 	);
 
 	// ─── Commit message generation via harness CLIs ──────────────────────────
@@ -2841,7 +2882,7 @@ export function registerIpc(): void {
 			request: GenerateCommitMessageRequest
 		): Promise<GenerateCommitMessageResult> => {
 			const win = BrowserWindow.fromWebContents(e.sender);
-			return generateCommitMessage(repoOrThrow(repoId).path, request, {
+			return generateCommitMessage(repoWorkDirOrThrow(repoId), request, {
 				onProgress: (event) => {
 					if (win) sendToWindow(win, 'commitMessage:progress', event);
 				}

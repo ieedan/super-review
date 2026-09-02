@@ -77,9 +77,26 @@
 		if (tab === 'prs') preloadPRs();
 	}
 
-	async function checkout(name: string): Promise<void> {
+	async function checkout(b: BranchInfo): Promise<void> {
 		app.branchPickerOpen = false;
-		await actions.requestBranchSwitch(name);
+		// A branch checked out in another worktree can't be checked out here (git
+		// refuses: "already used by worktree"), so enter that worktree instead —
+		// the app re-targets its checkout and the branch behaves like any other,
+		// uncommitted changes included. From inside a worktree the main
+		// checkout's branch carries the repo's own path, so selecting it lands
+		// back home through the same call.
+		if (b.worktreePath && !b.current) {
+			await actions.enterWorktree(b.worktreePath);
+			return;
+		}
+		if (app.activeRepo?.activeWorktreePath) {
+			// Switching to a branch no worktree owns: leave the worktree first so
+			// the dirty check (and any stash prompt) concerns the main checkout's
+			// tree, not the agent's in-progress work.
+			await actions.exitWorktree();
+			if (b.name === app.currentBranch) return;
+		}
+		await actions.requestBranchSwitch(b.name);
 	}
 
 	// Right-click a branch row: pop the native OS context menu and dispatch the
@@ -315,6 +332,16 @@
 		<span>
 			{triggerLabel}
 		</span>
+		<!-- Inside a linked worktree the branch is real and writable, but lives in
+		     a different checkout than the repo's own — surface that. -->
+		{#if app.activeRepo?.activeWorktreePath && !isReadOnlyView()}
+			<span
+				class="rounded bg-foreground/10 px-1 py-0.5 text-[10px] leading-none font-medium text-muted-foreground"
+				title={app.activeRepo.activeWorktreePath}
+			>
+				worktree
+			</span>
+		{/if}
 		<ChevronDown class="size-3.5 text-muted-foreground" />
 	</Popover.Trigger>
 	<Popover.Content align="start" class="w-[26rem] p-0">
@@ -378,7 +405,7 @@
 										{@const drifted = isViewingOtherBranch()}
 										<Command.Item
 											value={b.name}
-											onSelect={() => checkout(b.name)}
+											onSelect={() => checkout(b)}
 											oncontextmenu={(e) => showContextMenu(e, b)}
 											class={cn(
 												'flex items-center gap-2 [content-visibility:auto] [contain-intrinsic-size:auto_28px]',
@@ -415,6 +442,17 @@
 													class="shrink-0 rounded bg-foreground/10 px-1 py-0.5 text-[10px] leading-none font-medium text-muted-foreground"
 												>
 													checked out
+												</span>
+											{/if}
+											<!-- Checked out in another worktree: selecting it enters that
+											     worktree. From inside a worktree the main checkout shows up
+											     the same way — label it for what it is. -->
+											{#if b.worktreePath && !b.current}
+												<span
+													class="shrink-0 rounded bg-foreground/10 px-1 py-0.5 text-[10px] leading-none font-medium text-muted-foreground"
+													title={b.worktreePath}
+												>
+													{b.worktreePath === app.activeRepo?.path ? 'main checkout' : 'worktree'}
 												</span>
 											{/if}
 											{#if relativeFor(b)}

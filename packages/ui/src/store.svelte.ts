@@ -2041,6 +2041,29 @@ async function refreshRepos(): Promise<void> {
 	}
 }
 
+// The checkout the app is looking at on disk: the active worktree while one is
+// entered, else the repo itself. Anything that hands a path to the outside
+// world (editor, terminal, file manager, clipboard) resolves against this —
+// the worktree is a full checkout, and it's where the on-screen file versions
+// actually live.
+function activeCheckoutDir(): string | null {
+	const repo = app.activeRepo;
+	if (!repo) return null;
+	return repo.activeWorktreePath ?? repo.path;
+}
+
+// Mirror a main-process worktree exit (any real checkout leaves the active
+// worktree) into renderer state, so the watcher effects and the header's
+// worktree indicator follow without a repos round-trip.
+function clearLocalActiveWorktree(): void {
+	const repo = app.activeRepo;
+	if (!repo?.activeWorktreePath) return;
+	const updated: RepoInfo = { ...repo };
+	delete updated.activeWorktreePath;
+	app.activeRepo = updated;
+	app.repos = app.repos.map((r) => (r.id === updated.id ? updated : r));
+}
+
 // Make `repo` the active repo and load everything its view needs. Shared by the
 // open/create flows so they land the user in an identical, fully-refreshed state.
 async function activateRepo(repo: RepoInfo): Promise<void> {
@@ -5458,6 +5481,10 @@ export const actions = {
 		if (!app.activeRepo) return false;
 		try {
 			await window.api.git.checkout(app.activeRepo.id, branch);
+			// A real checkout targets the main checkout, so the main process left
+			// any active worktree — mirror that here (watchers and the header chip
+			// key off this field).
+			clearLocalActiveWorktree();
 			// Checking out makes the view follow the checkout again — drop any
 			// read-only view so the UI reflects the branch now on disk.
 			app.viewBranch = null;
@@ -5620,6 +5647,28 @@ export const actions = {
 			app.diffContext = contextForTab('branch');
 		}
 		await refreshFiles();
+	},
+
+	// Enter a linked worktree: the whole app re-targets that checkout, so the
+	// branch an agent has checked out there behaves like any other branch —
+	// its uncommitted changes show on Unstaged, and staging/commit/pull/push
+	// all run in the worktree. Entering the main checkout's own path (which is
+	// how its branch appears from inside a worktree) lands back home. The full
+	// repo-activation cascade keeps every tab consistent with the new checkout.
+	async enterWorktree(worktreePath: string): Promise<void> {
+		if (!app.activeRepo) return;
+		try {
+			const updated = await window.api.git.setActiveWorktree(app.activeRepo.id, worktreePath);
+			await activateRepo(updated);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	},
+
+	// Leave the active worktree and land back on the main checkout's branch.
+	async exitWorktree(): Promise<void> {
+		if (!app.activeRepo?.activeWorktreePath) return;
+		await actions.enterWorktree(app.activeRepo.path);
 	},
 
 	// User-initiated branch switch (the branch picker). With a clean tree this is
@@ -5845,6 +5894,9 @@ export const actions = {
 			// `pr` is a $state proxy; snapshot to a plain object so it survives the
 			// structured-clone across the IPC boundary ("object could not be cloned").
 			await window.api.git.checkoutPR(app.activeRepo.id, $state.snapshot(pr), app.prsSource);
+			// A PR checkout targets the main checkout — the main process left any
+			// active worktree, so mirror that locally.
+			clearLocalActiveWorktree();
 			app.viewBranch = null;
 			app.viewPR = null;
 			applyContextTab('branch');
@@ -7072,6 +7124,9 @@ export const actions = {
 				setError(result.error ?? 'Could not create branch.');
 				return false;
 			}
+			// Creating with checkout moves the main checkout's HEAD, which leaves
+			// any active worktree (main process already cleared it).
+			if (opts.checkout) clearLocalActiveWorktree();
 			if (app.contextTab === 'branch') {
 				app.diffContext = contextForTab('branch');
 			}
@@ -7844,12 +7899,13 @@ export const actions = {
 			setError('No external editor is configured. Install the cursor or code CLI.');
 			return;
 		}
-		const path = target ?? app.activeRepo.path;
+		const base = activeCheckoutDir() ?? app.activeRepo.path;
+		const path = target ?? base;
 		// Absolute on POSIX (`/...`) or Windows (`C:\...`, `\\server\...`).
 		const isAbsolute =
 			target != null &&
 			(target.startsWith('/') || /^[A-Za-z]:[\\/]/.test(target) || target.startsWith('\\\\'));
-		const resolved = target && !isAbsolute ? `${app.activeRepo.path}/${target}` : path;
+		const resolved = target && !isAbsolute ? `${base}/${target}` : path;
 		// When opening a changed file (a relative repo path) without an explicit
 		// line, jump to where its diff begins so the editor lands on the change
 		// instead of the top of the file.
@@ -8130,9 +8186,11 @@ export const actions = {
 	},
 
 	// Resolve a repo-relative path to an absolute one for the shell helpers.
+	// Inside a worktree that's where the on-screen version of the file lives.
 	resolveRepoPath(filePath: string): string | null {
-		if (!app.activeRepo) return null;
-		return `${app.activeRepo.path}/${filePath}`;
+		const base = activeCheckoutDir();
+		if (!base) return null;
+		return `${base}/${filePath}`;
 	},
 
 	// Reveal a file in the OS file manager (Finder / Explorer).
@@ -8142,10 +8200,12 @@ export const actions = {
 		await window.api.shell.showItemInFolder(full);
 	},
 
-	// Open the repository's folder in the OS file manager.
+	// Open the repository's folder (or the active worktree's) in the OS file
+	// manager.
 	async openRepoInFileManager(): Promise<void> {
-		if (!app.activeRepo) return;
-		const result = await window.api.shell.openPath(app.activeRepo.path);
+		const base = activeCheckoutDir();
+		if (!base) return;
+		const result = await window.api.shell.openPath(base);
 		if (!result.ok && result.error) setError(result.error);
 	},
 
@@ -8195,8 +8255,9 @@ export const actions = {
 			setError('No terminal is configured.');
 			return;
 		}
-		const path = target ?? app.activeRepo.path;
-		const resolved = target && !target.startsWith('/') ? `${app.activeRepo.path}/${target}` : path;
+		const base = activeCheckoutDir() ?? app.activeRepo.path;
+		const path = target ?? base;
+		const resolved = target && !target.startsWith('/') ? `${base}/${target}` : path;
 		const result = await window.api.terminal.open(terminal, resolved);
 		if (!result.ok && result.error) setError(result.error);
 	},

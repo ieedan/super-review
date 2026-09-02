@@ -190,6 +190,8 @@ const api: PreloadAPI = {
 		checkout: (repoId, branch) => invoke('git:checkout', repoId, branch) as Promise<void>,
 		checkoutPR: (repoId, pr, source) =>
 			invoke('git:checkoutPR', repoId, pr, source) as Promise<void>,
+		setActiveWorktree: (repoId, worktreePath) =>
+			invoke('git:setActiveWorktree', repoId, worktreePath) as Promise<RepoInfo>,
 		isDirty: (repoId) => invoke('git:isDirty', repoId) as Promise<boolean>,
 		createBranch: (repoId, name, opts) =>
 			invoke('git:createBranch', repoId, name, opts) as Promise<CreateBranchResult>,

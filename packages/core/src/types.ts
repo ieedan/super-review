@@ -33,6 +33,13 @@ export interface RepoInfo {
 	// GitHub account this project is pinned to. When unset, the app-wide default
 	// (activeGithubAccountId) is used instead.
 	githubAccountId?: string;
+	// Absolute path of a linked worktree the app is currently "inside" for this
+	// repo. While set, working-tree operations (status, staging, commit, pull,
+	// sessions, …) run against this checkout instead of `path`, so a branch an
+	// agent has checked out in a worktree reviews like any other branch. Ref
+	// reads are identical either way (worktrees share the object db and refs).
+	// Cleared by any real `git checkout`, which always targets `path`.
+	activeWorktreePath?: string;
 }
 
 // Author/committer identity applied to a commit, derived from the GitHub
@@ -60,6 +67,10 @@ export interface BranchInfo {
 	// Unix epoch ms of the branch tip's committer date. Undefined when git
 	// didn't return a parseable date (very rare — corrupted ref, etc.).
 	lastCommitAt?: number;
+	// Absolute path of the linked worktree this branch is checked out in, when
+	// that worktree isn't the repo itself. Such a branch can't be checked out
+	// here (git refuses: "already used by worktree"), so it's viewed read-only.
+	worktreePath?: string;
 }
 
 // A single commit in the History tab's list. Lightweight metadata only — the
@@ -2349,6 +2360,10 @@ export interface PreloadAPI {
 		getCurrentBranch(repoId: string): Promise<string | null>;
 		checkout(repoId: string, branch: string): Promise<void>;
 		checkoutPR(repoId: string, pr: PRSummary, source?: PRSource): Promise<void>;
+		// Enter (or, with null, leave) a linked worktree: working-tree operations
+		// for this repo run against that checkout until a real checkout clears it.
+		// Passing the repo's own path also leaves. Returns the updated RepoInfo.
+		setActiveWorktree(repoId: string, worktreePath: string | null): Promise<RepoInfo>;
 		isDirty(repoId: string): Promise<boolean>;
 		createBranch(
 			repoId: string,

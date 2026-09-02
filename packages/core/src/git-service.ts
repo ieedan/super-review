@@ -937,7 +937,7 @@ export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
 		git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
 		git.raw([
 			'for-each-ref',
-			'--format=%(refname)\t%(committerdate:unix)\t%(upstream:short)\t%(symref)',
+			'--format=%(refname)\t%(committerdate:unix)\t%(upstream:short)\t%(symref)\t%(worktreepath)',
 			'refs/heads',
 			'refs/remotes'
 		])
@@ -954,7 +954,7 @@ export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
 	const remoteOnly = new Map<string, { upstream: string; remote: string; lastCommitAt?: number }>();
 
 	for (const line of raw.split('\n').filter(Boolean)) {
-		const [refname, tsRaw, upstreamRaw, symref] = line.split('\t');
+		const [refname, tsRaw, upstreamRaw, symref, worktreePathRaw] = line.split('\t');
 		if (!refname) continue;
 		const ts = Number(tsRaw);
 		const lastCommitAt = Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined;
@@ -971,7 +971,12 @@ export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
 				// lives on a remote. Empty when the branch tracks nothing.
 				upstream: upstreamRaw ? upstreamRaw : undefined,
 				isRemote: false,
-				lastCommitAt
+				lastCommitAt,
+				// `%(worktreepath)` is set for every checked-out branch. The branch
+				// checked out *here* is already `current`; any other branch with a
+				// worktree path lives in a different worktree, so checking it out in
+				// this one is impossible (git refuses "already used by worktree").
+				worktreePath: worktreePathRaw && name !== current ? worktreePathRaw : undefined
 			});
 		} else if (refname.startsWith('refs/remotes/')) {
 			// Skip a remote's symbolic HEAD (e.g. `origin/HEAD -> origin/main`);
@@ -1096,7 +1101,11 @@ async function checkoutImpl(repoPath: string, branch: string): Promise<void> {
 export async function isWorkingTreeDirty(repoPath: string): Promise<boolean> {
 	try {
 		const status = await openGit(repoPath).status();
-		return !status.isClean();
+		// Ignore collapsed untracked directories (`?? dir/`, i.e. embedded repos
+		// such as linked worktrees) — the file list hides them, so they must not
+		// count as dirt either or every branch switch would prompt to stash
+		// "changes" the user can't see.
+		return status.files.some((f) => !f.path.endsWith('/'));
 	} catch {
 		return false;
 	}
@@ -1383,8 +1392,20 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 		const numstatMap = parseNumstat(numstatRaw);
 		const oidMap = parsePatchOids(patchRaw);
 		const untrackedReadTasks: Array<{ index: number; filePath: string }> = [];
+		// Index into `files` by path. `git status` can list one path twice: a
+		// staged deletion (`D  path`) plus an untracked entry (`?? path`) when the
+		// file left the index but is still on disk (`git rm --cached`, or a file
+		// re-created after its deletion was staged). Everything downstream keys on
+		// the path (the file list's {#each}, selection, seen state), so a second
+		// entry for the same path crashes the renderer with each_key_duplicate.
+		const indexByPath = new Map<string, number>();
 
 		for (const f of status.files) {
+			// A trailing slash is a collapsed untracked directory — git emits
+			// `?? dir/` (instead of descending) only for an embedded repo, e.g. a
+			// linked worktree under `.claude/worktrees/`. There's no content to
+			// diff and `git add` would only record a gitlink, so don't list it.
+			if (f.path.endsWith('/')) continue;
 			const fullStatus = mapStatus(f.index, f.working_dir);
 			let oldPath: string | undefined;
 			let p = f.path;
@@ -1409,6 +1430,32 @@ export async function listChangedFiles(repoPath: string, ctx: DiffContext): Prom
 				deletions: 0,
 				binary: false
 			};
+			const existing = indexByPath.get(p);
+			if (existing !== undefined) {
+				const prev = files[existing];
+				const pair = new Set<FileStatus>([prev.status, fullStatus]);
+				if (pair.has('deleted') && pair.has('untracked')) {
+					// Fold the staged-deletion + untracked pair into one row. HEAD has
+					// the file and so does the working tree, so the diff view renders
+					// HEAD vs disk: a modification whose staged half removes every line
+					// (the numstat below) and whose unstaged half re-adds the on-disk
+					// copy (counted from disk, which also supplies the content sig).
+					files[existing] = {
+						...prev,
+						status: 'modified',
+						deletions: Math.max(prev.deletions, ns.deletions),
+						isBinary: prev.isBinary || ns.binary,
+						baseContentSig: prev.baseContentSig ?? oidMap.get(p)?.base
+					};
+					if (!untrackedReadTasks.some((t) => t.index === existing)) {
+						untrackedReadTasks.push({ index: existing, filePath: p });
+					}
+				}
+				// Any other repeat is unexpected; keep the first entry so the path
+				// stays unique.
+				continue;
+			}
+			indexByPath.set(p, files.length);
 			files.push({
 				path: p,
 				oldPath,

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import Store from 'electron-store';
 import { safeStorage } from 'electron';
@@ -366,12 +367,54 @@ function normalizeRepoPath(p: string): string {
 // The registered repo whose working directory is `repoPath`, or null. Used to
 // resolve the account a git operation should authenticate as from just the
 // working directory (the git-transport credential provider has no repo id).
+// A repo's active worktree counts as its working directory too — transport
+// ops run there while the app is inside a worktree, and they must still
+// authenticate as the repo's pinned account.
 export function getRepoByPath(repoPath: string): RepoInfo | null {
 	const target = normalizeRepoPath(repoPath);
 	for (const repo of Object.values(db().repos)) {
 		if (normalizeRepoPath(repo.path) === target) return repo;
+		if (repo.activeWorktreePath && normalizeRepoPath(repo.activeWorktreePath) === target) {
+			return repo;
+		}
 	}
 	return null;
+}
+
+// The directory git operations for `repo` should run in: the active worktree
+// while one is set (and still exists on disk — `git worktree remove` or a
+// manual delete falls back to the repo itself rather than erroring every call).
+export function repoWorkDir(repo: RepoInfo): string {
+	if (repo.activeWorktreePath && fs.existsSync(repo.activeWorktreePath)) {
+		return repo.activeWorktreePath;
+	}
+	return repo.path;
+}
+
+// Enter (worktreePath set) or leave (null) a linked worktree. Entering the
+// repo's own path is normalized to leaving, so "switch to the main checkout's
+// branch" flows through the same call. Paths are realpath-compared: git
+// reports resolved worktree paths while the registry may hold a symlinked or
+// differently-cased spelling of the same directory.
+export function setRepoActiveWorktree(repoId: string, worktreePath: string | null): RepoInfo | null {
+	const repos = db().repos;
+	const repo = repos[repoId];
+	if (!repo) return null;
+	let enter = worktreePath;
+	if (enter) {
+		try {
+			if (fs.realpathSync.native(enter) === fs.realpathSync.native(repo.path)) enter = null;
+		} catch {
+			// One of the paths doesn't resolve (worktree removed?) — treat as leave.
+			enter = null;
+		}
+	}
+	const next: RepoInfo = { ...repo };
+	if (enter) next.activeWorktreePath = enter;
+	else delete next.activeWorktreePath;
+	repos[repoId] = next;
+	flush();
+	return next;
 }
 
 // Pin (or unpin, when accountId is null) the GitHub account a project uses.
