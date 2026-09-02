@@ -1,5 +1,16 @@
 # @super-review/ui
 
+## 0.7.1
+
+### Patch Changes
+
+- [`4065306`](https://github.com/ieedan/super-review/commit/406530661974b4442815845fd4b2e57a396b4840) Thanks [@ieedan](https://github.com/ieedan)! - feat: Add support for reviewing code in linked git worktrees
+
+  Allow the app to enter a linked worktree so an agent's checked-out branch reviews like any other branch, with its uncommitted changes and staging area. Worktree branches are marked read-only in the picker; selecting one enters the worktree instead of attempting an impossible checkout. The app re-targets all working-tree operations (status, staging, commit, pull, sessions, comments) to the active worktree while inside one. Ref reads remain identical (worktrees share the object database and refs). Real checkouts always target the main checkout and implicitly leave any active worktree.
+
+- Updated dependencies [[`4065306`](https://github.com/ieedan/super-review/commit/406530661974b4442815845fd4b2e57a396b4840)]:
+  - @super-review/core@0.5.1
+
 ## 0.7.0
 
 ### Minor Changes

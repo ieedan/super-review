@@ -396,7 +396,10 @@ export function repoWorkDir(repo: RepoInfo): string {
 // branch" flows through the same call. Paths are realpath-compared: git
 // reports resolved worktree paths while the registry may hold a symlinked or
 // differently-cased spelling of the same directory.
-export function setRepoActiveWorktree(repoId: string, worktreePath: string | null): RepoInfo | null {
+export function setRepoActiveWorktree(
+	repoId: string,
+	worktreePath: string | null
+): RepoInfo | null {
 	const repos = db().repos;
 	const repo = repos[repoId];
 	if (!repo) return null;
