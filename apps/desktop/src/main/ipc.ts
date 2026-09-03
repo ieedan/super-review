@@ -55,6 +55,7 @@ import type {
 	PRSource,
 	PRSummary,
 	PublishRepoOptions,
+	PublishRepoResult,
 	PullPushResult,
 	PushStatus,
 	RepoContextMenuAction,
@@ -722,15 +723,17 @@ export function registerIpc(): void {
 	// refreshed RepoInfo so the renderer picks up the new owner/remote.
 	ipcMain.handle(
 		'repos:publish',
-		async (e, repoId: string, options: PublishRepoOptions): Promise<RepoInfo> => {
+		async (e, repoId: string, options: PublishRepoOptions): Promise<PublishRepoResult> => {
 			const repo = repoOrThrow(repoId);
 			const accountId = repo.githubAccountId ?? null;
 			// A freshly-created repo leaves its seeded files uncommitted (unborn
 			// branch), which has nothing to push. Make the initial commit first so
-			// "create → publish" works without a manual commit step.
-			await ensureInitialCommit(
+			// "create → publish" works without a manual commit step. The renderer
+			// sends along whatever is in the commit box — the user wrote that message
+			// for this very commit — and we only name it ourselves when it's blank.
+			const initialCommit = await ensureInitialCommit(
 				repo.path,
-				'Initial commit',
+				options.initialCommitMessage?.trim() || 'Initial commit',
 				gh.resolveCommitIdentity(accountId),
 				await gh.resolveCommitSigning(accountId)
 			);
@@ -752,7 +755,7 @@ export function registerIpc(): void {
 			const info = preservePinnedAccount(await buildRepoInfo(repo.path));
 			upsertRepo(info);
 			broadcastToOthers(e.sender.id, 'repos:active-changed', info);
-			return info;
+			return { repo: info, initialCommit };
 		}
 	);
 

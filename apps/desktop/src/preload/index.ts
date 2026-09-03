@@ -60,6 +60,7 @@ import type {
 	PRReviewComment,
 	PRSummary,
 	PreloadAPI,
+	PublishRepoResult,
 	PullPushResult,
 	PushStatus,
 	RepoContextMenuAction,
@@ -177,7 +178,8 @@ const api: PreloadAPI = {
 		checkRemoteRepo: (name, accountId, owner) =>
 			invoke('repos:checkRemoteRepo', name, accountId, owner) as Promise<RemoteRepoRef | null>,
 		createRepo: (options) => invoke('repos:createRepo', options) as Promise<RepoInfo | null>,
-		publish: (repoId, options) => invoke('repos:publish', repoId, options) as Promise<RepoInfo>,
+		publish: (repoId, options) =>
+			invoke('repos:publish', repoId, options) as Promise<PublishRepoResult>,
 		remove: (id, moveToTrash) => invoke('repos:remove', id, moveToTrash) as Promise<void>,
 		setActive: (id) => invoke('repos:setActive', id) as Promise<RepoInfo | null>,
 		getActive: () => invoke('repos:getActive') as Promise<RepoInfo | null>

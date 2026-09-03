@@ -1697,6 +1697,21 @@ export interface PublishRepoOptions {
 	private: boolean;
 	/** Org login to create the repo under, or null for the personal account. */
 	org?: string | null;
+	/**
+	 * Message for the initial commit publishing makes when the repo has no
+	 * commits yet — what the user typed in the commit box, so their message isn't
+	 * thrown away. Falls back to "Initial commit" when blank/omitted, and is
+	 * ignored when the repo already has commits.
+	 */
+	initialCommitMessage?: string;
+}
+
+// Outcome of a publish: the refreshed repo, plus whether publishing had to make
+// the initial commit itself (an unborn branch has nothing to push). The renderer
+// uses that to empty the commit box, whose message the commit just consumed.
+export interface PublishRepoResult {
+	repo: RepoInfo;
+	initialCommit: boolean;
 }
 
 // Accent palette: 'super' is the brand flame, 'mono' the neutral monochrome
@@ -2349,8 +2364,8 @@ export interface PreloadAPI {
 		// Returns the registered repo, or null if the picker/flow was cancelled.
 		createRepo(options: CreateRepoOptions): Promise<RepoInfo | null>;
 		// Publish a local repo to GitHub: create the remote, wire it as `origin`,
-		// and push the current branch. Returns the refreshed RepoInfo.
-		publish(repoId: string, options: PublishRepoOptions): Promise<RepoInfo>;
+		// and push the current branch.
+		publish(repoId: string, options: PublishRepoOptions): Promise<PublishRepoResult>;
 		// De-register a repo. When `moveToTrash` is set, the repo's folder is also
 		// moved to the OS trash (mirrors GitHub Desktop's remove dialog).
 		remove(id: string, moveToTrash?: boolean): Promise<void>;
