@@ -1,5 +1,17 @@
 # @super-review/core
 
+## 0.5.2
+
+### Patch Changes
+
+- [`12e1a7a`](https://github.com/ieedan/super-review/commit/12e1a7a1ce1b5b6733a518e7170422be0ea52834) Thanks [@ieedan](https://github.com/ieedan)! - perf(commit): batch git add operations for massive performance improvement
+
+  Replaces per-file git add invocations with batched `git add` calls, reducing commit time for large changesets from tens of seconds to tens of milliseconds. Extracts staging logic into a reusable `stagePathsBatched()` function that batches paths in chunks while maintaining per-path fallback for edge cases (gitignore rules, pathspec mismatches, symlinks beyond symlinks). Applies to both full commits and partial (hunk-selection) commits.
+
+- [`12e1a7a`](https://github.com/ieedan/super-review/commit/12e1a7a1ce1b5b6733a518e7170422be0ea52834) Thanks [@ieedan](https://github.com/ieedan)! - feat(push): optimize push workflow by trying direct push before fetch
+
+  Adds non-fast-forward detection to skip unnecessary fetch when remote hasn't moved. Push now attempts a direct push if the branch isn't known to be behind, and only falls back to fetch+pull+push on non-fast-forward rejection. This reduces network round trips and improves perceived responsiveness. Also makes PR refresh non-blocking since it's not required for push completion.
+
 ## 0.5.1
 
 ### Patch Changes
