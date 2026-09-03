@@ -2225,6 +2225,10 @@ export interface PullPushResult {
 	conflicts: string[];
 	error?: string;
 	blockedFiles?: string[];
+	// The remote refused the push because it has commits we don't (`! [rejected]
+	// ... (fetch first)` / `(non-fast-forward)`). Lets the renderer push without
+	// fetching first and fall back to fetch, pull, push only when needed.
+	nonFastForward?: boolean;
 }
 
 async function listUnmergedPaths(git: SimpleGit): Promise<string[]> {
@@ -2395,12 +2399,24 @@ async function pushImpl(repoPath: string): Promise<PullPushResult> {
 		await git.raw(args);
 		return { ok: true, conflicts: [] };
 	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
 		return {
 			ok: false,
 			conflicts: [],
-			error: err instanceof Error ? err.message : String(err)
+			error: message,
+			nonFastForward: isNonFastForwardReject(message)
 		};
 	}
+}
+
+// Whether a failed push was refused because the remote branch has moved on
+// since we last fetched. git reports that as `! [rejected] <ref> (fetch first)`
+// (the remote has commits we don't) or `(non-fast-forward)` (our tip isn't a
+// descendant of the remote's), followed by the "Updates were rejected because"
+// hint. A remote-side hook refusal (`[remote rejected]`) and auth/network
+// failures don't match, so they surface as plain errors.
+function isNonFastForwardReject(message: string): boolean {
+	return /\((fetch first|non-fast-forward)\)|Updates were rejected because/.test(message);
 }
 
 export async function getConflicts(repoPath: string): Promise<string[]> {
@@ -2485,9 +2501,10 @@ async function discardChangesImpl(
 }
 
 // Cap how many paths we hand a single git invocation so a large "discard all"
-// can't overflow the OS command-line argument limit (ARG_MAX). Well below any
-// real limit; just splits the batch into a handful of commands at worst.
-const DISCARD_PATH_BATCH = 500;
+// or "commit all" can't overflow the OS command-line argument limit (ARG_MAX).
+// Well below any real limit; just splits the batch into a handful of commands
+// at worst.
+const GIT_PATH_BATCH = 500;
 
 // Bulk sibling of discardChanges: revert/trash a whole set of files in a couple
 // of batched git commands under one index lock, instead of a reset+checkout per
@@ -2534,8 +2551,8 @@ async function discardFilesImpl(
 
 function chunkPaths(paths: string[]): string[][] {
 	const out: string[][] = [];
-	for (let i = 0; i < paths.length; i += DISCARD_PATH_BATCH) {
-		out.push(paths.slice(i, i + DISCARD_PATH_BATCH));
+	for (let i = 0; i < paths.length; i += GIT_PATH_BATCH) {
+		out.push(paths.slice(i, i + GIT_PATH_BATCH));
 	}
 	return out;
 }
@@ -2971,6 +2988,56 @@ function isIgnoredPathAdd(err: unknown): boolean {
 	return /ignored by one of your \.gitignore files/.test(msg);
 }
 
+// Stage `paths` (`git add -A`) with as few git invocations as possible. Every
+// git subprocess costs ~30-100ms on macOS, so staging N files one at a time
+// made a commit of a few hundred files take tens of seconds; one batched add
+// takes tens of milliseconds. A batch is all-or-nothing, though: git aborts the
+// whole invocation when any path is gitignored, unmatched, or beyond a symlink.
+// So when a batch fails we redo that batch path by path with the special-case
+// handling those errors need (force past the ignore rule, tolerate an unmatched
+// pathspec such as an already-staged rename's old side). Paths git refuses as
+// "beyond a symbolic link" can't be staged with a pathspec at all; they are
+// returned so the caller can record their deletion its own way. The batch
+// first, fallback second ordering keeps the fast path at one spawn per batch
+// while a re-run stays correct because `git add` is idempotent.
+async function stagePathsBatched(git: SimpleGit, paths: string[]): Promise<string[]> {
+	const beyondSymlink: string[] = [];
+	for (const batch of chunkPaths(paths)) {
+		try {
+			await git.raw(['add', '-A', '--', ...batch]);
+			continue;
+		} catch {
+			// Fall through to the per-path pass below.
+		}
+		for (const p of batch) {
+			try {
+				await git.raw(['add', '-A', '--', p]);
+			} catch (err) {
+				if (isIgnoredPathAdd(err)) {
+					// Covered by .gitignore but selected for commit (tracked before the
+					// ignore rule was added). Force past the ignore check — see
+					// isIgnoredPathAdd — tolerating a pathspec mismatch the same way the
+					// plain add does (an already-staged rename's old side).
+					await git.raw(['add', '-A', '-f', '--', p]).catch((e) => {
+						if (!isPathspecMismatch(e)) throw e;
+					});
+					continue;
+				}
+				if (isBeyondSymlink(err)) {
+					beyondSymlink.push(p);
+					continue;
+				}
+				// When a rename is already staged as a unit, its old side is gone from
+				// both the worktree and the index, so `git add -- <oldPath>` reports
+				// "did not match any files". The deletion is already staged in that
+				// case, so skipping it is correct.
+				if (!isPathspecMismatch(err)) throw err;
+			}
+		}
+	}
+	return beyondSymlink;
+}
+
 // ─── Commit signing ─────────────────────────────────────────────────────────
 // SSH commit signing needs git >= 2.34 (the `gpg.format=ssh` backend) and an
 // ssh-keygen that supports `-Y sign` (OpenSSH >= 8.0). We detect this once and
@@ -3066,39 +3133,17 @@ async function commitImpl(
 				paths.push(f.path);
 				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
 			}
-			// Stage each path on its own and tolerate an unmatched pathspec. When a
-			// rename is already staged as a unit, its old side is gone from both the
-			// worktree and the index, so `git add -- <oldPath>` reports "did not
-			// match any files" and a single batched add would abort the whole
-			// commit. The deletion is already staged in that case, so skipping it is
-			// correct; the `git commit -- <paths>` below still records it.
-			for (const p of paths) {
-				try {
-					await git.raw(['add', '-A', '--', p]);
-				} catch (err) {
-					// Covered by .gitignore but selected for commit (tracked before the
-					// ignore rule was added). Force past the ignore check — see
-					// isIgnoredPathAdd — tolerating a pathspec mismatch the same way the
-					// plain add below does (an already-staged rename's old side).
-					if (isIgnoredPathAdd(err)) {
-						await git.raw(['add', '-A', '-f', '--', p]).catch((e) => {
-							if (!isPathspecMismatch(e)) throw e;
-						});
-						continue;
-					}
-					// A path whose ancestor directory is now a symlink in the working
-					// tree (a tracked directory replaced by a symlink) can't be staged
-					// with a pathspec'd `git add`, and pinning `git commit -- <path>` to
-					// it makes git re-read the symlink target instead of recording the
-					// deletion. Hand the whole commit to the scratch-index path, which
-					// stages such deletions with `git rm --cached` and commits the tree
-					// without a pathspec. See commitPartial's whole-file branch.
-					if (isBeyondSymlink(err)) {
-						await commitPartial(repoPath, trimmed, files, identity, signing);
-						return { ok: true, ...(await headCommitStats(git, repoPath)) };
-					}
-					if (!isPathspecMismatch(err)) throw err;
-				}
+			// Stage everything in one batched add (per-path fallback inside). A path
+			// whose ancestor directory is now a symlink in the working tree (a tracked
+			// directory replaced by a symlink) can't be staged with a pathspec'd
+			// `git add`, and pinning `git commit -- <path>` to it makes git re-read
+			// the symlink target instead of recording the deletion. Hand the whole
+			// commit to the scratch-index path, which stages such deletions with
+			// `git rm --cached` and commits the tree without a pathspec.
+			const beyondSymlink = await stagePathsBatched(git, paths);
+			if (beyondSymlink.length > 0) {
+				await commitPartial(repoPath, trimmed, files, identity, signing);
+				return { ok: true, ...(await headCommitStats(git, repoPath)) };
 			}
 			// `-c` sets config for this invocation only, overriding both author and
 			// committer without touching the repo's git config.
@@ -3185,6 +3230,9 @@ async function commitPartial(
 		// Seed the scratch index from HEAD (empty for an unborn branch).
 		await idxGit.raw(headExists ? ['read-tree', 'HEAD'] : ['read-tree', '--empty']);
 
+		// Whole-file entries are staged together (one batched add, see
+		// stagePathsBatched); partial entries each apply their own reduced patch.
+		const wholePaths: string[] = [];
 		for (const f of files) {
 			if (f.patch != null && f.patch.trim() !== '') {
 				const patchPath = path.join(
@@ -3198,33 +3246,18 @@ async function commitPartial(
 				// base). `--whitespace=nowarn` keeps benign whitespace from aborting.
 				await idxGit.raw(['apply', '--cached', '--whitespace=nowarn', patchPath]);
 			} else {
-				const paths = [f.path];
-				if (f.oldPath && f.oldPath !== f.path) paths.push(f.oldPath);
-				try {
-					await idxGit.raw(['add', '-A', '--', ...paths]);
-				} catch (err) {
-					// Covered by .gitignore but selected for commit (tracked before the
-					// ignore rule was added). Force past the ignore check into the
-					// scratch index — see isIgnoredPathAdd — tolerating a rename old
-					// side that no longer matches a pathspec.
-					if (isIgnoredPathAdd(err)) {
-						await idxGit.raw(['add', '-A', '-f', '--', ...paths]).catch((e) => {
-							if (!isPathspecMismatch(e)) throw e;
-						});
-						continue;
-					}
-					if (!isBeyondSymlink(err)) throw err;
-					// An ancestor of one of these paths is a symlink in the working
-					// tree, so `git add` refuses the pathspec. The change git surfaces
-					// for such a path is the deletion of its tracked HEAD version; stage
-					// that deletion in the scratch index directly with `git rm --cached`,
-					// which is index-only and so ignores the working-tree symlink. A
-					// path that isn't tracked in HEAD (nothing to delete) just no-ops.
-					for (const p of paths) {
-						await idxGit.raw(['rm', '--cached', '--', p]).catch(() => {});
-					}
-				}
+				wholePaths.push(f.path);
+				if (f.oldPath && f.oldPath !== f.path) wholePaths.push(f.oldPath);
 			}
+		}
+		// An ancestor of one of these paths is a symlink in the working tree, so
+		// `git add` refuses the pathspec. The change git surfaces for such a path
+		// is the deletion of its tracked HEAD version; stage that deletion in the
+		// scratch index directly with `git rm --cached`, which is index-only and so
+		// ignores the working-tree symlink. A path that isn't tracked in HEAD
+		// (nothing to delete) just no-ops.
+		for (const p of await stagePathsBatched(idxGit, wholePaths)) {
+			await idxGit.raw(['rm', '--cached', '--', p]).catch(() => {});
 		}
 
 		const tree = (await idxGit.raw(['write-tree'])).trim();
@@ -3256,7 +3289,9 @@ async function commitPartial(
 			touched.push(f.path);
 			if (f.oldPath && f.oldPath !== f.path) touched.push(f.oldPath);
 		}
-		await baseGit.raw(['reset', '-q', 'HEAD', '--', ...touched]).catch(() => {});
+		for (const batch of chunkPaths(touched)) {
+			await baseGit.raw(['reset', '-q', 'HEAD', '--', ...batch]).catch(() => {});
+		}
 	} finally {
 		await fs.rm(tmpIndex, { force: true }).catch(() => {});
 		for (const p of tmpPatchFiles) await fs.rm(p, { force: true }).catch(() => {});

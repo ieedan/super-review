@@ -7253,7 +7253,11 @@ export const actions = {
 			app.stagingLineExclusions = new SvelteSet();
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
-			await refreshBranchPR();
+			// The PR lookup is a GitHub round trip and nothing below needs it.
+			// Awaiting it kept `push.inProgress` (which gates the Push button) set
+			// for the whole request, so a commit couldn't be pushed until GitHub
+			// answered. Let it land on its own.
+			void refreshBranchPR();
 			// Drop local comments orphaned by this commit. A working-tree comment is
 			// pinned to an uncommitted change; once we commit that file and nothing's
 			// left in it, the comment can never re-anchor, so remove it rather than
@@ -7673,29 +7677,47 @@ export const actions = {
 		};
 		clearConflicts();
 		try {
-			await window.api.git.fetchOrigin(repoId);
-			await refreshPushStatus();
-			if (app.pushStatus?.behind && app.pushStatus.behind > 0) {
-				app.push.stage = 'pulling';
-				const pullResult = await window.api.git.pull(repoId);
-				if (!pullResult.ok) {
-					if (pullResult.conflicts.length > 0) {
-						setConflicts(pullResult.conflicts);
-						app.push.stage = 'conflicts';
-						// Don't clear inProgress — UI shows the conflict dialog until
-						// the user resolves or aborts.
-						return;
-					}
-					throw new Error(pullResult.error ?? 'Pull failed.');
-				}
+			// A branch we last saw as not behind (only ahead, or unpublished) is
+			// pushed straight away. Fetching first cost a second network round trip
+			// whose only purpose was to learn whether the remote had moved, which
+			// `git push` reports itself as a non-fast-forward rejection. A branch
+			// known to be behind takes the fetch-then-pull route up front; a stale
+			// "not behind" that gets rejected falls onto the same route below.
+			let pushed = false;
+			if (app.pushStatus && app.pushStatus.behind === 0) {
+				app.push.stage = 'pushing';
+				const direct = await window.api.git.push(repoId);
+				if (direct.ok) pushed = true;
+				else if (!direct.nonFastForward) throw new Error(direct.error ?? 'Push failed.');
 			}
-			app.push.stage = 'pushing';
-			const pushResult = await window.api.git.push(repoId);
-			if (!pushResult.ok) throw new Error(pushResult.error ?? 'Push failed.');
+			if (!pushed) {
+				app.push.stage = 'fetching';
+				await window.api.git.fetchOrigin(repoId);
+				await refreshPushStatus();
+				if (app.pushStatus?.behind && app.pushStatus.behind > 0) {
+					app.push.stage = 'pulling';
+					const pullResult = await window.api.git.pull(repoId);
+					if (!pullResult.ok) {
+						if (pullResult.conflicts.length > 0) {
+							setConflicts(pullResult.conflicts);
+							app.push.stage = 'conflicts';
+							// Don't clear inProgress — UI shows the conflict dialog until
+							// the user resolves or aborts.
+							return;
+						}
+						throw new Error(pullResult.error ?? 'Pull failed.');
+					}
+				}
+				app.push.stage = 'pushing';
+				const pushResult = await window.api.git.push(repoId);
+				if (!pushResult.ok) throw new Error(pushResult.error ?? 'Push failed.');
+			}
 			app.push.stage = 'done';
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
-			await refreshBranchPR();
+			// As in commit(): the GitHub PR lookup isn't needed to finish the push,
+			// and awaiting it kept the header button spinning until GitHub answered.
+			void refreshBranchPR();
 		} catch (err) {
 			app.push.error = err instanceof Error ? err.message : String(err);
 			setError(app.push.error, 'Pushing your changes');

@@ -1429,6 +1429,11 @@ export interface PullPushResult {
 	// abort). Distinct from `conflicts` (unmerged paths) — this is the blocked-pull
 	// signal that drives the stash prompt. Unset when the failure wasn't a block.
 	blockedFiles?: string[];
+	// A push the remote refused because it has commits we don't ("! [rejected]
+	// ... (fetch first)" / "(non-fast-forward)"). The renderer pushes without a
+	// fetch first and uses this to fall back to fetch, pull, push. Unset for any
+	// other failure (auth, network, hooks).
+	nonFastForward?: boolean;
 }
 
 // A managed stash: a normal git stash whose message carries the
