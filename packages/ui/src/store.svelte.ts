@@ -8,6 +8,7 @@ import type {
 	BranchInfo,
 	ChangedFile,
 	ChangesetStatus,
+	CloneRepoOptions,
 	CommitFileSelection,
 	CommitInfo,
 	CommitMessageHarness,
@@ -4553,14 +4554,14 @@ export const actions = {
 		}
 	},
 
-	async cloneRepo(url: string): Promise<void> {
+	async cloneRepo(url: string, options?: CloneRepoOptions): Promise<boolean> {
 		try {
-			const result = await window.api.git.cloneRepo(url);
+			const result = await window.api.git.cloneRepo(url, options);
 			if (!result.ok) {
 				if (result.error && result.error !== 'Clone cancelled.') {
 					setError(result.error);
 				}
-				return;
+				return false;
 			}
 			applyContextTab('unstaged');
 			app.diffContext = { kind: 'workingTree' };
@@ -4575,8 +4576,10 @@ export const actions = {
 				await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
 				await refreshBranchPR();
 			}
+			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
+			return false;
 		}
 	},
 

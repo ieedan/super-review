@@ -89,10 +89,13 @@ export interface GitCredentials {
 // credential helper (the previous behaviour). `repoPath` is the working
 // directory the operation runs in (null for repo-less ops like clone), letting
 // the provider pick the account a specific project is pinned to rather than a
-// single global one. Registered by the host app.
+// single global one. `accountId` names an account outright, for operations
+// that have no repo to resolve one from (cloning from a picked account).
+// Registered by the host app.
 export type GitCredentialProvider = (
 	remoteUrl: string,
-	repoPath?: string | null
+	repoPath?: string | null,
+	accountId?: string | null
 ) => GitCredentials | null;
 
 let credentialProvider: GitCredentialProvider | null = null;
@@ -105,7 +108,11 @@ export function setGitCredentialProvider(provider: GitCredentialProvider | null)
 // scoped to the remote's origin (e.g. https://github.com/). Empty when there's
 // no provider, the provider declines, or the remote isn't an HTTPS URL we can
 // scope to (e.g. scp-style `git@github.com:…`, which uses SSH keys anyway).
-function authConfig(remoteUrl: string | null | undefined, repoPath?: string | null): string[] {
+function authConfig(
+	remoteUrl: string | null | undefined,
+	repoPath?: string | null,
+	accountId?: string | null
+): string[] {
 	if (!remoteUrl || !credentialProvider) return [];
 	let origin: string;
 	try {
@@ -115,7 +122,7 @@ function authConfig(remoteUrl: string | null | undefined, repoPath?: string | nu
 	} catch {
 		return [];
 	}
-	const creds = credentialProvider(remoteUrl, repoPath);
+	const creds = credentialProvider(remoteUrl, repoPath, accountId);
 	if (!creds) return [];
 	const basic = Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
 	// Everything after the first `=` is the header value, so the colons/spaces in
@@ -164,8 +171,12 @@ function stripEditorEnv(env: Record<string, string>): void {
 // A simple-git instance for `repoPath` with credentials wired in for
 // `remoteUrl` when a provider supplies them; a plain instance otherwise. Pass a
 // null `repoPath` for repo-less operations like clone.
-function authedGit(repoPath: string | null, remoteUrl: string | null | undefined): SimpleGit {
-	const config = authConfig(remoteUrl, repoPath);
+function authedGit(
+	repoPath: string | null,
+	remoteUrl: string | null | undefined,
+	accountId?: string | null
+): SimpleGit {
+	const config = authConfig(remoteUrl, repoPath, accountId);
 	const options = config.length ? { config } : undefined;
 	return openGit(repoPath, options);
 }
@@ -3558,8 +3569,14 @@ export interface CloneResult {
 }
 
 // Clones the given URL into `parentDir/<repo-name>`. Caller is responsible for
-// validating the parent dir exists and is writable.
-export async function cloneRepo(url: string, parentDir: string): Promise<CloneResult> {
+// validating the parent dir exists and is writable. `accountId` authenticates
+// the clone as a specific GitHub account rather than the app-wide active one,
+// so a private repo picked from a second account still clones.
+export async function cloneRepo(
+	url: string,
+	parentDir: string,
+	accountId?: string | null
+): Promise<CloneResult> {
 	const trimmed = url.trim();
 	if (!trimmed) return { ok: false, error: 'Repository URL is required.' };
 	const name = trimmed
@@ -3569,20 +3586,36 @@ export async function cloneRepo(url: string, parentDir: string): Promise<CloneRe
 	if (!name) return { ok: false, error: 'Could not parse repository name from URL.' };
 	const target = path.join(parentDir, name);
 	try {
-		const exists = await fs
-			.stat(target)
-			.then(() => true)
-			.catch(() => false);
-		if (exists) {
-			return { ok: false, error: `Destination already exists: ${target}` };
+		// git clones happily into a directory that already exists as long as it is
+		// empty, and refuses otherwise — mirror that rather than rejecting every
+		// existing path, so a freshly made destination folder still works.
+		if (!(await isEmptyDir(target))) {
+			return {
+				ok: false,
+				error: `This folder contains files. Git can only clone to empty folders.`
+			};
 		}
-		await authedGit(null, trimmed).clone(trimmed, target);
+		await authedGit(null, trimmed, accountId).clone(trimmed, target);
 		return { ok: true, path: target };
 	} catch (err) {
 		return {
 			ok: false,
 			error: err instanceof Error ? err.message : String(err)
 		};
+	}
+}
+
+// Whether `dirPath` is somewhere a clone could land: either nothing is there, or
+// it's a directory with no entries at all (git counts any entry, dotfiles
+// included). A path that exists as a file is not.
+async function isEmptyDir(dirPath: string): Promise<boolean> {
+	try {
+		return (await fs.readdir(dirPath)).length === 0;
+	} catch (err) {
+		// Nothing there yet — clone creates it.
+		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return true;
+		// ENOTDIR (a file sits at the path) or an unreadable directory: not usable.
+		return false;
 	}
 }
 

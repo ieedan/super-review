@@ -1,7 +1,7 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import type {
 	BranchContextMenuAction,
 	BranchContextMenuParams,
@@ -12,10 +12,13 @@ import type {
 	ChangedFile,
 	ChangesetStatus,
 	CreateChangesetInput,
+	ClonePathState,
+	CloneRepoOptions,
 	CloneResult,
 	CreateRepoDefaults,
 	CreateRepoOptions,
 	RemoteRepoRef,
+	RemoteRepoSummary,
 	CommitDraft,
 	CommitAuthorIdentity,
 	CommitFileSelection,
@@ -628,6 +631,24 @@ export function registerIpc(): void {
 		return isGitRepo(dirPath);
 	});
 
+	// What's at a prospective clone destination. The renderer can't stat, and the
+	// answer decides whether the clone is even attemptable.
+	ipcMain.handle('repos:inspectClonePath', async (_e, dirPath: string): Promise<ClonePathState> => {
+		const target = dirPath?.trim();
+		if (!target) return { exists: false, empty: true, isGitRepo: false };
+		let entries: string[];
+		try {
+			entries = await readdir(target);
+		} catch (err) {
+			// Nothing there yet is the good case; anything else (a file at the path,
+			// an unreadable directory) is a destination we can't clone into.
+			const missing = (err as NodeJS.ErrnoException).code === 'ENOENT';
+			return { exists: !missing, empty: missing, isGitRepo: false };
+		}
+		if (entries.length === 0) return { exists: true, empty: true, isGitRepo: false };
+		return { exists: true, empty: false, isGitRepo: await isGitRepo(target) };
+	});
+
 	ipcMain.handle('repos:getCreateDefaults', async (): Promise<CreateRepoDefaults> => {
 		const { gitignores, licenses } = listTemplates();
 		// Mirror GitHub Desktop's default home for new repos.
@@ -689,6 +710,22 @@ export function registerIpc(): void {
 		'github:listAccountOrganizations',
 		async (_e, accountId: string): Promise<GithubOrg[]> => {
 			return gh.listOrganizations(accountId).catch(() => []);
+		}
+	);
+
+	// A background refresh replaced a stale listing: push it so an open picker
+	// swaps in the fresh list.
+	gh.onRepoListUpdated((accountId, repos) =>
+		broadcast('github:repos-updated', { accountId, repos })
+	);
+
+	// Repos a specific account can clone, for the clone dialog's picker. Errors
+	// propagate so the dialog can say why the list is empty (dead token, offline)
+	// rather than showing a bare "no repositories".
+	ipcMain.handle(
+		'github:listAccountRepositories',
+		async (_e, accountId: string, force?: boolean): Promise<RemoteRepoSummary[]> => {
+			return gh.listRepositories(accountId, force);
 		}
 	);
 
@@ -1271,23 +1308,35 @@ export function registerIpc(): void {
 		async (): Promise<boolean> => cancelChangesetGeneration()
 	);
 
-	ipcMain.handle('git:cloneRepo', async (_e, url: string): Promise<CloneResult> => {
-		const dir = await dialog.showOpenDialog({
-			title: 'Clone destination',
-			properties: ['openDirectory', 'createDirectory']
-		});
-		if (dir.canceled || dir.filePaths.length === 0) {
-			return { ok: false, error: 'Clone cancelled.' };
+	ipcMain.handle(
+		'git:cloneRepo',
+		async (_e, url: string, options?: CloneRepoOptions): Promise<CloneResult> => {
+			// The dialog supplies a destination; fall back to a folder picker for
+			// any caller that doesn't (and treat cancelling it as a cancelled clone).
+			let parentDir = options?.parentDir?.trim();
+			if (!parentDir) {
+				const dir = await dialog.showOpenDialog({
+					title: 'Clone destination',
+					properties: ['openDirectory', 'createDirectory']
+				});
+				if (dir.canceled || dir.filePaths.length === 0) {
+					return { ok: false, error: 'Clone cancelled.' };
+				}
+				parentDir = dir.filePaths[0];
+			}
+			const result = await cloneRepo(url, parentDir, options?.accountId);
+			if (result.ok && result.path) {
+				// Pin the clone to the account it was cloned from so every later
+				// fetch/pull/push authenticates as that same account.
+				let info = preservePinnedAccount(await buildRepoInfo(result.path));
+				if (options?.accountId) info = { ...info, githubAccountId: options.accountId };
+				upsertRepo(info);
+				setPrefs({ activeRepoId: info.id });
+				broadcast('repos:active-changed', info);
+			}
+			return result;
 		}
-		const result = await cloneRepo(url, dir.filePaths[0]);
-		if (result.ok && result.path) {
-			const info = preservePinnedAccount(await buildRepoInfo(result.path));
-			upsertRepo(info);
-			setPrefs({ activeRepoId: info.id });
-			broadcast('repos:active-changed', info);
-		}
-		return result;
-	});
+	);
 
 	// ─── Editor ────────────────────────────────────────────────────────────
 	ipcMain.handle('editor:detect', async () => detectEditors());

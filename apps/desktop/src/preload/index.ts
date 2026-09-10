@@ -9,9 +9,13 @@ import type {
 	ChangedFile,
 	ChangesetStatus,
 	CreateChangesetInput,
+	ClonePathState,
+	CloneRepoOptions,
 	CloneResult,
 	CreateRepoDefaults,
 	RemoteRepoRef,
+	RemoteRepoSummary,
+	RepoListUpdate,
 	CommitAuthorIdentity,
 	CommitDraft,
 	CommitInfo,
@@ -173,6 +177,7 @@ const api: PreloadAPI = {
 		openFolder: () => invoke('repos:openFolder') as Promise<RepoInfo[]>,
 		chooseDirectory: () => invoke('repos:chooseDirectory') as Promise<string | null>,
 		isGitRepo: (path) => invoke('repos:isGitRepo', path) as Promise<boolean>,
+		inspectClonePath: (path) => invoke('repos:inspectClonePath', path) as Promise<ClonePathState>,
 		getCreateDefaults: () => invoke('repos:getCreateDefaults') as Promise<CreateRepoDefaults>,
 		checkRemoteRepo: (name, accountId, owner) =>
 			invoke('repos:checkRemoteRepo', name, accountId, owner) as Promise<RemoteRepoRef | null>,
@@ -252,7 +257,8 @@ const api: PreloadAPI = {
 			invoke('git:listLocalCommits', repoId, limit) as Promise<LocalCommit[]>,
 		mergeBase: (repoId, a, b) => invoke('git:mergeBase', repoId, a, b) as Promise<string | null>,
 		undoLastCommit: (repoId) => invoke('git:undoLastCommit', repoId) as Promise<CommitResult>,
-		cloneRepo: (url) => invoke('git:cloneRepo', url) as Promise<CloneResult>,
+		cloneRepo: (url, options?: CloneRepoOptions) =>
+			invoke('git:cloneRepo', url, options) as Promise<CloneResult>,
 		convertToFork: (repoId, forkOwner, forkRepo, contributeToParent) =>
 			invoke(
 				'git:convertToFork',
@@ -295,6 +301,8 @@ const api: PreloadAPI = {
 			invoke('github:listOrganizations', repoId) as Promise<GithubOrg[]>,
 		listAccountOrganizations: (accountId) =>
 			invoke('github:listAccountOrganizations', accountId) as Promise<GithubOrg[]>,
+		listAccountRepositories: (accountId, force) =>
+			invoke('github:listAccountRepositories', accountId, force) as Promise<RemoteRepoSummary[]>,
 		getActiveAccount: () => invoke('github:getActiveAccount') as Promise<GithubAccount | null>,
 		setActiveAccount: (id) =>
 			invoke('github:setActiveAccount', id) as Promise<GithubAccount | null>,
@@ -647,6 +655,11 @@ const api: PreloadAPI = {
 				handler(errors);
 			ipcRenderer.on('github:auth-changed', listener);
 			return () => ipcRenderer.off('github:auth-changed', listener);
+		},
+		onGithubReposUpdated(handler) {
+			const listener = (_e: Electron.IpcRendererEvent, update: RepoListUpdate) => handler(update);
+			ipcRenderer.on('github:repos-updated', listener);
+			return () => ipcRenderer.off('github:repos-updated', listener);
 		},
 		onLicenseChanged(handler) {
 			const listener = (_e: Electron.IpcRendererEvent, state: LicenseState) => handler(state);

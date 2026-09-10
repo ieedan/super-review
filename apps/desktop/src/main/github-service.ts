@@ -27,7 +27,8 @@ import type {
 	PRSummary,
 	ReleaseNotes,
 	ReleaseNotesResult,
-	ReleaseNotesRangeResult
+	ReleaseNotesRangeResult,
+	RemoteRepoSummary
 } from '@shared/types.js';
 import {
 	checkSshSigningSupported,
@@ -144,6 +145,7 @@ export async function setActiveAccount(id: string): Promise<GithubAccount | null
 
 export async function removeAccount(id: string): Promise<void> {
 	storeRemoveAccount(id);
+	invalidateRepoList(id);
 	// Drop the account's signing key so we don't leave an orphaned key pair.
 	await removeSigningKey(id);
 }
@@ -631,18 +633,27 @@ export async function getReleaseNotesRange(
 // live, and so the token is never cached anywhere git could persist it. Call
 // once after the app is ready.
 export function registerGitCredentials(): void {
-	setGitCredentialProvider((remoteUrl: string, repoPath?: string | null): GitCredentials | null => {
-		let host: string;
-		try {
-			host = new URL(remoteUrl).hostname.toLowerCase();
-		} catch {
-			return null;
+	setGitCredentialProvider(
+		(
+			remoteUrl: string,
+			repoPath?: string | null,
+			accountId?: string | null
+		): GitCredentials | null => {
+			let host: string;
+			try {
+				host = new URL(remoteUrl).hostname.toLowerCase();
+			} catch {
+				return null;
+			}
+			if (host !== 'github.com') return null;
+			// An explicitly named account wins: a clone has no repo path yet, so it
+			// is the only way to authenticate as the account the user picked from.
+			const named = accountId ? getGithubAccount(accountId) : null;
+			const account = named ?? resolveAccountForRepoPath(repoPath);
+			if (!account?.token) return null;
+			return { username: 'x-access-token', password: account.token };
 		}
-		if (host !== 'github.com') return null;
-		const account = resolveAccountForRepoPath(repoPath);
-		if (!account?.token) return null;
-		return { username: 'x-access-token', password: account.token };
-	});
+	);
 }
 
 // The account git transport should authenticate as for an operation in
@@ -729,6 +740,115 @@ export async function listOrganizations(accountId?: string | null): Promise<Gith
 	return res.data.map((org) => ({ login: org.login, avatarUrl: org.avatar_url ?? undefined }));
 }
 
+// ── Repository listing (the clone picker) ───────────────────────────────────
+// `/user/repos` is not a fast endpoint: a page of 100 takes the better part of
+// a second, and an account in a few organizations spans several pages. Left
+// naive, the picker would pay that every time it opens, so listings are cached
+// per account, fetched a page at a time only for the first page (the rest go
+// out at once), and shared between concurrent callers.
+
+const REPO_LIST_PAGE_SIZE = 100;
+// 5 pages is 500 repos. Past that, paging costs more than the tail is worth:
+// the list is ordered by most recent push and the picker filters.
+const REPO_LIST_MAX_PAGES = 5;
+// How long a cached listing is handed out without re-checking. Repositories are
+// created rarely, and the picker's refresh button covers the impatient case.
+const REPO_LIST_TTL_MS = 5 * 60_000;
+
+const repoListCache = new Map<string, { at: number; repos: RemoteRepoSummary[] }>();
+// Fetches currently in flight, per account. A prefetch and the picker's own
+// load (or two windows) then share one request instead of racing.
+const repoListInFlight = new Map<string, Promise<RemoteRepoSummary[]>>();
+
+type RepoListListener = (accountId: string, repos: RemoteRepoSummary[]) => void;
+let repoListListener: RepoListListener | null = null;
+
+// Notified when a background refresh replaces a cached listing, so an open
+// picker can swap in the fresh list instead of showing yesterday's.
+export function onRepoListUpdated(listener: RepoListListener): void {
+	repoListListener = listener;
+}
+
+// Every repository the account can clone: the ones it owns, plus the ones it
+// reaches through an organization or a collaborator invite, most recently
+// pushed first. Served from cache when one is warm — a stale entry is still
+// returned immediately and refreshed behind the caller, who hears about the
+// result through onRepoListUpdated. `force` skips the cache entirely.
+export async function listRepositories(
+	accountId?: string | null,
+	force = false
+): Promise<RemoteRepoSummary[]> {
+	const account = resolveAccount(accountId);
+	const cached = repoListCache.get(account.id);
+	if (cached && !force) {
+		if (Date.now() - cached.at < REPO_LIST_TTL_MS) return cached.repos;
+		void fetchRepositories(account).then(
+			(repos) => repoListListener?.(account.id, repos),
+			() => {} // a failed background refresh just leaves the cache in place
+		);
+		return cached.repos;
+	}
+	return fetchRepositories(account);
+}
+
+// Drop an account's cached listing so the next read re-fetches (a repo was just
+// created, or the account is gone).
+export function invalidateRepoList(accountId: string): void {
+	repoListCache.delete(accountId);
+}
+
+function fetchRepositories(account: StoredGithubAccount): Promise<RemoteRepoSummary[]> {
+	const existing = repoListInFlight.get(account.id);
+	if (existing) return existing;
+	const run = fetchRepositoryPages(account)
+		.then((repos) => {
+			repoListCache.set(account.id, { at: Date.now(), repos });
+			return repos;
+		})
+		.finally(() => repoListInFlight.delete(account.id));
+	repoListInFlight.set(account.id, run);
+	return run;
+}
+
+async function fetchRepositoryPages(account: StoredGithubAccount): Promise<RemoteRepoSummary[]> {
+	const o = octokit(account);
+	const params = {
+		per_page: REPO_LIST_PAGE_SIZE,
+		sort: 'pushed',
+		direction: 'desc',
+		affiliation: 'owner,collaborator,organization_member'
+	} as const;
+	const first = await o.repos.listForAuthenticatedUser({ ...params, page: 1 });
+	// The Link header names the last page, so the remaining pages go out
+	// together rather than being walked one round-trip at a time.
+	const pages = Math.min(lastPageFrom(first.headers.link), REPO_LIST_MAX_PAGES);
+	const rest = await Promise.all(
+		Array.from({ length: Math.max(0, pages - 1) }, (_, i) =>
+			o.repos.listForAuthenticatedUser({ ...params, page: i + 2 })
+		)
+	);
+	return [first, ...rest].flatMap((res) =>
+		res.data.map((r) => ({
+			owner: r.owner?.login ?? '',
+			name: r.name,
+			ownerAvatarUrl: r.owner?.avatar_url ?? undefined,
+			description: r.description ?? undefined,
+			cloneUrl: r.clone_url ?? '',
+			private: r.private ?? false,
+			fork: r.fork ?? false,
+			archived: r.archived ?? false,
+			pushedAt: r.pushed_at ?? undefined
+		}))
+	);
+}
+
+// The `rel="last"` page number from a Link header, or 1 when there is none —
+// which is the common case, since most accounts fit on a single page.
+function lastPageFrom(link: string | undefined): number {
+	const match = link?.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+	return match ? Number(match[1]) : 1;
+}
+
 // Look up a repository by name under a specific owner. Used by the create-repo
 // form to reject a name that already exists on the chosen owner's remote before
 // we scaffold anything locally. `owner` is an org login, or the authenticated
@@ -785,6 +905,9 @@ export async function createRemoteRepo(opts: {
 		htmlUrl: d.html_url,
 		owner: d.owner?.login ?? ''
 	});
+	// The account just gained a repo; the clone picker shouldn't hide it behind
+	// a cached listing.
+	invalidateRepoList(account.id);
 	try {
 		const res = opts.org
 			? await o.repos.createInOrg({ org: opts.org, ...params })

@@ -1630,6 +1630,15 @@ export interface CloneResult {
 	error?: string;
 }
 
+// Where a clone lands and who it authenticates as. Both are optional: the
+// desktop app falls back to a folder picker and the active GitHub account.
+export interface CloneRepoOptions {
+	/** Parent directory the repo folder is created inside. */
+	parentDir?: string;
+	/** GitHub account to authenticate as (and pin the cloned repo to). */
+	accountId?: string | null;
+}
+
 // Options for the GitHub-Desktop-style "Create new repository" flow. The repo
 // is created at `<path>/<name>` and optionally scaffolded with a README, a
 // .gitignore (from a bundled template), and a LICENSE.
@@ -1669,6 +1678,47 @@ export interface RemoteRepoRef {
 	name: string;
 	/** Link to the existing repo on github.com. */
 	htmlUrl: string;
+}
+
+// A repository on GitHub the signed-in account can clone, listed in the clone
+// dialog's "GitHub" tab. Covers repos the account owns plus the ones it can
+// reach through an organization or a collaborator invite.
+export interface RemoteRepoSummary {
+	/** Owner login (the account itself, or an org / other user). */
+	owner: string;
+	/** Repository name on GitHub. */
+	name: string;
+	/** Avatar of the owner, for the row's leading icon. */
+	ownerAvatarUrl?: string;
+	/** One-line repo description, when it has one. */
+	description?: string;
+	/** HTTPS clone URL, handed straight to `git clone`. */
+	cloneUrl: string;
+	private: boolean;
+	fork: boolean;
+	archived: boolean;
+	/** ISO timestamp of the last push, for "updated 3 days ago" and sorting. */
+	pushedAt?: string;
+}
+
+// What sits at a prospective clone destination. `empty` is what actually gates a
+// clone: git refuses a destination directory that has any entry in it, but is
+// happy with one that exists and is empty (or doesn't exist yet).
+export interface ClonePathState {
+	/** Something already exists at the path (a directory or a file). */
+	exists: boolean;
+	/** Nothing is there, or it's a directory with no entries — a clone can land. */
+	empty: boolean;
+	/** What's there is already a git repository (offer to add it instead). */
+	isGitRepo: boolean;
+}
+
+// A refreshed repository listing pushed from the main process after a stale
+// cache was revalidated behind an open clone picker.
+export interface RepoListUpdate {
+	/** The GitHub account the listing belongs to. */
+	accountId: string;
+	repos: RemoteRepoSummary[];
 }
 
 // Defaults the create-repo form loads up front: a suggested parent directory
@@ -2337,6 +2387,10 @@ export interface PreloadAPI {
 		// Whether `path` is already a git repository — drives the form's "this is
 		// already a repo, add it instead?" hint.
 		isGitRepo(path: string): Promise<boolean>;
+		// What sits at a prospective clone destination, so the clone dialog can
+		// refuse a folder git would reject (and offer to add a repo that's already
+		// there instead of cloning it twice).
+		inspectClonePath(path: string): Promise<ClonePathState>;
 		// Suggested parent directory + template labels for the create-repo form.
 		getCreateDefaults(): Promise<CreateRepoDefaults>;
 		// Whether a repo named `name` already exists under `owner` (an org login, or
@@ -2452,7 +2506,11 @@ export interface PreloadAPI {
 		// null when they share no history. Backs the History tab's fork-point marker.
 		mergeBase(repoId: string, a: string, b: string): Promise<string | null>;
 		undoLastCommit(repoId: string): Promise<CommitResult>;
-		cloneRepo(url: string): Promise<CloneResult>;
+		// Clone `url` into `<parentDir>/<repo name>`. Without a `parentDir` the main
+		// process opens a folder picker (cancelling reports a cancelled result).
+		// `accountId` pins the new repo to that GitHub account and authenticates
+		// the clone as it, so a private repo on a non-active account still clones.
+		cloneRepo(url: string, options?: CloneRepoOptions): Promise<CloneResult>;
 		// Repoint `origin` at the user's fork (GitHub Desktop's fork layout). When
 		// `contributeToParent` is true the original is kept as `upstream` so the PR
 		// list / "Create PR" target the parent; false works the fork standalone.
@@ -2508,6 +2566,12 @@ export interface PreloadAPI {
 		// Orgs a specific account can create repos under, by account id (for the
 		// create-repo form's owner picker, which has no repo yet).
 		listAccountOrganizations(accountId: string): Promise<GithubOrg[]>;
+		// Repositories a specific account can clone (owned, org, collaborator),
+		// most recently pushed first. Backs the clone dialog's repo picker. Served
+		// from the main process's per-account cache when one is warm; a stale cache
+		// still answers immediately and refreshes in the background, pushing the
+		// result through onGithubReposUpdated. `force` re-fetches regardless.
+		listAccountRepositories(accountId: string, force?: boolean): Promise<RemoteRepoSummary[]>;
 		getActiveAccount(): Promise<GithubAccount | null>;
 		setActiveAccount(id: string): Promise<GithubAccount | null>;
 		removeAccount(id: string): Promise<void>;
@@ -3042,6 +3106,9 @@ export interface PreloadAPI {
 		// Payload is the full current list of failing accounts (empty = all good).
 		// Returns an unsubscribe fn.
 		onGithubAuthChanged(handler: (errors: GithubAuthError[]) => void): () => void;
+		// A background refresh replaced an account's cached repository listing.
+		// Lets an open clone picker swap in the fresh list. Returns an unsubscribe fn.
+		onGithubReposUpdated(handler: (update: RepoListUpdate) => void): () => void;
 		// Live license-state changes pushed by the main process (activation
 		// completes, revalidation flips status, etc.). Returns an unsubscribe fn.
 		onLicenseChanged(handler: (state: LicenseState) => void): () => void;
