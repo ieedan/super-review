@@ -2320,6 +2320,23 @@ async function dropAutostashBackup(git: SimpleGit): Promise<void> {
 	}
 }
 
+// `git stash` (and `merge --autostash`, which stashes the same way) refuses to
+// snapshot a working tree that holds intent-to-add entries (`git add -N`):
+// "Entry '<path>' not uptodate. Cannot merge. Cannot save the current worktree
+// state". Agents leave those behind (`add -N` makes a new file show up in
+// `git diff`), so demote them back to plain untracked files first. Only i-t-a
+// entries appear as "added" in a worktree-vs-index diff (untracked files don't
+// show at all, tracked ones are M/D), so that filter names exactly the set.
+// `reset -- <paths>` drops the index placeholder and leaves the file on disk;
+// `--include-untracked` then carries it through the stash like any other new
+// file, and it comes back untracked. Losing the i-t-a hint is the only cost.
+async function demoteIntentToAddEntries(git: SimpleGit): Promise<void> {
+	const raw = await git.raw(['diff', '--name-only', '-z', '--diff-filter=A']).catch(() => '');
+	const paths = raw.split('\0').filter(Boolean);
+	if (paths.length === 0) return;
+	await git.raw(['reset', '-q', '--', ...paths]);
+}
+
 // Merge another ref into the current branch — GitHub Desktop's "Update from
 // <default>". `--autostash` tucks away uncommitted work so the merge (or a
 // fast-forward) isn't blocked by "local changes would be overwritten", then
@@ -2330,6 +2347,7 @@ async function dropAutostashBackup(git: SimpleGit): Promise<void> {
 async function mergeIntoCurrentImpl(repoPath: string, ref: string): Promise<PullPushResult> {
 	const git = openGit(repoPath);
 	try {
+		await demoteIntentToAddEntries(git);
 		await git.raw(['merge', '--no-edit', '--autostash', ref]);
 	} catch (err) {
 		const conflicts = await listUnmergedPaths(git);
@@ -2688,6 +2706,7 @@ async function createManagedStashImpl(
 ): Promise<{ ok: boolean; error?: string }> {
 	const git = openGit(repoPath);
 	try {
+		await demoteIntentToAddEntries(git);
 		await git.raw(['stash', 'push', '--include-untracked', '-m', managedStashMarker(branch)]);
 		return { ok: true };
 	} catch (err) {
