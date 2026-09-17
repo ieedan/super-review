@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.5.4
+
+### Patch Changes
+
+- [`65ca792`](https://github.com/ieedan/super-review/commit/65ca7921d0c34b4d230a93b3a1805c0af82260ca) Thanks [@ieedan](https://github.com/ieedan)! - fix(git): handle intent-to-add entries during stash and merge operations
+
 ## 0.5.3
 
 ### Patch Changes
