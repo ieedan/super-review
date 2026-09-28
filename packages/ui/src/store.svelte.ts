@@ -3043,6 +3043,23 @@ async function loadLocalComments(): Promise<void> {
 	if (!commentsEqual(comments, app.localComments)) app.localComments = comments;
 }
 
+// Expand the just-committed files in the commit's context (live, cached, and
+// persisted). Seen marks are left alone: other contexts inherit from them (a
+// change seen unstaged stays seen on the Branch tab), and any later edit to the
+// same path clears its seen mark via the unmark-on-change pass anyway.
+async function resetCommittedCollapse(
+	repoId: string,
+	ctx: DiffContext,
+	committedPaths: string[]
+): Promise<void> {
+	const paths = committedPaths.filter((p) => app.collapsedFiles.has(p));
+	if (paths.length === 0) return;
+	for (const p of paths) app.collapsedFiles.delete(p);
+	const cached = filesCache.get(filesCacheKey(repoId, ctx));
+	if (cached) for (const p of paths) cached.collapsedFiles.delete(p);
+	await window.api.state.setFilesCollapsed(repoId, reviewContextKey(ctx), paths, false);
+}
+
 // Remove working-tree comments orphaned by a commit. Given the set of paths that
 // were committed, a comment is orphaned when its file was committed *and* has no
 // changes left in the working tree (`app.changedFiles`), i.e. the diff it was
@@ -3385,6 +3402,11 @@ async function refreshFiles(): Promise<void> {
 				if (prevSig && seenContentChanged(prevSig, curSig)) {
 					seenSet.delete(file.path);
 					void window.api.state.setFileSeen(repoId, reviewKey, file.path, false);
+					// Expand it too: the collapse came from marking it seen, and an
+					// unseen file left collapsed hides exactly what needs re-review.
+					if (collapsedSet.delete(file.path)) {
+						void window.api.state.setFileCollapsed(repoId, reviewKey, file.path, false);
+					}
 				}
 			}
 		}
@@ -7254,6 +7276,14 @@ export const actions = {
 			// The selection was consumed; clear partial line exclusions so stale
 			// line numbers don't carry over onto the post-commit diff.
 			app.stagingLineExclusions = new SvelteSet();
+			// Reset the committed files' collapsed state in this context. Their
+			// review there is done, so any later edits to the same paths should
+			// open expanded rather than inherit a collapse from the old change.
+			await resetCommittedCollapse(
+				repoId,
+				ctx,
+				included.map((f) => f.path)
+			);
 			bumpDiffReload();
 			await Promise.all([refreshFiles(), refreshBranches(), refreshPushStatus()]);
 			// The PR lookup is a GitHub round trip and nothing below needs it.
