@@ -1,5 +1,11 @@
 # @super-review/desktop
 
+## 0.5.6
+
+### Patch Changes
+
+- [`4d17068`](https://github.com/ieedan/super-review/commit/4d1706825d6d16513717e6d5acf58437ea5a5884) Thanks [@ieedan](https://github.com/ieedan)! - fix: ensure files marked seen are reset after commit
+
 ## 0.5.5
 
 ### Patch Changes
