@@ -5910,6 +5910,24 @@ export const actions = {
 		}
 	},
 
+	// Fetch a single PR by number from the repo the PR list is showing (the
+	// fork or its upstream). The list only holds the pages loaded so far, so the
+	// picker uses this to find an older PR when you search for its number.
+	// Resolves null when there's no such PR (or no GitHub remote).
+	async findPR(prNumber: number): Promise<PRSummary | null> {
+		const repo = app.activeRepo;
+		if (!repo) return null;
+		const upstream = app.prsSource === 'upstream';
+		const owner = upstream ? repo.upstreamOwner : repo.githubOwner;
+		const name = upstream ? repo.upstreamRepo : repo.githubRepo;
+		if (!owner || !name) return null;
+		try {
+			return await window.api.github.getPR(repo.id, prNumber, owner, name);
+		} catch {
+			return null;
+		}
+	},
+
 	// Check out the head branch of a PR and land on the Branch tab so its diff
 	// (head vs. the repo's default branch) is shown for review. Fetches from the
 	// upstream when the PR list is currently showing the fork's parent.
