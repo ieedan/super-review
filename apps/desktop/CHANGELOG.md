@@ -1,5 +1,11 @@
 # @super-review/desktop
 
+## 0.5.7
+
+### Patch Changes
+
+- [#206](https://github.com/ieedan/super-review/pull/206) [`4f7511a`](https://github.com/ieedan/super-review/commit/4f7511a4397e84126dc76ea4d661d1269697c572) Thanks [@ieedan](https://github.com/ieedan)! - fix: find pull requests by number in the branch picker, even ones not loaded yet
+
 ## 0.5.6
 
 ### Patch Changes
