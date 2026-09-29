@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { Command as CommandPrimitive } from 'bits-ui';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Cloud from '@lucide/svelte/icons/cloud';
@@ -222,19 +223,65 @@
 		return result;
 	});
 
+	// The PR number the filter names ("2655" or "#2655"), or null for any
+	// other query.
+	const searchedPRNumber = $derived.by(() => {
+		const m = /^#?(\d+)$/.exec(filter.trim());
+		return m ? Number(m[1]) : null;
+	});
+
+	// The list only holds the pages loaded so far, so a number search for an
+	// older PR would come up empty. When the number isn't among the loaded PRs,
+	// look it up on GitHub directly (debounced so typing "2655" doesn't fire a
+	// request per keystroke). Keyed by repo, PR source, and number so an answer
+	// never leaks across any of them.
+	let lookup = $state<{ key: string; pr: PRSummary | null } | null>(null);
+	const lookupKey = $derived.by(() => {
+		const number = searchedPRNumber;
+		const repoId = app.activeRepo?.id;
+		if (tab !== 'prs' || number === null || !repoId) return null;
+		if (app.prs.some((p) => p.number === number)) return null;
+		return `${repoId}:${app.prsSource}:${number}`;
+	});
+	const foundPR = $derived(lookupKey !== null && lookup?.key === lookupKey ? lookup.pr : null);
+	const lookingUpPR = $derived(lookupKey !== null && lookup?.key !== lookupKey);
+	$effect(() => {
+		const key = lookupKey;
+		const number = searchedPRNumber;
+		if (key === null || number === null || untrack(() => lookup?.key) === key) return;
+		const timer = setTimeout(async () => {
+			const pr = await actions.findPR(number);
+			// Drop a stale answer if the query, repo, or source moved on meanwhile.
+			if (lookupKey === key) lookup = { key, pr };
+		}, 250);
+		return () => clearTimeout(timer);
+	});
+
 	// PR rows, filtered by title / number / author / branch. A trailing
 	// `loadMore` sentinel row is appended whenever more pages remain — once it
 	// scrolls into view it triggers the next fetch.
 	type PRRow = { kind: 'pr'; pr: PRSummary } | { kind: 'loadMore' };
 	const prRows = $derived.by(() => {
-		const needle = filter.trim().toLowerCase();
+		const needle = filter
+			.trim()
+			.toLowerCase()
+			.replace(/^#(?=\d)/, '');
 		const matches = (p: PRSummary): boolean =>
 			needle === '' ||
 			p.title.toLowerCase().includes(needle) ||
 			String(p.number).includes(needle) ||
 			p.author.toLowerCase().includes(needle) ||
 			p.headRef.toLowerCase().includes(needle);
-		const result: PRRow[] = app.prs.filter(matches).map((pr) => ({ kind: 'pr', pr }) as PRRow);
+		const matched = app.prs.filter(matches);
+		// An exact number match (loaded, or fetched by the lookup above) leads the list.
+		const exactNumber = searchedPRNumber;
+		const exact =
+			exactNumber === null
+				? null
+				: (matched.find((p) => p.number === exactNumber) ??
+					(foundPR?.number === exactNumber ? foundPR : null));
+		const ordered = exact ? [exact, ...matched.filter((p) => p !== exact)] : matched;
+		const result: PRRow[] = ordered.map((pr) => ({ kind: 'pr', pr }) as PRRow);
 		// Only offer "load more" for the unfiltered list — paging makes no sense
 		// while a local filter is narrowing what's already fetched.
 		if (app.prsHasMore && needle === '') result.push({ kind: 'loadMore' });
@@ -504,12 +551,17 @@
 								<Loader2 class="size-3.5 animate-spin" />
 								Loading pull requests…
 							</div>
-						{:else if app.prs.length === 0}
-							<div class="px-3 py-6 text-center text-xs text-muted-foreground">
-								No pull requests
+						{:else if prRows.length === 0 && lookingUpPR}
+							<div
+								class="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground"
+							>
+								<Loader2 class="size-3.5 animate-spin" />
+								Looking up #{searchedPRNumber}…
 							</div>
 						{:else if prRows.length === 0}
-							<div class="px-3 py-6 text-center text-xs text-muted-foreground">No matches</div>
+							<div class="px-3 py-6 text-center text-xs text-muted-foreground">
+								{app.prs.length === 0 && filter.trim() === '' ? 'No pull requests' : 'No matches'}
+							</div>
 						{:else}
 							<Command.Group class="p-1">
 								<!-- Rows render straight into the list (no virtualization) so
