@@ -1,5 +1,11 @@
 # @super-review/ui
 
+## 0.7.5
+
+### Patch Changes
+
+- [`2030478`](https://github.com/ieedan/super-review/commit/20304782373b30e394281c125e832443b230b5ae) Thanks [@ieedan](https://github.com/ieedan)! - align command pallete to the top instead of center so it doesn't shift on the screen
+
 ## 0.7.4
 
 ### Patch Changes
