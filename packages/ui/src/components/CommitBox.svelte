@@ -298,6 +298,32 @@
 		return changesetAutoFilled || sessionAutoFilled;
 	}
 
+	// Mirror the message into the store on every change, so a flow that commits on
+	// the user's behalf can use it (publishing a repo with no commits makes the
+	// initial commit itself). Nothing here reads `app.commitDraft` back, so this
+	// can't feed itself.
+	$effect(() => {
+		actions.syncCommitDraft(summary, description);
+	});
+
+	// One of those flows just committed what the box held (see
+	// `app.commitDraftConsumed`) — empty it, the way submit() does after a commit
+	// of its own, so the message isn't offered again for the next commit.
+	let consumedSeen = untrack(() => app.commitDraftConsumed);
+	$effect(() => {
+		const consumed = app.commitDraftConsumed;
+		if (consumed === consumedSeen) return;
+		consumedSeen = consumed;
+		untrack(() => {
+			detectedChangeset = null;
+			detectedSession = null;
+			summary = '';
+			description = '';
+			const repoId = app.activeRepo?.id;
+			if (repoId) clearDraft(repoId);
+		});
+	});
+
 	// Debounce persistence so we're not writing the store on every keystroke.
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	function persistDraft(): void {
