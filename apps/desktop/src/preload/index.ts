@@ -56,6 +56,8 @@ import type {
 	ManagedStash,
 	NewReviewCommentInput,
 	NpmPackageResult,
+	WorkspaceCatalogsResult,
+	WorkspacePackageResult,
 	ReleaseNotesResult,
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
@@ -529,7 +531,11 @@ const api: PreloadAPI = {
 				packageName,
 				fromVersion,
 				toVersion
-			) as Promise<ReleaseNotesRangeResult>
+			) as Promise<ReleaseNotesRangeResult>,
+		getWorkspaceCatalogs: (repoId) =>
+			invoke('npm:getWorkspaceCatalogs', repoId) as Promise<WorkspaceCatalogsResult>,
+		getWorkspacePackage: (repoId, name) =>
+			invoke('npm:getWorkspacePackage', repoId, name) as Promise<WorkspacePackageResult>
 	},
 	feedback: {
 		// Posts to the Super Review backend, not GitHub. Works signed out.

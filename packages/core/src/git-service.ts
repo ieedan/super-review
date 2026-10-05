@@ -1725,6 +1725,23 @@ async function isUntrackedFile(git: SimpleGit, filePath: string): Promise<boolea
 	return out.split('\0').some((p) => p === filePath);
 }
 
+// Every package.json in the working tree (tracked or untracked, minus ignored
+// paths, so node_modules never shows up), repo-relative. Used to find the
+// workspace packages a `workspace:` specifier links to.
+export async function listPackageJsonPaths(repoPath: string): Promise<string[]> {
+	const out = await openGit(repoPath).raw([
+		'ls-files',
+		'-z',
+		'--cached',
+		'--others',
+		'--exclude-standard',
+		'--',
+		'package.json',
+		':(glob)**/package.json'
+	]);
+	return [...new Set(out.split('\0').filter(Boolean))];
+}
+
 async function showFile(git: SimpleGit, ref: string, filePath: string): Promise<string> {
 	try {
 		return await git.show([`${ref}:${filePath}`]);
