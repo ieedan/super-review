@@ -2226,6 +2226,33 @@ export interface NpmPackageInfo {
 // (offline, 404, rate-limited) the hover card can show instead of spinning.
 export type NpmPackageResult = { ok: true; info: NpmPackageInfo } | { ok: false; error: string };
 
+// Catalog name ('default' for the unnamed one) → package name → version range.
+export type WorkspaceCatalogs = Record<string, Record<string, string>>;
+
+export type WorkspaceCatalogsResult =
+	| { ok: true; catalogs: WorkspaceCatalogs }
+	| { ok: false; error: string };
+
+// A workspace package's own manifest, trimmed to what the hover card renders.
+export interface WorkspacePackageInfo {
+	name: string;
+	version?: string;
+	description?: string;
+	homepage?: string;
+	// Normalized to a browsable https URL, same as NpmPackageInfo.
+	repositoryUrl?: string;
+	license?: string;
+	author?: string;
+	keywords?: string[];
+	private?: boolean;
+	// Repo-relative directory of the package.
+	path: string;
+}
+
+export type WorkspacePackageResult =
+	| { ok: true; info: WorkspacePackageInfo | null }
+	| { ok: false; error: string };
+
 // A GitHub release's notes, for the hover card's "What's new" disclosure. `body`
 // is the raw release-notes markdown (the card renders it); `htmlUrl` links to
 // the release page on GitHub.
@@ -2980,6 +3007,15 @@ export interface PreloadAPI {
 			fromVersion: string,
 			toVersion: string
 		): Promise<ReleaseNotesRangeResult>;
+		// Resolve the repo's dependency catalogs (pnpm-workspace.yaml `catalog` /
+		// `catalogs`, or the root package.json's for bun/yarn) so `catalog:`
+		// specifiers can be shown as the range they actually pin. Read from the
+		// working tree on every call.
+		getWorkspaceCatalogs(repoId: string): Promise<WorkspaceCatalogsResult>;
+		// Find the workspace package named `name` in the repo (for `workspace:`
+		// specifiers) and return its manifest as it is in the working tree.
+		// `{ info: null }` when no workspace package has that name.
+		getWorkspacePackage(repoId: string, name: string): Promise<WorkspacePackageResult>;
 	};
 	feedback: {
 		// Send feedback to the Super Review backend. No GitHub account or license

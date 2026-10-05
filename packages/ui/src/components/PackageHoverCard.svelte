@@ -13,9 +13,17 @@
 	import Scale from '@lucide/svelte/icons/scale';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import FolderGit from '@lucide/svelte/icons/folder-git-2';
 	import { Popover, PopoverContent } from './ui/popover';
 	import { Badge } from './ui/badge';
 	import { getNpmInfo, requestNpmInfo, type NpmInfoState } from '@super-review/ui/npm-info.svelte';
+	import {
+		getWorkspaceCatalogs,
+		requestWorkspaceCatalogs,
+		getWorkspacePackage,
+		requestWorkspacePackage,
+		type WorkspaceLookupState
+	} from '@super-review/ui/workspace-deps.svelte';
 	import {
 		getReleaseNotes,
 		requestReleaseNotes,
@@ -34,30 +42,100 @@
 	import { app } from '@super-review/ui/store.svelte';
 	import { renderMarkdown, renderMarkdownInline } from '@super-review/ui/markdown';
 	import '@super-review/ui/markdown.css';
-	import type { NpmPackageInfo, ReleaseNotes } from '@super-review/core/types';
+	import type {
+		NpmPackageInfo,
+		ReleaseNotes,
+		WorkspaceCatalogs,
+		WorkspacePackageInfo
+	} from '@super-review/core/types';
 
-	// Kick off the fetch as a side effect when the hovered package changes.
-	// `requestNpmInfo` writes the reactive cache, so it must run in an `$effect`,
-	// not inside the `$derived` below (mutating state during derivation throws
-	// `state_unsafe_mutation`).
-	$effect(() => {
-		const name = packageHover.target?.name;
-		if (name) requestNpmInfo(name);
+	// pnpm/yarn/bun protocol specifiers that don't name an npm range themselves.
+	// `catalog:` defers the range to a workspace catalog, which we resolve so the
+	// card reads exactly like a plain dependency. `workspace:` links a package
+	// from this repo, so the card shows that local package's manifest (often it
+	// isn't on npm at all).
+	type SpecProtocol = { kind: 'workspace' } | { kind: 'catalog'; catalog: string };
+	function protocolOf(range: string | null | undefined): SpecProtocol | null {
+		if (!range) return null;
+		if (range.startsWith('workspace:')) return { kind: 'workspace' };
+		if (range.startsWith('catalog:')) {
+			return { kind: 'catalog', catalog: range.slice('catalog:'.length).trim() || 'default' };
+		}
+		return null;
+	}
+	const protocol = $derived(protocolOf(packageHover.target?.version));
+	const repoId = $derived(app.activeRepo?.id ?? null);
+
+	// The workspace package lookup, for a `workspace:` dependency.
+	const workspaceState = $derived<WorkspaceLookupState<WorkspacePackageInfo | null> | null>(
+		protocol?.kind === 'workspace' && repoId && packageHover.target
+			? (getWorkspacePackage(repoId, packageHover.target.name) ?? { status: 'loading' })
+			: null
+	);
+	const localPackage = $derived(workspaceState?.status === 'loaded' ? workspaceState.value : null);
+
+	// The repo's catalogs, needed whenever either side of the dep uses `catalog:`.
+	const usesCatalog = $derived.by(() => {
+		const t = packageHover.target;
+		return (
+			!!t && [t.version, t.oldRange, t.newRange].some((r) => protocolOf(r)?.kind === 'catalog')
+		);
 	});
-
-	// The npm request state for the currently-hovered package. Pure reactive read
-	// of the cache, so it re-resolves loading → loaded/error on its own. The cache
-	// is empty until the effect above populates it, so treat "not yet there" as
-	// loading.
-	const infoState = $derived<NpmInfoState | null>(
-		packageHover.target ? (getNpmInfo(packageHover.target.name) ?? { status: 'loading' }) : null
+	const catalogsState = $derived<WorkspaceLookupState<WorkspaceCatalogs> | null>(
+		usesCatalog && repoId ? (getWorkspaceCatalogs(repoId) ?? { status: 'loading' }) : null
 	);
 
-	// Only actually open the popover once the npm request has settled, so the card
-	// never flashes a "Loading…" state: it stays hidden during the hover-intent
-	// delay + fetch and pops in already populated (loaded or, for a missing/broken
-	// package, the error).
-	const contentReady = $derived(infoState?.status === 'loaded' || infoState?.status === 'error');
+	// A range as the card should treat it: `catalog:` swapped for the range the
+	// catalog pins (left as-is when it can't be resolved).
+	function effectiveRange(range: string | null | undefined): string | null {
+		if (!range) return null;
+		const p = protocolOf(range);
+		if (p?.kind !== 'catalog' || catalogsState?.status !== 'loaded') return range;
+		const name = packageHover.target?.name;
+		return (name && catalogsState.value[p.catalog]?.[name]) || range;
+	}
+	const hoveredRange = $derived(effectiveRange(packageHover.target?.version));
+
+	// Kick off the lookups as side effects when the hovered package changes. The
+	// requesters write reactive caches, so they must run in an `$effect`, not
+	// inside the `$derived`s (mutating state during derivation throws
+	// `state_unsafe_mutation`). npm is skipped for a workspace package we found
+	// locally; its own manifest is the source of truth.
+	$effect(() => {
+		const name = packageHover.target?.name;
+		if (!name) return;
+		if (repoId && protocol?.kind === 'workspace') requestWorkspacePackage(repoId, name);
+		if (repoId && usesCatalog) requestWorkspaceCatalogs(repoId);
+		const awaitingLocal = workspaceState != null && workspaceState.status !== 'error';
+		if (!awaitingLocal || (workspaceState?.status === 'loaded' && !localPackage)) {
+			requestNpmInfo(name);
+		}
+	});
+
+	// The package metadata the card renders. For a local workspace package that's
+	// its own manifest in the npm shape (no publish times); otherwise the npm
+	// request state, which re-resolves loading → loaded/error on its own. Caches
+	// are empty until the effect above populates them, so "not yet there" reads
+	// as loading.
+	const infoState = $derived.by<NpmInfoState | null>(() => {
+		const t = packageHover.target;
+		if (!t) return null;
+		if (workspaceState?.status === 'loading') return { status: 'loading' };
+		if (localPackage) {
+			const { version: _version, private: _private, path: _path, ...rest } = localPackage;
+			return { status: 'loaded', info: { ...rest, time: {} } };
+		}
+		return getNpmInfo(t.name) ?? { status: 'loading' };
+	});
+
+	// Only actually open the popover once everything it shows has settled, so the
+	// card never flashes a "Loading…" state or reflows when a catalog range
+	// resolves: it stays hidden during the hover-intent delay + fetch and pops in
+	// already populated (loaded or, for a missing/broken package, the error).
+	const contentReady = $derived(
+		(infoState?.status === 'loaded' || infoState?.status === 'error') &&
+			catalogsState?.status !== 'loading'
+	);
 	const cardOpen = $derived(packageHover.armed && contentReady);
 
 	// Open toward whichever side of the hovered token has more room, so expanding
@@ -156,15 +234,18 @@
 	// is the version in the file (the new side, or the old side for a removed dep);
 	// `previousVersion` is the old side's version, but only when the dep is present
 	// on both sides so we can tell a real change from an add/remove.
+	// A local workspace package is at whatever version its manifest says.
 	const currentVersion = $derived.by(() => {
+		if (localPackage) return localPackage.version ?? null;
 		const t = packageHover.target;
-		const range = t?.newRange ?? t?.oldRange ?? t?.version ?? null;
+		const range = effectiveRange(t?.newRange ?? t?.oldRange ?? t?.version);
 		return range ? baseVersion(range) : null;
 	});
 	const previousVersion = $derived.by(() => {
 		const t = packageHover.target;
-		if (!t?.oldRange || !t?.newRange) return null;
-		return baseVersion(t.oldRange);
+		if (localPackage || !t?.oldRange || !t?.newRange) return null;
+		const range = effectiveRange(t.oldRange);
+		return range ? baseVersion(range) : null;
 	});
 	// Did the version actually change in the diff? If so we show the changelog for
 	// every release between the two; otherwise just the current version's.
@@ -329,7 +410,7 @@
 			return null;
 		}
 		const info = infoState.info;
-		const range = packageHover.target.version;
+		const range = hoveredRange ?? packageHover.target.version;
 		const resolved = baseVersion(range);
 		const publishedIso = resolved ? info.time[resolved] : undefined;
 		return {
@@ -386,20 +467,34 @@
 						</div>
 					{/if}
 					<div class="min-w-0 flex-1">
-						<a
-							href={npmUrl(target.name)}
-							onclick={(e) => open(npmUrl(target.name), e)}
-							class="group inline-flex items-center gap-1 font-medium break-all hover:underline"
-						>
-							{target.name}
-							<ExternalLink
-								class="size-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-60"
-							/>
-						</a>
+						{#if localPackage?.private}
+							<!-- Private workspace package: there's no npm page to link to. -->
+							<span class="font-medium break-all">{target.name}</span>
+						{:else}
+							<a
+								href={npmUrl(target.name)}
+								onclick={(e) => open(npmUrl(target.name), e)}
+								class="group inline-flex items-center gap-1 font-medium break-all hover:underline"
+							>
+								{target.name}
+								<ExternalLink
+									class="size-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-60"
+								/>
+							</a>
+						{/if}
 						{#if target.kind === 'version'}
-							<p class="font-mono text-xs text-muted-foreground">{target.version}</p>
+							<!-- The catalog's range for a `catalog:` dep, so it reads like
+							     any other version; the badge says where it came from. -->
+							<p class="font-mono text-xs text-muted-foreground">{hoveredRange}</p>
 						{/if}
 					</div>
+					{#if protocol}
+						<Badge variant="outline" class="mt-0.5 font-mono">
+							{protocol.kind === 'catalog' && protocol.catalog !== 'default'
+								? `catalog:${protocol.catalog}`
+								: protocol.kind}
+						</Badge>
+					{/if}
 				</div>
 
 				<div class="border-t border-foreground/10 px-3 py-2.5 text-sm">
@@ -428,6 +523,15 @@
 								</div>
 							{/if}
 							<div class="mt-2 flex flex-wrap items-center gap-1.5">
+								{#if localPackage?.version}
+									<Badge variant="secondary" class="font-mono">
+										<Tag class="size-3" />
+										{localPackage.version}
+									</Badge>
+								{/if}
+								{#if localPackage?.private}
+									<Badge variant="muted">private</Badge>
+								{/if}
 								{#if info.latestVersion}
 									<Badge variant="secondary" class="font-mono">
 										<Tag class="size-3" />
@@ -474,6 +578,20 @@
 									{/if}
 								</div>
 							{/if}
+						{:else if localPackage}
+							<!-- Version card for a workspace package: it resolves to the local
+							     copy, so show which version and where it lives. -->
+							<div class="flex items-center gap-2">
+								<FolderGit class="size-3.5 shrink-0 text-muted-foreground" />
+								<span class="min-w-0 break-all">
+									{#if localPackage.version}
+										<span class="font-mono">{localPackage.version}</span> in
+									{:else}
+										Local package in
+									{/if}
+									<span class="font-mono text-foreground/90">{localPackage.path}</span>
+								</span>
+							</div>
 						{:else if versionView}
 							<!-- Version card: when this range was published + latest. -->
 							{#if versionView.publishedIso && versionView.resolved}

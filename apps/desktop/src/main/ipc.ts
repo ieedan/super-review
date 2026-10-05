@@ -48,6 +48,8 @@ import type {
 	MentionableUser,
 	NewReviewCommentInput,
 	NpmPackageResult,
+	WorkspaceCatalogsResult,
+	WorkspacePackageResult,
 	ReleaseNotesResult,
 	ReleaseNotesRangeResult,
 	PRChecksSummary,
@@ -157,6 +159,7 @@ import {
 } from '@super-review/core';
 import { detectEditors, detectTerminals, openInEditor, openInTerminal } from './editor-service.js';
 import { getNpmPackageInfo } from './npm-service.js';
+import { getWorkspaceCatalogs, getWorkspacePackage } from './workspace-service.js';
 import * as gh from './github-service.js';
 import { registerLicenseIpc } from './license/ipc.js';
 import { submitFeedback } from './feedback-service.js';
@@ -1927,6 +1930,21 @@ export function registerIpc(): void {
 	ipcMain.handle('npm:getPackageInfo', async (_e, name: string): Promise<NpmPackageResult> => {
 		return getNpmPackageInfo(name);
 	});
+
+	// `catalog:` / `workspace:` specifiers in package.json, resolved against the
+	// repo's working tree (see workspace-service).
+	ipcMain.handle(
+		'npm:getWorkspaceCatalogs',
+		async (_e, repoId: string): Promise<WorkspaceCatalogsResult> => {
+			return getWorkspaceCatalogs(repoWorkDirOrThrow(repoId));
+		}
+	);
+	ipcMain.handle(
+		'npm:getWorkspacePackage',
+		async (_e, repoId: string, name: string): Promise<WorkspacePackageResult> => {
+			return getWorkspacePackage(repoWorkDirOrThrow(repoId), name);
+		}
+	);
 
 	// GitHub release notes for a package version (the hover card's "What's new"
 	// disclosure). Resolves `{ release: null }` for non-GitHub repos / no matching

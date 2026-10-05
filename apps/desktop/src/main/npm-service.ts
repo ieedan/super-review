@@ -46,7 +46,7 @@ interface RegistryDoc {
 // Turn a repository field (string, or `{ url }` that's often `git+https://…`,
 // `git+ssh://git@host/owner/repo.git`, or `git://…`) into a plain browsable
 // https URL, or undefined when there's nothing usable.
-function normalizeRepositoryUrl(repo: RegistryDoc['repository']): string | undefined {
+export function normalizeRepositoryUrl(repo: RegistryDoc['repository']): string | undefined {
 	const raw = typeof repo === 'string' ? repo : repo?.url;
 	if (!raw) return undefined;
 	let url = raw.trim();
