@@ -1,5 +1,11 @@
 # @super-review/desktop
 
+## 0.5.9
+
+### Patch Changes
+
+- [`a5fe10b`](https://github.com/ieedan/super-review/commit/a5fe10b9656eefd5a4226d54f1e5185fc6e775b3) Thanks [@ieedan](https://github.com/ieedan)! - feat: resolve catalog and workspace deps in package hover cards
+
 ## 0.5.8
 
 ### Patch Changes
