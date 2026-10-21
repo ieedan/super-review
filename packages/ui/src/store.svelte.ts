@@ -6725,7 +6725,7 @@ export const actions = {
 				side: root.side,
 				startLine: root.startLine,
 				endLine: root.endLine,
-				...(root.anchor ? { anchor: root.anchor } : {}),
+				...(root.anchor ? { anchor: $state.snapshot(root.anchor) } : {}),
 				body: trimmed,
 				author: localAuthor(),
 				inReplyTo: root.id
@@ -6752,7 +6752,9 @@ export const actions = {
 				side: c.side,
 				startLine: c.line,
 				endLine: c.line,
-				...(c.anchor ? { anchor: c.anchor } : {}),
+				// $state.snapshot: the composer is deep reactive state, and a proxy can't
+				// cross IPC ("An object could not be cloned").
+				...(c.anchor ? { anchor: $state.snapshot(c.anchor) } : {}),
 				body: c.draft.trim(),
 				author: localAuthor()
 			});
