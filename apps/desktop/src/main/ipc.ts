@@ -31,6 +31,7 @@ import type {
 	FeedbackResult,
 	DiffContext,
 	DiffData,
+	FileSymbolRefs,
 	DiffLineContextMenuAction,
 	DiffLineContextMenuParams,
 	EditorKind,
@@ -137,6 +138,7 @@ import {
 	recheckConflicts,
 	getCurrentBranch,
 	getDiff,
+	getFileSymbolRefs,
 	getLastCommit,
 	getPushStatus,
 	isGitRepo,
@@ -984,6 +986,20 @@ export function registerIpc(): void {
 				};
 			}
 			return getDiff(repoWorkDirOrThrow(repoId), filePath, ctx);
+		}
+	);
+
+	// "Used in N places" lenses for a file's top-level declarations, counted
+	// against the tree the diff context's new side lives in. Unsupported
+	// languages and contexts answer `supported: false` rather than throwing.
+	ipcMain.handle(
+		'git:getSymbolRefs',
+		async (_e, repoId: string, filePath: string, ctx: DiffContext): Promise<FileSymbolRefs> => {
+			try {
+				return await getFileSymbolRefs(repoWorkDirOrThrow(repoId), ctx, filePath);
+			} catch {
+				return { supported: false, lineCount: 0, symbols: [] };
+			}
 		}
 	);
 

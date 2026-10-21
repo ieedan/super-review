@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, watch, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -28,11 +28,47 @@ function appDbPath(): string {
 	return path.join(appDir(), 'comments.db');
 }
 
-// Canonical key for a repo: its absolute, resolved path. The desktop app passes
-// its RepoInfo.path and the CLI passes the git toplevel — both resolve to the
-// same string, so app-written and CLI-written comments line up.
+// Canonical key for a repo: its real path on disk. The desktop app passes its
+// RepoInfo.path (whatever the user typed or picked) and the CLI passes the git
+// toplevel, and those can spell the same directory differently: `.../GitHub/x`
+// vs `.../github/x` on a case-insensitive filesystem, or through a symlink. Rows
+// are matched by exact string, so a plain `path.resolve` split one repo's
+// comments into sets the other side could not see. `realpathSync.native` asks the
+// OS for the canonical spelling (on-disk case, symlinks resolved), so both sides
+// land on one key. A path that no longer exists falls back to its resolved form.
+// Memoised: it runs on every query, and a repo's real path doesn't change under a
+// running process in any way that matters here.
+const repoKeyCache = new Map<string, string>();
 function repoKey(repoPath: string): string {
-	return path.resolve(repoPath);
+	const resolved = path.resolve(repoPath);
+	let key = repoKeyCache.get(resolved);
+	if (key === undefined) {
+		try {
+			key = realpathSync.native(resolved);
+		} catch {
+			return resolved;
+		}
+		repoKeyCache.set(resolved, key);
+	}
+	return key;
+}
+
+// Rows written before the key was canonical may sit under another spelling of a
+// repo's path. Fold each into its canonical key so those comments surface again.
+// Only paths that still exist can be canonicalised, so rows for moved or deleted
+// repos are left alone. Idempotent, and safe if the app and the CLI both run it.
+async function canonicaliseRepoKeys(client: Client): Promise<void> {
+	const { rows } = await client.execute('SELECT DISTINCT repo FROM comments');
+	for (const row of rows) {
+		const stored = String(row.repo);
+		const key = repoKey(stored);
+		if (key !== stored) {
+			await client.execute({
+				sql: 'UPDATE comments SET repo = ? WHERE repo = ?',
+				args: [key, stored]
+			});
+		}
+	}
 }
 
 // One libSQL client + Drizzle handle for the application database, created lazily
@@ -59,7 +95,8 @@ function getHandle(): Handle {
 			.then(() =>
 				Promise.all(COMMENTS_MIGRATIONS.map((sql) => client.execute(sql).catch(() => undefined)))
 			)
-			.then(() => undefined);
+			// A failed tidy-up must not take the comment store down with it.
+			.then(() => canonicaliseRepoKeys(client).catch(() => undefined));
 		handle = { client, db, ready };
 	}
 	return handle;
@@ -84,6 +121,7 @@ function rowToComment(r: Row): LocalComment {
 		side: r.side,
 		startLine: r.startLine,
 		endLine: r.endLine,
+		...(r.anchor != null ? { anchor: r.anchor } : {}),
 		body: r.body,
 		author: r.author,
 		createdAt: r.createdAt,
@@ -189,6 +227,7 @@ export function createComment(input: NewLocalCommentInput): LocalComment {
 		side: input.side,
 		startLine: input.startLine,
 		endLine: input.endLine,
+		...(input.anchor != null ? { anchor: input.anchor } : {}),
 		body: input.body,
 		author: input.author,
 		...(input.inReplyTo != null ? { inReplyTo: input.inReplyTo } : {}),
@@ -208,6 +247,7 @@ export async function writeComment(repoPath: string, comment: LocalComment): Pro
 		side: comment.side,
 		startLine: comment.startLine,
 		endLine: comment.endLine,
+		anchor: comment.anchor ?? null,
 		body: comment.body,
 		author: comment.author,
 		createdAt: comment.createdAt,
@@ -250,6 +290,7 @@ export async function replyToComment(
 		side: target.side,
 		startLine: target.startLine,
 		endLine: target.endLine,
+		...(target.anchor != null ? { anchor: target.anchor } : {}),
 		body,
 		author,
 		inReplyTo: rootId

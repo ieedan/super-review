@@ -1,3 +1,4 @@
+import type { CommentAnchor } from './comment-anchor.js';
 import type { Hotkeys } from './hotkeys.js';
 import type { RepoUsageStats, StatMetric } from './usage-stats.js';
 
@@ -297,6 +298,51 @@ export type DiffContext =
 	// commit with no parent diffs against the empty tree. Shares the branch
 	// machinery — `ref` resolves to a base/head pair in refsForContext.
 	| { kind: 'commit'; ref: string };
+
+// One place a symbol is used, for the references lens popover.
+export interface SymbolRefLocation {
+	path: string;
+	// 1-based line and 0-based column of the reference.
+	line: number;
+	col: number;
+	// The trimmed source line, for a preview.
+	text: string;
+}
+
+// How far to trust a symbol's reference count.
+//  - exact: every occurrence was classified; the count is the real number.
+//  - approximate: the name is also bound elsewhere (a parameter, a nested
+//    declaration), so the count may include uses of that other binding.
+//  - atLeast: part of the codebase couldn't be followed (a dynamic import, an
+//    unresolved alias, a component prop), so there may be more uses than found.
+//    With a count of 0 this means "unknown", never "unused".
+export type SymbolRefConfidence = 'exact' | 'approximate' | 'atLeast';
+
+// A declaration that gets a "used in N places" lens.
+export interface SymbolLens {
+	name: string;
+	kind: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'const' | 'let' | 'var';
+	// 1-based line of the declaration; the lens is drawn above it.
+	line: number;
+	exported: boolean;
+	count: number;
+	confidence: SymbolRefConfidence;
+	// Why the count is only a lower bound, when `confidence` is `atLeast`.
+	uncertainty?: string;
+	locations: SymbolRefLocation[];
+	// More references exist than `locations` carries.
+	locationsTruncated: boolean;
+}
+
+export interface FileSymbolRefs {
+	// False when the file's language isn't scanned or the context has no
+	// readable tree; the renderer shows no lenses.
+	supported: boolean;
+	// Line count of the contents the lenses were computed against, so the
+	// renderer can discard a result for a file that changed underneath it.
+	lineCount: number;
+	symbols: SymbolLens[];
+}
 
 // A workspace package changesets can version. `dir` is the repo-relative posix
 // path to the package; `private` packages are still releasable by default
@@ -821,6 +867,12 @@ export interface LocalComment {
 	// startLine === endLine.
 	startLine: number;
 	endLine: number;
+	// The commented text plus a few lines of context, captured when the comment was
+	// made. `side` + line numbers only mean something against the exact contents
+	// they were made on, so readers resolve this against the current file
+	// (`resolveAnchor`) to find where the code is now. Absent on comments that
+	// predate it, which fall back to the stored line numbers.
+	anchor?: CommentAnchor;
 	// The note itself (Markdown).
 	body: string;
 	author: LocalCommentAuthor;
@@ -849,6 +901,7 @@ export interface NewLocalCommentInput {
 	side: 'LEFT' | 'RIGHT';
 	startLine: number;
 	endLine: number;
+	anchor?: CommentAnchor;
 	body: string;
 	author: LocalCommentAuthor;
 	// Set when this comment is a reply — the thread root's id. The caller is
@@ -1926,6 +1979,10 @@ export interface UserPrefs {
 	// Draw vertical indentation guide lines in diff code (like an editor's
 	// indent guides), so nesting depth stays readable. On by default.
 	indentGuides: boolean;
+	// Draw a "used in N places" lens above each top-level declaration in the Raw
+	// view, so code nothing uses stands out. Off by default: it reads the rest of
+	// the repo to count uses.
+	symbolReferences: boolean;
 	// Font family for the app UI (sidebar, lists, chrome). "system" uses the
 	// built-in sans stack; any other value is an installed family name.
 	uiFont: string;
@@ -2466,6 +2523,9 @@ export interface PreloadAPI {
 		// confirm a remembered branch base still exists before diffing against it.
 		refExists(repoId: string, ref: string): Promise<boolean>;
 		getDiff(repoId: string, filePath: string, ctx: DiffContext): Promise<DiffData>;
+		// "Used in N places" lenses for the file's top-level declarations, counted
+		// in the tree the context's new side lives in.
+		getSymbolRefs(repoId: string, filePath: string, ctx: DiffContext): Promise<FileSymbolRefs>;
 		fetchOrigin(repoId: string): Promise<{ ok: boolean; error?: string }>;
 		getPushStatus(repoId: string): Promise<PushStatus>;
 		pull(repoId: string): Promise<PullPushResult>;

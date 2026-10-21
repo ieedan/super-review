@@ -273,6 +273,14 @@
 			keywords: 'indent indentation guides lines scope nesting whitespace'
 		},
 		{
+			tab: 'diff',
+			id: 'settings-symbol-references',
+			kind: 'row',
+			title: 'Symbol references',
+			description: 'Show how many places use each declaration in the Raw view, to spot dead code.',
+			keywords: 'references usages used unused dead code lens symbol count codelens'
+		},
+		{
 			tab: 'behavior',
 			id: 'settings-arrow-nav',
 			kind: 'row',
@@ -652,6 +660,7 @@
 	let draftCodeFont = $state<string>('system');
 	let draftUiFont = $state<string>('system');
 	let draftIndentGuides = $state<boolean>(true);
+	let draftSymbolReferences = $state<boolean>(false);
 	let draftEditor = $state<EditorKind | null>(null);
 	let draftTerminal = $state<TerminalKind | null>(null);
 	let draftChangesetsEnabled = $state<boolean>(true);
@@ -746,6 +755,7 @@
 		draftCodeFont = app.codeFont;
 		draftUiFont = app.uiFont;
 		draftIndentGuides = app.indentGuides;
+		draftSymbolReferences = app.symbolReferences;
 		draftEditor = effectiveEditor();
 		draftTerminal = effectiveTerminal();
 		draftChangesetsEnabled = app.changesetsEnabled;
@@ -860,6 +870,9 @@
 		}
 		if (draftIndentGuides !== app.indentGuides) {
 			promises.push(actions.setIndentGuides(draftIndentGuides));
+		}
+		if (draftSymbolReferences !== app.symbolReferences) {
+			promises.push(actions.setSymbolReferences(draftSymbolReferences));
 		}
 		if (draftPrMergedBehavior !== app.prMergedBehavior) {
 			promises.push(actions.setPrMergedBehavior(draftPrMergedBehavior));
@@ -1550,6 +1563,8 @@
 		/>
 	{:else if id === 'settings-indent-guides'}
 		<Switch bind:checked={draftIndentGuides} aria-label="Indent guides" />
+	{:else if id === 'settings-symbol-references'}
+		<Switch bind:checked={draftSymbolReferences} aria-label="Symbol references" />
 	{:else if id === 'settings-arrow-nav'}
 		<SettingSelect
 			ariaLabel="Arrow-key navigation"

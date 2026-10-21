@@ -75,6 +75,7 @@ import {
 	WINDOW_BOUNDS
 } from '@super-review/core/types';
 import { diffContextKey, reviewContextKey } from '@super-review/core/diff-context';
+import type { CommentAnchor } from '@super-review/core/comment-anchor';
 import { oidsMatch } from '@super-review/core/seen-inheritance';
 import { aggregateStats, emptyStats } from '@super-review/core/usage-stats';
 import {
@@ -155,6 +156,10 @@ export interface LocalComposer {
 	filePath: string;
 	line: number;
 	side: 'LEFT' | 'RIGHT';
+	// The commented text + context, captured from the file as it was when the
+	// composer opened (see captureAnchor). Absent when the contents weren't
+	// available (e.g. a truncated diff), in which case the comment is line-only.
+	anchor?: CommentAnchor;
 	draft: string;
 	submitting: boolean;
 }
@@ -406,6 +411,8 @@ interface AppState {
 	openFileOnArrowNav: boolean;
 	// Draw vertical indentation guide lines in diff code (see UserPrefs).
 	indentGuides: boolean;
+	// Draw "used in N places" lenses above declarations in the Raw view.
+	symbolReferences: boolean;
 	maxDiffLines: number;
 	hiddenDiffPatterns: string[];
 	customFileIcons: CustomFileIcon[];
@@ -639,6 +646,11 @@ interface AppState {
 	// (it owns the parsed diff), so the comments sidebar can badge them even though
 	// an orphaned comment no longer renders inline.
 	outdatedLocalCommentIds: SvelteSet<string>;
+	// Where each local comment's anchor currently sits in its file, for comments
+	// that moved because lines were added or removed around them. Maintained by
+	// each DiffFileSection alongside `outdatedLocalCommentIds`; a comment with no
+	// entry is still at its stored line. Read via `localCommentLines`.
+	resolvedLocalCommentLines: SvelteMap<string, { startLine: number; endLine: number }>;
 	// The single inline comment editor open anywhere — an edit box or a reply box,
 	// keyed so the two are mutually exclusive (opening one closes the other, in this
 	// or any other thread). Format: `edit:<scope>:<id>` or `reply:<scope>:<rootId>`,
@@ -1070,6 +1082,7 @@ const initial: AppState = {
 	showFileIcons: true,
 	openFileOnArrowNav: true,
 	indentGuides: true,
+	symbolReferences: false,
 	maxDiffLines: 1500,
 	hiddenDiffPatterns: DEFAULT_HIDDEN_DIFF_PATTERNS,
 	customFileIcons: [],
@@ -1185,6 +1198,7 @@ const initial: AppState = {
 	localCommentsContextKey: null,
 	localComposers: {},
 	outdatedLocalCommentIds: new SvelteSet(),
+	resolvedLocalCommentLines: new SvelteMap(),
 	openCommentEditor: null,
 	commentsSidebarOpen: false,
 	conversationFullscreen: false,
@@ -3029,6 +3043,7 @@ async function loadLocalComments(): Promise<void> {
 	if (app.localCommentsContextKey !== contextKey) {
 		app.localComposers = {};
 		app.outdatedLocalCommentIds.clear();
+		app.resolvedLocalCommentLines.clear();
 		app.localCommentsContextKey = contextKey;
 	}
 	let comments: LocalComment[];
@@ -3141,6 +3156,13 @@ function sideQualifier(side: 'LEFT' | 'RIGHT'): string {
 	return side === 'LEFT' ? ' (original side)' : '';
 }
 
+// Where a local comment sits now: its anchor's current location when the code
+// moved (a DiffFileSection resolved it against the live file), else the line range
+// it was made on. A reply shares its thread root's location.
+export function localCommentLines(c: LocalComment): { startLine: number; endLine: number } {
+	return app.resolvedLocalCommentLines.get(c.inReplyTo ?? c.id) ?? c;
+}
+
 // A header line for the "copy all" task lists, naming what the list is.
 const COMMENTS_PROMPT_INTRO =
 	'Address the following review comments left on a diff (the code changes under review). ' +
@@ -3150,8 +3172,9 @@ const COMMENTS_PROMPT_INTRO =
 // Build a copy-ready prompt for a single comment: makes the diff context and the
 // side explicit so an agent can act on it without the diff in front of them.
 function formatCommentPrompt(c: LocalComment): string {
+	const { startLine, endLine } = localCommentLines(c);
 	return (
-		`Review comment at ${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)} ` +
+		`Review comment at ${lineRangeLabel(startLine, endLine)}${sideQualifier(c.side)} ` +
 		`in \`${c.path}\`:\n\n${c.body.trim()}`
 	);
 }
@@ -3171,7 +3194,8 @@ function formatCommentsPrompt(comments: LocalComment[]): string {
 	for (const [path, list] of byFile) {
 		sections.push(`### ${path}`);
 		for (const c of list) {
-			const where = `${lineRangeLabel(c.startLine, c.endLine)}${sideQualifier(c.side)}`;
+			const { startLine, endLine } = localCommentLines(c);
+			const where = `${lineRangeLabel(startLine, endLine)}${sideQualifier(c.side)}`;
 			const body = c.body.trim().replace(/\n/g, '\n  ');
 			sections.push(`- [ ] **${where}** - ${body}`);
 		}
@@ -3228,7 +3252,8 @@ function formatPRCommentsPrompt(comments: PRReviewComment[]): string {
 function formatThreadPrompt(thread: LocalComment[]): string {
 	const root = thread[0];
 	if (!root) return '';
-	const where = `${lineRangeLabel(root.startLine, root.endLine)}${sideQualifier(root.side)}`;
+	const lines = localCommentLines(root);
+	const where = `${lineRangeLabel(lines.startLine, lines.endLine)}${sideQualifier(root.side)}`;
 	// Lead with the thread id so an agent can act on it (e.g. `comment reply <id>`).
 	const head = `Local Thread: ${root.id}\n\nReview thread at ${where} in \`${root.path}\` (oldest first):`;
 	const turns = thread.map(
@@ -3772,6 +3797,7 @@ function applyPrefsSettings(prefs: UserPrefs): void {
 	// `?? true` so prefs files persisted before this setting existed hydrate to
 	// the on-by-default behavior instead of undefined.
 	app.indentGuides = prefs.indentGuides ?? true;
+	app.symbolReferences = prefs.symbolReferences ?? false;
 	app.maxDiffLines = prefs.maxDiffLines;
 	app.hiddenDiffPatterns = prefs.hiddenDiffPatterns;
 	app.customFileIcons = prefs.customFileIcons;
@@ -6654,12 +6680,17 @@ export const actions = {
 
 	// Open an inline compose box for a new local comment at a line. No-op if one is
 	// already open there (matches the PR composer's single-open-per-line rule).
-	openLocalComposer(filePath: string, side: 'LEFT' | 'RIGHT', line: number): void {
+	openLocalComposer(
+		filePath: string,
+		side: 'LEFT' | 'RIGHT',
+		line: number,
+		anchor?: CommentAnchor
+	): void {
 		const key = composerKey(filePath, side, line);
 		if (app.localComposers[key]) return;
 		app.localComposers = {
 			...app.localComposers,
-			[key]: { filePath, line, side, draft: '', submitting: false }
+			[key]: { filePath, line, side, anchor, draft: '', submitting: false }
 		};
 	},
 
@@ -6694,6 +6725,7 @@ export const actions = {
 				side: root.side,
 				startLine: root.startLine,
 				endLine: root.endLine,
+				...(root.anchor ? { anchor: root.anchor } : {}),
 				body: trimmed,
 				author: localAuthor(),
 				inReplyTo: root.id
@@ -6720,6 +6752,7 @@ export const actions = {
 				side: c.side,
 				startLine: c.line,
 				endLine: c.line,
+				...(c.anchor ? { anchor: c.anchor } : {}),
 				body: c.draft.trim(),
 				author: localAuthor()
 			});
@@ -8375,6 +8408,11 @@ export const actions = {
 	async setIndentGuides(value: boolean): Promise<void> {
 		app.indentGuides = value;
 		app.prefs = await window.api.state.setPrefs({ indentGuides: value });
+	},
+
+	async setSymbolReferences(value: boolean): Promise<void> {
+		app.symbolReferences = value;
+		app.prefs = await window.api.state.setPrefs({ symbolReferences: value });
 	},
 
 	async setMaxDiffLines(max: number): Promise<void> {

@@ -10,12 +10,14 @@
 export * from './types.js';
 export * from './media.js';
 export * from './git-service.js';
+export * from './symbol-refs.js';
 export * from './changesets.js';
 export * from './repo-templates.js';
 export * from './session-capture.js';
 export * from './session-store.js';
 export * from './task-store.js';
 export * from './comment-store.js';
+export * from './comment-anchor.js';
 export * from './desktop-auth.js';
 
 // These result types are declared (identically) in both `types.js` — the shared

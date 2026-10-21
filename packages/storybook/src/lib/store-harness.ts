@@ -48,6 +48,7 @@ function resetTouchedFields() {
 	a.viewMode = 'split';
 	a.showFileIcons = true;
 	a.indentGuides = true;
+	a.symbolReferences = false;
 	a.recentRepoCount = 5;
 	a.loading = false;
 	a.githubAccounts = [];

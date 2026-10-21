@@ -12,6 +12,7 @@
 		"./subagent-convert": "./src/subagent-convert.ts",
 		"./media": "./src/media.ts",
 		"./hotkeys": "./src/hotkeys.ts",
+		"./comment-anchor": "./src/comment-anchor.ts",
 		"./harness-auth": "./src/harness-auth.ts",
 		"./push-status": "./src/push-status.ts",
 		"./diff-context": "./src/diff-context.ts",

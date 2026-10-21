@@ -13,6 +13,7 @@
 		type DiffTokenEventBaseProps,
 		type FileContents,
 		type FileDiffMetadata,
+		type LineAnnotation,
 		type HunkExpansionRegion,
 		type OnDiffLineClickProps,
 		type SelectedLineRange
@@ -78,10 +79,17 @@
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
+	import SymbolRefsLens from './SymbolRefsLens.svelte';
 	import SessionDiffCard from './SessionDiffCard.svelte';
 	import TaskDiffCard from './TaskDiffCard.svelte';
 	import { calloutsForFile } from '@super-review/ui/session-tour';
 	import { localCommentOutdated } from '@super-review/ui/comment-outdated';
+	import {
+		captureAnchor,
+		resolveAnchor,
+		splitLines,
+		type CommentAnchor
+	} from '@super-review/core/comment-anchor';
 	import type {
 		ChangedFile,
 		DiffContext,
@@ -89,7 +97,8 @@
 		FileHeaderItemVisibility,
 		LocalComment,
 		PRReviewComment,
-		SessionCallout
+		SessionCallout,
+		SymbolLens
 	} from '@super-review/core/types';
 
 	// Metadata Pierre carries on each line annotation. PR review comments/composers
@@ -97,7 +106,11 @@
 	// tour callouts add another variant. renderAnnotation branches on `kind` to
 	// mount the right component.
 	type CalloutMeta = { kind: 'callout'; callout: SessionCallout };
-	type AnnotationMeta = CommentMeta | LocalCommentMeta | CalloutMeta;
+	// A "used in N places" lens above a declaration (see SymbolRefsLens).
+	type SymbolLensMeta = { kind: 'symbol-lens'; symbol: SymbolLens };
+	type AnnotationMeta = CommentMeta | LocalCommentMeta | CalloutMeta | SymbolLensMeta;
+	// The Raw view's only annotation is that same lens, without the discriminant.
+	type LensMeta = { symbol: SymbolLens };
 
 	interface Props {
 		file: ChangedFile;
@@ -123,7 +136,11 @@
 	// no diff). Mutually exclusive with `instance`: only one is ever live at a
 	// time (renderDiff picks the branch), and both share `diffContainer`/`host`.
 	// Plain `let` (not $state) like `instance` — see the theme effect's caveat.
-	let rawInstance: FileClass | null = null;
+	let rawInstance: FileClass<LensMeta> | null = null;
+	// Mounted symbol-reference lenses, so they can be unmounted with the render
+	// they belong to. Instance-scoped imperative cache, not reactive state.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const lensMounts = new Set<ReturnType<typeof mount>>();
 	// Diff/Raw toggle. When true the section renders the whole file (Pierre's
 	// File renderer) instead of the diff — the "Raw" view. Part of the render
 	// key, so flipping it re-renders through the normal scheduler. Reset
@@ -428,6 +445,40 @@
 	// `hunks` drive the targeted expansion of collapsed regions around comments.
 	let fileDiffMeta = $state<FileDiffMetadata | null>(null);
 
+	// Where each local comment thread's code currently sits in this file. A comment
+	// stores the line it was made on plus the text around it; lines added or removed
+	// above it since then would leave the stored number pointing at different code,
+	// so we find the text again in the live contents (like GitHub / GitLab mapping a
+	// comment forward through a diff). Keyed by thread root id; replies share their
+	// root's result. Comments without an anchor (made before anchors existed) have no
+	// entry and keep their stored line. Skipped while the diff is unloaded or
+	// truncated, since partial contents would mis-resolve.
+	const resolvedLocalThreads = $derived.by<
+		Record<string, { startLine: number; endLine: number; outdated: boolean }>
+	>(() => {
+		const out: Record<string, { startLine: number; endLine: number; outdated: boolean }> = {};
+		if (!isLocalCommentContext || !diffData || diffData.truncated) return out;
+		const roots = app.localComments.filter(
+			(c) => c.path === file.path && c.inReplyTo == null && c.anchor != null
+		);
+		if (roots.length === 0) return out;
+		const left = roots.some((c) => c.side === 'LEFT') ? splitLines(diffData.oldContents) : [];
+		const right = roots.some((c) => c.side === 'RIGHT') ? splitLines(diffData.newContents) : [];
+		for (const c of roots) {
+			const r = resolveAnchor(c.anchor!, c, c.side === 'LEFT' ? left : right);
+			out[c.id] =
+				r.status === 'outdated'
+					? { startLine: c.startLine, endLine: c.endLine, outdated: true }
+					: { startLine: r.startLine, endLine: r.endLine, outdated: false };
+		}
+		return out;
+	});
+
+	// Current line range of a local comment: its resolved location, else as stored.
+	function localCommentPos(c: LocalComment): { startLine: number; endLine: number } {
+		return resolvedLocalThreads[c.inReplyTo ?? c.id] ?? c;
+	}
+
 	// Comment anchors (file-relative line + side) for this file in the current
 	// context. Both sources contribute — on the Branch tab with a PR open the two
 	// coexist, and a collapsed region has to expand for either kind.
@@ -440,7 +491,7 @@
 		}
 		if (isLocalCommentContext) {
 			for (const c of app.localComments) {
-				if (c.path === file.path) out.push({ side: c.side, line: c.startLine });
+				if (c.path === file.path) out.push({ side: c.side, line: localCommentPos(c).startLine });
 			}
 		}
 		return out;
@@ -570,6 +621,12 @@
 	// Same reference-stability trick for tour callouts, keyed by callout id.
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const calloutMetaCache = new Map<string, CalloutMeta>();
+	// Same again for lenses, keyed by the lens object itself (each fetch hands back
+	// new ones, so a WeakMap drops the old metas on its own).
+	const lensMetaCache = new WeakMap<SymbolLens, SymbolLensMeta>();
+	// The lenses to paint into the diff view. Set when the diff renders (from the
+	// cache when it can) and when a fresh lookup lands; read by `lineAnnotations`.
+	let diffLenses = $state<SymbolLens[]>([]);
 
 	// Session tour callouts pinned to this file (empty outside a session). Read
 	// reactively so the annotation list rebuilds when the open session changes.
@@ -602,6 +659,17 @@
 		return { left: lineCount(diffData.oldContents), right: lineCount(diffData.newContents) };
 	});
 
+	// Whether a local comment's code is gone: via its content anchor when it has one
+	// (the code can't be found any more), else the legacy check that its stored line
+	// is past the end of the file. undefined while the diff is still loading.
+	function localCommentOutdatedNow(c: LocalComment, fileDeleted: boolean): boolean | undefined {
+		if (fileDeleted && c.side === 'RIGHT') return true;
+		const at = resolvedLocalThreads[c.inReplyTo ?? c.id];
+		if (at) return at.outdated;
+		if (c.anchor) return localFileExtent == null ? undefined : false;
+		return localCommentOutdated(c, { fileDeleted, extent: localFileExtent });
+	}
+
 	// This file's local comments (empty outside a local-comment context).
 	const fileLocalComments = $derived(
 		isLocalCommentContext ? app.localComments.filter((c) => c.path === file.path) : []
@@ -617,15 +685,30 @@
 	// unloaded (`localFileExtent` null) we can't tell, so we drop this file's ids
 	// rather than guess. Cleaned up on destroy.
 	$effect(() => {
-		const extent = localFileExtent;
 		const fileDeleted = file.status === 'deleted';
 		for (const c of fileLocalComments) {
-			if (localCommentOutdated(c, { fileDeleted, extent })) app.outdatedLocalCommentIds.add(c.id);
+			if (localCommentOutdatedNow(c, fileDeleted)) app.outdatedLocalCommentIds.add(c.id);
 			else app.outdatedLocalCommentIds.delete(c.id);
+			// Publish moved locations for the sidebar and copy-prompts. Replies share
+			// their root's, so only roots carry an entry.
+			const at = resolvedLocalThreads[c.id];
+			if (c.inReplyTo == null) {
+				if (at && !at.outdated && (at.startLine !== c.startLine || at.endLine !== c.endLine)) {
+					app.resolvedLocalCommentLines.set(c.id, {
+						startLine: at.startLine,
+						endLine: at.endLine
+					});
+				} else {
+					app.resolvedLocalCommentLines.delete(c.id);
+				}
+			}
 		}
 	});
 	onDestroy(() => {
-		for (const c of fileLocalComments) app.outdatedLocalCommentIds.delete(c.id);
+		for (const c of fileLocalComments) {
+			app.outdatedLocalCommentIds.delete(c.id);
+			app.resolvedLocalCommentLines.delete(c.id);
+		}
 	});
 
 	// Build the annotation list FileDiff renders: PR comments + pending composers
@@ -722,10 +805,7 @@
 			// undefined while the diff is still loading (don't claim outdated yet);
 			// otherwise true when the anchored line no longer exists in the file (a
 			// deleted file takes its RIGHT-side comments straight from the status).
-			const outdated = localCommentOutdated(c, {
-				fileDeleted: file.status === 'deleted',
-				extent: localFileExtent
-			});
+			const outdated = localCommentOutdatedNow(c, file.status === 'deleted');
 			let meta = localCommentMetaCache.get(c.id);
 			// Invalidate when the comment object was replaced (e.g. resolved) or its
 			// outdated status changed (the diff shifted under it).
@@ -735,7 +815,7 @@
 			}
 			out.push({
 				side: c.side === 'LEFT' ? 'deletions' : 'additions',
-				lineNumber: c.startLine,
+				lineNumber: localCommentPos(c).startLine,
 				metadata: meta
 			});
 		}
@@ -770,6 +850,22 @@
 				lineNumber: callout.startLine,
 				metadata: meta
 			});
+		}
+
+		// Lenses go last so they stack under any comment on the same line and sit
+		// directly above their declaration. A lens for the declaration on line N is
+		// pinned to line N - 1, since Pierre draws an annotation below its line;
+		// when that line isn't part of the rendered diff Pierre simply skips it.
+		if (!showRaw) {
+			for (const symbol of diffLenses) {
+				if (symbol.line <= 1) continue;
+				let meta = lensMetaCache.get(symbol);
+				if (meta == null) {
+					meta = { kind: 'symbol-lens', symbol };
+					lensMetaCache.set(symbol, meta);
+				}
+				out.push({ side: 'additions', lineNumber: symbol.line - 1, metadata: meta });
+			}
 		}
 
 		// Garbage-collect stale entries so the caches don't leak across the
@@ -1001,6 +1097,14 @@
 			}
 			rawInstance = null;
 		}
+		for (const m of lensMounts) {
+			try {
+				unmount(m);
+			} catch {
+				// ignore
+			}
+		}
+		lensMounts.clear();
 		// The staging click listener lives on the shadow root that's about to be
 		// destroyed with the container; drop our reference (and detach defensively).
 		if (stagingClickRoot) {
@@ -1101,6 +1205,9 @@
 					props: { meta }
 				});
 				mountedComponents.set(key, cmp);
+			} else if (meta.kind === 'symbol-lens') {
+				const cmp = mount(SymbolRefsLens, { target: container, props: { symbol: meta.symbol } });
+				mountedComponents.set(key, cmp);
 			} else {
 				// PR review comment / composer. Track the comment's container under a
 				// `pr-<id>` key so the sidebar's "scroll to comment" can reach it too.
@@ -1117,12 +1224,25 @@
 		return container;
 	}
 
+	// Snapshot the text around a line for a new local comment, so it can follow the
+	// code later. Undefined when the contents aren't fully loaded.
+	function anchorFor(side: 'LEFT' | 'RIGHT', line: number): CommentAnchor | undefined {
+		if (!diffData || diffData.truncated) return undefined;
+		const contents = side === 'LEFT' ? diffData.oldContents : diffData.newContents;
+		return captureAnchor(contents, line, line) ?? undefined;
+	}
+
 	function onDiffLineNumberClick(props: OnDiffLineClickProps): void {
 		const side = props.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT';
 		if (isPRContext) {
 			actions.openComposer(file.path, side, props.lineNumber);
 		} else if (isLocalCommentContext) {
-			actions.openLocalComposer(file.path, side, props.lineNumber);
+			actions.openLocalComposer(
+				file.path,
+				side,
+				props.lineNumber,
+				anchorFor(side, props.lineNumber)
+			);
 		}
 	}
 
@@ -1138,7 +1258,7 @@
 		if (isPRContext) {
 			actions.openComposer(file.path, side, range.start);
 		} else if (isLocalCommentContext) {
-			actions.openLocalComposer(file.path, side, range.start);
+			actions.openLocalComposer(file.path, side, range.start, anchorFor(side, range.start));
 		}
 	}
 
@@ -1569,10 +1689,11 @@
 		// eslint-disable-next-line svelte/no-dom-manipulating
 		host.appendChild(diffContainer);
 
-		rawInstance = new FileClass(
+		rawInstance = new FileClass<LensMeta>(
 			{
 				themeType: app.theme,
 				disableFileHeader: true,
+				renderAnnotation: renderLensAnnotation,
 				// Repaint the indent guides after each render, including the async
 				// worker rerender that swaps in the highlighted nodes.
 				onPostRender: () => applyIndentGuidesNow()
@@ -1588,6 +1709,93 @@
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : String(err);
 		}
+
+		if (app.symbolReferences) loadSymbolLenses(diff);
+	}
+
+	function renderLensAnnotation(annotation: LineAnnotation<LensMeta>): HTMLElement | undefined {
+		const meta = annotation.metadata;
+		if (!meta) return undefined;
+		const container = document.createElement('div');
+		lensMounts.add(mount(SymbolRefsLens, { target: container, props: { symbol: meta.symbol } }));
+		return container;
+	}
+
+	// Lens lookups already made, so flipping between Diff and Raw (or a theme or
+	// layout re-render) doesn't search the repo again. Short-lived on purpose: a
+	// count depends on every other file, and edits elsewhere don't re-render this
+	// section, so an old answer shouldn't linger.
+	const LENS_CACHE_MS = 15_000;
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const lensCache = new Map<string, { at: number; symbols: SymbolLens[] }>();
+
+	function lensCacheKey(diff: DiffData): string | null {
+		const repo = app.activeRepo;
+		if (!repo || diff.truncated || diff.file.isBinary || diff.file.status === 'deleted')
+			return null;
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		return `${repo.id}::${diffContextKey(ctx)}::${file.path}::${dataEpoch}`;
+	}
+
+	function cachedLenses(diff: DiffData): SymbolLens[] | null {
+		const key = lensCacheKey(diff);
+		const hit = key ? lensCache.get(key) : undefined;
+		return hit && Date.now() - hit.at < LENS_CACHE_MS ? hit.symbols : null;
+	}
+
+	// Ask the main process how many places use each declaration in this file. The
+	// count needs the rest of the repo, so callers apply it after the file has
+	// already rendered rather than holding the render up. Resolves null when there
+	// is nothing to show (unsupported language, a failed lookup, or a file that
+	// changed while the repo was being searched, which would put lenses on the
+	// wrong lines).
+	async function fetchLenses(diff: DiffData): Promise<SymbolLens[] | null> {
+		const key = lensCacheKey(diff);
+		const repo = app.activeRepo;
+		if (!key || !repo) return null;
+		const hit = cachedLenses(diff);
+		if (hit) return hit;
+		const ctx = $state.snapshot(app.diffContext) as DiffContext;
+		try {
+			const res = await window.api.git.getSymbolRefs(repo.id, file.path, ctx);
+			if (!res?.supported || res.lineCount !== lineCount(diff.newContents)) return null;
+			if (lensCache.size > 40) lensCache.clear();
+			lensCache.set(key, { at: Date.now(), symbols: res.symbols });
+			return res.symbols;
+		} catch {
+			// Lenses are a convenience; a failed lookup just means none are shown.
+			return null;
+		}
+	}
+
+	// Raw view: attach the lenses straight to the file renderer. Pierre draws an
+	// annotation below its line, so a lens for the declaration on line N goes on
+	// line N - 1 (a declaration on line 1 has nothing above it and gets none).
+	function loadSymbolLenses(diff: DiffData): void {
+		const inst = rawInstance;
+		if (!inst) return;
+		void fetchLenses(diff).then((symbols) => {
+			// The section may have moved on (another file, back to the diff, a
+			// fresh render) while the repo was searched.
+			if (rawInstance !== inst || !symbols) return;
+			const annotations = symbols
+				.filter((s) => s.line > 1)
+				.map((s) => ({ lineNumber: s.line - 1, metadata: { symbol: s } }));
+			if (annotations.length === 0) return;
+			inst.setLineAnnotations(annotations);
+			inst.rerender();
+		});
+	}
+
+	// Diff view: the lenses are just more entries in `lineAnnotations`, so landing
+	// them is a state write and the annotations effect repaints.
+	function loadDiffLenses(diff: DiffData): void {
+		const inst = instance;
+		if (!inst) return;
+		void fetchLenses(diff).then((symbols) => {
+			if (instance !== inst || !symbols) return;
+			diffLenses = symbols;
+		});
 	}
 
 	function renderDiff(diff: DiffData): void {
@@ -1602,6 +1810,10 @@
 			renderRaw(diff);
 			return;
 		}
+
+		// Seed the lenses from the cache before the first paint so a re-render
+		// (theme, layout) doesn't flash them away and back.
+		diffLenses = app.symbolReferences ? (cachedLenses(diff) ?? []) : [];
 
 		// Build the per-hunk staging model from the raw git patch up front so the
 		// gutter checkboxes can be injected as soon as Pierre finishes rendering.
@@ -1721,13 +1933,19 @@
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : String(err);
 		}
+
+		if (app.symbolReferences) loadDiffLenses(diff);
 	}
 
 	// What the DOM *should* reflect given the currently loaded data + UI mode.
 	// Compared against `renderedKey` to decide whether a (re)render is needed.
+	// Which view is showing, and whether it carries lenses. Flipping the lens
+	// setting re-renders both views, so it is part of the render key.
+	const rawKeyPart = $derived(`${showRaw}${app.symbolReferences ? '+refs' : ''}`);
+
 	const targetRenderKey = $derived(
 		loadedCtxKey && diffData
-			? `${loadedCtxKey}::${app.viewMode}::raw=${showRaw}::${dataEpoch}`
+			? `${loadedCtxKey}::${app.viewMode}::raw=${rawKeyPart}::${dataEpoch}`
 			: null
 	);
 
@@ -1814,7 +2032,7 @@
 		if (data == null || ctxKey == null) return false;
 		if (data.file.isBinary || data.truncated) return false;
 		// dataEpoch has just been bumped by setLoadedDiff (or was already current).
-		const target = `${ctxKey}::${app.viewMode}::raw=${showRaw}::${dataEpoch}`;
+		const target = `${ctxKey}::${app.viewMode}::raw=${rawKeyPart}::${dataEpoch}`;
 		if (renderedKey === target) return true;
 		cancelPendingRender?.();
 		cancelPendingRender = null;

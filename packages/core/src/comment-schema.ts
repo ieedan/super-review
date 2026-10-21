@@ -1,5 +1,6 @@
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 import type { LocalCommentAuthor } from './types.js';
+import type { CommentAnchor } from './comment-anchor.js';
 
 // The single table backing local review comments. One database holds every
 // repo's comments (see comment-store), so each row carries the `repo` it belongs
@@ -23,6 +24,9 @@ export const comments = sqliteTable('comments', {
 	// top-level comments. Added after the initial schema, so existing databases get
 	// it via the ALTER in COMMENTS_MIGRATIONS below.
 	inReplyTo: text('in_reply_to'),
+	// Content anchor (commented text + context) captured at creation, so the comment
+	// can follow its code when lines shift. JSON; null for comments that predate it.
+	anchor: text('anchor', { mode: 'json' }).$type<CommentAnchor>(),
 	resolvedAt: integer('resolved_at'),
 	resolvedBy: text('resolved_by', { mode: 'json' }).$type<LocalCommentAuthor>(),
 	resolvedSessionId: text('resolved_session_id')
@@ -46,6 +50,7 @@ CREATE TABLE IF NOT EXISTS comments (
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
 	in_reply_to TEXT,
+	anchor TEXT,
 	resolved_at INTEGER,
 	resolved_by TEXT,
 	resolved_session_id TEXT
@@ -58,4 +63,7 @@ CREATE INDEX IF NOT EXISTS comments_repo_context ON comments (repo, context_key)
 // "duplicate column name" error is swallowed by the caller (see comment-store).
 // The CREATE above already has the column for fresh databases; this only matters
 // for ones that predate it.
-export const COMMENTS_MIGRATIONS: string[] = ['ALTER TABLE comments ADD COLUMN in_reply_to TEXT;'];
+export const COMMENTS_MIGRATIONS: string[] = [
+	'ALTER TABLE comments ADD COLUMN in_reply_to TEXT;',
+	'ALTER TABLE comments ADD COLUMN anchor TEXT;'
+];

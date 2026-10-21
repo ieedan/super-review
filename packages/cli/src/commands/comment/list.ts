@@ -1,6 +1,13 @@
 import { Command } from 'commander';
 import path from 'node:path';
-import { getCurrentBranch, listLocalComments, type LocalComment } from '@super-review/core';
+import { readFile } from 'node:fs/promises';
+import {
+	getCurrentBranch,
+	listLocalComments,
+	resolveAnchor,
+	splitLines,
+	type LocalComment
+} from '@super-review/core';
 import { fail, repoRoot } from '../../util';
 import { listPullRequestReviewComments, type GithubReviewComment } from '../../github';
 import { parsePrNumber, resolvePrContext } from '../../pr-context';
@@ -14,25 +21,76 @@ interface ListOptions {
 	pr?: string | boolean;
 }
 
+// A comment with its location re-resolved against the file as it is now.
+// `outdated` is set when the code the comment was about is gone.
+type LocatedComment = LocalComment & { outdated?: true; originalStartLine?: number };
+
+// A comment stores the line it was made on, which drifts as the file is edited.
+// For comments that carry a content anchor, find that code again in the working
+// tree so the agent is pointed at where it is now. Only the new (RIGHT) side can
+// be checked here: the old side lives at a base ref the CLI doesn't know. Replies
+// share their root's location. Anything that can't be resolved keeps its stored
+// lines.
+async function locate(root: string, comments: LocalComment[]): Promise<LocatedComment[]> {
+	const lines = new Map<string, string[] | null>();
+	const readLines = async (rel: string): Promise<string[] | null> => {
+		if (!lines.has(rel)) {
+			lines.set(rel, await readFile(path.join(root, rel), 'utf8').then(splitLines, () => null));
+		}
+		return lines.get(rel) ?? null;
+	};
+	const located = new Map<string, LocatedComment>();
+	for (const c of comments) {
+		if (c.inReplyTo != null || !c.anchor || c.side !== 'RIGHT') continue;
+		const file = await readLines(c.path);
+		if (!file) continue;
+		const r = resolveAnchor(c.anchor, c, file);
+		if (r.status === 'outdated') located.set(c.id, { ...c, outdated: true });
+		else if (r.startLine !== c.startLine || r.endLine !== c.endLine) {
+			located.set(c.id, {
+				...c,
+				startLine: r.startLine,
+				endLine: r.endLine,
+				originalStartLine: c.startLine
+			});
+		}
+	}
+	return comments.map((c) => {
+		const at = located.get(c.inReplyTo ?? c.id);
+		if (!at) return c;
+		return {
+			...c,
+			startLine: at.startLine,
+			endLine: at.endLine,
+			...(at.outdated ? { outdated: true as const } : {}),
+			...(at.originalStartLine != null ? { originalStartLine: at.originalStartLine } : {})
+		};
+	});
+}
+
 // One-line summary of a comment for the human-readable listing. Replies are
 // indented under their root and carry no status of their own — resolution is a
 // thread-level concept owned by the root.
-function formatLine(c: LocalComment, isReply: boolean): string {
+function formatLine(c: LocatedComment, isReply: boolean): string {
 	const firstLine = c.body.split('\n')[0]?.trim() ?? '';
 	const snippet = firstLine.length > 80 ? `${firstLine.slice(0, 77)}…` : firstLine;
 	if (isReply) return `  ↳ ${c.id}  ${snippet}`;
 	const range = c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
-	const status = c.resolvedAt ? 'resolved' : 'open';
-	return `${c.id}  [${status}]  ${c.path}:${range}  ${snippet}`;
+	const base = c.resolvedAt ? 'resolved' : 'open';
+	const status = c.outdated ? `${base}, outdated` : base;
+	const moved = c.originalStartLine != null ? ` (was L${c.originalStartLine})` : '';
+	return `${c.id}  [${status}]  ${c.path}:${range}${moved}  ${snippet}`;
 }
 
 // Group a flat comment list into threads: each root followed by its replies in
 // chronological order. Replies point at their root via `inReplyTo`; an orphan (a
 // reply whose root isn't in the list) is treated as its own root so nothing is
 // silently dropped.
-function toThreads(comments: LocalComment[]): { root: LocalComment; replies: LocalComment[] }[] {
-	const byRoot = new Map<string, LocalComment[]>();
-	const roots: LocalComment[] = [];
+function toThreads(
+	comments: LocatedComment[]
+): { root: LocatedComment; replies: LocatedComment[] }[] {
+	const byRoot = new Map<string, LocatedComment[]>();
+	const roots: LocatedComment[] = [];
 	for (const c of comments) {
 		if (c.inReplyTo && comments.some((x) => x.id === c.inReplyTo)) {
 			const list = byRoot.get(c.inReplyTo) ?? [];
@@ -42,7 +100,7 @@ function toThreads(comments: LocalComment[]): { root: LocalComment; replies: Loc
 			roots.push(c);
 		}
 	}
-	const byCreated = (a: LocalComment, b: LocalComment): number => a.createdAt - b.createdAt;
+	const byCreated = (a: LocatedComment, b: LocatedComment): number => a.createdAt - b.createdAt;
 	return roots
 		.sort(byCreated)
 		.map((root) => ({ root, replies: (byRoot.get(root.id) ?? []).sort(byCreated) }));
@@ -138,7 +196,7 @@ async function runList(opts: ListOptions): Promise<void> {
 	// an agent is always on exactly one. (These live on the reviewer's machine, so
 	// a remote/cloud agent in a fresh checkout simply finds none.)
 	const branch = await getCurrentBranch(root);
-	const comments = await listLocalComments(root, branch);
+	const comments = await locate(root, await listLocalComments(root, branch));
 	const scope = branch ? `branch "${branch}"` : 'the working tree';
 
 	// Resolution is thread-level: `--unresolved` drops a whole thread (root + its

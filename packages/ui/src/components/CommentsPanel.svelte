@@ -20,6 +20,7 @@
 		diff,
 		isPRCommentContext,
 		isLocalCommentSurface,
+		localCommentLines,
 		effectiveCommentsSidebarTab
 	} from '@super-review/ui/store.svelte';
 	import FileIcon from './FileIcon.svelte';
@@ -132,7 +133,8 @@
 	}
 
 	function lineLabel(c: LocalComment): string {
-		return c.startLine === c.endLine ? `L${c.startLine}` : `L${c.startLine}-${c.endLine}`;
+		const { startLine, endLine } = localCommentLines(c);
+		return startLine === endLine ? `L${startLine}` : `L${startLine}-${endLine}`;
 	}
 
 	function fileName(path: string): string {

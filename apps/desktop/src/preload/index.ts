@@ -28,6 +28,7 @@ import type {
 	DeviceFlowStatus,
 	DiffContext,
 	DiffData,
+	FileSymbolRefs,
 	LicenseState,
 	DiffLineContextMenuAction,
 	EditorKind,
@@ -209,6 +210,8 @@ const api: PreloadAPI = {
 		refExists: (repoId, ref) => invoke('git:refExists', repoId, ref) as Promise<boolean>,
 		getDiff: (repoId, filePath, ctx: DiffContext) =>
 			invoke('git:getDiff', repoId, filePath, ctx) as Promise<DiffData>,
+		getSymbolRefs: (repoId, filePath, ctx: DiffContext) =>
+			invoke('git:getSymbolRefs', repoId, filePath, ctx) as Promise<FileSymbolRefs>,
 		fetchOrigin: (repoId) =>
 			invoke('git:fetchOrigin', repoId) as Promise<{
 				ok: boolean;

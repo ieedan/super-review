@@ -4018,3 +4018,103 @@ async function pinPRBaseRefImpl(
 	// repo we don't keep a permanent remote for.
 	await git.fetch([remote, `+refs/heads/${baseBranch}:refs/pr/${prNumber}/base`]).catch(() => {});
 }
+
+// ---------------------------------------------------------------------------
+// Snapshots: a read-only view of "the new side" of a diff context
+// ---------------------------------------------------------------------------
+//
+// Cross-file features (symbol references) have to read the repo as the diff
+// shows it: the working tree for the unstaged context, the head ref for a
+// branch / PR / commit. These helpers list, read and search either one without
+// touching the index or the checkout.
+
+export type RepoSnapshot = { kind: 'workingTree' } | { kind: 'ref'; ref: string };
+
+// The snapshot a diff context's new side lives in, or null for contexts that
+// aren't backed by a readable tree (agent sessions, stash entries).
+export async function resolveContextSnapshot(
+	repoPath: string,
+	ctx: DiffContext
+): Promise<RepoSnapshot | null> {
+	if (ctx.kind === 'session' || ctx.kind === 'stash') return null;
+	const refs = await refsForContext(openGit(repoPath), ctx);
+	if (refs.workingTree) return { kind: 'workingTree' };
+	return refs.head ? { kind: 'ref', ref: refs.head } : null;
+}
+
+const SNAPSHOT_MAX_BUFFER = 256 * 1024 * 1024;
+
+async function gitStdout(repoPath: string, args: string[], maxBuffer: number): Promise<string> {
+	const { stdout } = await execFileAsync('git', args, {
+		cwd: repoPath,
+		encoding: 'utf8',
+		maxBuffer,
+		env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }
+	});
+	return stdout;
+}
+
+// Every path in the snapshot, repo-relative with forward slashes. For the
+// working tree that is tracked plus untracked-but-not-ignored files.
+export async function listSnapshotFiles(repoPath: string, snap: RepoSnapshot): Promise<string[]> {
+	try {
+		const out =
+			snap.kind === 'workingTree'
+				? await gitStdout(
+						repoPath,
+						['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+						SNAPSHOT_MAX_BUFFER
+					)
+				: await gitStdout(
+						repoPath,
+						['ls-tree', '-r', '--name-only', '-z', snap.ref],
+						SNAPSHOT_MAX_BUFFER
+					);
+		return out.split('\0').filter(Boolean);
+	} catch {
+		return [];
+	}
+}
+
+// One file's text from the snapshot, or null when it's missing or too large.
+export async function readSnapshotFile(
+	repoPath: string,
+	snap: RepoSnapshot,
+	filePath: string
+): Promise<string | null> {
+	try {
+		if (snap.kind === 'workingTree') {
+			const buf = await fs.readFile(path.join(repoPath, filePath));
+			return buf.byteLength > MAX_FILE_BYTES ? null : buf.toString('utf8');
+		}
+		return await gitStdout(repoPath, ['show', `${snap.ref}:${filePath}`], MAX_FILE_BYTES);
+	} catch {
+		return null;
+	}
+}
+
+// Paths of snapshot files containing a match for any of `patterns` (POSIX
+// extended regexes). Binary files are skipped. `git grep` exits 1 on no match,
+// which is an empty result here, not an error.
+export async function grepSnapshotFiles(
+	repoPath: string,
+	snap: RepoSnapshot,
+	patterns: string[]
+): Promise<string[]> {
+	if (patterns.length === 0) return [];
+	const args = ['grep', '-l', '-I', '-z', '-E'];
+	if (snap.kind === 'workingTree') args.push('--untracked');
+	for (const p of patterns) args.push('-e', p);
+	if (snap.kind === 'ref') args.push(snap.ref);
+	args.push('--');
+	try {
+		const out = await gitStdout(repoPath, args, SNAPSHOT_MAX_BUFFER);
+		const prefix = snap.kind === 'ref' ? `${snap.ref}:` : '';
+		return out
+			.split('\0')
+			.filter(Boolean)
+			.map((p) => (prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p));
+	} catch {
+		return [];
+	}
+}
