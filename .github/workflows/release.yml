@@ -11,11 +11,13 @@ name: Release
 #   3. `publish-release` pushes the `v<version>` tag at the built commit and
 #      flips the draft release to published (so electron-updater sees it).
 #
-# npm auth for the CLI publish uses a `secrets.NPM_TOKEN` (an npm automation/
-# granular token) wired in as NODE_AUTH_TOKEN. setup-node's registry-url writes
-# the .npmrc that consumes it. (Provenance via OIDC would be nicer but requires
-# a public source repo — switch to it once this repo is public.)
-# See PUBLISHING.md for the contributor-facing walkthrough.
+# The CLI publish uses npm trusted publishing (OIDC): the `version` job has
+# `id-token: write` and npm exchanges the GitHub OIDC token for a short-lived
+# publish credential, so no npm token secret exists. Provenance attestations
+# are generated automatically. This needs npm >= 11.5.1 and a trusted publisher
+# configured for `super-review` on npmjs.com (repo ieedan/super-review,
+# workflow `release.yml`). Don't set `registry-url` on setup-node: it writes an
+# .npmrc that expects NODE_AUTH_TOKEN and gets in the way of the OIDC exchange.
 on:
   push:
     branches: [main]
@@ -35,6 +37,13 @@ jobs:
   version:
     name: Version
     runs-on: ubuntu-latest
+    permissions:
+      # create/upload the GitHub Release and push the version tag
+      contents: write
+      # changesets/action opens the "Version Packages" PR
+      pull-requests: write
+      # npm trusted publishing (OIDC) + provenance
+      id-token: write
     outputs:
       release: ${{ steps.check.outputs.release }}
       version: ${{ steps.check.outputs.version }}
@@ -58,8 +67,10 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          # Writes an .npmrc that authenticates via NODE_AUTH_TOKEN (set below).
-          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing requires npm >= 11.5.1.
+      - name: Update npm
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -78,8 +89,7 @@ jobs:
           title: 'chore(release): version desktop app'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # npm automation/granular token with publish rights for `super-review`.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
 
       # Runs only when there are no pending changesets — i.e. nothing to PR.
       # That's either a routine push (version already tagged → skip) or a just
