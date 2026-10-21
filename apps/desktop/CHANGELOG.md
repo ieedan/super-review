@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.5.11
+
+### Patch Changes
+
+- [`f31e2fd`](https://github.com/ieedan/super-review/commit/f31e2fd206332d579a55fdf0f85f61e383d2c9eb) Thanks [@ieedan](https://github.com/ieedan)! - fix: adding a local review comment failed with "An object could not be cloned"
+
+  A new comment's content anchor was read straight from the reactive composer state and sent to the main process as a Svelte proxy, which Electron's IPC can't copy. The anchor is now snapshotted to a plain object first, for both new comments and replies.
+
 ## 0.5.10
 
 ### Patch Changes
