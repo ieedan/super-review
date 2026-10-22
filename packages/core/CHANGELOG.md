@@ -1,5 +1,11 @@
 # @super-review/core
 
+## 0.5.5
+
+### Patch Changes
+
+- [`d51bcee`](https://github.com/ieedan/super-review/commit/d51bcee3b0172425524a8278c64230fc95c2ce84) Thanks [@ieedan](https://github.com/ieedan)! - fix(core): ignore stale selected paths so partial commits are not blocked by phantom pathspecs
+
 ## 0.5.4
 
 ### Patch Changes
