@@ -3085,6 +3085,16 @@ async function stagePathsBatched(git: SimpleGit, paths: string[]): Promise<strin
 	return beyondSymlink;
 }
 
+// The subset of `paths` that differs between the index and HEAD (or the empty
+// tree on an unborn branch). Renames are split into delete + add so both sides
+// of a move are reported, and `-z` keeps odd filenames (parentheses, unicode)
+// unquoted. Call after staging.
+async function pathsWithStagedChanges(git: SimpleGit, paths: string[]): Promise<string[]> {
+	const out = await git.raw(['diff', '--cached', '--name-only', '--no-renames', '-z']);
+	const staged = new Set(out.split('\0').filter(Boolean));
+	return paths.filter((p) => staged.has(p));
+}
+
 // ─── Commit signing ─────────────────────────────────────────────────────────
 // SSH commit signing needs git >= 2.34 (the `gpg.format=ssh` backend) and an
 // ssh-keygen that supports `-Y sign` (OpenSSH >= 8.0). We detect this once and
@@ -3199,8 +3209,17 @@ async function commitImpl(
 				: [];
 			// Pin the commit to the selected pathspecs so anything else that may be
 			// staged in the index is left out — only the checked files are committed.
+			// Narrowed to paths that actually carry a staged change first: `git commit
+			// -- <path>` aborts the whole commit ("pathspec did not match any file(s)
+			// known to git") for any path that is in neither HEAD, the index, nor the
+			// worktree. That is what a stale selection leaves behind (a file moved or
+			// deleted after the list loaded) or a rename's old side that was never in
+			// HEAD, and one such path shouldn't block committing the rest.
+			const pinned = await pathsWithStagedChanges(git, paths);
+			if (pinned.length === 0)
+				throw new Error('Nothing to commit: the selected files have no changes.');
 			await runSignedOrFallback(signing, (cfg, sign) =>
-				git.raw([...cfg, ...identityArgs, 'commit', ...sign, '-m', trimmed, '--', ...paths])
+				git.raw([...cfg, ...identityArgs, 'commit', ...sign, '-m', trimmed, '--', ...pinned])
 			);
 			return { ok: true, ...(await headCommitStats(git, repoPath)) };
 		}
