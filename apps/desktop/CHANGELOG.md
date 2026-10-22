@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.5.13
+
+### Patch Changes
+
+- [#214](https://github.com/ieedan/super-review/pull/214) [`61ee8d2`](https://github.com/ieedan/super-review/commit/61ee8d23ea0fffd5d5d1b43d0543408440b9b529) Thanks [@ieedan](https://github.com/ieedan)! - fix: the branch picker's tabs no longer scroll vertically when pressing the up or down arrow keys
+
+  The tab list's active underline poked 1px past its padding box, and because the list is `overflow-x-auto` the browser made it vertically scrollable too. The bottom rule is now an inset shadow and the underline sits inside the box, so there is nothing to scroll.
+
 ## 0.5.12
 
 ### Patch Changes
