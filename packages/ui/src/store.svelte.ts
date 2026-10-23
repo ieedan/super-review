@@ -5540,14 +5540,23 @@ export const actions = {
 			// read-only view so the UI reflects the branch now on disk.
 			app.viewBranch = null;
 			app.viewPR = null;
+			// The PR belongs to the branch we just left; its pinned base would
+			// otherwise leak into the new branch's diff context.
+			app.branchPR = null;
 			// Checking out the default branch empties (and hides) the Branch tab, so
 			// fall back to Unstaged rather than leaving a hidden tab selected.
 			const landingOnDefault = branch === (app.activeRepo.defaultBranch ?? 'main');
+			// `currentBranch` (and the remembered base) only update once the branch
+			// list reloads, so settle them before deriving the Branch context.
+			// Deriving it first targeted the branch we just left and the sidebar
+			// kept showing its files.
+			await refreshBranches();
+			await hydrateRememberedBranchBase();
 			// Re-derive the diff context for tabs that depend on currentBranch.
 			if (app.contextTab === 'branch' && !landingOnDefault) {
 				app.diffContext = contextForTab('branch');
 			}
-			await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+			await Promise.all([refreshFiles(), refreshPushStatus()]);
 			await refreshBranchPR();
 			if (app.contextTab === 'history') {
 				// The commit list follows the checked-out branch: drop any open commit
@@ -5819,10 +5828,13 @@ export const actions = {
 
 		// On `target` now (the stash left the tree clean) — land the UI there
 		// before popping the carried-over work.
+		app.branchPR = null;
+		await refreshBranches();
+		await hydrateRememberedBranchBase();
 		if (app.contextTab === 'branch') {
 			app.diffContext = contextForTab('branch');
 		}
-		await Promise.all([refreshBranches(), refreshFiles(), refreshPushStatus()]);
+		await Promise.all([refreshFiles(), refreshPushStatus()]);
 		await refreshBranchPR();
 
 		// Pop the stash onto the target, reusing the stash-restore conflict flow so
