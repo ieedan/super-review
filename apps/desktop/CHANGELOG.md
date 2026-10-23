@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.5.14
+
+### Patch Changes
+
+- [`ad466cc`](https://github.com/ieedan/super-review/commit/ad466cccbf5c97d0ffe3d43d34fc0356c98a2bf4) Thanks [@ieedan](https://github.com/ieedan)! - fix: switching branches from the picker on the Branch tab now updates the files in the sidebar
+
+  The Branch diff target was worked out before the new branch was known, so the sidebar kept listing the branch you had just left. It is now derived after the branch refresh, and the previous branch's PR is cleared so its base cannot carry over.
+
 ## 0.5.13
 
 ### Patch Changes
