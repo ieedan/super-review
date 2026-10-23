@@ -2708,7 +2708,7 @@ export interface PreloadAPI {
 			prNumber: number,
 			owner?: string,
 			repo?: string
-		): Promise<{ headRef: string; baseRef: string }>;
+		): Promise<{ headRef: string; baseRef: string; baseSha: string | null }>;
 		findPRForBranch(repoId: string, branch: string): Promise<PRSummary | null>;
 		// PR operations accept the PR's host repo (owner/repo) so they target the
 		// right repository — an upstream PR lives on the parent, not the fork.

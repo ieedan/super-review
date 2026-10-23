@@ -1512,7 +1512,7 @@ export function registerIpc(): void {
 			prNumber: number,
 			prOwner?: string,
 			prRepo?: string
-		): Promise<{ headRef: string; baseRef: string }> => {
+		): Promise<{ headRef: string; baseRef: string; baseSha: string | null }> => {
 			const repo = repoOrThrow(repoId);
 			// The PR's host (base) repo — the parent for an upstream PR on a fork,
 			// otherwise our own. Falls back to the active repo's coordinates.
@@ -1531,7 +1531,8 @@ export function registerIpc(): void {
 			const remote = isOrigin ? 'origin' : repoFetchUrl(repo, owner, name);
 			const refs = await fetchPRRef(repo.path, prNumber, remote);
 			await pinPRBaseRef(repo.path, prNumber, baseRef, remote);
-			return refs;
+			// The pinned base tip, so callers can tell when a re-pin actually moved it.
+			return { ...refs, baseSha: await resolveRef(repo.path, refs.baseRef) };
 		}
 	);
 

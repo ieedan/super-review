@@ -1571,7 +1571,9 @@ export async function createReviewComment(
 		// field of `pull_request_review_thread` (the `.line` variant is what you
 		// get when the path matches but the specific line doesn't). A third case:
 		// when we anchor to a Branch view's tip that hasn't been pushed yet, GitHub
-		// doesn't know that commit and rejects it on the `.commit_id` field. All
+		// doesn't know that commit (or it isn't part of the PR) and rejects it on
+		// the `commit_id` field. Unlike the thread fields, that one is reported
+		// bare (`commit_id`), not under a `pull_request_review_thread.` prefix. All
 		// mean the same thing: the on-screen diff disagrees with the PR's diff at
 		// its head — the PR was rebased/force-pushed since it loaded, or (in the
 		// Branch tab) the local branch has changes that aren't pushed to the PR
@@ -1582,7 +1584,10 @@ export async function createReviewComment(
 		).response?.data?.errors;
 		const unresolvableAnchor = errors?.some(
 			(e) =>
-				e.field?.endsWith('.path') || e.field?.endsWith('.line') || e.field?.endsWith('.commit_id')
+				e.field === 'commit_id' ||
+				e.field?.endsWith('.path') ||
+				e.field?.endsWith('.line') ||
+				e.field?.endsWith('.commit_id')
 		);
 		if (status === 422 && unresolvableAnchor) {
 			throw new Error(

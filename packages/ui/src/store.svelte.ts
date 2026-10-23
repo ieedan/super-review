@@ -2329,12 +2329,68 @@ async function ensurePRBasePinned(pr: PRSummary | null): Promise<boolean> {
 	if (!app.activeRepo || !pr) return false;
 	if (app.fetchedPRBases.has(pr.number)) return true;
 	try {
-		await window.api.github.fetchPR(app.activeRepo.id, pr.number, ...prHostArgs(pr));
+		const { baseSha } = await window.api.github.fetchPR(
+			app.activeRepo.id,
+			pr.number,
+			...prHostArgs(pr)
+		);
 		app.fetchedPRBases.add(pr.number);
+		prBasePins.set(prPinKey(app.activeRepo.id, pr.number), {
+			sha: baseSha ?? null,
+			at: Date.now()
+		});
 		return true;
 	} catch {
 		return false;
 	}
+}
+
+// How long a pinned `pr/<n>/base` is trusted before a refresh re-fetches it.
+// `refreshBranchPR` runs on every focus/poll, so this keeps it to one fetch a
+// minute per PR rather than one per call.
+const PR_BASE_REPIN_MS = 60_000;
+
+// What we last pinned for each PR (keyed by repo, since PR numbers repeat across
+// repos): the base tip's SHA and when we fetched it. Plain (non-reactive) state.
+const prBasePins = new Map<string, { sha: string | null; at: number }>();
+const prBaseRepins = new Map<string, Promise<boolean>>();
+
+function prPinKey(repoId: string, prNumber: number): string {
+	return `${repoId}#${prNumber}`;
+}
+
+// Re-fetch an already-pinned PR base so the pin tracks the live base branch.
+// `ensurePRBasePinned` only pins once per session, so without this the pin is a
+// frozen snapshot: once the base moves (and especially if the branch merged it
+// in), the merge-base against the old snapshot is too old and the Branch diff
+// lists everything the base gained since, i.e. files GitHub doesn't consider part
+// of the PR. Throttled by PR_BASE_REPIN_MS and de-duplicated while in flight.
+// Returns true only when the pinned tip actually moved, so callers reload the
+// diff only when something changed. Best-effort: failures leave the old pin.
+async function repinPRBase(pr: PRSummary | null): Promise<boolean> {
+	const repo = app.activeRepo;
+	if (!repo || !pr || !app.fetchedPRBases.has(pr.number)) return false;
+	const key = prPinKey(repo.id, pr.number);
+	const prev = prBasePins.get(key);
+	if (prev && Date.now() - prev.at < PR_BASE_REPIN_MS) return false;
+	const inflight = prBaseRepins.get(key);
+	if (inflight) return inflight;
+	const run = (async () => {
+		try {
+			const { baseSha } = await window.api.github.fetchPR(repo.id, pr.number, ...prHostArgs(pr));
+			const sha = baseSha ?? null;
+			prBasePins.set(key, { sha, at: Date.now() });
+			// No earlier SHA to compare against (pinned by a path that doesn't record
+			// it): treat as unchanged rather than forcing a pointless reload.
+			return !!prev && prev.sha !== null && sha !== null && prev.sha !== sha;
+		} catch {
+			return false;
+		} finally {
+			prBaseRepins.delete(key);
+		}
+	})();
+	prBaseRepins.set(key, run);
+	return run;
 }
 
 // Look up the open PR (if any) for the current branch. Only meaningful when
@@ -2435,6 +2491,19 @@ async function refreshBranchPR(): Promise<void> {
 			app.diffContext = contextForTab('branch');
 			await refreshFiles();
 		}
+	} else if (app.branchPR) {
+		// Already pinned: keep the pin current so it doesn't go stale as the base
+		// branch moves. Reload the diff only if the base tip actually changed.
+		const pinnedPR = app.branchPR;
+		newlyPinned = await repinPRBase(pinnedPR);
+		if (
+			newlyPinned &&
+			app.branchPR?.number === pinnedPR.number &&
+			app.contextTab === 'branch' &&
+			!isReadOnlyView()
+		) {
+			await refreshFiles();
+		}
 	}
 	// The PR picture for the checked-out branch changed: the lookup landed a
 	// different PR than before (including none, after a merge), its base ref
@@ -2469,6 +2538,9 @@ async function resolveViewBranchPR(branch: string): Promise<void> {
 		// Pin the PR's base so the viewed branch diffs against the PR's real base
 		// (an upstream/non-default branch) rather than the local default. Refresh
 		// the diff once it lands if we're still on this view.
+		// A pin from an earlier visit may be stale; refresh it first (throttled), as
+		// the reload below picks up whatever base it lands on.
+		if (pr) await repinPRBase(pr);
 		if (pr && (await ensurePRBasePinned(pr))) {
 			if (app.viewBranch === branch && app.contextTab === 'branch') {
 				app.diffContext = contextForTab('branch');

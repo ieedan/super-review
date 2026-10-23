@@ -341,6 +341,7 @@ const api: PreloadAPI = {
 			invoke('github:fetchPR', repoId, prNumber, owner, repo) as Promise<{
 				headRef: string;
 				baseRef: string;
+				baseSha: string | null;
 			}>,
 		findPRForBranch: (repoId, branch) =>
 			invoke('github:findPRForBranch', repoId, branch) as Promise<PRSummary | null>,
