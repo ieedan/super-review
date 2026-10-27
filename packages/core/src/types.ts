@@ -2016,6 +2016,10 @@ export interface UserPrefs {
 	// per-file content signature captured at mark-seen time against the current
 	// one (see fileSeenSig in the renderer store).
 	unmarkSeenOnChange: boolean;
+	// Show a "Mark seen" button under every hunk, so a file can be reviewed part by
+	// part. A file counts as seen once all of its hunks are; a hunk whose content
+	// changes resurfaces on its own. Off by default.
+	markSeenPerHunk: boolean;
 	// User-configurable keyboard shortcuts, keyed by action. See DEFAULT_HOTKEYS
 	// in @shared/hotkeys for the defaults and matching semantics.
 	hotkeys: Hotkeys;
@@ -2876,6 +2880,15 @@ export interface PreloadAPI {
 			filePath: string,
 			seen: boolean,
 			sig?: string
+		): Promise<void>;
+		// Per-hunk seen marks (the "Mark seen per hunk" setting): path -> hunk
+		// content hashes. setFileSeenHunks replaces one file's list; empty forgets it.
+		getSeenHunks(repoId: string, contextKey: string): Promise<Record<string, string[]>>;
+		setFileSeenHunks(
+			repoId: string,
+			contextKey: string,
+			filePath: string,
+			hashes: string[]
 		): Promise<void>;
 		clearSeen(repoId: string, contextKey: string): Promise<void>;
 		getCollapsedFiles(repoId: string, contextKey: string): Promise<string[]>;

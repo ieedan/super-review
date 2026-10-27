@@ -71,6 +71,10 @@ interface Schema {
 	// that diff and we don't re-inherit it on the next refresh. A new diff (changed
 	// signature) is eligible to inherit again.
 	seenInherited: Record<string, Record<string, Record<string, string>>>;
+	// seenHunks[repoId][contextKey][filePath] = hunk content hashes marked seen via
+	// the per-hunk "Mark seen" buttons. Content-addressed, so an edited hunk simply
+	// stops matching and resurfaces; a hunk that only shifts position stays seen.
+	seenHunks: Record<string, Record<string, Record<string, string[]>>>;
 	// collapsedFiles[repoId][contextKey] = filePath[]
 	collapsedFiles: Record<string, Record<string, string[]>>;
 	// fileLists[repoId][contextKey] = the last-computed changed-file list for that
@@ -150,6 +154,7 @@ const defaults: Schema = {
 	prefs: { ...DEFAULT_SETTINGS, ...DEFAULT_PREF_STATE },
 	seen: {},
 	seenInherited: {},
+	seenHunks: {},
 	collapsedFiles: {},
 	fileLists: {},
 	branchBases: {},
@@ -342,6 +347,7 @@ export function removeRepo(id: string): void {
 	const d = db();
 	delete d.repos[id];
 	delete d.seen[id];
+	delete d.seenHunks[id];
 	delete d.collapsedFiles[id];
 	delete d.fileLists[id];
 	delete d.branchBases[id];
@@ -674,8 +680,32 @@ export function clearSeen(repoId: string, contextKey: string): void {
 	const all = db().seen;
 	if (all[repoId]) {
 		delete all[repoId][contextKey];
-		flush();
 	}
+	const hunks = db().seenHunks[repoId];
+	if (hunks) delete hunks[contextKey];
+	flush();
+}
+
+// Per-hunk seen marks for every file in `contextKey`: path -> hunk hashes.
+export function getSeenHunks(repoId: string, contextKey: string): Record<string, string[]> {
+	return db().seenHunks[repoId]?.[contextKey] ?? {};
+}
+
+// Replace the seen-hunk hashes recorded for one file. An empty list forgets the
+// file entirely.
+export function setFileSeenHunks(
+	repoId: string,
+	contextKey: string,
+	filePath: string,
+	hashes: string[]
+): void {
+	const all = db().seenHunks;
+	if (hashes.length === 0 && !all[repoId]?.[contextKey]?.[filePath]) return;
+	const forRepo = (all[repoId] ??= {});
+	const forCtx = (forRepo[contextKey] ??= {});
+	if (hashes.length > 0) forCtx[filePath] = hashes;
+	else delete forCtx[filePath];
+	flush();
 }
 
 export function getCollapsedFiles(repoId: string, contextKey: string): string[] {

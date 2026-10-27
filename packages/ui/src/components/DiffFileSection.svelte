@@ -78,6 +78,8 @@
 	} from '@super-review/ui/regex-tester.svelte';
 	import CommentAnnotation, { type CommentMeta } from './CommentAnnotation.svelte';
 	import LocalCommentAnnotation, { type LocalCommentMeta } from './LocalCommentAnnotation.svelte';
+	import HunkSeenBar from './HunkSeenBar.svelte';
+	import { hunkSeenInfo } from '@super-review/ui/hunk-seen';
 	import CalloutAnnotation from './CalloutAnnotation.svelte';
 	import SymbolRefsLens from './SymbolRefsLens.svelte';
 	import SessionDiffCard from './SessionDiffCard.svelte';
@@ -108,7 +110,14 @@
 	type CalloutMeta = { kind: 'callout'; callout: SessionCallout };
 	// A "used in N places" lens above a declaration (see SymbolRefsLens).
 	type SymbolLensMeta = { kind: 'symbol-lens'; symbol: SymbolLens };
-	type AnnotationMeta = CommentMeta | LocalCommentMeta | CalloutMeta | SymbolLensMeta;
+	// The "Mark seen" bar under a hunk (the "Mark seen per hunk" setting).
+	type HunkSeenMeta = { kind: 'hunk-seen'; path: string; hash: string; hashes: string[] };
+	type AnnotationMeta =
+		| CommentMeta
+		| LocalCommentMeta
+		| CalloutMeta
+		| SymbolLensMeta
+		| HunkSeenMeta;
 	// The Raw view's only annotation is that same lens, without the discriminant.
 	type LensMeta = { symbol: SymbolLens };
 
@@ -711,6 +720,30 @@
 		}
 	});
 
+	// One "Mark seen" bar per hunk, hung under the hunk's last line. Reads only
+	// the file's path (a derived, so a refresh handing us a fresh `file` object
+	// doesn't count as a change) and hands back the previous array while the hunks
+	// are structurally the same, so the annotation effect doesn't repaint the
+	// whole file for nothing. Plain `let`s: scratch for that comparison only.
+	const filePath = $derived(file.path);
+	let hunkBarsKey = '';
+	let hunkBars: DiffLineAnnotation<AnnotationMeta>[] = [];
+	const hunkSeenAnnotations = $derived.by<DiffLineAnnotation<AnnotationMeta>[]>(() => {
+		const meta = fileDiffMeta;
+		if (!app.markSeenPerHunk || showRaw || !meta) return [];
+		const info = hunkSeenInfo(meta);
+		const key = `${filePath}\n${info.map((h) => `${h.hash}:${h.side}:${h.line}`).join(',')}`;
+		if (key === hunkBarsKey) return hunkBars;
+		const hashes = info.map((h) => h.hash);
+		hunkBarsKey = key;
+		hunkBars = info.map((h) => ({
+			side: h.side,
+			lineNumber: h.line,
+			metadata: { kind: 'hunk-seen', path: filePath, hash: h.hash, hashes }
+		}));
+		return hunkBars;
+	});
+
 	// Build the annotation list FileDiff renders: PR comments + pending composers
 	// (PR contexts only), plus agent tour callouts (session context). Annotation
 	// order is part of the cache key — `${index}-${side}-${line}` — so we append
@@ -867,6 +900,10 @@
 				out.push({ side: 'additions', lineNumber: symbol.line - 1, metadata: meta });
 			}
 		}
+
+		// Hunk bars sit after everything else so a comment on a hunk's last line
+		// stays above the bar.
+		out.push(...hunkSeenAnnotations);
 
 		// Garbage-collect stale entries so the caches don't leak across the
 		// lifetime of the section.
@@ -1207,6 +1244,12 @@
 				mountedComponents.set(key, cmp);
 			} else if (meta.kind === 'symbol-lens') {
 				const cmp = mount(SymbolRefsLens, { target: container, props: { symbol: meta.symbol } });
+				mountedComponents.set(key, cmp);
+			} else if (meta.kind === 'hunk-seen') {
+				const cmp = mount(HunkSeenBar, {
+					target: container,
+					props: { path: meta.path, hash: meta.hash, hashes: meta.hashes }
+				});
 				mountedComponents.set(key, cmp);
 			} else {
 				// PR review comment / composer. Track the comment's container under a
@@ -1875,6 +1918,13 @@
 		}
 		if (!metadata) return;
 		fileDiffMeta = metadata;
+		// Report the hunks to the store (untracked: it reads store state this
+		// render must not depend on). Needed even with the setting off, so a later
+		// file-level "mark seen" knows which hunks it covers.
+		const hunkHashes = hunkSeenInfo(metadata).map((h) => h.hash);
+		untrack(() => {
+			void actions.noteFileHunks(file.path, hunkHashes);
+		});
 
 		instance = new FileDiffClass<AnnotationMeta>(
 			{

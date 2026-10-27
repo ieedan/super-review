@@ -298,6 +298,15 @@
 		},
 		{
 			tab: 'behavior',
+			id: 'settings-mark-seen-per-hunk',
+			kind: 'row',
+			title: 'Mark seen per hunk',
+			description:
+				'Add a Mark seen button under every hunk, so a file can be reviewed part by part.',
+			keywords: 'review seen unseen mark hunk hunks partial granular chunk'
+		},
+		{
+			tab: 'behavior',
 			id: 'settings-commits',
 			kind: 'row',
 			title: 'Sign my commits',
@@ -643,6 +652,7 @@
 	let draftPrMergedBehavior = $state<PrMergedBehavior>('prompt');
 	let draftAutoRemoveMergedBranch = $state<boolean>(false);
 	let draftUnmarkSeenOnChange = $state<boolean>(true);
+	let draftMarkSeenPerHunk = $state<boolean>(false);
 	let draftSignCommits = $state<boolean>(true);
 	let draftMaxDiffLines = $state<number>(1500);
 	let draftRecentRepoCount = $state<number>(5);
@@ -738,6 +748,7 @@
 		draftPrMergedBehavior = app.prMergedBehavior;
 		draftAutoRemoveMergedBranch = app.autoRemoveMergedBranch;
 		draftUnmarkSeenOnChange = app.unmarkSeenOnChange;
+		draftMarkSeenPerHunk = app.markSeenPerHunk;
 		draftSignCommits = app.signCommits;
 		draftMaxDiffLines = app.maxDiffLines;
 		draftRecentRepoCount = app.recentRepoCount;
@@ -882,6 +893,9 @@
 		}
 		if (draftUnmarkSeenOnChange !== app.unmarkSeenOnChange) {
 			promises.push(actions.setUnmarkSeenOnChange(draftUnmarkSeenOnChange));
+		}
+		if (draftMarkSeenPerHunk !== app.markSeenPerHunk) {
+			promises.push(actions.setMarkSeenPerHunk(draftMarkSeenPerHunk));
 		}
 		if (draftSignCommits !== app.signCommits) {
 			promises.push(actions.setSignCommits(draftSignCommits));
@@ -1593,6 +1607,8 @@
 			bind:checked={draftUnmarkSeenOnChange}
 			aria-label="Unmark seen files when they change"
 		/>
+	{:else if id === 'settings-mark-seen-per-hunk'}
+		<Switch bind:checked={draftMarkSeenPerHunk} aria-label="Mark seen per hunk" />
 	{:else if id === 'settings-commits'}
 		<Switch bind:checked={draftSignCommits} aria-label="Sign my commits" />
 	{:else if id === 'settings-recent-repos'}

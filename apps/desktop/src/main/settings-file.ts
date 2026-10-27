@@ -75,6 +75,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
 	unmarkSeenOnChange: true,
+	markSeenPerHunk: false,
 	hotkeys: DEFAULT_HOTKEYS,
 	windowWidth: WINDOW_BOUNDS.defaultWidth,
 	windowHeight: WINDOW_BOUNDS.defaultHeight,
@@ -136,6 +137,7 @@ const FIELD_SCHEMAS: { [K in keyof AppSettings]-?: z.ZodType } = {
 	prMergedBehavior: z.enum(['prompt', 'switch', 'nothing']),
 	autoRemoveMergedBranch: z.boolean(),
 	unmarkSeenOnChange: z.boolean(),
+	markSeenPerHunk: z.boolean(),
 	hotkeys: z.record(
 		z.string(),
 		z.object({

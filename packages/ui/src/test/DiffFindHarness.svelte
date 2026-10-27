@@ -54,6 +54,8 @@
 			setPrefs: asyncNoop,
 			setFileCollapsed: asyncNoop,
 			setFileSeen: asyncNoop,
+			setFileSeenHunks: asyncNoop,
+			getSeenHunks: async () => ({}),
 			getCollapsedFiles: async () => [],
 			getSeenFiles: async () => [],
 			getSeenSignatures: async () => ({})

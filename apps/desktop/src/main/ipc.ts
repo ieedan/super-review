@@ -224,6 +224,7 @@ import {
 	getInheritedSeen,
 	getRetainedSeen,
 	getSeen,
+	getSeenHunks,
 	getSeenSignatures,
 	getStats,
 	listRepos,
@@ -237,6 +238,7 @@ import {
 	setCommitDraft,
 	setFileCollapsed,
 	setFilesCollapsed,
+	setFileSeenHunks,
 	setPrefs,
 	replacePrefsSettings,
 	resetPrefsSettings,
@@ -2677,6 +2679,20 @@ export function registerIpc(): void {
 			sig?: string
 		) => {
 			setSeen(repoId, contextKey, filePath, seen, sig);
+		}
+	);
+
+	ipcMain.handle(
+		'state:getSeenHunks',
+		async (_e, repoId: string, contextKey: string): Promise<Record<string, string[]>> => {
+			return getSeenHunks(repoId, contextKey);
+		}
+	);
+
+	ipcMain.handle(
+		'state:setFileSeenHunks',
+		async (_e, repoId: string, contextKey: string, filePath: string, hashes: string[]) => {
+			setFileSeenHunks(repoId, contextKey, filePath, hashes);
 		}
 	);
 

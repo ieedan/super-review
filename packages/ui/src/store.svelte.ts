@@ -368,6 +368,10 @@ interface AppState {
 	// back to the single active file.
 	selectedFiles: SvelteSet<string>;
 	seenFiles: SvelteSet<string>;
+	// Hunks marked seen through the per-hunk buttons (markSeenPerHunk), as hunk
+	// content hashes per file. Keyed `${reviewKey}\0${path}` so marks for different
+	// review contexts coexist without being reset on a context switch.
+	seenHunks: SvelteMap<string, string[]>;
 	// The first file currently visible in the diff viewport that is *not* yet
 	// seen, tracked by the diff scroll handler. Unlike `selectedFile` (which
 	// follows the topmost visible section by position alone, seen or not), this
@@ -420,6 +424,8 @@ interface AppState {
 	prMergedBehavior: PrMergedBehavior;
 	autoRemoveMergedBranch: boolean;
 	unmarkSeenOnChange: boolean;
+	// Show a "Mark seen" bar under every hunk (see UserPrefs.markSeenPerHunk).
+	markSeenPerHunk: boolean;
 	// How many repos the repo picker's "Recent" section lists (see UserPrefs).
 	recentRepoCount: number;
 	hotkeys: Hotkeys;
@@ -1069,6 +1075,7 @@ const initial: AppState = {
 	selectedFile: null,
 	selectedFiles: new SvelteSet(),
 	seenFiles: new SvelteSet(),
+	seenHunks: new SvelteMap(),
 	firstVisibleUnseenFile: null,
 	seenItAllDismissed: false,
 	seenItAllAnimate: false,
@@ -1090,6 +1097,7 @@ const initial: AppState = {
 	prMergedBehavior: 'prompt',
 	autoRemoveMergedBranch: false,
 	unmarkSeenOnChange: true,
+	markSeenPerHunk: false,
 	recentRepoCount: 5,
 	hotkeys: DEFAULT_HOTKEYS,
 	headerItems: { ...DEFAULT_HEADER_ITEMS },
@@ -1366,6 +1374,68 @@ async function inheritSeenAcrossContexts(
 			cached.collapsedFiles.add(p);
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Per-hunk seen marks (the markSeenPerHunk setting).
+//
+// A hunk's identity is a hash of its changed lines (see hunk-seen.ts), so an
+// edited hunk stops matching and resurfaces by itself, while a hunk that only
+// shifts position stays seen. File-level `seenFiles` stays the single source of
+// truth for everything that reads "seen" (sidebar, progress, the completion
+// state): a file is seen once all of its hunks are, and un-seeing any hunk
+// un-sees the file. Hunk data only exists once a file's diff has rendered, so the
+// rendered sections report their hashes here (`noteFileHunks`).
+// ---------------------------------------------------------------------------
+
+const hunkFileKey = (reviewKey: string, path: string): string => `${reviewKey}\u0000${path}`;
+
+function currentReviewKey(): string {
+	return reviewContextKey($state.snapshot(app.diffContext) as DiffContext);
+}
+
+// Hunk hashes of each file as last rendered, so a file-level "mark seen" that
+// never opened the hunks' UI (hotkey, sidebar) can still record them. Plain Map:
+// scratch lookup, not reactive state.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const renderedHunks = new Map<string, string[]>();
+
+// Contexts whose persisted marks are already folded into `app.seenHunks`.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const hunkMarksLoaded = new Map<string, Promise<void>>();
+
+function loadHunkMarks(repoId: string, reviewKey: string): Promise<void> {
+	const loadKey = `${repoId}\u0000${reviewKey}`;
+	let p = hunkMarksLoaded.get(loadKey);
+	if (!p) {
+		p = window.api.state
+			.getSeenHunks(repoId, reviewKey)
+			.then((byPath) => {
+				for (const [path, hashes] of Object.entries(byPath)) {
+					const key = hunkFileKey(reviewKey, path);
+					// A mark made while loading wins: it is already the newer state.
+					if (!app.seenHunks.has(key)) app.seenHunks.set(key, hashes);
+				}
+			})
+			.catch(() => {
+				hunkMarksLoaded.delete(loadKey);
+			});
+		hunkMarksLoaded.set(loadKey, p);
+	}
+	return p;
+}
+
+function ensureHunkMarks(): Promise<void> {
+	if (!app.activeRepo) return Promise.resolve();
+	return loadHunkMarks(app.activeRepo.id, currentReviewKey());
+}
+
+// Record a file's hunk marks locally and persist them. An empty list forgets it.
+function writeHunkMarks(repoId: string, reviewKey: string, path: string, hashes: string[]): void {
+	const key = hunkFileKey(reviewKey, path);
+	if (hashes.length > 0) app.seenHunks.set(key, hashes);
+	else app.seenHunks.delete(key);
+	void window.api.state.setFileSeenHunks(repoId, reviewKey, path, hashes);
 }
 
 // Paint the file list from the per-context cache for the current diff context,
@@ -3544,6 +3614,7 @@ async function refreshFiles(): Promise<void> {
 		// from the file list we persisted last time, instead of sitting on a
 		// spinner while git computes the diff. The persisted list rides along in
 		// the same batch, but only when the in-memory cache missed.
+		if (app.markSeenPerHunk) void loadHunkMarks(repoId, reviewKey);
 		const [seenList, seenSigs, collapsedList, persisted] = await Promise.all([
 			window.api.state.getSeenFiles(repoId, reviewKey),
 			window.api.state.getSeenSignatures(repoId, reviewKey),
@@ -3884,6 +3955,7 @@ function applyPrefsSettings(prefs: UserPrefs): void {
 	app.prMergedBehavior = prefs.prMergedBehavior ?? 'prompt';
 	app.autoRemoveMergedBranch = prefs.autoRemoveMergedBranch ?? false;
 	app.unmarkSeenOnChange = prefs.unmarkSeenOnChange ?? true;
+	app.markSeenPerHunk = prefs.markSeenPerHunk ?? false;
 	app.changesetsEnabled = prefs.changesetsEnabled ?? true;
 	app.signCommits = prefs.signCommits ?? true;
 	// Beta: force automatic updates on regardless of the persisted value. The
@@ -5314,9 +5386,25 @@ export const actions = {
 		app.prefs = await window.api.state.setPrefs({ viewMode: app.viewMode });
 	},
 
-	async toggleSeen(filePath: string, seen?: boolean): Promise<void> {
+	async toggleSeen(
+		filePath: string,
+		seen?: boolean,
+		opts?: { keepHunks?: boolean }
+	): Promise<void> {
 		if (!app.activeRepo) return;
 		const next = seen ?? !app.seenFiles.has(filePath);
+		const reviewKey = currentReviewKey();
+		if (!next && !opts?.keepHunks) {
+			// Un-seeing a file forgets its per-hunk marks too, or they would just
+			// mark the file seen again the next time its hunks render.
+			writeHunkMarks(app.activeRepo.id, reviewKey, filePath, []);
+		} else if (next && app.markSeenPerHunk) {
+			// Marking a whole file seen marks every hunk we know of, so the
+			// hunks stay seen if the file later changes elsewhere.
+			const hashes = renderedHunks.get(hunkFileKey(reviewKey, filePath));
+			if (hashes && hashes.length > 0)
+				writeHunkMarks(app.activeRepo.id, reviewKey, filePath, hashes);
+		}
 		// Was the branch already fully reviewed before this toggle? If not and this
 		// toggle completes it, arm the celebration's entrance animation. Doing it
 		// here (rather than reacting to `allBranchChangesSeen()` flipping true) is
@@ -5485,11 +5573,65 @@ export const actions = {
 		}
 	},
 
+	// Whether a hunk reads as seen: its file is marked seen, or it was marked on
+	// its own. Reactive, so the hunk bars update as marks change.
+	isHunkSeen(path: string, hash: string): boolean {
+		if (app.seenFiles.has(path)) return true;
+		return app.seenHunks.get(hunkFileKey(currentReviewKey(), path))?.includes(hash) ?? false;
+	},
+
+	// Mark or unmark one hunk. `allHashes` is every hunk in the file, in order:
+	// marking the last unseen one marks the file seen, and un-seeing any hunk of a
+	// seen file un-sees the file (its other hunks keep their marks).
+	toggleHunkSeen(path: string, hash: string, allHashes: string[], seen?: boolean): void {
+		if (!app.activeRepo) return;
+		const repoId = app.activeRepo.id;
+		const reviewKey = currentReviewKey();
+		const fileSeen = app.seenFiles.has(path);
+		const explicit = app.seenHunks.get(hunkFileKey(reviewKey, path)) ?? [];
+		const next = seen ?? !(fileSeen || explicit.includes(hash));
+		// A file-level mark covers every hunk, so start from all of them.
+		const base = fileSeen ? allHashes : explicit;
+		const hashes = next
+			? base.includes(hash)
+				? [...base]
+				: [...base, hash]
+			: base.filter((h) => h !== hash);
+		writeHunkMarks(repoId, reviewKey, path, hashes);
+		const complete = allHashes.length > 0 && allHashes.every((h) => hashes.includes(h));
+		if (complete && !fileSeen) void actions.toggleSeen(path, true);
+		else if (!complete && fileSeen) void actions.toggleSeen(path, false, { keepHunks: true });
+	},
+
+	// Called by a rendered file section with its current hunk hashes. Remembers
+	// them for file-level marks and revives a file's seen mark when every one of
+	// its (possibly changed) hunks has been seen before, e.g. a commit landed that
+	// only touched hunks the reviewer had already cleared.
+	async noteFileHunks(path: string, hashes: string[]): Promise<void> {
+		if (!app.activeRepo) return;
+		const repoId = app.activeRepo.id;
+		const reviewKey = currentReviewKey();
+		renderedHunks.set(hunkFileKey(reviewKey, path), hashes);
+		if (!app.markSeenPerHunk || hashes.length === 0) return;
+		await loadHunkMarks(repoId, reviewKey);
+		if (!app.activeRepo || app.activeRepo.id !== repoId || currentReviewKey() !== reviewKey) return;
+		if (app.seenFiles.has(path)) return;
+		const explicit = app.seenHunks.get(hunkFileKey(reviewKey, path));
+		if (explicit && hashes.every((h) => explicit.includes(h))) {
+			void actions.toggleSeen(path, true);
+		}
+	},
+
 	async clearSeen(): Promise<void> {
 		if (!app.activeRepo) return;
 		const ctx = $state.snapshot(app.diffContext) as DiffContext;
-		await window.api.state.clearSeen(app.activeRepo.id, reviewContextKey(ctx));
+		const reviewKey = reviewContextKey(ctx);
+		await window.api.state.clearSeen(app.activeRepo.id, reviewKey);
 		app.seenFiles.clear();
+		const prefix = `${reviewKey}\u0000`;
+		for (const key of [...app.seenHunks.keys()]) {
+			if (key.startsWith(prefix)) app.seenHunks.delete(key);
+		}
 	},
 
 	// Hide the "You've seen it all" completion state ("Keep Reviewing"). It stays
@@ -8541,6 +8683,12 @@ export const actions = {
 	async setUnmarkSeenOnChange(value: boolean): Promise<void> {
 		app.unmarkSeenOnChange = value;
 		app.prefs = await window.api.state.setPrefs({ unmarkSeenOnChange: value });
+	},
+
+	async setMarkSeenPerHunk(value: boolean): Promise<void> {
+		app.markSeenPerHunk = value;
+		if (value) void ensureHunkMarks();
+		app.prefs = await window.api.state.setPrefs({ markSeenPerHunk: value });
 	},
 
 	async setRecentRepoCount(count: number): Promise<void> {

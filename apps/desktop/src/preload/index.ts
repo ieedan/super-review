@@ -430,6 +430,10 @@ const api: PreloadAPI = {
 			invoke('state:getRetainedSeen', repoId, contextKey, fileDiffSigs) as Promise<string[]>,
 		setFileSeen: (repoId, contextKey, filePath, seen, sig) =>
 			invoke('state:setFileSeen', repoId, contextKey, filePath, seen, sig) as Promise<void>,
+		getSeenHunks: (repoId, contextKey) =>
+			invoke('state:getSeenHunks', repoId, contextKey) as Promise<Record<string, string[]>>,
+		setFileSeenHunks: (repoId, contextKey, filePath, hashes) =>
+			invoke('state:setFileSeenHunks', repoId, contextKey, filePath, hashes) as Promise<void>,
 		clearSeen: (repoId, contextKey) =>
 			invoke('state:clearSeen', repoId, contextKey) as Promise<void>,
 		getCollapsedFiles: (repoId, contextKey) =>

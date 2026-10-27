@@ -49,6 +49,7 @@ function resetTouchedFields() {
 	a.showFileIcons = true;
 	a.indentGuides = true;
 	a.symbolReferences = false;
+	a.markSeenPerHunk = false;
 	a.recentRepoCount = 5;
 	a.loading = false;
 	a.githubAccounts = [];
@@ -56,6 +57,7 @@ function resetTouchedFields() {
 	// Reactive collections must be fresh instances so old entries don't linger.
 	a.selectedFiles = new SvelteSet<string>();
 	a.seenFiles = new SvelteSet<string>();
+	a.seenHunks = new SvelteMap();
 	a.collapsedFiles = new SvelteSet<string>();
 	a.collapsedFolders = new SvelteSet<string>();
 	a.excludedFromCommit = new SvelteSet<string>();
