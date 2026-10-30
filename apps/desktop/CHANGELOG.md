@@ -1,5 +1,13 @@
 # @super-review/desktop
 
+## 0.5.16
+
+### Patch Changes
+
+- [`3f016fc`](https://github.com/ieedan/super-review/commit/3f016fcdf3318ee2573df80dd0d18364727499e7) - feat: copy paths from the file context menu when multiple files are selected
+
+  Right-clicking a multi-file selection now offers "Copy File Paths" and "Copy Relative File Paths", which copy one path per line.
+
 ## 0.5.15
 
 ### Patch Changes
