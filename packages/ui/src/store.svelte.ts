@@ -8206,10 +8206,13 @@ export const actions = {
 				await Promise.all(targets.map((f) => actions.toggleSeen(f.path, false)));
 				break;
 			case 'copyPath':
-				await actions.copyToClipboard(actions.resolveRepoPath(file.path) ?? file.path);
+				// `targets` is the selection in bulk (one path per line), else the file.
+				await actions.copyToClipboard(
+					targets.map((f) => actions.resolveRepoPath(f.path) ?? f.path).join('\n')
+				);
 				break;
 			case 'copyRelativePath':
-				await actions.copyToClipboard(file.path);
+				await actions.copyToClipboard(targets.map((f) => f.path).join('\n'));
 				break;
 			case 'reveal':
 				await actions.revealFile(file.path);

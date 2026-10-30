@@ -2050,7 +2050,7 @@ export function registerIpc(): void {
 			const template: MenuItemConstructorOptions[] = [];
 			if (params.selectedCount > 1) {
 				// Multi-selection: only show actions that apply to the whole selection.
-				// The single-file copy/reveal/open items target just one file, so they
+				// The single-file reveal/open items target just one file, so they
 				// are omitted here. Discard and include/exclude live in their own
 				// groups.
 				const n = params.selectedCount;
@@ -2081,6 +2081,10 @@ export function registerIpc(): void {
 				}
 				ignoreGroup.push(...extensionItems());
 				if (ignoreGroup.length > 0) groups.push(ignoreGroup);
+				groups.push([
+					item('Copy File Paths', 'copyPath'),
+					item('Copy Relative File Paths', 'copyRelativePath')
+				]);
 				groups.forEach((group, i) => {
 					if (i > 0) template.push({ type: 'separator' });
 					template.push(...group);
