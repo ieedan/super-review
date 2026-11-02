@@ -1,5 +1,13 @@
 # @super-review/core
 
+## 0.5.6
+
+### Patch Changes
+
+- [`3a411f8`](https://github.com/ieedan/super-review/commit/3a411f802ebc502f847829bb8fa13621c7ebe9ca) Thanks [@ieedan](https://github.com/ieedan)! - fix: a branch checked out from a fork now picks up the contributor's new commits
+
+  The background fetch only refreshed `origin`, so a branch tracking a fork's remote (what checking out a fork PR creates) froze at the commit you first checked out. The behind count never appeared and the Branch tab kept showing the old code. The fetch now refreshes the remote the current branch tracks as well, and a fork that can't be reached no longer fails the origin fetch.
+
 ## 0.5.5
 
 ### Patch Changes
