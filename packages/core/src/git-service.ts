@@ -3857,18 +3857,51 @@ export async function convertToForkRemotes(
 	if (upstreamUrl) await ensureUpstreamRemote(git, upstreamUrl);
 }
 
+// The remote the checked-out branch tracks when it is not `origin` and is a
+// configured remote — e.g. the `<owner>` fork remote that checking out a fork's
+// PR creates. Null on a detached HEAD, an untracked branch, or one tracking
+// `origin` (already covered by the origin fetch).
+async function trackedForkRemote(
+	git: SimpleGit
+): Promise<{ name: string; url: string | null } | null> {
+	try {
+		const branch = (await git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim();
+		if (!branch) return null;
+		const name = (await git.raw(['config', '--get', `branch.${branch}.remote`])).trim();
+		if (!name || name === 'origin' || name === '.') return null;
+		const remotes = await git.getRemotes(true);
+		const remote = remotes.find((r) => r.name === name);
+		if (!remote) return null;
+		return { name, url: remote.refs.fetch ?? remote.refs.push ?? null };
+	} catch {
+		return null;
+	}
+}
+
 export async function fetchOrigin(repoPath: string): Promise<{ ok: boolean; error?: string }> {
 	try {
 		const remoteUrl = await originRemoteUrl(openGit(repoPath));
 		const git = authedGit(repoPath, remoteUrl);
 		await git.fetch(['origin', '--prune']);
-		return { ok: true };
 	} catch (err) {
 		return {
 			ok: false,
 			error: err instanceof Error ? err.message : String(err)
 		};
 	}
+	// A branch checked out from a fork tracks that fork's remote, which the origin
+	// fetch never touches, so its tracking ref (and the behind count and the diff
+	// head built on it) would freeze at the checkout. Refresh it too. Best effort:
+	// a deleted or unreachable fork must not fail the origin fetch that succeeded.
+	const fork = await trackedForkRemote(openGit(repoPath));
+	if (fork) {
+		try {
+			await authedGit(repoPath, fork.url).fetch([fork.name, '--prune']);
+		} catch (err) {
+			console.warn(`fetch ${fork.name} failed:`, err instanceof Error ? err.message : err);
+		}
+	}
+	return { ok: true };
 }
 
 export async function fetchPRRef(
